@@ -19,6 +19,7 @@ type Server struct {
 
 // Config holds configuration for the admin server.
 type Config struct {
+	Host string
 	Port int
 }
 
@@ -44,7 +45,7 @@ func New(cfg Config, logger *zap.Logger) *Server {
 
 	return &Server{
 		server: &http.Server{
-			Addr:         fmt.Sprintf(":%d", cfg.Port),
+			Addr:         fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
 			Handler:      r,
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 30 * time.Second,

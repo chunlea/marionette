@@ -1,0 +1,7 @@
+# Malformed YAML - invalid syntax
+server:
+  api:
+    port: 8080
+    host: [invalid
+  admin:
+    - this is wrong
