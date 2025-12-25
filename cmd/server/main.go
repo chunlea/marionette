@@ -3,12 +3,14 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/chunlea/marionette/pkg/config"
 	"github.com/chunlea/marionette/pkg/server/admin"
 	"github.com/chunlea/marionette/pkg/server/api"
 	grpcserver "github.com/chunlea/marionette/pkg/server/grpc"
@@ -16,19 +18,58 @@ import (
 )
 
 func main() {
-	logger, err := zap.NewProduction()
+	// Parse command-line flags
+	configPath := flag.String("config", "configs/local.yaml", "path to config file")
+	flag.Parse()
+
+	// Load configuration
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize logger based on config
+	var logger *zap.Logger
+	if cfg.Logging.Format == "console" {
+		logger, err = zap.NewDevelopment()
+	} else {
+		logger, err = zap.NewProduction()
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
 	defer func() { _ = logger.Sync() }()
 
-	logger.Info("marionette server starting")
+	logger.Info("marionette server starting",
+		zap.String("config", *configPath),
+		zap.String("log_level", cfg.Logging.Level),
+	)
+
+	// Load secrets (optional in development mode)
+	secrets := config.LoadSecretsOptional()
+	if secrets.DatabaseURL != "" {
+		logger.Info("database URL configured")
+	} else {
+		logger.Warn("database URL not set, database features will be unavailable")
+	}
 
 	// Create servers
-	apiServer := api.New(api.Config{Port: 8080}, logger)
-	adminServer := admin.New(admin.Config{Port: 8081}, logger)
-	grpcServer, err := grpcserver.New(grpcserver.Config{Port: 9090}, logger)
+	apiServer := api.New(api.Config{
+		Host: cfg.Server.API.Host,
+		Port: cfg.Server.API.Port,
+	}, logger)
+
+	adminServer := admin.New(admin.Config{
+		Host: cfg.Server.Admin.Host,
+		Port: cfg.Server.Admin.Port,
+	}, logger)
+
+	grpcServer, err := grpcserver.New(grpcserver.Config{
+		Host: cfg.Server.GRPC.Host,
+		Port: cfg.Server.GRPC.Port,
+	}, logger)
 	if err != nil {
 		logger.Fatal("failed to create gRPC server", zap.Error(err))
 	}
@@ -55,14 +96,14 @@ func main() {
 	}()
 
 	// Register service statuses
-	admin.Registry.Register("Public API", 8080, "ok", "Running")
-	admin.Registry.Register("Admin API", 8081, "ok", "Running")
-	admin.Registry.Register("gRPC", 9090, "ok", "Running")
+	admin.Registry.Register("Public API", cfg.Server.API.Port, "ok", "Running")
+	admin.Registry.Register("Admin API", cfg.Server.Admin.Port, "ok", "Running")
+	admin.Registry.Register("gRPC", cfg.Server.GRPC.Port, "ok", "Running")
 
 	logger.Info("all servers started",
-		zap.Int("api_port", 8080),
-		zap.Int("admin_port", 8081),
-		zap.Int("grpc_port", 9090),
+		zap.String("api_addr", fmt.Sprintf("%s:%d", cfg.Server.API.Host, cfg.Server.API.Port)),
+		zap.String("admin_addr", fmt.Sprintf("%s:%d", cfg.Server.Admin.Host, cfg.Server.Admin.Port)),
+		zap.String("grpc_addr", fmt.Sprintf("%s:%d", cfg.Server.GRPC.Host, cfg.Server.GRPC.Port)),
 	)
 
 	// Wait for interrupt signal or server error

@@ -1,0 +1,17 @@
+# Invalid port configuration
+server:
+  api:
+    port: 99999  # Invalid port number
+  admin:
+    port: 8081
+  grpc:
+    port: 9090
+
+storage:
+  provider: local
+  local:
+    path: "./data"
+
+logging:
+  level: info
+  format: json

@@ -1,0 +1,17 @@
+# Minimal configuration - uses defaults for most values
+server:
+  api:
+    port: 8080
+  admin:
+    port: 8081
+  grpc:
+    port: 9090
+
+storage:
+  provider: local
+  local:
+    path: "./data"
+
+logging:
+  level: info
+  format: json

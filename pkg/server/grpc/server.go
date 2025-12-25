@@ -20,12 +20,13 @@ type Server struct {
 
 // Config holds configuration for the gRPC server.
 type Config struct {
+	Host string
 	Port int
 }
 
 // New creates a new gRPC server.
 func New(cfg Config, logger *zap.Logger) (*Server, error) {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
+	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Host, cfg.Port))
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
