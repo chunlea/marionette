@@ -1,0 +1,47 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Generated code
+/gen/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# IDE and editor files
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Air hot reload
+.air/
+tmp/
+
+# macOS
+.DS_Store
+
+# Log files
+*.log
+
+# Local data
+/data/
+
+# Debug
+__debug_bin*

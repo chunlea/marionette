@@ -1,0 +1,378 @@
+// Marionette gRPC Protocol
+// Runner <-> Server communication
+
+syntax = "proto3";
+
+package marionette.v1;
+
+option go_package = "github.com/chunlea/marionette/gen/proto/v1;protov1";
+
+// RunnerService: Internal gRPC for runner <-> server communication
+//
+// AUTHENTICATION:
+// All RPCs require runner authentication via gRPC metadata:
+//   - "x-runner-token": Runner token from RegisterRunnerResponse or runner_tokens table
+//   - "x-runner-id": Runner ID (validated against token)
+//
+// For StreamLogs specifically:
+//   - First message MUST be StreamLogsInit (validates session/task assignment)
+//   - Subsequent messages are LogEntry
+//   - Server validates runner_id in LogEntry matches authenticated runner
+//   - Server validates tenant_id matches runner's tenant
+//
+service RunnerService {
+  // Bidirectional stream for control messages
+  // Auth: x-runner-token, x-runner-id in metadata
+  rpc Connect(stream RunnerMessage) returns (stream ServerCommand);
+
+  // Log upload stream (runner -> server)
+  // Auth: x-runner-token, x-runner-id in metadata
+  // First message must be StreamLogsInit, subsequent are LogEntry
+  rpc StreamLogs(stream StreamLogsMessage) returns (StreamLogsResponse);
+
+  // Unary RPCs
+  rpc RegisterRunner(RegisterRunnerRequest) returns (RegisterRunnerResponse);
+  rpc GetRunnerStatus(GetRunnerStatusRequest) returns (RunnerStatus);
+}
+
+//------------------------------------------------------------------------------
+// Runner -> Server Messages
+//------------------------------------------------------------------------------
+
+message RunnerMessage {
+  oneof payload {
+    Heartbeat heartbeat = 1;
+    TaskProgress task_progress = 2;
+    PermissionRequest permission_request = 3;
+    TaskCompleted task_completed = 4;
+    TaskAccepted task_accepted = 5;
+    TaskStarted task_started = 6;
+    SessionAttached session_attached = 7;
+    SessionSuspended session_suspended = 8;
+  }
+}
+
+message Heartbeat {
+  string runner_id = 1;
+  string status = 2;        // "idle", "busy", "paused"
+  int64 uptime_seconds = 3;
+  ResourceUsage resources = 4;
+}
+
+message ResourceUsage {
+  double cpu_percent = 1;
+  int64 memory_bytes = 2;
+  int64 disk_bytes = 3;
+}
+
+message TaskAccepted {
+  string task_id = 1;
+  string run_id = 2;
+  int32 attempt = 3;
+}
+
+message TaskStarted {
+  string task_id = 1;
+  string run_id = 2;
+  int32 attempt = 3;
+}
+
+message TaskProgress {
+  string task_id = 1;
+  string run_id = 2;
+  int32 attempt = 3;
+  string status = 4;
+  int32 progress_percent = 5;
+  string current_step = 6;
+}
+
+message TaskCompleted {
+  string task_id = 1;
+  string run_id = 2;
+  int32 attempt = 3;
+  bool success = 4;
+  string error = 5;
+  int32 exit_code = 6;
+  int64 tokens_input = 7;
+  int64 tokens_output = 8;
+  bytes context_snapshot = 9;  // JSON context for session restore
+}
+
+message PermissionRequest {
+  string request_id = 1;
+  string task_id = 2;
+  string run_id = 3;
+  string tool = 4;          // "bash", "edit", "browser"
+  string action = 5;        // command or description
+  string risk_level = 6;    // "low", "medium", "high", "critical"
+
+  // Timing behavior:
+  // - Runner blocks waiting for approval
+  // - After suspend_after_seconds, server auto-suspends session (default: 1800 = 30 min)
+  // - Permission request remains pending indefinitely until user responds
+  // - On session resume, pending approval/denial is delivered to runner
+  // - No auto-deny: request stays pending until explicit response or session termination
+  int64 suspend_after_seconds = 7;  // Auto-suspend session after this (default: 1800)
+
+  // Context for UI display
+  string context = 8;       // Additional context (file path, command args, etc.)
+  int64 created_at_unix_ms = 9;
+}
+
+message SessionAttached {
+  string session_id = 1;
+  bool restored = 2;        // true if restored from snapshot
+}
+
+// SessionSuspended is sent by runner after completing suspend operation
+message SessionSuspended {
+  string session_id = 1;
+
+  // Actual strategy that was executed (may differ from requested if fallback)
+  string strategy = 2;
+
+  // What was preserved
+  bool context_saved = 3;       // Agent context saved to snapshot
+  bool workspace_synced = 4;    // Workspace synced to CAS
+  string snapshot_id = 5;       // Snapshot ID if created
+
+  // Error if suspend failed
+  bool success = 6;
+  string error = 7;
+
+  int64 suspended_at_unix_ms = 8;
+}
+
+//------------------------------------------------------------------------------
+// Server -> Runner Commands
+//------------------------------------------------------------------------------
+
+message ServerCommand {
+  oneof payload {
+    ExecuteTask execute_task = 1;
+    ApprovePermission approve_permission = 2;
+    KillTask kill_task = 3;
+    CreateTunnel create_tunnel = 4;
+    AttachSession attach_session = 5;
+    DetachSession detach_session = 6;
+  }
+}
+
+message ExecuteTask {
+  string task_id = 1;
+  string run_id = 2;
+  int32 attempt = 3;
+  string session_id = 4;
+  string prompt = 5;
+  string work_dir = 6;
+  map<string, string> env = 7;
+  SandboxConfig sandbox = 8;
+
+  // Agent config for task execution
+  // Note: For new sessions, use AttachSession first.
+  // For tasks within existing sessions, agent_config is optional
+  // (runner uses previously attached config if not provided).
+  AgentConfig agent_config = 9;
+}
+
+message AttachSession {
+  string session_id = 1;
+  string workspace_path = 2;
+  bytes context_snapshot = 3;
+  AgentConfig agent_config = 4;
+
+  // Pending permission requests that were responded to while session was suspended
+  // Runner should process these immediately after attach
+  repeated PendingPermissionResponse pending_permissions = 5;
+}
+
+// Permission response that was made while session was suspended
+message PendingPermissionResponse {
+  string request_id = 1;
+  bool approved = 2;
+  string reason = 3;
+  string responded_by = 4;
+  int64 responded_at_unix_ms = 5;
+}
+
+message DetachSession {
+  string session_id = 1;
+  bool save_context = 2;
+
+  // Suspend configuration (for suspend operations)
+  SuspendConfig suspend = 3;
+}
+
+// SuspendConfig tells the runner how to handle session suspension
+message SuspendConfig {
+  // Strategy to use for this suspend
+  // "pause" - keep memory, pause execution (Docker pause, E2B suspend)
+  // "snapshot" - create full snapshot (Firecracker, QEMU)
+  // "terminate_preserve_storage" - terminate but keep PV/volume (Kubernetes)
+  // "release_to_pool" - sync workspace to CAS, release runner to pool
+  // "terminate" - full termination (fallback)
+  string strategy = 1;
+
+  // Sync workspace to object storage before suspend
+  // Required for release_to_pool, optional for others
+  bool sync_workspace = 2;
+
+  // Create snapshot before suspend (if provider supports)
+  bool save_snapshot = 3;
+
+  // Reason for suspend (e.g., "permission_timeout", "idle_timeout", "user_request")
+  string reason = 4;
+}
+
+message ApprovePermission {
+  string request_id = 1;
+  bool approved = 2;
+  string reason = 3;
+
+  // Set to true when this is a cached response delivered after session resume
+  // Runner should process immediately without re-prompting user
+  bool from_cache = 4;
+
+  // Who approved/denied (for audit logging)
+  string responded_by = 5;
+  int64 responded_at_unix_ms = 6;
+}
+
+message KillTask {
+  string task_id = 1;
+  string run_id = 2;
+  string reason = 3;
+}
+
+message CreateTunnel {
+  string tunnel_id = 1;
+  string type = 2;          // "http", "tcp", "desktop", "browser", "ios", "android"
+  int32 local_port = 3;
+  string token = 4;         // One-time token (server stores hash only)
+
+  // Direction for network policy enforcement
+  // "inbound": Server/User → Agent (desktop, browser, ios, android)
+  // "outbound": Agent → External (http, tcp)
+  string direction = 5;
+
+  // Expiration time (Unix milliseconds)
+  int64 expires_at_unix_ms = 6;
+}
+
+//------------------------------------------------------------------------------
+// Configuration Messages
+//------------------------------------------------------------------------------
+
+message AgentConfig {
+  string agent = 1;         // "claude", "codex", "gemini"
+  string model = 2;
+  string api_key = 3;       // passed as env var to sandbox
+  string base_url = 4;
+  map<string, string> extra = 5;
+
+  // Agent version for compatibility checking
+  // Format: semantic version, e.g., "1.0.45"
+  string agent_version = 6;
+}
+
+message SandboxConfig {
+  string mode = 1;          // "runner-is-sandbox" | "runner-creates-sandbox"
+  string type = 2;          // "docker", "gvisor", "namespace", "sandbox-exec", "none"
+  int64 timeout_seconds = 3;
+  int64 memory_mb = 4;
+  double cpus = 5;
+  NetworkConfig network = 6;
+}
+
+message NetworkConfig {
+  string level = 1;         // "none", "allow_list", "proxy", "air_gapped"
+  repeated string allowed_hosts = 2;
+  // Note: Cloud metadata endpoints (169.254.169.254) are ALWAYS blocked.
+  // This is not configurable for security reasons.
+}
+
+//------------------------------------------------------------------------------
+// Registration
+//------------------------------------------------------------------------------
+
+message RegisterRunnerRequest {
+  string name = 1;
+  string hostname = 2;
+  string token = 3;         // runner authentication token
+  repeated string capabilities = 4;
+  string sandbox_mode = 5;
+  repeated string sandbox_types = 6;
+  string pool_name = 7;
+  map<string, string> labels = 8;
+  map<string, string> annotations = 9;
+}
+
+message RegisterRunnerResponse {
+  string runner_id = 1;
+  bool accepted = 2;
+  string message = 3;
+}
+
+message GetRunnerStatusRequest {
+  string runner_id = 1;
+}
+
+message RunnerStatus {
+  string runner_id = 1;
+  string status = 2;
+  string current_task_id = 3;
+  string current_session_id = 4;
+}
+
+//------------------------------------------------------------------------------
+// Logs
+//------------------------------------------------------------------------------
+
+// StreamLogsMessage wraps log stream messages with init handshake
+message StreamLogsMessage {
+  oneof payload {
+    StreamLogsInit init = 1;
+    LogEntry log_entry = 2;
+  }
+}
+
+// StreamLogsInit is the REQUIRED first message in a log stream
+// Server validates that runner is authorized to stream logs for this session/task
+message StreamLogsInit {
+  string session_id = 1;      // Session this stream is for
+  string task_id = 2;         // Current task (optional, for filtering)
+  string run_id = 3;          // Current run (optional, for filtering)
+
+  // These are validated against the authenticated runner from metadata
+  // If mismatch, stream is rejected with PERMISSION_DENIED
+  string runner_id = 4;       // Must match x-runner-id in metadata
+  string tenant_id = 5;       // Must match runner's tenant
+}
+
+// StreamLogsResponse provides feedback after stream ends
+message StreamLogsResponse {
+  int64 logs_received = 1;    // Total log entries received
+  int64 logs_stored = 2;      // Logs successfully persisted
+  int64 logs_dropped = 3;     // Logs dropped due to back-pressure or errors
+  string error = 4;           // Error message if stream terminated abnormally
+}
+
+message LogEntry {
+  string task_id = 1;
+  string run_id = 2;
+  string session_id = 3;
+  string stream = 4;        // "stdout", "stderr", "system"
+  string level = 5;         // "debug", "info", "warn", "error"
+  string content = 6;
+  int64 sequence = 7;
+  int64 timestamp_unix_ms = 8;
+  map<string, string> metadata = 9;
+
+  // Tenant isolation (denormalized for efficient routing and storage)
+  // Server validates this matches the StreamLogsInit tenant_id
+  string tenant_id = 10;
+
+  // Runner context
+  // Server validates this matches the authenticated runner_id
+  string runner_id = 11;
+}

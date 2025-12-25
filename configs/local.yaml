@@ -1,0 +1,36 @@
+# Marionette Local Development Configuration
+# Sensitive values should be set via environment variables (MARIONETTE_* prefix)
+
+server:
+  api:
+    port: 8080
+    host: "0.0.0.0"
+  admin:
+    port: 8081
+    host: "127.0.0.1"
+  grpc:
+    port: 9090
+    host: "0.0.0.0"
+
+# Provider configuration
+providers:
+  default: docker
+  docker:
+    image: "marionette/agent:latest"
+    network: "marionette-network"
+
+# Storage configuration
+storage:
+  provider: local
+  local:
+    path: "./data/storage"
+
+# Logging configuration
+logging:
+  level: debug
+  format: console  # console or json
+
+# Development settings
+dev:
+  hot_reload: true
+  skip_tls: true  # Skip TLS verification in development

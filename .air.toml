@@ -1,0 +1,70 @@
+# Air configuration for hot reload
+# https://github.com/air-verse/air
+
+root = "."
+testdata_dir = "testdata"
+tmp_dir = ".air"
+
+[build]
+  # Build all binaries: server, agent, mctl
+  cmd = "go build -o ./bin/server ./cmd/server && go build -o ./bin/agent ./cmd/agent && go build -o ./bin/mctl ./cmd/mctl && echo '✓ Built: server, agent, mctl'"
+
+  # Run server after build
+  bin = "./bin/server"
+  args_bin = ["--config", "configs/local.yaml"]
+
+  # Watch these file extensions
+  include_ext = ["go", "yaml", "yml"]
+
+  # Exclude directories
+  exclude_dir = ["gen", "bin", "tmp", ".air", "vendor", "testdata", "node_modules", "docs", "deploy"]
+
+  # Exclude files
+  exclude_file = []
+
+  # Exclude specific regex patterns
+  exclude_regex = ["_test.go"]
+
+  # Exclude unchanged files
+  exclude_unchanged = false
+
+  # Follow symlinks
+  follow_symlink = false
+
+  # Delay before reloading (ms)
+  delay = 500
+
+  # Stop running old binary when building new one
+  kill_delay = "2s"
+
+  # Send interrupt signal before killing
+  send_interrupt = true
+
+  # Rerun binary when build errors are fixed
+  rerun = false
+
+  # Rerun delay
+  rerun_delay = 500
+
+[log]
+  # Show log time
+  time = true
+  # Only show main log (silences watcher/build logs)
+  main_only = false
+
+[color]
+  # Customize log colors
+  main = "magenta"
+  watcher = "cyan"
+  build = "yellow"
+  runner = "green"
+
+[misc]
+  # Delete tmp directory on exit
+  clean_on_exit = true
+
+[screen]
+  # Clear screen on rebuild
+  clear_on_rebuild = false
+  # Keep scroll position
+  keep_scroll = true

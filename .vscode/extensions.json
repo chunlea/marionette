@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "golang.go",
+    "bufbuild.vscode-buf",
+    "zxh404.vscode-proto3",
+    "editorconfig.editorconfig",
+    "redhat.vscode-yaml",
+    "ms-azuretools.vscode-docker",
+    "streetsidesoftware.code-spell-checker"
+  ],
+  "unwantedRecommendations": []
+}

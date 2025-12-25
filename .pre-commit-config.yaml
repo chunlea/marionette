@@ -1,0 +1,67 @@
+# Pre-commit hooks configuration
+# https://pre-commit.com/
+#
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # Go formatting and linting
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: go fmt
+        entry: gofmt -l -w
+        language: system
+        types: [go]
+        pass_filenames: true
+
+      - id: go-imports
+        name: goimports
+        entry: goimports -w -local github.com/chunlea/marionette
+        language: system
+        types: [go]
+        pass_filenames: true
+
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: golangci-lint
+        name: golangci-lint
+        entry: golangci-lint run --fix
+        language: system
+        types: [go]
+        pass_filenames: false
+
+  # Protobuf linting
+  - repo: local
+    hooks:
+      - id: buf-lint
+        name: buf lint
+        entry: buf lint
+        language: system
+        types: [proto]
+        pass_filenames: false
+
+      - id: buf-format
+        name: buf format
+        entry: buf format -w
+        language: system
+        types: [proto]
+        pass_filenames: false
+
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^gen/
+      - id: end-of-file-fixer
+        exclude: ^gen/
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: detect-private-key

@@ -1,0 +1,56 @@
+# Marionette Production Configuration Template
+# Copy this file to production.yaml and configure for your environment
+#
+# REQUIRED ENVIRONMENT VARIABLES:
+#   MARIONETTE_DATABASE_URL     - PostgreSQL connection string
+#   MARIONETTE_MASTER_KEY       - Master key for admin operations
+#   MARIONETTE_ENCRYPTION_KEY   - Key for encrypting agent credentials
+#   MARIONETTE_UI_USERNAME      - WebUI Basic Auth username
+#   MARIONETTE_UI_PASSWORD      - WebUI Basic Auth password
+
+server:
+  api:
+    port: 8080
+    host: "0.0.0.0"
+  admin:
+    port: 8081
+    host: "0.0.0.0"
+  grpc:
+    port: 9090
+    host: "0.0.0.0"
+
+# TLS configuration (required in production)
+tls:
+  enabled: true
+  cert_file: "/etc/marionette/tls/server.crt"
+  key_file: "/etc/marionette/tls/server.key"
+  ca_file: "/etc/marionette/tls/ca.crt"
+  verify_client: true  # Enable mTLS
+
+# Provider configuration
+providers:
+  default: docker
+  docker:
+    image: "ghcr.io/chunlea/marionette-agent:latest"
+    network: "marionette-network"
+
+# Storage configuration
+storage:
+  provider: s3
+  s3:
+    bucket: "marionette-storage"
+    region: "us-west-2"
+    # AWS credentials from environment or IAM role
+
+# Logging configuration
+logging:
+  level: info
+  format: json
+
+# Observability
+observability:
+  metrics:
+    enabled: true
+    port: 9091
+  health:
+    enabled: true

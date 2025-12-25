@@ -1,0 +1,76 @@
+{
+  // Go settings
+  "go.useLanguageServer": true,
+  "go.languageServerFlags": [
+    "-rpc.trace"
+  ],
+  "gopls": {
+    "ui.completion.usePlaceholders": true,
+    "ui.semanticTokens": true,
+    "ui.diagnostic.analyses": {
+      "fieldalignment": false,
+      "shadow": true,
+      "unusedparams": true,
+      "unusedwrite": true
+    },
+    "formatting.gofumpt": false,
+    "ui.codelenses": {
+      "gc_details": false,
+      "generate": true,
+      "regenerate_cgo": true,
+      "run_govulncheck": true,
+      "test": true,
+      "tidy": true,
+      "upgrade_dependency": true,
+      "vendor": true
+    }
+  },
+  "go.testFlags": [
+    "-v",
+    "-race"
+  ],
+  "go.coverOnSave": false,
+  "go.coverageDecorator": {
+    "type": "gutter",
+    "coveredHighlightColor": "rgba(64,128,128,0.5)",
+    "uncoveredHighlightColor": "rgba(128,64,64,0.25)"
+  },
+  // Format on save
+  "editor.formatOnSave": true,
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    },
+    "editor.defaultFormatter": "golang.go"
+  },
+  "[proto3]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "bufbuild.vscode-buf"
+  },
+  "[yaml]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  // File associations
+  "files.associations": {
+    "*.proto": "proto3",
+    "*.yaml": "yaml",
+    "*.yml": "yaml"
+  },
+  // Exclude generated files from search
+  "search.exclude": {
+    "**/gen/**": true,
+    "**/bin/**": true,
+    "**/vendor/**": true
+  },
+  // TOML settings - disable schema validation for air.toml
+  "evenBetterToml.schema.associations": {
+    ".air.toml": false
+  },
+  // YAML settings - use official golangci-lint v2 schema
+  "yaml.schemaStore.enable": true,
+  "yaml.schemas": {
+    "https://golangci-lint.run/jsonschema/golangci.jsonschema.json": [".golangci.yml"]
+  }
+}
