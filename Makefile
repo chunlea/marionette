@@ -64,11 +64,11 @@ build-mctl:
 	$(GOBUILD) $(LDFLAGS) -o $(MCTL_BINARY) ./cmd/mctl
 
 ## test: Run tests with race detector
-test:
+test: proto
 	$(GOTEST) -race -v ./...
 
 ## test-coverage: Run tests with coverage report
-test-coverage:
+test-coverage: proto
 	$(GOTEST) -race -coverprofile=coverage.out ./...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
