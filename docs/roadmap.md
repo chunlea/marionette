@@ -162,7 +162,7 @@
   - [x] `postgres.go` - connection pool setup
   - [x] `runners.go` - runner CRUD
   - [x] `sessions.go` - session CRUD
-  - [ ] `tasks.go` - task/task_run CRUD
+  - [x] `tasks.go` - task/task_run CRUD
   - [x] `workspaces.go` - workspace CRUD
   - [ ] `auth.go` - api_keys, runner_tokens
   - [ ] `configs.go` - agent_configs, provider_configs, profiles
