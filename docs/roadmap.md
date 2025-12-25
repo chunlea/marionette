@@ -166,10 +166,10 @@
   - [ ] `workspaces.go` - workspace CRUD
   - [ ] `auth.go` - api_keys, runner_tokens
   - [ ] `configs.go` - agent_configs, provider_configs, profiles
-- [ ] Create migration system (golang-migrate):
-  - [ ] `migrations/001_initial.up.sql` - from schema.sql
-  - [ ] `migrations/001_initial.down.sql`
-  - [ ] Migration runner in Makefile
+- [x] Create migration system (golang-migrate):
+  - [x] `migrations/001_initial.up.sql` - from schema.sql
+  - [x] `migrations/001_initial.down.sql`
+  - [x] Migration runner in Makefile
 - [ ] Implement tenant isolation:
   - [ ] `TenantContext` wrapper for queries
   - [ ] Automatic `tenant_id` injection
