@@ -1,3 +1,4 @@
+// Package main provides the marionette-agent binary.
 package main
 
 import (
@@ -13,7 +14,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	logger.Info("marionette agent starting")
 

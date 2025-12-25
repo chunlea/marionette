@@ -9,8 +9,6 @@ run:
 linters:
   default: standard
   enable:
-    - gofmt
-    - goimports
     - revive
     - misspell
     - bodyclose
@@ -20,6 +18,11 @@ linters:
     - prealloc
     - unconvert
     - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 exclusions:
   generated: lax

@@ -1,3 +1,4 @@
+// Package main provides the mctl CLI binary.
 package main
 
 import (
@@ -31,7 +32,7 @@ func init() {
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
-		Run: func(cmd *cobra.Command, args []string) {
+		Run: func(_ *cobra.Command, _ []string) {
 			fmt.Println("mctl version 0.0.1")
 		},
 	})
