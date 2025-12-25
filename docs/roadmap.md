@@ -159,7 +159,7 @@
   - [x] APIKey, RunnerToken, AgentConfig
   - [x] ProviderConfig, Profile
 - [ ] Implement PostgreSQL store (`pkg/store/postgres/`):
-  - [ ] `postgres.go` - connection pool setup
+  - [x] `postgres.go` - connection pool setup
   - [ ] `runners.go` - runner CRUD
   - [ ] `sessions.go` - session CRUD
   - [ ] `tasks.go` - task/task_run CRUD
