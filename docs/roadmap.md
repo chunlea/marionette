@@ -44,10 +44,10 @@
 
 ## Phase 1: Foundation
 
-### 1.1 Project Setup
+### 1.1 Project Setup ✓
 
-- [ ] Initialize Go module (`go mod init github.com/anthropics/marionette`)
-- [ ] Create directory structure:
+- [x] Initialize Go module (`go mod init github.com/chunlea/marionette`)
+- [x] Create directory structure:
   ```
   marionette/
   ├── cmd/
@@ -67,20 +67,21 @@
   ├── configs/
   └── deploy/
   ```
-- [ ] Create Makefile with targets:
-  - [ ] `make deps` - install dependencies
-  - [ ] `make build` - build all binaries
-  - [ ] `make test` - run tests
-  - [ ] `make lint` - run linter
-  - [ ] `make proto` - generate protobuf
-  - [ ] `make migrate` - run database migrations
-  - [ ] `make dev` - hot reload development
-- [ ] Set up protobuf generation:
-  - [ ] Install buf or protoc
-  - [ ] Create buf.yaml / buf.gen.yaml
-  - [ ] Generate Go code from runner.proto
-- [ ] Set up linting (golangci-lint)
-- [ ] Set up pre-commit hooks
+- [x] Create Makefile with targets:
+  - [x] `make deps` - install dependencies
+  - [x] `make build` - build all binaries
+  - [x] `make test` - run tests
+  - [x] `make lint` - run linter
+  - [x] `make proto` - generate protobuf
+  - [x] `make migrate` - run database migrations
+  - [x] `make dev` - hot reload development
+- [x] Set up protobuf generation:
+  - [x] Install buf or protoc
+  - [x] Create buf.yaml / buf.gen.yaml
+  - [x] Generate Go code from runner.proto
+- [x] Set up linting (golangci-lint v2)
+- [x] Set up pre-commit hooks
+- [x] Set up LSP/editor settings (VS Code, gopls, .editorconfig)
 
 ### 1.2 ID Generation
 
