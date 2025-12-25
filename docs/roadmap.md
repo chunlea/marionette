@@ -165,7 +165,7 @@
   - [x] `tasks.go` - task/task_run CRUD
   - [x] `workspaces.go` - workspace CRUD
   - [x] `auth.go` - api_keys, runner_tokens
-  - [ ] `configs.go` - agent_configs, provider_configs, profiles
+  - [x] `configs.go` - agent_configs, provider_configs, profiles
 - [x] Create migration system (golang-migrate):
   - [x] `migrations/001_initial.up.sql` - from schema.sql
   - [x] `migrations/001_initial.down.sql`
