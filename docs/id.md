@@ -5,10 +5,10 @@ Marionette uses Stripe-style prefixed IDs for all resources.
 ## Format
 
 ```
-{prefix}_{base62_timestamp}{nanoid}
+{prefix}_{timestamp}{random}
 ```
 
-Example: `sess_0002xK9mNpV1StGXR8`
+Example: `sess_BlShKHtNJr5K5iRW`
 
 ### Components
 
@@ -16,21 +16,24 @@ Example: `sess_0002xK9mNpV1StGXR8`
 |------|-------------|--------|
 | prefix | Resource type identifier | 2-4 chars |
 | `_` | Separator | 1 char |
-| timestamp | Base62-encoded milliseconds since epoch | 8 chars (zero-padded) |
-| nanoid | Random string (base62 alphabet) | 8 chars |
+| timestamp | Base52-encoded milliseconds since epoch (letters only) | 8 chars |
+| random | Random string (base62 alphabet) | 8 chars |
 
 Total: ~21 characters
 
 ### Time Ordering
 
-The timestamp component uses **fixed-width zero-padded base62** encoding to ensure:
+The timestamp component uses **letters-only base52** encoding (A-Za-z) to ensure:
 - Lexicographic order equals chronological order
 - BTREE indexes maintain time-based clustering
 - IDs remain sortable without parsing
+- No ugly leading zeros (current timestamps start with 'B')
 
-Without padding, `9` (single digit) would sort after `10` (two digits) lexicographically, breaking time ordering.
+8 characters of base52 can represent up to `52^8 = 53,459,728,531,456` milliseconds (~1,700 years from epoch), which is sufficient for any practical use.
 
-8 characters of base62 can represent up to `62^8 = 218,340,105,584,896` milliseconds (~6,900 years from epoch), which is sufficient for any practical use.
+### Why Letters Only?
+
+With base62 (including digits), current Unix timestamps (~1.7 trillion ms) produce IDs like `sess_0000UXpT...` with leading zeros. Using base52 (letters only), the same timestamp produces `sess_BlShKH...` - much cleaner.
 
 ### Prefixes
 
@@ -53,16 +56,18 @@ Without padding, `9` (single digit) would sort after `10` (two digits) lexicogra
 | `prof_` | Profile |
 | `snap_` | Snapshot |
 | `tun_` | Tunnel |
+| `ttok_` | Tunnel Token |
 | `mfst_` | Manifest |
 | `alog_` | Action Log |
 
 ## Benefits
 
 - **Human-readable**: Type visible in ID (`sess_xxx` vs UUID)
-- **Time-ordered**: Fixed-width base62 ensures lexicographic = chronological order
+- **Time-ordered**: Fixed-width base52 ensures lexicographic = chronological order
 - **Short**: ~21 chars vs UUID's 36
 - **URL-safe**: No special characters
 - **Debuggable**: Easy to identify in logs
+- **Clean**: No leading zeros
 
 ## Implementation
 
@@ -77,24 +82,32 @@ import (
 )
 
 const (
-    alphabet      = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    timestampLen  = 8  // Fixed width for proper lexicographic ordering
+    // timestampAlphabet uses letters only (base52) for timestamp encoding.
+    // This avoids leading zeros since current Unix milliseconds (~1.7 trillion)
+    // starts with 'B' in base52, making IDs more readable.
+    timestampAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+    // randomAlphabet uses full base62 for the random suffix.
+    randomAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+    timestampLen = 8
+    randomLen    = 8
 )
 
 // New generates a time-ordered prefixed ID
 func New(prefix string) string {
-    ts := encodeBase62Padded(time.Now().UnixMilli(), timestampLen)
-    rand, _ := nanoid.Generate(alphabet, 8)
+    ts := encodeTimestamp(time.Now().UnixMilli())
+    rand, _ := nanoid.Generate(randomAlphabet, randomLen)
     return prefix + "_" + ts + rand
 }
 
-// encodeBase62Padded converts an int64 to fixed-width base62 string
-// Zero-pads to ensure lexicographic order equals chronological order
-func encodeBase62Padded(n int64, width int) string {
-    result := make([]byte, width)
-    for i := width - 1; i >= 0; i-- {
-        result[i] = alphabet[n%62]
-        n /= 62
+// encodeTimestamp converts milliseconds to a fixed-width base52 string.
+func encodeTimestamp(n int64) string {
+    const base = 52
+    result := make([]byte, timestampLen)
+    for i := timestampLen - 1; i >= 0; i-- {
+        result[i] = timestampAlphabet[n%base]
+        n /= base
     }
     return string(result)
 }
@@ -118,6 +131,7 @@ func ProviderConfig() string    { return New("pcfg") }
 func Profile() string           { return New("prof") }
 func Snapshot() string          { return New("snap") }
 func Tunnel() string            { return New("tun") }
+func TunnelToken() string       { return New("ttok") }
 func Manifest() string          { return New("mfst") }
 ```
 
@@ -138,64 +152,45 @@ var ErrInvalidID = errors.New("invalid id format")
 // Parse extracts prefix and value from an ID
 func Parse(id string) (prefix, value string, err error) {
     parts := strings.SplitN(id, "_", 2)
-    if len(parts) != 2 {
+    if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
         return "", "", ErrInvalidID
     }
     return parts[0], parts[1], nil
 }
 
 // ExtractTime extracts the timestamp from an ID
-// Returns zero time if parsing fails
 func ExtractTime(id string) time.Time {
     _, value, err := Parse(id)
     if err != nil || len(value) < timestampLen {
         return time.Time{}
     }
-    ts := decodeBase62(value[:timestampLen])
+    ts := decodeTimestamp(value[:timestampLen])
     return time.UnixMilli(ts)
 }
 
-// decodeBase62 converts a base62 string back to int64
-func decodeBase62(s string) int64 {
+// decodeTimestamp converts a base52 timestamp string back to int64.
+func decodeTimestamp(s string) int64 {
+    const base = 52
     var n int64
     for _, c := range s {
-        n *= 62
+        n *= base
         switch {
-        case c >= '0' && c <= '9':
-            n += int64(c - '0')
         case c >= 'A' && c <= 'Z':
-            n += int64(c - 'A' + 10)
+            n += int64(c - 'A')
         case c >= 'a' && c <= 'z':
-            n += int64(c - 'a' + 36)
+            n += int64(c - 'a' + 26)
         }
     }
     return n
 }
 
-// IsSession returns true if id is a session ID
-func IsSession(id string) bool {
-    return strings.HasPrefix(id, "sess_")
-}
-
-// IsTask returns true if id is a task ID
-func IsTask(id string) bool {
-    return strings.HasPrefix(id, "task_")
-}
-
-// IsRunner returns true if id is a runner ID
-func IsRunner(id string) bool {
-    return strings.HasPrefix(id, "run_")
-}
-
-// IsWorkspace returns true if id is a workspace ID
-func IsWorkspace(id string) bool {
-    return strings.HasPrefix(id, "ws_")
-}
-
-// IsManifest returns true if id is a manifest ID
-func IsManifest(id string) bool {
-    return strings.HasPrefix(id, "mfst_")
-}
+// Type checking functions
+func IsSession(id string) bool   { return strings.HasPrefix(id, "sess_") }
+func IsTask(id string) bool      { return strings.HasPrefix(id, "task_") }
+func IsRunner(id string) bool    { return strings.HasPrefix(id, "run_") }
+func IsWorkspace(id string) bool { return strings.HasPrefix(id, "ws_") }
+func IsManifest(id string) bool  { return strings.HasPrefix(id, "mfst_") }
+// ... and more for each resource type
 ```
 
 ## Testing
@@ -210,11 +205,10 @@ import (
 )
 
 func TestTimeOrdering(t *testing.T) {
-    // Generate IDs across time
     id1 := Session()
-    time.Sleep(1 * time.Millisecond)
+    time.Sleep(2 * time.Millisecond)
     id2 := Session()
-    time.Sleep(1 * time.Millisecond)
+    time.Sleep(2 * time.Millisecond)
     id3 := Session()
 
     // Lexicographic order should equal chronological order
@@ -234,13 +228,14 @@ func TestExtractTime(t *testing.T) {
     }
 }
 
-func TestPaddingWidth(t *testing.T) {
-    id := Session()
-    _, value, _ := Parse(id)
-
-    // Should always be 16 chars (8 timestamp + 8 random)
-    if len(value) != 16 {
-        t.Errorf("Expected value length 16, got %d: %s", len(value), value)
+func TestBase52Roundtrip(t *testing.T) {
+    tests := []int64{0, 1, 51, 52, 2703, 2704, 1000000, time.Now().UnixMilli()}
+    for _, tt := range tests {
+        encoded := encodeTimestamp(tt)
+        decoded := decodeTimestamp(encoded)
+        if tt != decoded {
+            t.Errorf("roundtrip failed for %d: encoded=%s, decoded=%d", tt, encoded, decoded)
+        }
     }
 }
 ```
