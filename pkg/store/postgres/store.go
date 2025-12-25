@@ -149,3 +149,10 @@ func (s *Store) Pool() *pgxpool.Pool {
 func (s *Store) Stats() *pgxpool.Stat {
 	return s.pool.Stat()
 }
+
+// ExecRaw executes raw SQL statements.
+// This is useful for migrations and administrative tasks.
+func (s *Store) ExecRaw(ctx context.Context, sql string) error {
+	_, err := s.pool.Exec(ctx, sql)
+	return err
+}
