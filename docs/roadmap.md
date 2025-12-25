@@ -134,7 +134,7 @@
 
 ### 1.5 Store Layer
 
-- [ ] Define store interfaces (`pkg/store/store.go`):
+- [x] Define store interfaces (`pkg/store/store.go`):
   ```go
   type Store interface {
       // Runners
@@ -153,11 +153,11 @@
       BeginTx(ctx) (Tx, error)
   }
   ```
-- [ ] Define data models (`pkg/store/models.go`):
-  - [ ] Runner, Session, Task, TaskRun
-  - [ ] Workspace, PermissionRequest
-  - [ ] APIKey, RunnerToken, AgentConfig
-  - [ ] ProviderConfig, Profile
+- [x] Define data models (`pkg/store/models.go`):
+  - [x] Runner, Session, Task, TaskRun
+  - [x] Workspace, PermissionRequest
+  - [x] APIKey, RunnerToken, AgentConfig
+  - [x] ProviderConfig, Profile
 - [ ] Implement PostgreSQL store (`pkg/store/postgres/`):
   - [ ] `postgres.go` - connection pool setup
   - [ ] `runners.go` - runner CRUD
