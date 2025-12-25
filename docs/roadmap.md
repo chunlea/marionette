@@ -118,19 +118,19 @@
   - [x] Test prefix extraction
   - [x] Test time extraction accuracy
 
-### 1.4 Configuration
+### 1.4 Configuration ✓
 
-- [ ] Create `pkg/config/config.go`:
-  - [ ] Define config structs (Server, Agent, Database, etc.)
-  - [ ] Viper integration for YAML + env vars
-  - [ ] Environment variable prefix: `MARIONETTE_`
-- [ ] Create example config files:
-  - [ ] `configs/local.yaml` - local development
-  - [ ] `configs/production.yaml.example` - production template
-- [ ] Sensitive values from environment only:
-  - [ ] `MARIONETTE_DATABASE_URL`
-  - [ ] `MARIONETTE_MASTER_KEY`
-  - [ ] `MARIONETTE_ENCRYPTION_KEY`
+- [x] Create `pkg/config/config.go`:
+  - [x] Define config structs (Server, Agent, Database, etc.)
+  - [x] Viper integration for YAML + env vars
+  - [x] Environment variable prefix: `MARIONETTE_`
+- [x] Create example config files:
+  - [x] `configs/local.yaml` - local development
+  - [x] `configs/production.yaml.example` - production template
+- [x] Sensitive values from environment only:
+  - [x] `MARIONETTE_DATABASE_URL`
+  - [x] `MARIONETTE_MASTER_KEY`
+  - [x] `MARIONETTE_ENCRYPTION_KEY`
 
 ### 1.5 Store Layer
 
