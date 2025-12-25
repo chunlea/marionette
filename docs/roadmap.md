@@ -83,7 +83,27 @@
 - [x] Set up pre-commit hooks
 - [x] Set up LSP/editor settings (VS Code, gopls, .editorconfig)
 
-### 1.2 ID Generation
+### 1.2 Server API Foundation ✓
+
+- [x] Set up Public API server (`pkg/server/api/`):
+  - [x] Chi router with CORS middleware
+  - [x] `GET /health` - Health check endpoint
+  - [x] `GET /healthz` - Kubernetes probe endpoint
+- [x] Set up Admin API server (`pkg/server/admin/`):
+  - [x] `GET /health` - Admin health check
+  - [x] `GET /healthz` - Kubernetes probe
+  - [x] `GET /api/status` - Service registry status
+  - [x] Embedded static file serving (for future WebUI)
+- [x] Set up gRPC server (`pkg/server/grpc/`):
+  - [x] RunnerService stub implementation
+  - [x] gRPC reflection enabled
+- [x] Server binary wiring (`cmd/server/main.go`):
+  - [x] Start all 3 servers (public :8080, admin :8081, gRPC :9090)
+  - [x] Graceful shutdown handling
+  - [x] Service registry for status reporting
+- [x] Unit tests for all handlers and services
+
+### 1.3 ID Generation
 
 - [ ] Implement `pkg/id/id.go`:
   - [ ] `New(prefix string) string` - generate prefixed ID
@@ -98,7 +118,7 @@
   - [ ] Test prefix extraction
   - [ ] Test time extraction accuracy
 
-### 1.3 Configuration
+### 1.4 Configuration
 
 - [ ] Create `pkg/config/config.go`:
   - [ ] Define config structs (Server, Agent, Database, etc.)
@@ -112,7 +132,7 @@
   - [ ] `MARIONETTE_MASTER_KEY`
   - [ ] `MARIONETTE_ENCRYPTION_KEY`
 
-### 1.4 Store Layer
+### 1.5 Store Layer
 
 - [ ] Define store interfaces (`pkg/store/store.go`):
   ```go
@@ -160,7 +180,7 @@
   - [ ] Test tenant isolation
   - [ ] Test unique constraints
 
-### 1.5 Token & Authentication
+### 1.6 Token & Authentication
 
 - [ ] Implement token generation (`pkg/crypto/token.go`):
   ```go
@@ -189,7 +209,7 @@
   - [ ] Hash verification
   - [ ] Token rotation grace period
 
-### 1.6 Encryption
+### 1.7 Encryption
 
 - [ ] Implement envelope encryption (`pkg/crypto/envelope.go`):
   - [ ] KEK loading from environment (`MARIONETTE_ENCRYPTION_KEY`)
@@ -209,7 +229,7 @@
   - [ ] Different tenants have different DEKs
   - [ ] Tampering detection
 
-### 1.7 Docker Provider (Basic)
+### 1.8 Docker Provider (Basic)
 
 - [ ] Define provider interface (`pkg/provider/provider.go`):
   ```go
