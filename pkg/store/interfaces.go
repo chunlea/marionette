@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+
+	"github.com/chunlea/marionette/pkg/crypto"
 )
 
 // APIKeyStore defines operations for API key storage.
@@ -53,3 +55,8 @@ type RunnerTokenStore interface {
 	// DeleteRunnerToken permanently deletes a runner token.
 	DeleteRunnerToken(ctx context.Context, id string) error
 }
+
+// DEKStore defines operations for data encryption key storage.
+// This interface is also defined in pkg/crypto but we re-export it here
+// for consistency with other store interfaces.
+type DEKStore = crypto.DEKStore
