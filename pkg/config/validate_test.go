@@ -277,21 +277,22 @@ func TestS3StorageValidate(t *testing.T) {
 
 func TestValidatePort(t *testing.T) {
 	tests := []struct {
+		name    string
 		port    int
 		wantErr bool
 	}{
-		{port: 1, wantErr: false},
-		{port: 80, wantErr: false},
-		{port: 8080, wantErr: false},
-		{port: 65535, wantErr: false},
-		{port: 0, wantErr: true},
-		{port: -1, wantErr: true},
-		{port: 65536, wantErr: true},
-		{port: 100000, wantErr: true},
+		{name: "port 1 valid", port: 1, wantErr: false},
+		{name: "port 80 valid", port: 80, wantErr: false},
+		{name: "port 8080 valid", port: 8080, wantErr: false},
+		{name: "port 65535 valid", port: 65535, wantErr: false},
+		{name: "port 0 invalid", port: 0, wantErr: true},
+		{name: "port -1 invalid", port: -1, wantErr: true},
+		{name: "port 65536 invalid", port: 65536, wantErr: true},
+		{name: "port 100000 invalid", port: 100000, wantErr: true},
 	}
 
 	for _, tt := range tests {
-		t.Run("", func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			err := validatePort(tt.port, "test")
 			if tt.wantErr && err == nil {
 				t.Errorf("validatePort(%d) expected error, got nil", tt.port)

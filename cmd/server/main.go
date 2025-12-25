@@ -30,12 +30,7 @@ func main() {
 	}
 
 	// Initialize logger based on config
-	var logger *zap.Logger
-	if cfg.Logging.Format == "console" {
-		logger, err = zap.NewDevelopment()
-	} else {
-		logger, err = zap.NewProduction()
-	}
+	logger, err := newLogger(cfg.Logging.Level, cfg.Logging.Format)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize logger: %v\n", err)
 		os.Exit(1)
@@ -134,4 +129,33 @@ func main() {
 	}
 
 	logger.Info("marionette server stopped")
+}
+
+// newLogger creates a zap logger with the specified level and format.
+func newLogger(level, format string) (*zap.Logger, error) {
+	// Parse log level
+	var zapLevel zap.AtomicLevel
+	switch level {
+	case "debug":
+		zapLevel = zap.NewAtomicLevelAt(zap.DebugLevel)
+	case "info":
+		zapLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
+	case "warn":
+		zapLevel = zap.NewAtomicLevelAt(zap.WarnLevel)
+	case "error":
+		zapLevel = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	default:
+		zapLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+
+	// Build config based on format
+	var cfg zap.Config
+	if format == "console" {
+		cfg = zap.NewDevelopmentConfig()
+	} else {
+		cfg = zap.NewProductionConfig()
+	}
+	cfg.Level = zapLevel
+
+	return cfg.Build()
 }
