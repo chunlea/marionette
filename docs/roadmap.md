@@ -161,7 +161,7 @@
 - [ ] Implement PostgreSQL store (`pkg/store/postgres/`):
   - [x] `postgres.go` - connection pool setup
   - [x] `runners.go` - runner CRUD
-  - [ ] `sessions.go` - session CRUD
+  - [x] `sessions.go` - session CRUD
   - [ ] `tasks.go` - task/task_run CRUD
   - [x] `workspaces.go` - workspace CRUD
   - [ ] `auth.go` - api_keys, runner_tokens
