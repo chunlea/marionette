@@ -483,6 +483,16 @@ func updateRunnerToken(ctx context.Context, q querier, tokenID string, updates s
 	var args []any
 	argNum := 1
 
+	if updates.TokenHash != nil {
+		setClauses = append(setClauses, fmt.Sprintf("token_hash = $%d", argNum))
+		args = append(args, *updates.TokenHash)
+		argNum++
+	}
+	if updates.TokenPrefix != nil {
+		setClauses = append(setClauses, fmt.Sprintf("token_prefix = $%d", argNum))
+		args = append(args, *updates.TokenPrefix)
+		argNum++
+	}
 	if updates.RunnerID != nil {
 		setClauses = append(setClauses, fmt.Sprintf("runner_id = $%d", argNum))
 		args = append(args, *updates.RunnerID)

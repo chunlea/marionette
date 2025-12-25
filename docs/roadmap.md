@@ -193,54 +193,54 @@
   - [x] Test transactions (commit/rollback)
   - [x] Test unique constraints and error handling
 
-### 1.6 Token & Authentication
+### 1.6 Token & Authentication ✓
 
-- [ ] Implement token generation (`pkg/crypto/token.go`):
+- [x] Implement token generation (`pkg/crypto/token.go`):
   ```go
   func GenerateToken(prefix string) (token, displayPrefix, hash string, version int, err error)
   func VerifyToken(token, storedHash string, version int, hmacKey []byte) bool
   ```
-- [ ] Token prefixes:
-  - [ ] `mk_` - API keys
-  - [ ] `rtok_` - Runner tokens
-  - [ ] `ttok_` - Tunnel tokens
-- [ ] SHA-256 hashing with hash_version support:
-  - [ ] Version 1: SHA-256 (current)
-  - [ ] Version 2: HMAC-SHA256 (reserved)
-- [ ] Implement API key service (`pkg/auth/apikey.go`):
-  - [ ] `Create(name string, scopes []string) (*APIKey, plainToken string, error)`
-  - [ ] `Validate(token string) (*APIKeyInfo, error)`
-  - [ ] `Revoke(id string, reason string) error`
-  - [ ] `List(opts ListOptions) ([]*APIKey, error)`
-- [ ] Implement runner token service (`pkg/auth/runnertoken.go`):
-  - [ ] `Create(poolName string) (*RunnerToken, plainToken string, error)`
-  - [ ] `Validate(token string) (*RunnerTokenInfo, error)`
-  - [ ] `Rotate(id string) (newToken string, error)` - with grace period
-  - [ ] `Revoke(id string, reason string) error`
-- [ ] Write auth tests:
-  - [ ] Token generation uniqueness
-  - [ ] Hash verification
-  - [ ] Token rotation grace period
+- [x] Token prefixes:
+  - [x] `mk_` - API keys
+  - [x] `rtok_` - Runner tokens
+  - [x] `ttok_` - Tunnel tokens
+- [x] SHA-256 hashing with hash_version support:
+  - [x] Version 1: SHA-256 (current)
+  - [x] Version 2: HMAC-SHA256 (reserved)
+- [x] Implement API key service (`pkg/auth/apikey.go`):
+  - [x] `Create(name string, scopes []string) (*APIKey, plainToken string, error)`
+  - [x] `Validate(token string) (*APIKeyInfo, error)`
+  - [x] `Revoke(id string, reason string) error`
+  - [x] `List(opts ListOptions) ([]*APIKey, error)`
+- [x] Implement runner token service (`pkg/auth/runnertoken.go`):
+  - [x] `Create(poolName string) (*RunnerToken, plainToken string, error)`
+  - [x] `Validate(token string) (*RunnerTokenInfo, error)`
+  - [x] `Rotate(id string) (newToken string, error)` - with grace period
+  - [x] `Revoke(id string, reason string) error`
+- [x] Write auth tests:
+  - [x] Token generation uniqueness
+  - [x] Hash verification
+  - [x] Token rotation grace period
 
-### 1.7 Encryption
+### 1.7 Encryption ✓
 
-- [ ] Implement envelope encryption (`pkg/crypto/envelope.go`):
-  - [ ] KEK loading from environment (`MARIONETTE_ENCRYPTION_KEY`)
-  - [ ] DEK generation per resource
-  - [ ] `Encrypt(tenantID string, plaintext []byte) (ciphertext []byte, error)`
-  - [ ] `Decrypt(tenantID string, ciphertext []byte) (plaintext []byte, error)`
-- [ ] AES-256-GCM implementation:
-  - [ ] Nonce generation (12 bytes random)
-  - [ ] Authenticated encryption
-  - [ ] Ciphertext format: `nonce || ciphertext || tag`
-- [ ] DEK management:
-  - [ ] Store encrypted DEKs in `data_keys` table
-  - [ ] DEK rotation support
-  - [ ] Per-tenant DEK isolation
-- [ ] Write crypto tests:
-  - [ ] Encryption roundtrip
-  - [ ] Different tenants have different DEKs
-  - [ ] Tampering detection
+- [x] Implement envelope encryption (`pkg/crypto/envelope.go`):
+  - [x] KEK loading from environment (`MARIONETTE_ENCRYPTION_KEY`)
+  - [x] DEK generation per resource
+  - [x] `Encrypt(tenantID string, plaintext []byte) (ciphertext []byte, error)`
+  - [x] `Decrypt(tenantID string, ciphertext []byte) (plaintext []byte, error)`
+- [x] AES-256-GCM implementation:
+  - [x] Nonce generation (12 bytes random)
+  - [x] Authenticated encryption
+  - [x] Ciphertext format: `nonce || ciphertext || tag`
+- [x] DEK management:
+  - [x] Store encrypted DEKs in `data_keys` table
+  - [x] DEK rotation support
+  - [x] Per-tenant DEK isolation
+- [x] Write crypto tests:
+  - [x] Encryption roundtrip
+  - [x] Different tenants have different DEKs
+  - [x] Tampering detection
 
 ### 1.8 Docker Provider (Basic)
 

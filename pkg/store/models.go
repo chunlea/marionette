@@ -335,6 +335,8 @@ type RunnerToken struct {
 
 // RunnerTokenUpdates contains fields that can be updated on a runner token.
 type RunnerTokenUpdates struct {
+	TokenHash         *string // For rotation: new token hash
+	TokenPrefix       *string // For rotation: new token prefix
 	RunnerID          *string
 	Status            *string
 	PreviousTokenHash *string
