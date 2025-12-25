@@ -132,9 +132,9 @@
   - [x] `MARIONETTE_MASTER_KEY`
   - [x] `MARIONETTE_ENCRYPTION_KEY`
 
-### 1.5 Store Layer
+### 1.5 Store Layer ✓
 
-- [ ] Define store interfaces (`pkg/store/store.go`):
+- [x] Define store interfaces (`pkg/store/store.go`):
   ```go
   type Store interface {
       // Runners
@@ -153,32 +153,45 @@
       BeginTx(ctx) (Tx, error)
   }
   ```
-- [ ] Define data models (`pkg/store/models.go`):
-  - [ ] Runner, Session, Task, TaskRun
-  - [ ] Workspace, PermissionRequest
-  - [ ] APIKey, RunnerToken, AgentConfig
-  - [ ] ProviderConfig, Profile
-- [ ] Implement PostgreSQL store (`pkg/store/postgres/`):
-  - [ ] `postgres.go` - connection pool setup
-  - [ ] `runners.go` - runner CRUD
-  - [ ] `sessions.go` - session CRUD
-  - [ ] `tasks.go` - task/task_run CRUD
-  - [ ] `workspaces.go` - workspace CRUD
-  - [ ] `auth.go` - api_keys, runner_tokens
-  - [ ] `configs.go` - agent_configs, provider_configs, profiles
-- [ ] Create migration system (golang-migrate):
-  - [ ] `migrations/001_initial.up.sql` - from schema.sql
-  - [ ] `migrations/001_initial.down.sql`
-  - [ ] Migration runner in Makefile
-- [ ] Implement tenant isolation:
+- [x] Define data models (`pkg/store/models.go`):
+  - [x] Runner, Session, Task, TaskRun
+  - [x] Workspace, PermissionRequest
+  - [x] APIKey, RunnerToken, AgentConfig
+  - [x] ProviderConfig, Profile
+  - [x] Snapshot, Tunnel, DataKey
+  - [x] Log, LogArchive, ActionLog
+  - [x] Chunk, Manifest
+- [x] Implement PostgreSQL store (`pkg/store/postgres/`):
+  - [x] `store.go` - connection pool setup
+  - [x] `tx.go` - transaction wrapper
+  - [x] `helpers.go` - SQL helpers
+  - [x] `runners.go` - runner CRUD
+  - [x] `sessions.go` - session CRUD
+  - [x] `tasks.go` - task/task_run/scheduled_task CRUD
+  - [x] `workspaces.go` - workspace CRUD
+  - [x] `permissions.go` - permission_request CRUD
+  - [x] `auth.go` - api_keys, runner_tokens
+  - [x] `configs.go` - agent_configs, provider_configs, profiles
+  - [x] `storage.go` - snapshots, tunnels, data_keys
+  - [x] `logs.go` - logs, log_archives, action_logs
+  - [x] `cas.go` - chunks, manifests
+- [x] Create migration system (golang-migrate):
+  - [x] `migrations/001_initial.up.sql` - from schema.sql
+  - [x] `migrations/001_initial.down.sql`
+  - [x] Migration runner in Makefile
+- [x] Wire store into server:
+  - [x] Initialize store when DATABASE_URL is set
+  - [x] Register database health status
+  - [x] Graceful shutdown
+- [ ] Implement tenant isolation (deferred to later phase):
   - [ ] `TenantContext` wrapper for queries
   - [ ] Automatic `tenant_id` injection
   - [ ] Cross-tenant validation in store methods
-- [ ] Write store tests:
-  - [ ] Use testcontainers for PostgreSQL
-  - [ ] Test CRUD operations
-  - [ ] Test tenant isolation
-  - [ ] Test unique constraints
+- [x] Write store tests:
+  - [x] Use testcontainers for PostgreSQL
+  - [x] Test CRUD operations (runners, workspaces, sessions, tasks, API keys, configs)
+  - [x] Test transactions (commit/rollback)
+  - [x] Test unique constraints and error handling
 
 ### 1.6 Token & Authentication
 

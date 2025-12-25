@@ -14,6 +14,7 @@ import (
 	"github.com/chunlea/marionette/pkg/server/admin"
 	"github.com/chunlea/marionette/pkg/server/api"
 	grpcserver "github.com/chunlea/marionette/pkg/server/grpc"
+	"github.com/chunlea/marionette/pkg/store/postgres"
 	"go.uber.org/zap"
 )
 
@@ -44,10 +45,26 @@ func main() {
 
 	// Load secrets (optional in development mode)
 	secrets := config.LoadSecretsOptional()
+
+	// Initialize database store
+	var store *postgres.Store
 	if secrets.DatabaseURL != "" {
-		logger.Info("database URL configured")
+		ctx := context.Background()
+		var err error
+		store, err = postgres.New(ctx, postgres.Config{
+			URL:             secrets.DatabaseURL,
+			MaxConns:        int32(cfg.Database.MaxOpenConns),
+			MinConns:        int32(cfg.Database.MaxIdleConns),
+			MaxConnLifetime: parseDuration(cfg.Database.ConnMaxLifetime, time.Hour),
+		}, logger)
+		if err != nil {
+			logger.Fatal("failed to connect to database", zap.Error(err))
+		}
+		logger.Info("database connected")
+		admin.Registry.Register("Database", 0, "ok", "Connected")
 	} else {
 		logger.Warn("database URL not set, database features will be unavailable")
+		admin.Registry.Register("Database", 0, "warn", "Not configured")
 	}
 
 	// Create servers
@@ -128,6 +145,15 @@ func main() {
 		logger.Error("grpc server shutdown error", zap.Error(err))
 	}
 
+	// Close database connection
+	if store != nil {
+		if err := store.Close(); err != nil {
+			logger.Error("database close error", zap.Error(err))
+		} else {
+			logger.Info("database connection closed")
+		}
+	}
+
 	logger.Info("marionette server stopped")
 }
 
@@ -158,4 +184,16 @@ func newLogger(level, format string) (*zap.Logger, error) {
 	cfg.Level = zapLevel
 
 	return cfg.Build()
+}
+
+// parseDuration parses a duration string, returning the default if empty or invalid.
+func parseDuration(s string, defaultVal time.Duration) time.Duration {
+	if s == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return defaultVal
+	}
+	return d
 }
