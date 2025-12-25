@@ -103,20 +103,20 @@
   - [x] Service registry for status reporting
 - [x] Unit tests for all handlers and services
 
-### 1.3 ID Generation
+### 1.3 ID Generation ✓
 
-- [ ] Implement `pkg/id/id.go`:
-  - [ ] `New(prefix string) string` - generate prefixed ID
-  - [ ] `encodeBase62Padded(n int64, width int) string` - fixed-width base62
-  - [ ] Convenience functions: `Session()`, `Task()`, `Runner()`, etc.
-- [ ] Implement `pkg/id/validate.go`:
-  - [ ] `Parse(id string) (prefix, value string, err error)`
-  - [ ] `ExtractTime(id string) time.Time`
-  - [ ] Type checking: `IsSession()`, `IsTask()`, `IsRunner()`, etc.
-- [ ] Write unit tests:
-  - [ ] Test time ordering (lexicographic = chronological)
-  - [ ] Test prefix extraction
-  - [ ] Test time extraction accuracy
+- [x] Implement `pkg/id/id.go`:
+  - [x] `New(prefix string) string` - generate prefixed ID
+  - [x] `encodeTimestamp(n int64) string` - fixed-width base52 (letters only)
+  - [x] Convenience functions: `Session()`, `Task()`, `Runner()`, etc. (20 total)
+- [x] Implement `pkg/id/validate.go`:
+  - [x] `Parse(id string) (prefix, value string, err error)`
+  - [x] `ExtractTime(id string) time.Time`
+  - [x] Type checking: `IsSession()`, `IsTask()`, `IsRunner()`, etc. (20 total)
+- [x] Write unit tests:
+  - [x] Test time ordering (lexicographic = chronological)
+  - [x] Test prefix extraction
+  - [x] Test time extraction accuracy
 
 ### 1.4 Configuration
 
