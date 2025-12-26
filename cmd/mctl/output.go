@@ -160,6 +160,89 @@ func taskToRow(t *client.Task) []string {
 	}
 }
 
+// PrintRunner outputs a single runner.
+func (p *Printer) PrintRunner(r *client.Runner) error {
+	if p.format == OutputTable {
+		headers := []string{"ID", "NAME", "STATUS", "POOL", "PROVIDER", "LAST SEEN"}
+		rows := [][]string{runnerToRow(r)}
+		return p.PrintTable(headers, rows)
+	}
+	return p.Print(r)
+}
+
+// PrintRunnerList outputs a list of runners.
+func (p *Printer) PrintRunnerList(runners []*client.Runner) error {
+	if p.format == OutputTable {
+		headers := []string{"ID", "NAME", "STATUS", "POOL", "PROVIDER", "LAST SEEN"}
+		rows := make([][]string, len(runners))
+		for i, r := range runners {
+			rows[i] = runnerToRow(r)
+		}
+		return p.PrintTable(headers, rows)
+	}
+	return p.Print(runners)
+}
+
+// PrintPermission outputs a single permission request.
+func (p *Printer) PrintPermission(perm *client.PermissionRequest) error {
+	if p.format == OutputTable {
+		headers := []string{"ID", "SESSION", "TASK", "TOOL", "STATUS", "RISK", "CREATED"}
+		rows := [][]string{permissionToRow(perm)}
+		return p.PrintTable(headers, rows)
+	}
+	return p.Print(perm)
+}
+
+// PrintPermissionList outputs a list of permission requests.
+func (p *Printer) PrintPermissionList(perms []*client.PermissionRequest) error {
+	if p.format == OutputTable {
+		headers := []string{"ID", "SESSION", "TASK", "TOOL", "STATUS", "RISK", "CREATED"}
+		rows := make([][]string, len(perms))
+		for i, perm := range perms {
+			rows[i] = permissionToRow(perm)
+		}
+		return p.PrintTable(headers, rows)
+	}
+	return p.Print(perms)
+}
+
+// runnerToRow converts a runner to a table row.
+func runnerToRow(r *client.Runner) []string {
+	pool := ""
+	if r.PoolName != nil {
+		pool = *r.PoolName
+	}
+	provider := ""
+	if r.ProviderConfigID != nil {
+		provider = *r.ProviderConfigID
+	}
+	lastSeen := ""
+	if r.LastSeenAt != nil {
+		lastSeen = formatTime(*r.LastSeenAt)
+	}
+	return []string{
+		r.ID,
+		r.Name,
+		r.Status,
+		pool,
+		provider,
+		lastSeen,
+	}
+}
+
+// permissionToRow converts a permission request to a table row.
+func permissionToRow(perm *client.PermissionRequest) []string {
+	return []string{
+		perm.ID,
+		perm.SessionID,
+		perm.TaskID,
+		perm.Tool,
+		perm.Status,
+		perm.RiskLevel,
+		formatTime(perm.CreatedAt),
+	}
+}
+
 // formatTime formats a time value for display.
 func formatTime(t time.Time) string {
 	duration := time.Since(t)

@@ -26,6 +26,14 @@ type MockClient struct {
 	ListTasksFunc   func(ctx context.Context, opts ListTasksOptions) (*ListResult[Task], error)
 	CancelTaskFunc  func(ctx context.Context, id string) error
 	GetTaskLogsFunc func(ctx context.Context, id string, opts GetLogsOptions) (LogIterator, error)
+
+	GetRunnerFunc   func(ctx context.Context, id string) (*Runner, error)
+	ListRunnersFunc func(ctx context.Context, opts ListRunnersOptions) (*ListResult[Runner], error)
+
+	GetPermissionFunc     func(ctx context.Context, id string) (*PermissionRequest, error)
+	ListPermissionsFunc   func(ctx context.Context, opts ListPermissionsOptions) (*ListResult[PermissionRequest], error)
+	ApprovePermissionFunc func(ctx context.Context, id string, reason string) error
+	DenyPermissionFunc    func(ctx context.Context, id string, reason string) error
 }
 
 // MockCall represents a recorded method call.
@@ -157,6 +165,60 @@ func (m *MockClient) GetTaskLogs(ctx context.Context, id string, opts GetLogsOpt
 		return m.GetTaskLogsFunc(ctx, id, opts)
 	}
 	return &MockLogIterator{}, nil
+}
+
+// GetRunner implements Client.
+func (m *MockClient) GetRunner(ctx context.Context, id string) (*Runner, error) {
+	m.recordCall("GetRunner", id)
+	if m.GetRunnerFunc != nil {
+		return m.GetRunnerFunc(ctx, id)
+	}
+	return nil, ErrNotFound
+}
+
+// ListRunners implements Client.
+func (m *MockClient) ListRunners(ctx context.Context, opts ListRunnersOptions) (*ListResult[Runner], error) {
+	m.recordCall("ListRunners", opts)
+	if m.ListRunnersFunc != nil {
+		return m.ListRunnersFunc(ctx, opts)
+	}
+	return &ListResult[Runner]{Items: []*Runner{}}, nil
+}
+
+// GetPermission implements Client.
+func (m *MockClient) GetPermission(ctx context.Context, id string) (*PermissionRequest, error) {
+	m.recordCall("GetPermission", id)
+	if m.GetPermissionFunc != nil {
+		return m.GetPermissionFunc(ctx, id)
+	}
+	return nil, ErrNotFound
+}
+
+// ListPermissions implements Client.
+func (m *MockClient) ListPermissions(ctx context.Context, opts ListPermissionsOptions) (*ListResult[PermissionRequest], error) {
+	m.recordCall("ListPermissions", opts)
+	if m.ListPermissionsFunc != nil {
+		return m.ListPermissionsFunc(ctx, opts)
+	}
+	return &ListResult[PermissionRequest]{Items: []*PermissionRequest{}}, nil
+}
+
+// ApprovePermission implements Client.
+func (m *MockClient) ApprovePermission(ctx context.Context, id string, reason string) error {
+	m.recordCall("ApprovePermission", id, reason)
+	if m.ApprovePermissionFunc != nil {
+		return m.ApprovePermissionFunc(ctx, id, reason)
+	}
+	return nil
+}
+
+// DenyPermission implements Client.
+func (m *MockClient) DenyPermission(ctx context.Context, id string, reason string) error {
+	m.recordCall("DenyPermission", id, reason)
+	if m.DenyPermissionFunc != nil {
+		return m.DenyPermissionFunc(ctx, id, reason)
+	}
+	return nil
 }
 
 // MockLogIterator is a mock implementation of LogIterator.

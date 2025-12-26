@@ -92,3 +92,42 @@ type GetLogsOptions struct {
 	// SinceSequence returns logs after this sequence number.
 	SinceSequence int64
 }
+
+// ListRunnersOptions contains options for listing runners.
+type ListRunnersOptions struct {
+	// Limit is the maximum number of runners to return.
+	Limit int
+
+	// Cursor is the pagination cursor.
+	Cursor string
+
+	// Status filters runners by status.
+	Status []string
+
+	// PoolName filters runners by pool name.
+	PoolName string
+
+	// Labels filters runners by labels.
+	Labels map[string]string
+}
+
+// ListPermissionsOptions contains options for listing permission requests.
+type ListPermissionsOptions struct {
+	// Limit is the maximum number of permissions to return.
+	Limit int
+
+	// Cursor is the pagination cursor.
+	Cursor string
+
+	// SessionID filters permissions by session.
+	SessionID string
+
+	// TaskID filters permissions by task.
+	TaskID string
+
+	// Status filters permissions by status (pending, approved, denied).
+	Status []string
+
+	// RiskLevel filters permissions by risk level.
+	RiskLevel []string
+}
