@@ -587,5 +587,154 @@ func calculateDirSize(dir string) (int64, error) {
 	return size, err
 }
 
+// SyncIncremental performs incremental sync based on a previous manifest.
+// Only uploads chunks that have changed since the previous manifest.
+func (s *Sync) SyncIncremental(ctx context.Context, workspaceID, tenantID, srcDir, previousManifestID string) (string, *DiffResult, error) {
+	// Load previous manifest if provided
+	var previousManifest *Manifest
+	if previousManifestID != "" {
+		var err error
+		previousManifest, err = s.manifestStore.LoadManifest(ctx, tenantID, workspaceID, previousManifestID)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to load previous manifest: %w", err)
+		}
+	}
+
+	// Calculate total size to determine mode
+	totalSize, err := calculateDirSize(srcDir)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to calculate directory size: %w", err)
+	}
+
+	// For single chunk mode, we can't do incremental sync effectively
+	// because the entire workspace is in one chunk
+	if totalSize < s.config.SingleChunkThreshold {
+		manifestID, err := s.Sync(ctx, workspaceID, tenantID, srcDir)
+		if err != nil {
+			return "", nil, err
+		}
+		// For single chunk mode, we just report all files as modified
+		diff := &DiffResult{Modified: []string{"(single-chunk-mode)"}}
+		return manifestID, diff, nil
+	}
+
+	// Compare current directory against previous manifest
+	diff, fileChunks, err := DiffDirectory(previousManifest, srcDir, s.chunker)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to diff directory: %w", err)
+	}
+
+	// If nothing changed, still create a new manifest for the timestamp
+	manifest := &Manifest{
+		ID:          id.Manifest(),
+		WorkspaceID: workspaceID,
+		TenantID:    tenantID,
+		CreatedAt:   time.Now(),
+		TotalSize:   totalSize,
+		ParentID:    stringPtr(previousManifestID),
+	}
+
+	// Collect chunks that need to be uploaded
+	chunksToUpload := CollectNewChunks(fileChunks)
+
+	// Check which chunks already exist
+	existingChunks := make(map[string]bool)
+	for hash := range chunksToUpload {
+		exists, err := s.chunkStore.ChunkExists(ctx, tenantID, hash)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to check chunk %s: %w", hash, err)
+		}
+		existingChunks[hash] = exists
+	}
+
+	// Filter to only new chunks
+	newChunks := ChunksToUpload(chunksToUpload, existingChunks)
+
+	// Upload new chunks in parallel
+	if err := s.uploadChunks(ctx, tenantID, newChunks); err != nil {
+		return "", nil, fmt.Errorf("failed to upload chunks: %w", err)
+	}
+
+	// Build the file list for the new manifest
+	manifest.Files = s.buildManifestFiles(srcDir, fileChunks, previousManifest, diff)
+	manifest.ChunkCount = len(chunksToUpload)
+
+	// Save manifest
+	if err := s.manifestStore.SaveManifest(ctx, manifest); err != nil {
+		return "", nil, fmt.Errorf("failed to save manifest: %w", err)
+	}
+
+	return manifest.ID, diff, nil
+}
+
+// buildManifestFiles constructs the manifest file list from diff results.
+func (s *Sync) buildManifestFiles(srcDir string, newChunks map[string][]ChunkInfo, previousManifest *Manifest, diff *DiffResult) []ManifestFile {
+	files := make([]ManifestFile, 0)
+
+	// Create map of previous files for unchanged lookup
+	previousFiles := make(map[string]*ManifestFile)
+	if previousManifest != nil {
+		for i := range previousManifest.Files {
+			previousFiles[previousManifest.Files[i].Path] = &previousManifest.Files[i]
+		}
+	}
+
+	// Add unchanged files from previous manifest
+	for _, path := range diff.Unchanged {
+		if pf, ok := previousFiles[path]; ok {
+			files = append(files, *pf)
+		}
+	}
+
+	// Add new and modified files
+	addOrModified := make([]string, 0, len(diff.Added)+len(diff.Modified))
+	addOrModified = append(addOrModified, diff.Added...)
+	addOrModified = append(addOrModified, diff.Modified...)
+	for _, path := range addOrModified {
+		chunks, ok := newChunks[path]
+		if !ok {
+			continue
+		}
+
+		fullPath := filepath.Join(srcDir, path)
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			continue
+		}
+
+		hashes := make([]string, len(chunks))
+		for i, c := range chunks {
+			hashes[i] = c.Hash
+		}
+
+		files = append(files, ManifestFile{
+			Path:    path,
+			Mode:    info.Mode(),
+			ModTime: info.ModTime(),
+			Size:    info.Size(),
+			Chunks:  hashes,
+		})
+	}
+
+	return files
+}
+
+// Diff compares the current directory against a manifest.
+func (s *Sync) Diff(_ context.Context, manifest *Manifest, srcDir string) (*DiffResult, error) {
+	diff, _, err := DiffDirectory(manifest, srcDir, s.chunker)
+	if err != nil {
+		return nil, fmt.Errorf("failed to diff directory: %w", err)
+	}
+	return diff, nil
+}
+
+// stringPtr returns a pointer to a string, or nil if the string is empty.
+func stringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 // Compile-time interface check.
 var _ Syncer = (*Sync)(nil)

@@ -558,6 +558,7 @@ func TestBlobChunkStore_StoreChunkDedup(t *testing.T) {
 
 func TestSync_StreamManifestCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	memStorage := NewMemoryProvider()
 	encryptor := NewNoOpEncryptor()
@@ -674,4 +675,382 @@ func TestSync_NestedEmptyDirs(t *testing.T) {
 
 	// Verify file exists
 	assertFileContent(t, dstDir, "parent/file.txt", "content")
+}
+
+func TestSync_SyncIncremental_NoChanges(t *testing.T) {
+	ctx := context.Background()
+
+	memStorage := NewMemoryProvider()
+	encryptor := NewNoOpEncryptor()
+	chunkStore := NewBlobChunkStore(memStorage, encryptor)
+	manifestStore := NewBlobManifestStore(memStorage, encryptor)
+
+	config := Config{
+		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
+		MaxConcurrency:       4,
+	}.WithDefaults()
+
+	sync := NewSync(config, chunkStore, manifestStore)
+
+	// Create test directory with content exceeding threshold
+	srcDir := t.TempDir()
+	createTestFile(t, srcDir, "file1.txt", "content file one with enough data")
+	createTestFile(t, srcDir, "file2.txt", "content file two with enough data")
+
+	// First sync
+	manifestID1, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
+	require.NoError(t, err)
+
+	// Incremental sync with no changes
+	manifestID2, diff, err := sync.SyncIncremental(ctx, "ws-1", "tenant-1", srcDir, manifestID1)
+	require.NoError(t, err)
+	assert.NotEqual(t, manifestID1, manifestID2) // New manifest even if no changes
+	assert.Empty(t, diff.Added)
+	assert.Empty(t, diff.Modified)
+	assert.Empty(t, diff.Deleted)
+	assert.Len(t, diff.Unchanged, 2)
+}
+
+func TestSync_SyncIncremental_AddedFiles(t *testing.T) {
+	ctx := context.Background()
+
+	memStorage := NewMemoryProvider()
+	encryptor := NewNoOpEncryptor()
+	chunkStore := NewBlobChunkStore(memStorage, encryptor)
+	manifestStore := NewBlobManifestStore(memStorage, encryptor)
+
+	config := Config{
+		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
+		MaxConcurrency:       4,
+	}.WithDefaults()
+
+	sync := NewSync(config, chunkStore, manifestStore)
+
+	// Create initial directory
+	srcDir := t.TempDir()
+	createTestFile(t, srcDir, "file1.txt", "content file one with enough data")
+
+	// First sync
+	manifestID1, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
+	require.NoError(t, err)
+
+	// Add new file
+	createTestFile(t, srcDir, "file2.txt", "content file two with enough data")
+
+	// Incremental sync
+	manifestID2, diff, err := sync.SyncIncremental(ctx, "ws-1", "tenant-1", srcDir, manifestID1)
+	require.NoError(t, err)
+	assert.NotEqual(t, manifestID1, manifestID2)
+	assert.Len(t, diff.Added, 1)
+	assert.Contains(t, diff.Added, "file2.txt")
+	assert.Empty(t, diff.Modified)
+	assert.Empty(t, diff.Deleted)
+	assert.Len(t, diff.Unchanged, 1)
+
+	// Verify manifest contains both files
+	manifest, err := manifestStore.LoadManifest(ctx, "tenant-1", "ws-1", manifestID2)
+	require.NoError(t, err)
+	assert.Len(t, manifest.Files, 2)
+}
+
+func TestSync_SyncIncremental_ModifiedFiles(t *testing.T) {
+	ctx := context.Background()
+
+	memStorage := NewMemoryProvider()
+	encryptor := NewNoOpEncryptor()
+	chunkStore := NewBlobChunkStore(memStorage, encryptor)
+	manifestStore := NewBlobManifestStore(memStorage, encryptor)
+
+	config := Config{
+		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
+		MaxConcurrency:       4,
+	}.WithDefaults()
+
+	sync := NewSync(config, chunkStore, manifestStore)
+
+	// Create initial directory
+	srcDir := t.TempDir()
+	createTestFile(t, srcDir, "file.txt", "original content with enough data to exceed threshold")
+
+	// First sync
+	manifestID1, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
+	require.NoError(t, err)
+
+	// Modify file
+	createTestFile(t, srcDir, "file.txt", "modified content with enough data to exceed threshold")
+
+	// Incremental sync
+	manifestID2, diff, err := sync.SyncIncremental(ctx, "ws-1", "tenant-1", srcDir, manifestID1)
+	require.NoError(t, err)
+	assert.NotEqual(t, manifestID1, manifestID2)
+	assert.Empty(t, diff.Added)
+	assert.Len(t, diff.Modified, 1)
+	assert.Contains(t, diff.Modified, "file.txt")
+	assert.Empty(t, diff.Deleted)
+}
+
+func TestSync_SyncIncremental_DeletedFiles(t *testing.T) {
+	ctx := context.Background()
+
+	memStorage := NewMemoryProvider()
+	encryptor := NewNoOpEncryptor()
+	chunkStore := NewBlobChunkStore(memStorage, encryptor)
+	manifestStore := NewBlobManifestStore(memStorage, encryptor)
+
+	config := Config{
+		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
+		MaxConcurrency:       4,
+	}.WithDefaults()
+
+	sync := NewSync(config, chunkStore, manifestStore)
+
+	// Create initial directory
+	srcDir := t.TempDir()
+	createTestFile(t, srcDir, "file1.txt", "content file one with enough data")
+	createTestFile(t, srcDir, "file2.txt", "content file two with enough data")
+
+	// First sync
+	manifestID1, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
+	require.NoError(t, err)
+
+	// Delete file
+	err = os.Remove(filepath.Join(srcDir, "file2.txt"))
+	require.NoError(t, err)
+
+	// Incremental sync
+	manifestID2, diff, err := sync.SyncIncremental(ctx, "ws-1", "tenant-1", srcDir, manifestID1)
+	require.NoError(t, err)
+	assert.NotEqual(t, manifestID1, manifestID2)
+	assert.Empty(t, diff.Added)
+	assert.Empty(t, diff.Modified)
+	assert.Len(t, diff.Deleted, 1)
+	assert.Contains(t, diff.Deleted, "file2.txt")
+	assert.Len(t, diff.Unchanged, 1)
+
+	// Verify manifest only contains file1
+	manifest, err := manifestStore.LoadManifest(ctx, "tenant-1", "ws-1", manifestID2)
+	require.NoError(t, err)
+	assert.Len(t, manifest.Files, 1)
+	assert.Equal(t, "file1.txt", manifest.Files[0].Path)
+}
+
+func TestSync_SyncIncremental_SingleChunkFallback(t *testing.T) {
+	ctx := context.Background()
+
+	memStorage := NewMemoryProvider()
+	encryptor := NewNoOpEncryptor()
+	chunkStore := NewBlobChunkStore(memStorage, encryptor)
+	manifestStore := NewBlobManifestStore(memStorage, encryptor)
+
+	config := Config{
+		SingleChunkThreshold: 100 * 1024 * 1024, // Large threshold for single chunk
+		MaxConcurrency:       4,
+	}.WithDefaults()
+
+	sync := NewSync(config, chunkStore, manifestStore)
+
+	// Create small directory (will use single chunk mode)
+	srcDir := t.TempDir()
+	createTestFile(t, srcDir, "file.txt", "small")
+
+	// First sync
+	manifestID1, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
+	require.NoError(t, err)
+
+	// Incremental sync - should fall back to full sync for single chunk mode
+	manifestID2, diff, err := sync.SyncIncremental(ctx, "ws-1", "tenant-1", srcDir, manifestID1)
+	require.NoError(t, err)
+	assert.NotEqual(t, manifestID1, manifestID2)
+	// Single chunk mode reports modified
+	assert.Len(t, diff.Modified, 1)
+	assert.Contains(t, diff.Modified, "(single-chunk-mode)")
+}
+
+func TestSync_SyncIncremental_NoPreviousManifest(t *testing.T) {
+	ctx := context.Background()
+
+	memStorage := NewMemoryProvider()
+	encryptor := NewNoOpEncryptor()
+	chunkStore := NewBlobChunkStore(memStorage, encryptor)
+	manifestStore := NewBlobManifestStore(memStorage, encryptor)
+
+	config := Config{
+		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
+		MaxConcurrency:       4,
+	}.WithDefaults()
+
+	sync := NewSync(config, chunkStore, manifestStore)
+
+	// Create directory
+	srcDir := t.TempDir()
+	createTestFile(t, srcDir, "file.txt", "content with enough data to exceed threshold")
+
+	// Incremental sync with empty previous manifest ID (first sync)
+	manifestID, diff, err := sync.SyncIncremental(ctx, "ws-1", "tenant-1", srcDir, "")
+	require.NoError(t, err)
+	assert.NotEmpty(t, manifestID)
+	assert.Len(t, diff.Added, 1)
+}
+
+func TestSync_SyncIncremental_ParentID(t *testing.T) {
+	ctx := context.Background()
+
+	memStorage := NewMemoryProvider()
+	encryptor := NewNoOpEncryptor()
+	chunkStore := NewBlobChunkStore(memStorage, encryptor)
+	manifestStore := NewBlobManifestStore(memStorage, encryptor)
+
+	config := Config{
+		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
+		MaxConcurrency:       4,
+	}.WithDefaults()
+
+	sync := NewSync(config, chunkStore, manifestStore)
+
+	// Create directory
+	srcDir := t.TempDir()
+	createTestFile(t, srcDir, "file.txt", "content with enough data to exceed threshold")
+
+	// First sync
+	manifestID1, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
+	require.NoError(t, err)
+
+	// Add file
+	createTestFile(t, srcDir, "new.txt", "new content with enough data to exceed threshold")
+
+	// Incremental sync
+	manifestID2, _, err := sync.SyncIncremental(ctx, "ws-1", "tenant-1", srcDir, manifestID1)
+	require.NoError(t, err)
+
+	// Verify ParentID is set
+	manifest, err := manifestStore.LoadManifest(ctx, "tenant-1", "ws-1", manifestID2)
+	require.NoError(t, err)
+	require.NotNil(t, manifest.ParentID)
+	assert.Equal(t, manifestID1, *manifest.ParentID)
+}
+
+func TestSync_Diff(t *testing.T) {
+	ctx := context.Background()
+
+	memStorage := NewMemoryProvider()
+	encryptor := NewNoOpEncryptor()
+	chunkStore := NewBlobChunkStore(memStorage, encryptor)
+	manifestStore := NewBlobManifestStore(memStorage, encryptor)
+
+	config := Config{
+		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
+		MaxConcurrency:       4,
+	}.WithDefaults()
+
+	sync := NewSync(config, chunkStore, manifestStore)
+
+	// Create and sync initial directory
+	srcDir := t.TempDir()
+	createTestFile(t, srcDir, "file1.txt", "content file one with enough data")
+	createTestFile(t, srcDir, "file2.txt", "content file two with enough data")
+
+	manifestID, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
+	require.NoError(t, err)
+
+	manifest, err := manifestStore.LoadManifest(ctx, "tenant-1", "ws-1", manifestID)
+	require.NoError(t, err)
+
+	// Diff with no changes
+	diff, err := sync.Diff(ctx, manifest, srcDir)
+	require.NoError(t, err)
+	assert.True(t, diff.IsEmpty())
+	assert.Len(t, diff.Unchanged, 2)
+
+	// Modify a file
+	createTestFile(t, srcDir, "file1.txt", "modified content with different data now")
+
+	// Diff should show modification
+	diff, err = sync.Diff(ctx, manifest, srcDir)
+	require.NoError(t, err)
+	assert.Len(t, diff.Modified, 1)
+	assert.Contains(t, diff.Modified, "file1.txt")
+}
+
+func TestSync_SyncIncremental_ChunkDedup(t *testing.T) {
+	ctx := context.Background()
+
+	memStorage := NewMemoryProvider()
+	encryptor := NewNoOpEncryptor()
+	chunkStore := NewBlobChunkStore(memStorage, encryptor)
+	manifestStore := NewBlobManifestStore(memStorage, encryptor)
+
+	config := Config{
+		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
+		MaxConcurrency:       4,
+	}.WithDefaults()
+
+	sync := NewSync(config, chunkStore, manifestStore)
+
+	// Create directory with duplicate content
+	srcDir := t.TempDir()
+	createTestFile(t, srcDir, "file1.txt", "same content with enough data to exceed threshold")
+	createTestFile(t, srcDir, "file2.txt", "same content with enough data to exceed threshold")
+
+	// First sync
+	manifestID1, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
+	require.NoError(t, err)
+
+	// Add another file with same content
+	createTestFile(t, srcDir, "file3.txt", "same content with enough data to exceed threshold")
+
+	// Incremental sync - should not upload duplicate chunk
+	manifestID2, diff, err := sync.SyncIncremental(ctx, "ws-1", "tenant-1", srcDir, manifestID1)
+	require.NoError(t, err)
+	assert.NotEqual(t, manifestID1, manifestID2)
+	assert.Len(t, diff.Added, 1)
+
+	// Verify all three files reference the same chunks
+	manifest, err := manifestStore.LoadManifest(ctx, "tenant-1", "ws-1", manifestID2)
+	require.NoError(t, err)
+	assert.Len(t, manifest.Files, 3)
+
+	// All files should have same chunks
+	assert.Equal(t, manifest.Files[0].Chunks, manifest.Files[1].Chunks)
+	assert.Equal(t, manifest.Files[1].Chunks, manifest.Files[2].Chunks)
+}
+
+func TestSync_SyncIncremental_RestoreFromIncremental(t *testing.T) {
+	ctx := context.Background()
+
+	memStorage := NewMemoryProvider()
+	encryptor := NewNoOpEncryptor()
+	chunkStore := NewBlobChunkStore(memStorage, encryptor)
+	manifestStore := NewBlobManifestStore(memStorage, encryptor)
+
+	config := Config{
+		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
+		MaxConcurrency:       4,
+	}.WithDefaults()
+
+	sync := NewSync(config, chunkStore, manifestStore)
+
+	// Create initial directory
+	srcDir := t.TempDir()
+	createTestFile(t, srcDir, "file1.txt", "content file one with enough data")
+
+	// First sync
+	manifestID1, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
+	require.NoError(t, err)
+
+	// Add and modify files
+	createTestFile(t, srcDir, "file2.txt", "content file two with enough data")
+	createTestFile(t, srcDir, "file1.txt", "modified content one with enough data")
+
+	// Incremental sync
+	manifestID2, _, err := sync.SyncIncremental(ctx, "ws-1", "tenant-1", srcDir, manifestID1)
+	require.NoError(t, err)
+
+	// Restore from incremental manifest
+	dstDir := t.TempDir()
+	err = sync.restoreFromManifestInternal(ctx, "ws-1", manifestID2, "tenant-1", dstDir)
+	require.NoError(t, err)
+
+	// Verify files
+	assertFileContent(t, dstDir, "file1.txt", "modified content one with enough data")
+	assertFileContent(t, dstDir, "file2.txt", "content file two with enough data")
 }

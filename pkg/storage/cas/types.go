@@ -58,6 +58,7 @@ type Manifest struct {
 type ManifestHeader struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspace_id"`
+	ParentID    string    `json:"parent_id,omitempty"`
 	TenantID    string    `json:"tenant_id"`
 	CreatedAt   time.Time `json:"created_at"`
 	TotalSize   int64     `json:"total_size"`
@@ -115,6 +116,9 @@ func (m *Manifest) ToHeader() ManifestHeader {
 		ChunkCount:  m.ChunkCount,
 		SingleChunk: m.SingleChunk,
 	}
+	if m.ParentID != nil {
+		header.ParentID = *m.ParentID
+	}
 	if m.ChunkHash != nil {
 		header.ChunkHash = *m.ChunkHash
 	}
@@ -131,6 +135,9 @@ func FromHeader(h ManifestHeader) *Manifest {
 		TotalSize:   h.TotalSize,
 		ChunkCount:  h.ChunkCount,
 		SingleChunk: h.SingleChunk,
+	}
+	if h.ParentID != "" {
+		m.ParentID = &h.ParentID
 	}
 	if h.ChunkHash != "" {
 		m.ChunkHash = &h.ChunkHash

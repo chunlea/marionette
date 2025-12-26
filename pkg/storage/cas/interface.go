@@ -40,9 +40,14 @@ type ManifestStore interface {
 
 // Syncer defines the workspace sync/restore interface.
 type Syncer interface {
-	// Sync performs incremental workspace sync.
+	// Sync performs workspace sync.
 	// Returns the created manifest ID.
 	Sync(ctx context.Context, workspaceID, tenantID, srcDir string) (string, error)
+
+	// SyncIncremental performs incremental sync based on a previous manifest.
+	// Only uploads chunks that have changed since the previous manifest.
+	// Returns the created manifest ID and a diff summary.
+	SyncIncremental(ctx context.Context, workspaceID, tenantID, srcDir, previousManifestID string) (string, *DiffResult, error)
 
 	// Restore reconstructs a workspace from the latest manifest.
 	Restore(ctx context.Context, workspaceID, tenantID, dstDir string) error
@@ -52,6 +57,9 @@ type Syncer interface {
 
 	// ValidateManifest checks that all chunks referenced by a manifest exist.
 	ValidateManifest(ctx context.Context, manifest *Manifest) error
+
+	// Diff compares the current directory against a manifest.
+	Diff(ctx context.Context, manifest *Manifest, srcDir string) (*DiffResult, error)
 }
 
 // Encryptor provides encryption and decryption for CAS data.
