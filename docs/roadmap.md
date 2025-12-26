@@ -284,24 +284,24 @@
 
 ## Phase 2: Core Runtime
 
-### 2.1 gRPC Server
+### 2.1 gRPC Server ✓
 
-- [ ] Set up gRPC server (`pkg/server/grpc/server.go`):
-  - [ ] TLS configuration (required)
-  - [ ] Port 9090 for agent connections
-  - [ ] Interceptors for logging, recovery
-- [ ] Implement RunnerService:
-  - [ ] `RegisterRunner(RegisterRunnerRequest) returns (RegisterRunnerResponse)`
-  - [ ] `Connect(stream RunnerMessage) returns (stream ServerCommand)`
-  - [ ] `StreamLogs(stream StreamLogsMessage) returns (StreamLogsResponse)`
-  - [ ] `GetRunnerStatus(GetRunnerStatusRequest) returns (RunnerStatus)`
-- [ ] TLS setup:
-  - [ ] Load server certificate and key
+- [x] Set up gRPC server (`pkg/server/grpc/server.go`):
+  - [x] TLS configuration (required)
+  - [x] Port 9090 for agent connections
+  - [x] Interceptors for logging, recovery
+- [x] Implement RunnerService (stubs):
+  - [x] `RegisterRunner(RegisterRunnerRequest) returns (RegisterRunnerResponse)`
+  - [x] `Connect(stream RunnerMessage) returns (stream ServerCommand)`
+  - [x] `StreamLogs(stream StreamLogsMessage) returns (StreamLogsResponse)`
+  - [x] `GetRunnerStatus(GetRunnerStatusRequest) returns (RunnerStatus)`
+- [x] TLS setup:
+  - [x] Load server certificate and key
   - [ ] CA certificate for client verification (optional in dev)
   - [ ] Certificate generation script for development
-- [ ] Connection management:
-  - [ ] Track connected runners in memory
-  - [ ] Handle connection/disconnection events
+- [x] Connection management:
+  - [x] Track connected runners in memory
+  - [x] Handle connection/disconnection events
   - [ ] Update runner status in database
 
 ### 2.2 Marionette Agent (Basic)
