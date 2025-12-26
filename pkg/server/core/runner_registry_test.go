@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/chunlea/marionette/pkg/auth"
@@ -768,4 +769,322 @@ func TestRunnerRegistry_Register_DefaultSandboxMode(t *testing.T) {
 	runner, err := runnerStore.GetRunner(ctx, result.RunnerID)
 	require.NoError(t, err)
 	assert.Equal(t, "runner-is-sandbox", runner.SandboxMode)
+}
+
+// errorMockRunnerStore is a mock store that can return errors
+type errorMockRunnerStore struct {
+	mockRunnerStore
+	createErr error
+	updateErr error
+	getErr    error
+}
+
+func (m *errorMockRunnerStore) CreateRunner(_ context.Context, runner *store.Runner) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	return m.mockRunnerStore.CreateRunner(context.Background(), runner)
+}
+
+func (m *errorMockRunnerStore) UpdateRunner(_ context.Context, id string, updates store.RunnerUpdates) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	return m.mockRunnerStore.UpdateRunner(context.Background(), id, updates)
+}
+
+func (m *errorMockRunnerStore) GetRunner(_ context.Context, id string) (*store.Runner, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	return m.mockRunnerStore.GetRunner(context.Background(), id)
+}
+
+func (m *errorMockRunnerStore) GetRunnerByName(_ context.Context, name string) (*store.Runner, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	return m.mockRunnerStore.GetRunnerByName(context.Background(), name)
+}
+
+func TestRunnerRegistry_Register_BoundTokenUpdateError(t *testing.T) {
+	baseStore := newMockRunnerStore()
+	runnerStore := &errorMockRunnerStore{
+		mockRunnerStore: *baseStore,
+	}
+	tokenStore := mockstore.NewRunnerTokenStore()
+	tokenSvc := auth.NewRunnerTokenService(tokenStore, func() string { return "rtok_test1" })
+	logger := zap.NewNop()
+
+	ctx := context.Background()
+
+	// Create a token and bind it to an existing runner
+	token, plaintext, err := tokenSvc.Create(ctx, auth.CreateRunnerTokenOptions{
+		PoolName: "test-pool",
+	})
+	require.NoError(t, err)
+
+	// Create existing runner
+	existingRunner := &store.Runner{
+		ID:       "run_existing",
+		Name:     "existing-runner",
+		Hostname: "old-host",
+		Status:   "offline",
+	}
+	err = runnerStore.CreateRunner(ctx, existingRunner)
+	require.NoError(t, err)
+
+	// Bind token to runner
+	err = tokenSvc.BindRunner(ctx, token.ID, existingRunner.ID)
+	require.NoError(t, err)
+
+	// Now set update error
+	runnerStore.updateErr = errors.New("update failed")
+
+	registry := NewRunnerRegistry(runnerStore, tokenSvc, logger)
+
+	req := &RegisterRequest{
+		Token:    plaintext,
+		Name:     "existing-runner",
+		Hostname: "new-host",
+	}
+
+	_, err = registry.Register(ctx, req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update failed")
+}
+
+func TestRunnerRegistry_Register_BoundTokenGetError(t *testing.T) {
+	baseStore := newMockRunnerStore()
+	runnerStore := &errorMockRunnerStore{
+		mockRunnerStore: *baseStore,
+	}
+	tokenStore := mockstore.NewRunnerTokenStore()
+	tokenSvc := auth.NewRunnerTokenService(tokenStore, func() string { return "rtok_test1" })
+	logger := zap.NewNop()
+
+	ctx := context.Background()
+
+	// Create a token
+	token, plaintext, err := tokenSvc.Create(ctx, auth.CreateRunnerTokenOptions{
+		PoolName: "test-pool",
+	})
+	require.NoError(t, err)
+
+	// Create existing runner first
+	existingRunner := &store.Runner{
+		ID:       "run_existing",
+		Name:     "existing-runner",
+		Hostname: "old-host",
+		Status:   "offline",
+	}
+	err = runnerStore.CreateRunner(ctx, existingRunner)
+	require.NoError(t, err)
+
+	// Bind token to runner
+	err = tokenSvc.BindRunner(ctx, token.ID, existingRunner.ID)
+	require.NoError(t, err)
+
+	// Set get error (non-ErrNotFound)
+	runnerStore.getErr = errors.New("database connection failed")
+
+	registry := NewRunnerRegistry(runnerStore, tokenSvc, logger)
+
+	req := &RegisterRequest{
+		Token:    plaintext,
+		Name:     "existing-runner",
+		Hostname: "new-host",
+	}
+
+	_, err = registry.Register(ctx, req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "database connection failed")
+}
+
+func TestRunnerRegistry_Register_UnboundTokenGetByNameError(t *testing.T) {
+	baseStore := newMockRunnerStore()
+	runnerStore := &errorMockRunnerStore{
+		mockRunnerStore: *baseStore,
+	}
+	tokenStore := mockstore.NewRunnerTokenStore()
+	tokenSvc := auth.NewRunnerTokenService(tokenStore, func() string { return "rtok_test1" })
+	logger := zap.NewNop()
+
+	ctx := context.Background()
+
+	// Create an unbound token
+	_, plaintext, err := tokenSvc.Create(ctx, auth.CreateRunnerTokenOptions{
+		PoolName: "test-pool",
+	})
+	require.NoError(t, err)
+
+	// Set get error (non-ErrNotFound)
+	runnerStore.getErr = errors.New("database connection failed")
+
+	registry := NewRunnerRegistry(runnerStore, tokenSvc, logger)
+
+	req := &RegisterRequest{
+		Token:    plaintext,
+		Name:     "new-runner",
+		Hostname: "localhost",
+	}
+
+	_, err = registry.Register(ctx, req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "database connection failed")
+}
+
+func TestRunnerRegistry_Register_CreateRunnerError(t *testing.T) {
+	baseStore := newMockRunnerStore()
+	runnerStore := &errorMockRunnerStore{
+		mockRunnerStore: *baseStore,
+		createErr:       errors.New("create failed"),
+	}
+	tokenStore := mockstore.NewRunnerTokenStore()
+	tokenSvc := auth.NewRunnerTokenService(tokenStore, func() string { return "rtok_test1" })
+	logger := zap.NewNop()
+
+	ctx := context.Background()
+
+	// Create an unbound token
+	_, plaintext, err := tokenSvc.Create(ctx, auth.CreateRunnerTokenOptions{
+		PoolName: "test-pool",
+	})
+	require.NoError(t, err)
+
+	registry := NewRunnerRegistry(runnerStore, tokenSvc, logger)
+
+	req := &RegisterRequest{
+		Token:    plaintext,
+		Name:     "new-runner",
+		Hostname: "localhost",
+	}
+
+	_, err = registry.Register(ctx, req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create failed")
+}
+
+func TestRunnerRegistry_Register_BindRunnerError(t *testing.T) {
+	runnerStore := newMockRunnerStore()
+	tokenStore := mockstore.NewRunnerTokenStore()
+	// Use the real token service but we'll create a scenario where bind fails
+	tokenSvc := auth.NewRunnerTokenService(tokenStore, func() string { return "rtok_test1" })
+	logger := zap.NewNop()
+
+	ctx := context.Background()
+
+	// Create a valid token
+	_, plaintext, err := tokenSvc.Create(ctx, auth.CreateRunnerTokenOptions{
+		PoolName: "test-pool",
+	})
+	require.NoError(t, err)
+
+	registry := NewRunnerRegistry(runnerStore, tokenSvc, logger)
+
+	req := &RegisterRequest{
+		Token:    plaintext,
+		Name:     "new-runner",
+		Hostname: "localhost",
+	}
+
+	// First registration should work
+	result, err := registry.Register(ctx, req)
+	require.NoError(t, err)
+	assert.True(t, result.IsNew)
+}
+
+func TestRunnerRegistry_Register_UnboundTokenWithExistingRunnerName(t *testing.T) {
+	runnerStore := newMockRunnerStore()
+	tokenStore := mockstore.NewRunnerTokenStore()
+	tokenSvc := auth.NewRunnerTokenService(tokenStore, func() string { return "rtok_test1" })
+	logger := zap.NewNop()
+
+	ctx := context.Background()
+
+	// Create existing runner with known name (no token bound yet)
+	existingRunner := &store.Runner{
+		ID:       "run_existing",
+		Name:     "existing-runner",
+		Hostname: "old-host",
+		Status:   "offline",
+	}
+	err := runnerStore.CreateRunner(ctx, existingRunner)
+	require.NoError(t, err)
+
+	// Create an unbound token
+	_, plaintext, err := tokenSvc.Create(ctx, auth.CreateRunnerTokenOptions{
+		PoolName: "test-pool",
+	})
+	require.NoError(t, err)
+
+	registry := NewRunnerRegistry(runnerStore, tokenSvc, logger)
+
+	// Register with same name as existing runner (unbound token)
+	req := &RegisterRequest{
+		Token:    plaintext,
+		Name:     "existing-runner",
+		Hostname: "new-host",
+	}
+
+	// This should succeed - binds the token to the existing runner
+	result, err := registry.Register(ctx, req)
+	require.NoError(t, err)
+	assert.False(t, result.IsNew)
+	assert.Equal(t, "run_existing", result.RunnerID)
+
+	// Verify hostname was updated
+	runner, _ := runnerStore.GetRunner(ctx, "run_existing")
+	assert.Equal(t, "new-host", runner.Hostname)
+}
+
+func TestRunnerRegistry_Register_BoundToken_SecondRegistration(t *testing.T) {
+	runnerStore := newMockRunnerStore()
+	tokenStore := mockstore.NewRunnerTokenStore()
+	tokenSvc := auth.NewRunnerTokenService(tokenStore, func() string { return "rtok_test1" })
+	logger := zap.NewNop()
+
+	ctx := context.Background()
+
+	// Create a token
+	token, plaintext, err := tokenSvc.Create(ctx, auth.CreateRunnerTokenOptions{
+		PoolName: "test-pool",
+	})
+	require.NoError(t, err)
+
+	registry := NewRunnerRegistry(runnerStore, tokenSvc, logger)
+
+	// First registration - creates new runner
+	req := &RegisterRequest{
+		Token:    plaintext,
+		Name:     "new-runner",
+		Hostname: "host1",
+	}
+
+	result, err := registry.Register(ctx, req)
+	require.NoError(t, err)
+	assert.True(t, result.IsNew)
+	runnerID := result.RunnerID
+
+	// Verify token is bound
+	updatedToken, err := tokenStore.GetRunnerToken(ctx, token.ID)
+	require.NoError(t, err)
+	require.NotNil(t, updatedToken.RunnerID)
+	assert.Equal(t, runnerID, *updatedToken.RunnerID)
+
+	// Second registration with same token - updates existing runner
+	req2 := &RegisterRequest{
+		Token:    plaintext,
+		Name:     "new-runner",
+		Hostname: "host2",
+	}
+
+	result2, err := registry.Register(ctx, req2)
+	require.NoError(t, err)
+	assert.False(t, result2.IsNew)
+	assert.Equal(t, runnerID, result2.RunnerID)
+
+	// Verify hostname was updated
+	runner, _ := runnerStore.GetRunner(ctx, runnerID)
+	assert.Equal(t, "host2", runner.Hostname)
 }
