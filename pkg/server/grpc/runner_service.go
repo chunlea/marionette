@@ -7,9 +7,12 @@ import (
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/auth"
+	"github.com/chunlea/marionette/pkg/server/core"
 	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // RunnerManagerInterface defines the interface for runner lifecycle management.
@@ -38,6 +41,7 @@ type RunnerService struct {
 	connManager   *ConnectionManager
 	runnerManager RunnerManagerInterface
 	router        MessageRouterInterface
+	registry      *core.RunnerRegistry
 }
 
 // RunnerServiceOption is a functional option for RunnerService.
@@ -89,19 +93,69 @@ func WithRouter(r MessageRouterInterface) RunnerServiceOption {
 	}
 }
 
+// WithRegistry sets the runner registry for the RunnerService.
+func WithRegistry(reg *core.RunnerRegistry) RunnerServiceOption {
+	return func(svc *RunnerService) {
+		svc.registry = reg
+	}
+}
+
 // RegisterRunner handles runner registration.
-// This is a stub that returns a mock response.
-func (s *RunnerService) RegisterRunner(_ context.Context, req *pb.RegisterRunnerRequest) (*pb.RegisterRunnerResponse, error) {
-	s.logger.Info("RegisterRunner called (stub)",
-		zap.String("name", req.Name),
-		zap.String("hostname", req.Hostname),
+// Validates the runner token and creates/updates the runner in the database.
+func (s *RunnerService) RegisterRunner(ctx context.Context, req *pb.RegisterRunnerRequest) (*pb.RegisterRunnerResponse, error) {
+	s.logger.Info("RegisterRunner called",
+		zap.String("name", req.GetName()),
+		zap.String("hostname", req.GetHostname()),
 	)
 
-	// Stub implementation - actual implementation will come in G2
+	// Check if registry is configured
+	if s.registry == nil {
+		s.logger.Error("registry not configured")
+		return &pb.RegisterRunnerResponse{
+			Accepted: false,
+			Message:  "server configuration error: registry not configured",
+		}, status.Error(codes.Internal, "registry not configured")
+	}
+
+	// Build registration request
+	regReq := &core.RegisterRequest{
+		Token:        req.GetToken(),
+		Name:         req.GetName(),
+		Hostname:     req.GetHostname(),
+		SandboxMode:  req.GetSandboxMode(),
+		SandboxTypes: req.GetSandboxTypes(),
+		Capabilities: req.GetCapabilities(),
+		Labels:       req.GetLabels(),
+	}
+
+	// Register via registry
+	result, err := s.registry.Register(ctx, regReq)
+	if err != nil {
+		s.logger.Warn("runner registration failed",
+			zap.String("name", req.GetName()),
+			zap.Error(err),
+		)
+		return &pb.RegisterRunnerResponse{
+			Accepted: false,
+			Message:  err.Error(),
+		}, status.Errorf(codes.InvalidArgument, "registration failed: %v", err)
+	}
+
+	msg := "runner registered"
+	if !result.IsNew {
+		msg = "runner re-registered"
+	}
+
+	s.logger.Info(msg,
+		zap.String("runner_id", result.RunnerID),
+		zap.String("pool_name", result.PoolName),
+		zap.Bool("is_new", result.IsNew),
+	)
+
 	return &pb.RegisterRunnerResponse{
-		RunnerId: "run_stub",
+		RunnerId: result.RunnerID,
 		Accepted: true,
-		Message:  "stub: registration accepted",
+		Message:  msg,
 	}, nil
 }
 
