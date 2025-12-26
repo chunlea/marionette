@@ -55,6 +55,18 @@ func New(cfg Config, logger *zap.Logger) (*Server, error) {
 		logger.Warn("TLS disabled for gRPC server - this is not recommended for production")
 	}
 
+	// Add interceptors (order: recovery first to catch panics, then logging)
+	opts = append(opts,
+		grpc.ChainUnaryInterceptor(
+			RecoveryUnaryInterceptor(logger),
+			LoggingUnaryInterceptor(logger),
+		),
+		grpc.ChainStreamInterceptor(
+			RecoveryStreamInterceptor(logger),
+			LoggingStreamInterceptor(logger),
+		),
+	)
+
 	s := grpc.NewServer(opts...)
 
 	// Create connection manager
