@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -11,9 +12,12 @@ import (
 	"time"
 
 	"github.com/chunlea/marionette/pkg/config"
+	"github.com/chunlea/marionette/pkg/provider"
+	"github.com/chunlea/marionette/pkg/provider/docker"
 	"github.com/chunlea/marionette/pkg/server/admin"
 	"github.com/chunlea/marionette/pkg/server/api"
 	grpcserver "github.com/chunlea/marionette/pkg/server/grpc"
+	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/store/postgres"
 	"go.uber.org/zap"
 )
@@ -47,11 +51,11 @@ func main() {
 	secrets := config.LoadSecretsOptional()
 
 	// Initialize database store
-	var store *postgres.Store
+	var dbStore *postgres.Store
 	if secrets.DatabaseURL != "" {
 		ctx := context.Background()
 		var err error
-		store, err = postgres.New(ctx, postgres.Config{
+		dbStore, err = postgres.New(ctx, postgres.Config{
 			URL:             secrets.DatabaseURL,
 			MaxConns:        int32(cfg.Database.MaxOpenConns),
 			MinConns:        int32(cfg.Database.MaxIdleConns),
@@ -66,6 +70,9 @@ func main() {
 		logger.Warn("database URL not set, database features will be unavailable")
 		admin.Registry.Register("Database", 0, "warn", "Not configured")
 	}
+
+	// Initialize provider registry
+	providerRegistry := initProviderRegistry(dbStore, cfg, logger)
 
 	// Create servers
 	apiServer := api.New(api.Config{
@@ -145,9 +152,18 @@ func main() {
 		logger.Error("grpc server shutdown error", zap.Error(err))
 	}
 
+	// Close provider registry
+	if providerRegistry != nil {
+		if err := providerRegistry.Close(); err != nil {
+			logger.Error("provider registry close error", zap.Error(err))
+		} else {
+			logger.Info("provider registry closed")
+		}
+	}
+
 	// Close database connection
-	if store != nil {
-		if err := store.Close(); err != nil {
+	if dbStore != nil {
+		if err := dbStore.Close(); err != nil {
 			logger.Error("database close error", zap.Error(err))
 		} else {
 			logger.Info("database connection closed")
@@ -155,6 +171,61 @@ func main() {
 	}
 
 	logger.Info("marionette server stopped")
+}
+
+// initProviderRegistry creates and configures the provider registry.
+func initProviderRegistry(s store.Store, cfg *config.Config, logger *zap.Logger) *provider.Registry {
+	// Create registry with store for database-backed provider configs
+	registry := provider.NewRegistry(s)
+
+	// Register Docker provider factory
+	registry.RegisterFactory("docker", func(cfg *store.ProviderConfig) (provider.Provider, error) {
+		return docker.New(cfg)
+	})
+
+	// Load default Docker provider from YAML config if specified
+	if cfg.Providers.Default == "docker" && cfg.Providers.Docker != nil {
+		dockerCfg := cfg.Providers.Docker
+		providerCfg := &store.ProviderConfig{
+			Name:     "docker-default",
+			Provider: "docker",
+			Config:   dockerConfigToJSON(dockerCfg),
+		}
+
+		p, err := docker.New(providerCfg)
+		if err != nil {
+			logger.Error("failed to create default Docker provider", zap.Error(err))
+		} else {
+			if err := registry.Register("docker-default", p); err != nil {
+				logger.Error("failed to register default Docker provider", zap.Error(err))
+			} else {
+				registry.SetDefault("docker-default")
+				logger.Info("default Docker provider registered",
+					zap.String("image", dockerCfg.Image),
+					zap.String("network", dockerCfg.Network),
+				)
+			}
+		}
+	}
+
+	return registry
+}
+
+// dockerConfigToJSON converts DockerProviderConfig to JSON for the provider.
+func dockerConfigToJSON(cfg *config.DockerProviderConfig) json.RawMessage {
+	data := map[string]interface{}{
+		"host":    cfg.Host,
+		"image":   cfg.Image,
+		"network": cfg.Network,
+	}
+	if cfg.Resources.Memory != "" || cfg.Resources.CPUs != "" {
+		data["resources"] = map[string]string{
+			"memory": cfg.Resources.Memory,
+			"cpus":   cfg.Resources.CPUs,
+		}
+	}
+	b, _ := json.Marshal(data)
+	return b
 }
 
 // newLogger creates a zap logger with the specified level and format.
