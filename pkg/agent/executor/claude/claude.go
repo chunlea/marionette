@@ -29,6 +29,9 @@ var (
 type Executor struct {
 	logger *zap.Logger
 
+	// Command path override for testing
+	commandPath string
+
 	// Process state
 	mu      sync.Mutex
 	cmd     *exec.Cmd
@@ -45,6 +48,12 @@ func New(logger *zap.Logger) *Executor {
 	return &Executor{
 		logger: logger.Named("claude"),
 	}
+}
+
+// WithCommandPath sets a custom command path (for testing).
+func (e *Executor) WithCommandPath(path string) *Executor {
+	e.commandPath = path
+	return e
 }
 
 // Name returns the executor name.
@@ -233,10 +242,14 @@ func (e *Executor) Kill() error {
 
 // buildCommand creates the exec.Cmd for running Claude Code.
 func (e *Executor) buildCommand(task *executor.Task, config *executor.AgentConfig) (*exec.Cmd, error) {
-	// Find claude binary
-	claudePath, err := exec.LookPath("claude")
-	if err != nil {
-		return nil, fmt.Errorf("claude not found in PATH: %w", err)
+	// Use custom command path if set (for testing), otherwise find claude binary
+	claudePath := e.commandPath
+	if claudePath == "" {
+		var err error
+		claudePath, err = exec.LookPath("claude")
+		if err != nil {
+			return nil, fmt.Errorf("claude not found in PATH: %w", err)
+		}
 	}
 
 	// Build arguments
