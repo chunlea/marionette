@@ -562,28 +562,29 @@
 
 ### 3.7 Permission Handling (Server) ✓
 
-- [ ] Permission request detection (Agent-side, deferred):
-  - [ ] Parse Claude Code output for permission patterns
-  - [ ] Extract tool name, action, context
-  - [ ] Determine risk level
+- [x] Permission request detection:
+  - [x] Parse Claude Code output for permission patterns
+  - [x] Extract tool name, action, context
+  - [x] Determine risk level
 - [x] Permission request flow:
   - [x] Agent sends `PermissionRequest` message
   - [x] Server creates permission_request record (PermissionManager)
   - [x] MessageRouter routes to PermissionManager
+  - [x] Agent blocks waiting for response
   - [ ] Server notifies subscribers (WebSocket, webhook) - Phase 4
 - [x] Permission response flow:
   - [x] User approves/denies via API (PermissionManager.Respond)
   - [x] Server sends `ApprovePermission` command
   - [x] Session resumed if suspended
-  - [ ] Agent receives and unblocks executor - Agent-side
+  - [x] Agent receives and unblocks executor
 - [x] Timeout handling:
   - [x] `suspend_after_seconds`: auto-suspend session (PermissionTimeoutEnforcer)
   - [x] Permission stays pending (no auto-deny)
-  - [ ] On resume: deliver cached response to agent - Agent-side
+  - [ ] On resume: deliver cached response to agent
 - [x] Permission caching:
   - [x] Store response in database
   - [x] Include `responded_by`, `response_reason`, `responded_at`
-  - [ ] Deliver on session resume via `pending_permissions` - Agent-side
+  - [ ] Deliver on session resume via `pending_permissions`
 
 ---
 
