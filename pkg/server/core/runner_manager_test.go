@@ -1,0 +1,601 @@
+package core
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+)
+
+// RunnerStore is the minimal interface needed by RunnerManager.
+type RunnerStore interface {
+	GetRunner(ctx context.Context, id string) (*store.Runner, error)
+	UpdateRunner(ctx context.Context, id string, updates store.RunnerUpdates) error
+	ListRunners(ctx context.Context, opts store.ListRunnersOptions) (*store.ListResult[store.Runner], error)
+}
+
+// testRunnerStore implements RunnerStore for testing.
+type testRunnerStore struct {
+	runners map[string]*store.Runner
+}
+
+func newTestRunnerStore() *testRunnerStore {
+	return &testRunnerStore{
+		runners: make(map[string]*store.Runner),
+	}
+}
+
+func (m *testRunnerStore) GetRunner(_ context.Context, id string) (*store.Runner, error) {
+	runner, ok := m.runners[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return runner, nil
+}
+
+func (m *testRunnerStore) UpdateRunner(_ context.Context, id string, updates store.RunnerUpdates) error {
+	runner, ok := m.runners[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if updates.Status != nil {
+		runner.Status = *updates.Status
+	}
+	if updates.LastSeenAt != nil {
+		runner.LastSeenAt = updates.LastSeenAt
+	}
+	return nil
+}
+
+func (m *testRunnerStore) ListRunners(_ context.Context, opts store.ListRunnersOptions) (*store.ListResult[store.Runner], error) {
+	items := make([]*store.Runner, 0, len(m.runners))
+	for _, r := range m.runners {
+		if len(opts.Status) > 0 {
+			matched := false
+			for _, s := range opts.Status {
+				if r.Status == s {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		items = append(items, r)
+	}
+	return &store.ListResult[store.Runner]{Items: items}, nil
+}
+
+// testConnManager implements ConnectionManagerInterface for testing.
+type testConnManager struct {
+	connected map[string]bool
+}
+
+func newTestConnManager() *testConnManager {
+	return &testConnManager{
+		connected: make(map[string]bool),
+	}
+}
+
+func (m *testConnManager) IsConnected(runnerID string) bool {
+	return m.connected[runnerID]
+}
+
+func (m *testConnManager) UpdateLastSeen(_ string) error {
+	return nil
+}
+
+// testRunnerManager wraps RunnerManager for testing with our mock store.
+type testRunnerManager struct {
+	store       *testRunnerStore
+	connManager *testConnManager
+	logger      *zap.Logger
+}
+
+func newTestRunnerManager() *testRunnerManager {
+	return &testRunnerManager{
+		store:       newTestRunnerStore(),
+		connManager: newTestConnManager(),
+		logger:      zap.NewNop(),
+	}
+}
+
+func (t *testRunnerManager) OnConnect(ctx context.Context, runnerID string) error {
+	_, err := t.store.GetRunner(ctx, runnerID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	updates := store.RunnerUpdates{
+		Status:     stringPtr(StatusIdle),
+		LastSeenAt: &now,
+	}
+	return t.store.UpdateRunner(ctx, runnerID, updates)
+}
+
+func (t *testRunnerManager) OnDisconnect(ctx context.Context, runnerID string) error {
+	updates := store.RunnerUpdates{
+		Status: stringPtr(StatusOffline),
+	}
+	return t.store.UpdateRunner(ctx, runnerID, updates)
+}
+
+func (t *testRunnerManager) OnHeartbeat(ctx context.Context, runnerID string, hb *pb.Heartbeat) error {
+	runner, err := t.store.GetRunner(ctx, runnerID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	updates := store.RunnerUpdates{
+		LastSeenAt: &now,
+	}
+
+	if hb.GetStatus() != "" && isValidTransition(runner.Status, hb.GetStatus()) {
+		updates.Status = stringPtr(hb.GetStatus())
+	}
+
+	return t.store.UpdateRunner(ctx, runnerID, updates)
+}
+
+func (t *testRunnerManager) SetStatus(ctx context.Context, runnerID, status string) error {
+	runner, err := t.store.GetRunner(ctx, runnerID)
+	if err != nil {
+		return err
+	}
+
+	if !isValidTransition(runner.Status, status) {
+		return ErrInvalidStatusTransition
+	}
+
+	updates := store.RunnerUpdates{
+		Status: &status,
+	}
+	return t.store.UpdateRunner(ctx, runnerID, updates)
+}
+
+func TestRunnerManager_OnConnect(t *testing.T) {
+	tm := newTestRunnerManager()
+	tm.store.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusOffline,
+	}
+
+	err := tm.OnConnect(context.Background(), "run_123")
+	require.NoError(t, err)
+
+	runner := tm.store.runners["run_123"]
+	assert.Equal(t, StatusIdle, runner.Status)
+}
+
+func TestRunnerManager_OnDisconnect(t *testing.T) {
+	tm := newTestRunnerManager()
+	tm.store.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	err := tm.OnDisconnect(context.Background(), "run_123")
+	require.NoError(t, err)
+
+	runner := tm.store.runners["run_123"]
+	assert.Equal(t, StatusOffline, runner.Status)
+}
+
+func TestRunnerManager_OnHeartbeat(t *testing.T) {
+	tm := newTestRunnerManager()
+	tm.store.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	hb := &pb.Heartbeat{
+		Status: StatusIdle,
+	}
+
+	err := tm.OnHeartbeat(context.Background(), "run_123", hb)
+	require.NoError(t, err)
+
+	runner := tm.store.runners["run_123"]
+	assert.NotNil(t, runner.LastSeenAt)
+}
+
+func TestRunnerManager_SetStatus(t *testing.T) {
+	tm := newTestRunnerManager()
+	tm.store.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	err := tm.SetStatus(context.Background(), "run_123", StatusBusy)
+	require.NoError(t, err)
+
+	runner := tm.store.runners["run_123"]
+	assert.Equal(t, StatusBusy, runner.Status)
+}
+
+func TestRunnerManager_SetStatus_InvalidTransition(t *testing.T) {
+	tm := newTestRunnerManager()
+	tm.store.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusOffline,
+	}
+
+	err := tm.SetStatus(context.Background(), "run_123", StatusBusy)
+	assert.ErrorIs(t, err, ErrInvalidStatusTransition)
+}
+
+func TestIsValidTransition(t *testing.T) {
+	tests := []struct {
+		name     string
+		from     string
+		to       string
+		expected bool
+	}{
+		{"offline to idle", StatusOffline, StatusIdle, true},
+		{"offline to busy", StatusOffline, StatusBusy, false},
+		{"offline to offline", StatusOffline, StatusOffline, true},
+		{"idle to busy", StatusIdle, StatusBusy, true},
+		{"idle to idle", StatusIdle, StatusIdle, true},
+		{"idle to offline", StatusIdle, StatusOffline, true},
+		{"idle to paused", StatusIdle, StatusPaused, true},
+		{"busy to idle", StatusBusy, StatusIdle, true},
+		{"busy to busy", StatusBusy, StatusBusy, true},
+		{"busy to offline", StatusBusy, StatusOffline, true},
+		{"paused to idle", StatusPaused, StatusIdle, true},
+		{"paused to busy", StatusPaused, StatusBusy, false},
+		{"paused to offline", StatusPaused, StatusOffline, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsValidTransition(tt.from, tt.to)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestStaleDetector_CheckStaleRunners(t *testing.T) {
+	s := newTestRunnerStore()
+	staleTime := time.Now().Add(-2 * time.Minute)
+	s.runners["run_stale"] = &store.Runner{
+		ID:         "run_stale",
+		Name:       "stale-runner",
+		Status:     StatusIdle,
+		LastSeenAt: &staleTime,
+	}
+
+	freshTime := time.Now()
+	s.runners["run_fresh"] = &store.Runner{
+		ID:         "run_fresh",
+		Name:       "fresh-runner",
+		Status:     StatusIdle,
+		LastSeenAt: &freshTime,
+	}
+
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+
+	// Create a wrapper store that calls our test store
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		wrapperStore,
+		connMgr,
+		manager,
+		logger,
+		WithStaleThreshold(30*time.Second),
+	)
+
+	err := detector.checkStaleRunners(context.Background())
+	require.NoError(t, err)
+
+	// Stale runner should be offline
+	assert.Equal(t, StatusOffline, s.runners["run_stale"].Status)
+
+	// Fresh runner should still be idle
+	assert.Equal(t, StatusIdle, s.runners["run_fresh"].Status)
+}
+
+// testStoreWrapper wraps testRunnerStore to implement store.Store.
+type testStoreWrapper struct {
+	testStore *testRunnerStore
+}
+
+func (w *testStoreWrapper) GetRunner(ctx context.Context, id string) (*store.Runner, error) {
+	return w.testStore.GetRunner(ctx, id)
+}
+
+func (w *testStoreWrapper) UpdateRunner(ctx context.Context, id string, updates store.RunnerUpdates) error {
+	return w.testStore.UpdateRunner(ctx, id, updates)
+}
+
+func (w *testStoreWrapper) ListRunners(ctx context.Context, opts store.ListRunnersOptions) (*store.ListResult[store.Runner], error) {
+	return w.testStore.ListRunners(ctx, opts)
+}
+
+// Implement remaining store.Store methods as stubs
+func (w *testStoreWrapper) CreateRunner(_ context.Context, _ *store.Runner) error { return nil }
+func (w *testStoreWrapper) GetRunnerByName(_ context.Context, _ string) (*store.Runner, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) DeleteRunner(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateWorkspace(_ context.Context, _ *store.Workspace) error { return nil }
+func (w *testStoreWrapper) GetWorkspace(_ context.Context, _ string) (*store.Workspace, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListWorkspaces(_ context.Context, _ store.ListWorkspacesOptions) (*store.ListResult[store.Workspace], error) {
+	return &store.ListResult[store.Workspace]{}, nil
+}
+func (w *testStoreWrapper) UpdateWorkspace(_ context.Context, _ string, _ store.WorkspaceUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteWorkspace(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateSession(_ context.Context, _ *store.Session) error { return nil }
+func (w *testStoreWrapper) GetSession(_ context.Context, _ string) (*store.Session, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListSessions(_ context.Context, _ store.ListSessionsOptions) (*store.ListResult[store.Session], error) {
+	return &store.ListResult[store.Session]{}, nil
+}
+func (w *testStoreWrapper) UpdateSession(_ context.Context, _ string, _ store.SessionUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteSession(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateTask(_ context.Context, _ *store.Task) error { return nil }
+func (w *testStoreWrapper) GetTask(_ context.Context, _ string) (*store.Task, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListTasks(_ context.Context, _ store.ListTasksOptions) (*store.ListResult[store.Task], error) {
+	return &store.ListResult[store.Task]{}, nil
+}
+func (w *testStoreWrapper) UpdateTask(_ context.Context, _ string, _ store.TaskUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteTask(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateTaskRun(_ context.Context, _ *store.TaskRun) error { return nil }
+func (w *testStoreWrapper) GetTaskRun(_ context.Context, _ string) (*store.TaskRun, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListTaskRuns(_ context.Context, _ store.ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	return &store.ListResult[store.TaskRun]{}, nil
+}
+func (w *testStoreWrapper) UpdateTaskRun(_ context.Context, _ string, _ store.TaskRunUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteTaskRun(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateAPIKey(_ context.Context, _ *store.APIKey) error { return nil }
+func (w *testStoreWrapper) GetAPIKey(_ context.Context, _ string) (*store.APIKey, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetAPIKeyByHash(_ context.Context, _ string) (*store.APIKey, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListAPIKeys(_ context.Context, _ store.ListAPIKeysOptions) (*store.ListResult[store.APIKey], error) {
+	return &store.ListResult[store.APIKey]{}, nil
+}
+func (w *testStoreWrapper) UpdateAPIKey(_ context.Context, _ string, _ store.APIKeyUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteAPIKey(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateRunnerToken(_ context.Context, _ *store.RunnerToken) error {
+	return nil
+}
+func (w *testStoreWrapper) GetRunnerToken(_ context.Context, _ string) (*store.RunnerToken, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetRunnerTokenByHash(_ context.Context, _ string) (*store.RunnerToken, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListRunnerTokens(_ context.Context, _ store.ListRunnerTokensOptions) (*store.ListResult[store.RunnerToken], error) {
+	return &store.ListResult[store.RunnerToken]{}, nil
+}
+func (w *testStoreWrapper) UpdateRunnerToken(_ context.Context, _ string, _ store.RunnerTokenUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteRunnerToken(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) GetTaskRunByTaskAndAttempt(_ context.Context, _ string, _ int) (*store.TaskRun, error) {
+	return nil, store.ErrNotFound
+}
+
+func (w *testStoreWrapper) CreateScheduledTask(_ context.Context, _ *store.ScheduledTask) error {
+	return nil
+}
+func (w *testStoreWrapper) GetScheduledTask(_ context.Context, _ string) (*store.ScheduledTask, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListScheduledTasks(_ context.Context, _ store.ListScheduledTasksOptions) (*store.ListResult[store.ScheduledTask], error) {
+	return &store.ListResult[store.ScheduledTask]{}, nil
+}
+func (w *testStoreWrapper) UpdateScheduledTask(_ context.Context, _ string, _ store.ScheduledTaskUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteScheduledTask(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreatePermissionRequest(_ context.Context, _ *store.PermissionRequest) error {
+	return nil
+}
+func (w *testStoreWrapper) GetPermissionRequest(_ context.Context, _ string) (*store.PermissionRequest, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListPermissionRequests(_ context.Context, _ store.ListPermissionRequestsOptions) (*store.ListResult[store.PermissionRequest], error) {
+	return &store.ListResult[store.PermissionRequest]{}, nil
+}
+func (w *testStoreWrapper) UpdatePermissionRequest(_ context.Context, _ string, _ store.PermissionRequestUpdates) error {
+	return nil
+}
+
+func (w *testStoreWrapper) CreateAgentConfig(_ context.Context, _ *store.AgentConfig) error {
+	return nil
+}
+func (w *testStoreWrapper) GetAgentConfig(_ context.Context, _ string) (*store.AgentConfig, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetAgentConfigByName(_ context.Context, _ string) (*store.AgentConfig, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetDefaultAgentConfig(_ context.Context, _ string) (*store.AgentConfig, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListAgentConfigs(_ context.Context, _ store.ListAgentConfigsOptions) (*store.ListResult[store.AgentConfig], error) {
+	return &store.ListResult[store.AgentConfig]{}, nil
+}
+func (w *testStoreWrapper) UpdateAgentConfig(_ context.Context, _ string, _ store.AgentConfigUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteAgentConfig(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateProviderConfig(_ context.Context, _ *store.ProviderConfig) error {
+	return nil
+}
+func (w *testStoreWrapper) GetProviderConfig(_ context.Context, _ string) (*store.ProviderConfig, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetProviderConfigByName(_ context.Context, _ string) (*store.ProviderConfig, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetDefaultProviderConfig(_ context.Context, _ string) (*store.ProviderConfig, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListProviderConfigs(_ context.Context, _ store.ListProviderConfigsOptions) (*store.ListResult[store.ProviderConfig], error) {
+	return &store.ListResult[store.ProviderConfig]{}, nil
+}
+func (w *testStoreWrapper) UpdateProviderConfig(_ context.Context, _ string, _ store.ProviderConfigUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteProviderConfig(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateProfile(_ context.Context, _ *store.Profile) error { return nil }
+func (w *testStoreWrapper) GetProfile(_ context.Context, _ string) (*store.Profile, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetProfileByName(_ context.Context, _ string) (*store.Profile, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListProfiles(_ context.Context, _ store.ListProfilesOptions) (*store.ListResult[store.Profile], error) {
+	return &store.ListResult[store.Profile]{}, nil
+}
+func (w *testStoreWrapper) UpdateProfile(_ context.Context, _ string, _ store.ProfileUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteProfile(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateSnapshot(_ context.Context, _ *store.Snapshot) error { return nil }
+func (w *testStoreWrapper) GetSnapshot(_ context.Context, _ string) (*store.Snapshot, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetSnapshotByRunnerAndName(_ context.Context, _, _ string) (*store.Snapshot, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListSnapshots(_ context.Context, _ store.ListSnapshotsOptions) (*store.ListResult[store.Snapshot], error) {
+	return &store.ListResult[store.Snapshot]{}, nil
+}
+func (w *testStoreWrapper) UpdateSnapshot(_ context.Context, _ string, _ store.SnapshotUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteSnapshot(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateTunnel(_ context.Context, _ *store.Tunnel) error { return nil }
+func (w *testStoreWrapper) GetTunnel(_ context.Context, _ string) (*store.Tunnel, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetTunnelByTokenHash(_ context.Context, _ string) (*store.Tunnel, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListTunnels(_ context.Context, _ store.ListTunnelsOptions) (*store.ListResult[store.Tunnel], error) {
+	return &store.ListResult[store.Tunnel]{}, nil
+}
+func (w *testStoreWrapper) UpdateTunnel(_ context.Context, _ string, _ store.TunnelUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteTunnel(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateActionLog(_ context.Context, _ *store.ActionLog) error { return nil }
+func (w *testStoreWrapper) GetActionLog(_ context.Context, _ string) (*store.ActionLog, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListActionLogs(_ context.Context, _ store.ListActionLogsOptions) (*store.ListResult[store.ActionLog], error) {
+	return &store.ListResult[store.ActionLog]{}, nil
+}
+
+func (w *testStoreWrapper) CreateLog(_ context.Context, _ *store.Log) error    { return nil }
+func (w *testStoreWrapper) CreateLogs(_ context.Context, _ []*store.Log) error { return nil }
+func (w *testStoreWrapper) ListLogs(_ context.Context, _ store.ListLogsOptions) (*store.ListResult[store.Log], error) {
+	return &store.ListResult[store.Log]{}, nil
+}
+
+func (w *testStoreWrapper) CreateLogArchive(_ context.Context, _ *store.LogArchive) error {
+	return nil
+}
+func (w *testStoreWrapper) GetLogArchive(_ context.Context, _ string) (*store.LogArchive, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetLogArchiveBySession(_ context.Context, _ string) (*store.LogArchive, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListLogArchives(_ context.Context, _ store.ListLogArchivesOptions) (*store.ListResult[store.LogArchive], error) {
+	return &store.ListResult[store.LogArchive]{}, nil
+}
+func (w *testStoreWrapper) UpdateLogArchive(_ context.Context, _ string, _ store.LogArchiveUpdates) error {
+	return nil
+}
+
+func (w *testStoreWrapper) CreateDataKey(_ context.Context, _ *store.DataKey) error { return nil }
+func (w *testStoreWrapper) GetDataKey(_ context.Context, _ string) (*store.DataKey, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetDataKeyByResource(_ context.Context, _, _ string) (*store.DataKey, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) UpdateDataKey(_ context.Context, _ string, _ store.DataKeyUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteDataKey(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) CreateChunk(_ context.Context, _ *store.Chunk) error { return nil }
+func (w *testStoreWrapper) GetChunk(_ context.Context, _, _ string) (*store.Chunk, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) UpdateChunk(_ context.Context, _, _ string, _ store.ChunkUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteChunk(_ context.Context, _, _ string) error { return nil }
+func (w *testStoreWrapper) IncrementChunkRefCount(_ context.Context, _, _ string) error {
+	return nil
+}
+func (w *testStoreWrapper) DecrementChunkRefCount(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (w *testStoreWrapper) CreateManifest(_ context.Context, _ *store.Manifest) error { return nil }
+func (w *testStoreWrapper) GetManifest(_ context.Context, _ string) (*store.Manifest, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetLatestManifest(_ context.Context, _ string) (*store.Manifest, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) DeleteManifest(_ context.Context, _ string) error { return nil }
+
+func (w *testStoreWrapper) BeginTx(_ context.Context) (store.Tx, error) { return nil, nil }
+func (w *testStoreWrapper) Ping(_ context.Context) error                { return nil }
+func (w *testStoreWrapper) Close() error                                { return nil }
