@@ -28,20 +28,52 @@ type ConnectionManagerInterface interface {
 	UpdateLastSeen(runnerID string) error
 }
 
+// RunnerManagerInterface defines the interface for runner management.
+// This is used for dependency injection in other components.
+type RunnerManagerInterface interface {
+	OnConnect(ctx context.Context, runnerID string) error
+	OnDisconnect(ctx context.Context, runnerID string) error
+	OnHeartbeat(ctx context.Context, runnerID string, hb *pb.Heartbeat) error
+	SetStatus(ctx context.Context, runnerID, status string) error
+}
+
 // RunnerManager handles runner lifecycle and status transitions.
 type RunnerManager struct {
 	store       store.Store
 	connManager ConnectionManagerInterface
+	taskMgr     TaskManagerInterface
+	sessionMgr  SessionManagerInterface
 	logger      *zap.Logger
 }
 
+// RunnerManagerOption is a functional option for RunnerManager.
+type RunnerManagerOption func(*RunnerManager)
+
+// WithTaskManager sets the task manager for the runner manager.
+func WithTaskManager(tm TaskManagerInterface) RunnerManagerOption {
+	return func(m *RunnerManager) {
+		m.taskMgr = tm
+	}
+}
+
+// WithSessionManager sets the session manager for the runner manager.
+func WithSessionManager(sm SessionManagerInterface) RunnerManagerOption {
+	return func(m *RunnerManager) {
+		m.sessionMgr = sm
+	}
+}
+
 // NewRunnerManager creates a new RunnerManager.
-func NewRunnerManager(store store.Store, connManager ConnectionManagerInterface, logger *zap.Logger) *RunnerManager {
-	return &RunnerManager{
+func NewRunnerManager(store store.Store, connManager ConnectionManagerInterface, logger *zap.Logger, opts ...RunnerManagerOption) *RunnerManager {
+	m := &RunnerManager{
 		store:       store,
 		connManager: connManager,
 		logger:      logger,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // OnConnect is called when a runner connects to the server.
@@ -210,32 +242,124 @@ func (m *RunnerManager) SetStatus(ctx context.Context, runnerID, status string) 
 }
 
 // handleInFlightTasks handles tasks that were running on a disconnected runner.
-// G3: Will mark running tasks as failed and check retry policy.
-//
-//nolint:unparam // Stub always returns nil; will be implemented in G3
-func (m *RunnerManager) handleInFlightTasks(_ context.Context, runnerID string) error {
-	m.logger.Debug("handling in-flight tasks (stub)",
+// Marks running task runs as failed and triggers retry if applicable.
+func (m *RunnerManager) handleInFlightTasks(ctx context.Context, runnerID string) error {
+	if m.taskMgr == nil {
+		m.logger.Debug("skipping in-flight task handling: no task manager configured",
+			zap.String("runner_id", runnerID),
+		)
+		return nil
+	}
+
+	// Get all task runs that were running on this runner
+	runs, err := m.store.ListTaskRuns(ctx, store.ListTaskRunsOptions{
+		RunnerID: &runnerID,
+		Status:   []string{TaskRunStatusAssigned, TaskRunStatusRunning},
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(runs.Items) == 0 {
+		m.logger.Debug("no in-flight tasks to handle",
+			zap.String("runner_id", runnerID),
+		)
+		return nil
+	}
+
+	m.logger.Info("handling in-flight tasks for disconnected runner",
 		zap.String("runner_id", runnerID),
+		zap.Int("task_runs", len(runs.Items)),
 	)
-	// G3: Implement task failure handling
-	// - Get all task_runs with status="running" and runner_id=runnerID
-	// - Mark them as failed with error="runner disconnected"
-	// - Check retry policy and requeue if applicable
+
+	// Track tasks to check for retry
+	tasksToRetry := make(map[string]bool)
+
+	// Mark each run as failed
+	for _, run := range runs.Items {
+		if err := m.taskMgr.FailRun(ctx, run.ID, "runner disconnected"); err != nil {
+			m.logger.Error("failed to mark task run as failed",
+				zap.String("run_id", run.ID),
+				zap.String("task_id", run.TaskID),
+				zap.Error(err),
+			)
+			continue
+		}
+		tasksToRetry[run.TaskID] = true
+	}
+
+	// Check retry policy for each affected task
+	for taskID := range tasksToRetry {
+		shouldRetry, err := m.taskMgr.ShouldRetry(ctx, taskID)
+		if err != nil {
+			m.logger.Error("failed to check retry policy",
+				zap.String("task_id", taskID),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		if shouldRetry {
+			m.logger.Info("task will be retried after runner disconnect",
+				zap.String("task_id", taskID),
+			)
+			// Note: The actual retry will be triggered when a new runner is available
+			// and the session is resumed. For now, the task stays in running state.
+		}
+	}
+
 	return nil
 }
 
 // detachSessions detaches all sessions attached to a disconnected runner.
-// G3: Will update sessions to suspended status.
-//
-//nolint:unparam // Stub always returns nil; will be implemented in G3
-func (m *RunnerManager) detachSessions(_ context.Context, runnerID string) error {
-	m.logger.Debug("detaching sessions (stub)",
+// Suspends sessions and detaches them from the runner.
+func (m *RunnerManager) detachSessions(ctx context.Context, runnerID string) error {
+	if m.sessionMgr == nil {
+		m.logger.Debug("skipping session detachment: no session manager configured",
+			zap.String("runner_id", runnerID),
+		)
+		return nil
+	}
+
+	// Get all active sessions attached to this runner
+	sessions, err := m.store.ListSessions(ctx, store.ListSessionsOptions{
+		RunnerID: &runnerID,
+		Status:   []string{SessionStatusActive},
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(sessions.Items) == 0 {
+		m.logger.Debug("no sessions to detach",
+			zap.String("runner_id", runnerID),
+		)
+		return nil
+	}
+
+	m.logger.Info("detaching sessions from disconnected runner",
 		zap.String("runner_id", runnerID),
+		zap.Int("sessions", len(sessions.Items)),
 	)
-	// G3: Implement session detachment
-	// - Get all sessions with runner_id=runnerID
-	// - Set runner_id=NULL and status=suspended
-	// - Trigger suspend strategy if configured
+
+	// Suspend each session
+	for _, sess := range sessions.Items {
+		// Use "terminate" strategy for unexpected disconnects
+		// (more sophisticated strategies will be implemented in G5)
+		if err := m.sessionMgr.Suspend(ctx, sess.ID, "terminate"); err != nil {
+			m.logger.Error("failed to suspend session",
+				zap.String("session_id", sess.ID),
+				zap.String("runner_id", runnerID),
+				zap.Error(err),
+			)
+			continue
+		}
+		m.logger.Info("session suspended due to runner disconnect",
+			zap.String("session_id", sess.ID),
+			zap.String("runner_id", runnerID),
+		)
+	}
+
 	return nil
 }
 
