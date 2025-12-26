@@ -989,3 +989,437 @@ func TestTaskTimeoutEnforcer_WithCheckInterval(t *testing.T) {
 
 	assert.Equal(t, 10*time.Second, enforcer.checkInterval)
 }
+
+// =============================================================================
+// TaskTimeoutEnforcer CheckTimeouts Tests
+// =============================================================================
+
+func TestTaskTimeoutEnforcer_CheckTimeouts_NoRunningTasks(t *testing.T) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	logger := zap.NewNop()
+	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+
+	enforcer := NewTaskTimeoutEnforcer(
+		s,
+		taskMgr,
+		cmdSender,
+		logger,
+	)
+
+	// No running task runs
+	err := enforcer.checkTimeouts(context.Background())
+	require.NoError(t, err)
+}
+
+func TestTaskTimeoutEnforcer_CheckTimeouts_NotTimedOut(t *testing.T) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	logger := zap.NewNop()
+	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+
+	enforcer := NewTaskTimeoutEnforcer(
+		s,
+		taskMgr,
+		cmdSender,
+		logger,
+	)
+
+	// Create a task with 1 hour timeout
+	s.tasks["task_1"] = &store.Task{
+		ID:             "task_1",
+		SessionID:      "sess_1",
+		Status:         TaskStatusRunning,
+		TimeoutSeconds: 3600,
+	}
+
+	// Create a running task run that just started
+	startedAt := time.Now()
+	s.taskRuns["trun_1"] = &store.TaskRun{
+		ID:        "trun_1",
+		TaskID:    "task_1",
+		Status:    TaskRunStatusRunning,
+		StartedAt: &startedAt,
+	}
+
+	err := enforcer.checkTimeouts(context.Background())
+	require.NoError(t, err)
+
+	// Task run should still be running
+	assert.Equal(t, TaskRunStatusRunning, s.taskRuns["trun_1"].Status)
+}
+
+func TestTaskTimeoutEnforcer_CheckTimeouts_TimedOut(t *testing.T) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	logger := zap.NewNop()
+	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+
+	enforcer := NewTaskTimeoutEnforcer(
+		s,
+		taskMgr,
+		cmdSender,
+		logger,
+	)
+
+	// Create a task with 1 second timeout
+	s.tasks["task_1"] = &store.Task{
+		ID:             "task_1",
+		SessionID:      "sess_1",
+		Status:         TaskStatusRunning,
+		TimeoutSeconds: 1,
+		MaxRetries:     0,
+	}
+
+	// Create a running task run that started 2 seconds ago
+	startedAt := time.Now().Add(-2 * time.Second)
+	runnerID := "run_1"
+	s.taskRuns["trun_1"] = &store.TaskRun{
+		ID:        "trun_1",
+		TaskID:    "task_1",
+		Status:    TaskRunStatusRunning,
+		StartedAt: &startedAt,
+		RunnerID:  &runnerID,
+	}
+
+	err := enforcer.checkTimeouts(context.Background())
+	require.NoError(t, err)
+
+	// Task run should be marked as timeout
+	assert.Equal(t, TaskRunStatusTimeout, s.taskRuns["trun_1"].Status)
+	assert.NotNil(t, s.taskRuns["trun_1"].Error)
+	assert.Equal(t, "task execution timed out", *s.taskRuns["trun_1"].Error)
+
+	// Kill command should have been sent
+	require.Len(t, cmdSender.sentCommands, 1)
+	killCmd := cmdSender.sentCommands[0].GetKillTask()
+	require.NotNil(t, killCmd)
+	assert.Equal(t, "task_1", killCmd.TaskId)
+	assert.Equal(t, "trun_1", killCmd.RunId)
+	assert.Equal(t, "timeout", killCmd.Reason)
+}
+
+func TestTaskTimeoutEnforcer_CheckTimeouts_TimedOutWithRetry(t *testing.T) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	logger := zap.NewNop()
+	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+
+	enforcer := NewTaskTimeoutEnforcer(
+		s,
+		taskMgr,
+		cmdSender,
+		logger,
+	)
+
+	// Create a task with 1 second timeout and 1 retry
+	s.tasks["task_1"] = &store.Task{
+		ID:             "task_1",
+		SessionID:      "sess_1",
+		Status:         TaskStatusRunning,
+		TimeoutSeconds: 1,
+		MaxRetries:     1,
+		RetryCount:     0,
+	}
+
+	// Create an active session
+	s.sessions["sess_1"] = &store.Session{
+		ID:     "sess_1",
+		Status: SessionStatusActive,
+	}
+
+	// Create a running task run that started 2 seconds ago
+	startedAt := time.Now().Add(-2 * time.Second)
+	s.taskRuns["trun_1"] = &store.TaskRun{
+		ID:        "trun_1",
+		TaskID:    "task_1",
+		Status:    TaskRunStatusRunning,
+		StartedAt: &startedAt,
+		Attempt:   1,
+	}
+
+	err := enforcer.checkTimeouts(context.Background())
+	require.NoError(t, err)
+
+	// Task run should be marked as timeout
+	assert.Equal(t, TaskRunStatusTimeout, s.taskRuns["trun_1"].Status)
+
+	// Give goroutine time to retry (async retry)
+	time.Sleep(100 * time.Millisecond)
+
+	// Task should still be running (retry creates new run)
+	assert.Equal(t, TaskStatusRunning, s.tasks["task_1"].Status)
+}
+
+func TestTaskTimeoutEnforcer_CheckTimeouts_NoStartedAt(t *testing.T) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	logger := zap.NewNop()
+	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+
+	enforcer := NewTaskTimeoutEnforcer(
+		s,
+		taskMgr,
+		cmdSender,
+		logger,
+	)
+
+	// Create a task
+	s.tasks["task_1"] = &store.Task{
+		ID:             "task_1",
+		SessionID:      "sess_1",
+		Status:         TaskStatusRunning,
+		TimeoutSeconds: 1,
+	}
+
+	// Create a running task run with no started_at (edge case)
+	s.taskRuns["trun_1"] = &store.TaskRun{
+		ID:        "trun_1",
+		TaskID:    "task_1",
+		Status:    TaskRunStatusRunning,
+		StartedAt: nil, // No started_at
+	}
+
+	err := enforcer.checkTimeouts(context.Background())
+	require.NoError(t, err)
+
+	// Task run should still be running (skipped due to no started_at)
+	assert.Equal(t, TaskRunStatusRunning, s.taskRuns["trun_1"].Status)
+}
+
+func TestTaskTimeoutEnforcer_CheckTimeouts_TaskNotFound(t *testing.T) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	logger := zap.NewNop()
+	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+
+	enforcer := NewTaskTimeoutEnforcer(
+		s,
+		taskMgr,
+		cmdSender,
+		logger,
+	)
+
+	// Create a running task run without corresponding task
+	startedAt := time.Now().Add(-2 * time.Second)
+	s.taskRuns["trun_1"] = &store.TaskRun{
+		ID:        "trun_1",
+		TaskID:    "task_nonexistent",
+		Status:    TaskRunStatusRunning,
+		StartedAt: &startedAt,
+	}
+
+	// Should not error, just log warning
+	err := enforcer.checkTimeouts(context.Background())
+	require.NoError(t, err)
+}
+
+func TestTaskTimeoutEnforcer_CheckTimeouts_NoRunnerID(t *testing.T) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	logger := zap.NewNop()
+	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+
+	enforcer := NewTaskTimeoutEnforcer(
+		s,
+		taskMgr,
+		cmdSender,
+		logger,
+	)
+
+	// Create a task with 1 second timeout
+	s.tasks["task_1"] = &store.Task{
+		ID:             "task_1",
+		SessionID:      "sess_1",
+		Status:         TaskStatusRunning,
+		TimeoutSeconds: 1,
+		MaxRetries:     0,
+	}
+
+	// Create a running task run with no runner_id
+	startedAt := time.Now().Add(-2 * time.Second)
+	s.taskRuns["trun_1"] = &store.TaskRun{
+		ID:        "trun_1",
+		TaskID:    "task_1",
+		Status:    TaskRunStatusRunning,
+		StartedAt: &startedAt,
+		RunnerID:  nil, // No runner
+	}
+
+	err := enforcer.checkTimeouts(context.Background())
+	require.NoError(t, err)
+
+	// Task run should be marked as timeout even without runner
+	assert.Equal(t, TaskRunStatusTimeout, s.taskRuns["trun_1"].Status)
+
+	// No kill command sent (no runner to kill)
+	assert.Len(t, cmdSender.sentCommands, 0)
+}
+
+func TestTaskTimeoutEnforcer_CheckTimeouts_NoMoreRetries(t *testing.T) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	logger := zap.NewNop()
+	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+
+	enforcer := NewTaskTimeoutEnforcer(
+		s,
+		taskMgr,
+		cmdSender,
+		logger,
+	)
+
+	// Create a task with 1 second timeout and max retries exhausted
+	s.tasks["task_1"] = &store.Task{
+		ID:             "task_1",
+		SessionID:      "sess_1",
+		Status:         TaskStatusRunning,
+		TimeoutSeconds: 1,
+		MaxRetries:     2,
+		RetryCount:     2, // Already retried twice
+	}
+
+	// Create a running task run that started 2 seconds ago
+	startedAt := time.Now().Add(-2 * time.Second)
+	s.taskRuns["trun_1"] = &store.TaskRun{
+		ID:        "trun_1",
+		TaskID:    "task_1",
+		Status:    TaskRunStatusRunning,
+		StartedAt: &startedAt,
+		Attempt:   3,
+	}
+
+	err := enforcer.checkTimeouts(context.Background())
+	require.NoError(t, err)
+
+	// Task run should be marked as timeout
+	assert.Equal(t, TaskRunStatusTimeout, s.taskRuns["trun_1"].Status)
+
+	// Task should be marked as failed (no more retries)
+	assert.Equal(t, TaskStatusFailed, s.tasks["task_1"].Status)
+}
+
+// =============================================================================
+// OnTaskCompleted Additional Tests
+// =============================================================================
+
+func TestTaskManager_OnTaskCompleted_WithTokens(t *testing.T) {
+	manager, s, _ := setupTaskManagerTest()
+
+	// Create task
+	s.tasks["task_1"] = &store.Task{
+		ID:        "task_1",
+		SessionID: "sess_1",
+		Status:    TaskStatusRunning,
+	}
+
+	// Create running task run
+	s.taskRuns["trun_1"] = &store.TaskRun{
+		ID:     "trun_1",
+		TaskID: "task_1",
+		Status: TaskRunStatusRunning,
+	}
+
+	result := &TaskCompletedResult{
+		RunID:        "trun_1",
+		Success:      true,
+		TokensInput:  100,
+		TokensOutput: 200,
+	}
+
+	err := manager.OnTaskCompleted(context.Background(), result)
+	require.NoError(t, err)
+
+	// Check token values were saved
+	run := s.taskRuns["trun_1"]
+	require.NotNil(t, run.TokensInput)
+	require.NotNil(t, run.TokensOutput)
+	assert.Equal(t, 100, *run.TokensInput)
+	assert.Equal(t, 200, *run.TokensOutput)
+}
+
+func TestTaskManager_OnTaskCompleted_FailedWithRetry(t *testing.T) {
+	manager, s, _ := setupTaskManagerTest()
+
+	// Create task with retries available
+	s.tasks["task_1"] = &store.Task{
+		ID:             "task_1",
+		SessionID:      "sess_1",
+		Status:         TaskStatusRunning,
+		MaxRetries:     2,
+		RetryCount:     0,
+		TimeoutSeconds: 3600,
+	}
+
+	// Create active session with a runner attached
+	runnerID := "run_1"
+	s.sessions["sess_1"] = &store.Session{
+		ID:       "sess_1",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	}
+
+	// Create running task run
+	s.taskRuns["trun_1"] = &store.TaskRun{
+		ID:      "trun_1",
+		TaskID:  "task_1",
+		Status:  TaskRunStatusRunning,
+		Attempt: 1,
+	}
+
+	result := &TaskCompletedResult{
+		RunID:   "trun_1",
+		Success: false,
+		Error:   "execution failed",
+	}
+
+	err := manager.OnTaskCompleted(context.Background(), result)
+	require.NoError(t, err)
+
+	// Task run should be failed
+	assert.Equal(t, TaskRunStatusFailed, s.taskRuns["trun_1"].Status)
+
+	// Give goroutine time to retry (async retry)
+	time.Sleep(100 * time.Millisecond)
+
+	// Task should still be running (retry pending or in progress)
+	assert.Equal(t, TaskStatusRunning, s.tasks["task_1"].Status)
+	// RetryCount should be incremented by the Retry goroutine
+	assert.Equal(t, 1, s.tasks["task_1"].RetryCount)
+}
+
+func TestTaskManager_OnTaskCompleted_FailedNoRetry(t *testing.T) {
+	manager, s, _ := setupTaskManagerTest()
+
+	// Create task with no retries
+	s.tasks["task_1"] = &store.Task{
+		ID:         "task_1",
+		SessionID:  "sess_1",
+		Status:     TaskStatusRunning,
+		MaxRetries: 0,
+		RetryCount: 0,
+	}
+
+	// Create running task run
+	s.taskRuns["trun_1"] = &store.TaskRun{
+		ID:      "trun_1",
+		TaskID:  "task_1",
+		Status:  TaskRunStatusRunning,
+		Attempt: 1,
+	}
+
+	result := &TaskCompletedResult{
+		RunID:   "trun_1",
+		Success: false,
+		Error:   "execution failed",
+	}
+
+	err := manager.OnTaskCompleted(context.Background(), result)
+	require.NoError(t, err)
+
+	// Task run should be failed
+	assert.Equal(t, TaskRunStatusFailed, s.taskRuns["trun_1"].Status)
+
+	// Task should also be failed (no retries)
+	assert.Equal(t, TaskStatusFailed, s.tasks["task_1"].Status)
+}
