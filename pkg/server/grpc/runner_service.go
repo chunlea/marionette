@@ -3,6 +3,7 @@ package grpc
 
 import (
 	"context"
+	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/auth"
@@ -11,13 +12,32 @@ import (
 	"google.golang.org/grpc"
 )
 
+// RunnerManagerInterface defines the interface for runner lifecycle management.
+// This interface is implemented by core.RunnerManager.
+type RunnerManagerInterface interface {
+	// OnConnect is called when a runner connects.
+	OnConnect(ctx context.Context, runnerID string) error
+	// OnDisconnect is called when a runner disconnects.
+	OnDisconnect(ctx context.Context, runnerID string) error
+	// OnHeartbeat is called when a heartbeat is received from a runner.
+	OnHeartbeat(ctx context.Context, runnerID string, hb *pb.Heartbeat) error
+}
+
+// MessageRouterInterface defines the interface for routing runner messages.
+type MessageRouterInterface interface {
+	// HandleMessage routes a message from a runner to the appropriate handler.
+	HandleMessage(ctx context.Context, runnerID string, msg *pb.RunnerMessage) error
+}
+
 // RunnerService implements the RunnerServiceServer interface.
 type RunnerService struct {
 	pb.UnimplementedRunnerServiceServer
-	logger      *zap.Logger
-	store       store.Store
-	tokenSvc    *auth.RunnerTokenService
-	connManager *ConnectionManager
+	logger        *zap.Logger
+	store         store.Store
+	tokenSvc      *auth.RunnerTokenService
+	connManager   *ConnectionManager
+	runnerManager RunnerManagerInterface
+	router        MessageRouterInterface
 }
 
 // RunnerServiceOption is a functional option for RunnerService.
@@ -55,6 +75,20 @@ func WithConnectionManager(cm *ConnectionManager) RunnerServiceOption {
 	}
 }
 
+// WithRunnerManager sets the runner manager for the RunnerService.
+func WithRunnerManager(rm RunnerManagerInterface) RunnerServiceOption {
+	return func(svc *RunnerService) {
+		svc.runnerManager = rm
+	}
+}
+
+// WithRouter sets the message router for the RunnerService.
+func WithRouter(r MessageRouterInterface) RunnerServiceOption {
+	return func(svc *RunnerService) {
+		svc.router = r
+	}
+}
+
 // RegisterRunner handles runner registration.
 // This is a stub that returns a mock response.
 func (s *RunnerService) RegisterRunner(_ context.Context, req *pb.RegisterRunnerRequest) (*pb.RegisterRunnerResponse, error) {
@@ -78,24 +112,24 @@ func (s *RunnerService) GetRunnerStatus(_ context.Context, req *pb.GetRunnerStat
 		zap.String("runner_id", req.RunnerId),
 	)
 
-	// Stub implementation - actual implementation will come in G2
+	// Stub implementation - actual implementation will come in G3
 	return &pb.RunnerStatus{
 		RunnerId: req.RunnerId,
 		Status:   "unknown",
 	}, nil
 }
 
-// Connect handles the bidirectional stream for control messages.
-// This is a stub that just waits for the stream to close.
-func (s *RunnerService) Connect(stream grpc.BidiStreamingServer[pb.RunnerMessage, pb.ServerCommand]) error {
-	s.logger.Info("Connect stream opened (stub)")
-	// Stub - just wait for the stream to close
-	for {
-		_, err := stream.Recv()
-		if err != nil {
-			s.logger.Info("Connect stream closed", zap.Error(err))
-			return nil
-		}
+// createConnection creates a new RunnerConnection from a runner and stream.
+func (s *RunnerService) createConnection(runner *store.Runner, stream grpc.BidiStreamingServer[pb.RunnerMessage, pb.ServerCommand]) *RunnerConnection {
+	return &RunnerConnection{
+		RunnerID:    runner.ID,
+		Name:        runner.Name,
+		Hostname:    runner.Hostname,
+		Status:      RunnerStatusIdle,
+		ConnectedAt: time.Now(),
+		LastSeen:    time.Now(),
+		commandCh:   make(chan *pb.ServerCommand, commandBufferSize),
+		stream:      stream,
 	}
 }
 
