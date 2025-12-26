@@ -841,20 +841,22 @@
   - [x] Create tar.zst archive
   - [x] Store as single encrypted chunk
 
-### 5.5 Workspace Sync
+### 5.5 Workspace Sync ✓
 
 - [x] Sync service (`pkg/storage/cas/sync.go`):
   - [x] `Sync(ctx, workspaceID, tenantID, srcDir string) error`
   - [x] `Restore(ctx, workspaceID, tenantID, dstDir string) error`
   - [x] `ValidateManifest(ctx, manifest *Manifest) error`
-- [ ] Incremental sync:
-  - [ ] Get previous manifest chunk hashes
-  - [x] Only upload new/modified chunks (dedup within single sync)
-  - [ ] Update chunk ref_count
+- [x] Incremental sync:
+  - [x] Get previous manifest chunk hashes
+  - [x] Only upload new/modified chunks
+  - [x] Diff functionality (Added/Modified/Deleted/Unchanged)
+  - [x] ParentID tracking for manifest chains
 - [x] Memory-efficient implementation:
-  - [ ] Stream chunks to temp files (not memory) - deferred
-  - [x] Parallel upload with bounded concurrency (10)
-  - [x] Streaming manifest save/load
+  - [x] StreamingProcessor for file chunking via channels
+  - [x] ChunkUploader for concurrent uploads with progress
+  - [x] StreamingFileReader for restore
+  - [x] Parallel upload with bounded concurrency
 
 ### 5.6 Garbage Collection
 
