@@ -45,11 +45,6 @@ and monitor their progress.`,
 			apiClient = client.NewHTTPClient(ctx.Server, ctx.APIKey)
 		}
 
-		// Initialize the admin client if admin flags are set
-		if cmd.Parent() != nil && cmd.Parent().Name() == "admin" || cmd.Name() == "admin" {
-			initAdminClient()
-		}
-
 		return nil
 	},
 }
@@ -73,9 +68,10 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(sessionsCmd)
 	rootCmd.AddCommand(tasksCmd)
-	rootCmd.AddCommand(runnersCmd)
-	rootCmd.AddCommand(permissionsCmd)
-	rootCmd.AddCommand(adminCmd)
+	// TODO: Add these commands when implemented
+	// rootCmd.AddCommand(runnersCmd)
+	// rootCmd.AddCommand(permissionsCmd)
+	// rootCmd.AddCommand(adminCmd)
 }
 
 // getOutput returns the output writer for commands (allows testing).
