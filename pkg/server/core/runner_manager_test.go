@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -865,4 +866,277 @@ func TestStringPtr(t *testing.T) {
 	ptr := stringPtr("test")
 	require.NotNil(t, ptr)
 	assert.Equal(t, "test", *ptr)
+}
+
+// =============================================================================
+// Error Path Tests
+// =============================================================================
+
+// errorTestStore wraps testRunnerStore to inject errors
+type errorTestStore struct {
+	*testStoreWrapper
+	updateErr error
+	listErr   error
+}
+
+func (e *errorTestStore) UpdateRunner(_ context.Context, id string, updates store.RunnerUpdates) error {
+	if e.updateErr != nil {
+		return e.updateErr
+	}
+	return e.testStoreWrapper.UpdateRunner(context.Background(), id, updates)
+}
+
+func (e *errorTestStore) ListRunners(_ context.Context, opts store.ListRunnersOptions) (*store.ListResult[store.Runner], error) {
+	if e.listErr != nil {
+		return nil, e.listErr
+	}
+	return e.testStoreWrapper.ListRunners(context.Background(), opts)
+}
+
+func TestRunnerManager_OnConnect_UpdateError(t *testing.T) {
+	s := newTestRunnerStore()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusOffline,
+	}
+
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	errorStore := &errorTestStore{
+		testStoreWrapper: wrapperStore,
+		updateErr:        errors.New("update failed"),
+	}
+	manager := NewRunnerManager(errorStore, connMgr, logger)
+
+	err := manager.OnConnect(context.Background(), "run_123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update failed")
+}
+
+func TestRunnerManager_OnHeartbeat_UpdateError(t *testing.T) {
+	s := newTestRunnerStore()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	errorStore := &errorTestStore{
+		testStoreWrapper: wrapperStore,
+		updateErr:        errors.New("update failed"),
+	}
+	manager := NewRunnerManager(errorStore, connMgr, logger)
+
+	hb := &pb.Heartbeat{Status: ""}
+
+	err := manager.OnHeartbeat(context.Background(), "run_123", hb)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update failed")
+}
+
+func TestRunnerManager_SetStatus_UpdateError(t *testing.T) {
+	s := newTestRunnerStore()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	errorStore := &errorTestStore{
+		testStoreWrapper: wrapperStore,
+		updateErr:        errors.New("update failed"),
+	}
+	manager := NewRunnerManager(errorStore, connMgr, logger)
+
+	err := manager.SetStatus(context.Background(), "run_123", StatusBusy)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update failed")
+}
+
+func TestStaleDetector_CheckStaleRunners_ListError(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	errorStore := &errorTestStore{
+		testStoreWrapper: wrapperStore,
+		listErr:          errors.New("list failed"),
+	}
+	manager := NewRunnerManager(errorStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		errorStore,
+		connMgr,
+		manager,
+		logger,
+		WithStaleThreshold(30*time.Second),
+	)
+
+	err := detector.checkStaleRunners(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list failed")
+}
+
+func TestStaleDetector_CheckStaleRunners_MarkStaleError(t *testing.T) {
+	s := newTestRunnerStore()
+	staleTime := time.Now().Add(-2 * time.Minute)
+	s.runners["run_stale"] = &store.Runner{
+		ID:         "run_stale",
+		Name:       "stale-runner",
+		Status:     StatusIdle,
+		LastSeenAt: &staleTime,
+	}
+
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	errorStore := &errorTestStore{
+		testStoreWrapper: wrapperStore,
+		updateErr:        errors.New("update failed"),
+	}
+	manager := NewRunnerManager(errorStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		errorStore,
+		connMgr,
+		manager,
+		logger,
+		WithStaleThreshold(30*time.Second),
+	)
+
+	// Should not return error but should log it
+	err := detector.checkStaleRunners(context.Background())
+	require.NoError(t, err)
+}
+
+func TestStaleDetector_CheckStaleRunners_NoLastSeenMarkStaleError(t *testing.T) {
+	s := newTestRunnerStore()
+	s.runners["run_no_lastseen"] = &store.Runner{
+		ID:         "run_no_lastseen",
+		Name:       "no-lastseen-runner",
+		Status:     StatusIdle,
+		LastSeenAt: nil,
+	}
+
+	connMgr := newTestConnManager()
+	connMgr.connected["run_no_lastseen"] = false
+
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	errorStore := &errorTestStore{
+		testStoreWrapper: wrapperStore,
+		updateErr:        errors.New("update failed"),
+	}
+	manager := NewRunnerManager(errorStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		errorStore,
+		connMgr,
+		manager,
+		logger,
+		WithStaleThreshold(30*time.Second),
+	)
+
+	// Should not return error but should log the markStale error
+	err := detector.checkStaleRunners(context.Background())
+	require.NoError(t, err)
+}
+
+func TestStaleDetector_CheckStaleRunners_NilConnManager(t *testing.T) {
+	s := newTestRunnerStore()
+	s.runners["run_no_lastseen"] = &store.Runner{
+		ID:         "run_no_lastseen",
+		Name:       "no-lastseen-runner",
+		Status:     StatusIdle,
+		LastSeenAt: nil,
+	}
+
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, nil, logger)
+
+	detector := NewStaleDetector(
+		wrapperStore,
+		nil, // nil connManager
+		manager,
+		logger,
+		WithStaleThreshold(30*time.Second),
+	)
+
+	// With nil connManager, should skip the no-LastSeenAt check
+	err := detector.checkStaleRunners(context.Background())
+	require.NoError(t, err)
+
+	// Runner should still be idle (not marked offline)
+	assert.Equal(t, StatusIdle, s.runners["run_no_lastseen"].Status)
+}
+
+func TestRunnerManager_OnHeartbeat_NilConnManager(t *testing.T) {
+	s := newTestRunnerStore()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, nil, logger) // nil connManager
+
+	hb := &pb.Heartbeat{Status: StatusIdle}
+
+	err := manager.OnHeartbeat(context.Background(), "run_123", hb)
+	require.NoError(t, err)
+}
+
+func TestStaleDetector_Run_TickerLoop(t *testing.T) {
+	s := newTestRunnerStore()
+	staleTime := time.Now().Add(-2 * time.Minute)
+	s.runners["run_stale"] = &store.Runner{
+		ID:         "run_stale",
+		Name:       "stale-runner",
+		Status:     StatusIdle,
+		LastSeenAt: &staleTime,
+	}
+
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		wrapperStore,
+		connMgr,
+		manager,
+		logger,
+		WithCheckInterval(50*time.Millisecond),
+		WithStaleThreshold(30*time.Second),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	detector.Start(ctx)
+
+	// Wait for at least one tick
+	time.Sleep(100 * time.Millisecond)
+
+	// Stale runner should be marked offline by the ticker
+	assert.Equal(t, StatusOffline, s.runners["run_stale"].Status)
+
+	cancel()
+
+	// Wait for done
+	select {
+	case <-detector.doneCh:
+		// Success
+	case <-time.After(time.Second):
+		t.Fatal("detector did not stop")
+	}
 }
