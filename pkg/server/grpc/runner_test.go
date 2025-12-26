@@ -10,7 +10,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestRunnerService_RegisterRunner(t *testing.T) {
+func TestRunnerService_RegisterRunner_NoRegistry(t *testing.T) {
+	// Test that RegisterRunner fails gracefully when registry is not configured
 	logger := zap.NewNop()
 	svc := NewRunnerService(logger)
 
@@ -21,12 +22,11 @@ func TestRunnerService_RegisterRunner(t *testing.T) {
 	}
 
 	resp, err := svc.RegisterRunner(context.Background(), req)
-	require.NoError(t, err)
+	require.Error(t, err)
 	require.NotNil(t, resp)
 
-	assert.True(t, resp.Accepted)
-	assert.Equal(t, "run_stub", resp.RunnerId)
-	assert.Contains(t, resp.Message, "stub")
+	assert.False(t, resp.Accepted)
+	assert.Contains(t, resp.Message, "registry not configured")
 }
 
 func TestRunnerService_GetRunnerStatus(t *testing.T) {
