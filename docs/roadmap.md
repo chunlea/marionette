@@ -304,27 +304,27 @@
   - [x] Handle connection/disconnection events
   - [x] Update runner status in database
 
-### 2.2 Marionette Agent (Basic)
+### 2.2 Marionette Agent (Basic) ✓
 
-- [ ] Create agent binary (`cmd/agent/main.go`):
-  - [ ] Config loading (server URL, token, labels)
-  - [ ] Graceful shutdown handling
-- [ ] Implement gRPC client (`pkg/agent/client.go`):
-  - [ ] TLS connection to server
-  - [ ] Runner token in metadata
-  - [ ] Automatic reconnection with backoff
-- [ ] Registration flow:
-  - [ ] Call `RegisterRunner` on startup
-  - [ ] Send runner capabilities and labels
-  - [ ] Receive runner ID from server
-- [ ] Heartbeat loop:
-  - [ ] Send `Heartbeat` messages periodically (30s)
-  - [ ] Include status, uptime, resource usage
-  - [ ] Detect server disconnection
-- [ ] Sandbox mode configuration:
-  - [ ] `runner-is-sandbox` - agent runs in isolated container
-  - [ ] `runner-creates-sandbox` - agent creates sandbox per task
-  - [ ] Detect available sandbox types
+- [x] Create agent binary (`cmd/agent/main.go`):
+  - [x] Config loading (server URL, token, labels)
+  - [x] Graceful shutdown handling
+- [x] Implement gRPC client (`pkg/agent/client.go`):
+  - [x] TLS connection to server
+  - [x] Runner token in metadata
+  - [x] Automatic reconnection with backoff
+- [x] Registration flow:
+  - [x] Call `RegisterRunner` on startup
+  - [x] Send runner capabilities and labels
+  - [x] Receive runner ID from server
+- [x] Heartbeat loop:
+  - [x] Send `Heartbeat` messages periodically (30s)
+  - [x] Include status, uptime, resource usage
+  - [x] Detect server disconnection
+- [x] Sandbox mode configuration:
+  - [x] `runner-is-sandbox` - agent runs in isolated container
+  - [x] `runner-creates-sandbox` - agent creates sandbox per task
+  - [x] Detect available sandbox types
 
 ### 2.3 Control Channel (Server Side) ✓
 
