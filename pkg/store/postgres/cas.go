@@ -73,8 +73,18 @@ func (s *Store) IncrementChunkRef(ctx context.Context, tenantID, hash string) er
 	return incrementChunkRef(ctx, s.pool, tenantID, hash)
 }
 
+// IncrementChunkRefCount increments the reference count (alias for IncrementChunkRef).
+func (s *Store) IncrementChunkRefCount(ctx context.Context, tenantID, hash string) error {
+	return incrementChunkRef(ctx, s.pool, tenantID, hash)
+}
+
 // IncrementChunkRef increments the reference count within a transaction.
 func (t *Tx) IncrementChunkRef(ctx context.Context, tenantID, hash string) error {
+	return incrementChunkRef(ctx, t.tx, tenantID, hash)
+}
+
+// IncrementChunkRefCount increments the reference count within a transaction (alias).
+func (t *Tx) IncrementChunkRefCount(ctx context.Context, tenantID, hash string) error {
 	return incrementChunkRef(ctx, t.tx, tenantID, hash)
 }
 
@@ -97,8 +107,18 @@ func (s *Store) DecrementChunkRef(ctx context.Context, tenantID, hash string) er
 	return decrementChunkRef(ctx, s.pool, tenantID, hash)
 }
 
+// DecrementChunkRefCount decrements the reference count (alias for DecrementChunkRef).
+func (s *Store) DecrementChunkRefCount(ctx context.Context, tenantID, hash string) error {
+	return decrementChunkRef(ctx, s.pool, tenantID, hash)
+}
+
 // DecrementChunkRef decrements the reference count within a transaction.
 func (t *Tx) DecrementChunkRef(ctx context.Context, tenantID, hash string) error {
+	return decrementChunkRef(ctx, t.tx, tenantID, hash)
+}
+
+// DecrementChunkRefCount decrements the reference count within a transaction (alias).
+func (t *Tx) DecrementChunkRefCount(ctx context.Context, tenantID, hash string) error {
 	return decrementChunkRef(ctx, t.tx, tenantID, hash)
 }
 
