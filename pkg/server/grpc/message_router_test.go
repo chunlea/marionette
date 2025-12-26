@@ -15,7 +15,9 @@ type mockRunnerManager struct {
 	onConnectCalled    bool
 	onDisconnectCalled bool
 	onHeartbeatCalled  bool
+	setStatusCalled    bool
 	lastHeartbeat      *pb.Heartbeat
+	lastStatus         string
 }
 
 func (m *mockRunnerManager) OnConnect(_ context.Context, _ string) error {
@@ -31,6 +33,12 @@ func (m *mockRunnerManager) OnDisconnect(_ context.Context, _ string) error {
 func (m *mockRunnerManager) OnHeartbeat(_ context.Context, _ string, hb *pb.Heartbeat) error {
 	m.onHeartbeatCalled = true
 	m.lastHeartbeat = hb
+	return nil
+}
+
+func (m *mockRunnerManager) SetStatus(_ context.Context, _ string, status string) error {
+	m.setStatusCalled = true
+	m.lastStatus = status
 	return nil
 }
 
