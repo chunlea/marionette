@@ -1,0 +1,729 @@
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+
+	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/id"
+	"github.com/chunlea/marionette/pkg/store"
+	"go.uber.org/zap"
+)
+
+// Task status constants.
+const (
+	TaskStatusPending   = "pending"
+	TaskStatusRunning   = "running"
+	TaskStatusCompleted = "completed"
+	TaskStatusFailed    = "failed"
+	TaskStatusCanceled  = "canceled"
+)
+
+// TaskRun status constants.
+const (
+	TaskRunStatusPending   = "pending"
+	TaskRunStatusAssigned  = "assigned"
+	TaskRunStatusRunning   = "running"
+	TaskRunStatusCompleted = "completed"
+	TaskRunStatusFailed    = "failed"
+	TaskRunStatusTimeout   = "timeout"
+	TaskRunStatusCanceled  = "canceled"
+)
+
+// Default task configuration.
+const (
+	DefaultTaskTimeoutSeconds = 3600 // 1 hour
+	DefaultMaxRetries         = 0
+)
+
+// Task-related errors.
+var (
+	ErrTaskNotFound             = errors.New("task not found")
+	ErrTaskRunNotFound          = errors.New("task run not found")
+	ErrInvalidTaskTransition    = errors.New("invalid task status transition")
+	ErrInvalidTaskRunTransition = errors.New("invalid task run status transition")
+	ErrTaskAlreadyCompleted     = errors.New("task is already completed")
+	ErrTaskAlreadyCanceled      = errors.New("task is already canceled")
+	ErrSessionRequired          = errors.New("session_id is required")
+	ErrPromptRequired           = errors.New("prompt is required")
+	ErrNoRunnerAttached         = errors.New("no runner attached to session")
+	ErrMaxRetriesExceeded       = errors.New("max retries exceeded")
+)
+
+// CommandSender defines the interface for sending commands to runners.
+// This is implemented by grpc.ConnectionManager.
+type CommandSender interface {
+	SendCommand(runnerID string, cmd *pb.ServerCommand) error
+}
+
+// TaskManagerInterface defines the interface for task management.
+// This is used for dependency injection in other components.
+type TaskManagerInterface interface {
+	Create(ctx context.Context, opts CreateTaskOptions) (*store.Task, error)
+	Get(ctx context.Context, taskID string) (*store.Task, error)
+	List(ctx context.Context, opts ListTasksOptions) (*store.ListResult[store.Task], error)
+	Cancel(ctx context.Context, taskID string) error
+	Execute(ctx context.Context, taskID string) error
+	CreateRun(ctx context.Context, taskID string) (*store.TaskRun, error)
+	OnTaskAccepted(ctx context.Context, runID string) error
+	OnTaskStarted(ctx context.Context, runID string) error
+	OnTaskProgress(ctx context.Context, runID string, progress int) error
+	OnTaskCompleted(ctx context.Context, result *TaskCompletedResult) error
+	FailRun(ctx context.Context, runID, reason string) error
+	ShouldRetry(ctx context.Context, taskID string) (bool, error)
+	Retry(ctx context.Context, taskID string) (*store.TaskRun, error)
+}
+
+// TaskCompletedResult contains the result of a completed task run.
+type TaskCompletedResult struct {
+	RunID        string
+	Success      bool
+	Error        string
+	ExitCode     *int
+	TokensInput  int
+	TokensOutput int
+}
+
+// TaskManager handles task lifecycle and execution.
+type TaskManager struct {
+	store      store.Store
+	cmdSender  CommandSender
+	sessionMgr SessionManagerInterface
+	logger     *zap.Logger
+}
+
+// NewTaskManager creates a new TaskManager.
+func NewTaskManager(
+	store store.Store,
+	cmdSender CommandSender,
+	sessionMgr SessionManagerInterface,
+	logger *zap.Logger,
+) *TaskManager {
+	return &TaskManager{
+		store:      store,
+		cmdSender:  cmdSender,
+		sessionMgr: sessionMgr,
+		logger:     logger,
+	}
+}
+
+// CreateTaskOptions contains options for creating a new task.
+type CreateTaskOptions struct {
+	SessionID      string            // Required
+	Prompt         string            // Required
+	MaxRetries     int               // Default: 0
+	TimeoutSeconds int               // Default: 3600
+	TenantID       *string           // For multi-tenant deployments
+	Labels         map[string]string // Optional metadata labels
+	Annotations    map[string]string // Optional metadata annotations
+}
+
+// ListTasksOptions wraps store.ListTasksOptions for convenience.
+type ListTasksOptions = store.ListTasksOptions
+
+// ListTaskRunsOptions wraps store.ListTaskRunsOptions for convenience.
+type ListTaskRunsOptions = store.ListTaskRunsOptions
+
+// Create creates a new task.
+func (m *TaskManager) Create(ctx context.Context, opts CreateTaskOptions) (*store.Task, error) {
+	// Validate required fields
+	if opts.SessionID == "" {
+		return nil, ErrSessionRequired
+	}
+	if opts.Prompt == "" {
+		return nil, ErrPromptRequired
+	}
+
+	// Validate session exists
+	session, err := m.store.GetSession(ctx, opts.SessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrSessionNotFound
+		}
+		return nil, err
+	}
+
+	// Set defaults
+	timeoutSeconds := opts.TimeoutSeconds
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = DefaultTaskTimeoutSeconds
+	}
+
+	maxRetries := opts.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = DefaultMaxRetries
+	}
+
+	// Marshal labels and annotations
+	labels, err := json.Marshal(opts.Labels)
+	if err != nil {
+		labels = []byte("{}")
+	}
+	annotations, err := json.Marshal(opts.Annotations)
+	if err != nil {
+		annotations = []byte("{}")
+	}
+
+	// Use session's tenant ID if not specified
+	tenantID := opts.TenantID
+	if tenantID == nil {
+		tenantID = session.TenantID
+	}
+
+	// Create task
+	task := &store.Task{
+		ID:             id.Task(),
+		SessionID:      opts.SessionID,
+		Prompt:         opts.Prompt,
+		Status:         TaskStatusPending,
+		MaxRetries:     maxRetries,
+		RetryCount:     0,
+		TimeoutSeconds: timeoutSeconds,
+		TenantID:       tenantID,
+		Labels:         labels,
+		Annotations:    annotations,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	if err := m.store.CreateTask(ctx, task); err != nil {
+		return nil, err
+	}
+
+	m.logger.Info("task created",
+		zap.String("task_id", task.ID),
+		zap.String("session_id", task.SessionID),
+		zap.Int("timeout_seconds", task.TimeoutSeconds),
+		zap.Int("max_retries", task.MaxRetries),
+	)
+
+	return task, nil
+}
+
+// Get retrieves a task by ID.
+func (m *TaskManager) Get(ctx context.Context, taskID string) (*store.Task, error) {
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
+// List retrieves tasks matching the given options.
+func (m *TaskManager) List(ctx context.Context, opts ListTasksOptions) (*store.ListResult[store.Task], error) {
+	return m.store.ListTasks(ctx, opts)
+}
+
+// Cancel cancels a task.
+// This can be called from pending or running state.
+func (m *TaskManager) Cancel(ctx context.Context, taskID string) error {
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrTaskNotFound
+		}
+		return err
+	}
+
+	// Check if already in terminal state
+	if task.Status == TaskStatusCompleted {
+		return ErrTaskAlreadyCompleted
+	}
+	if task.Status == TaskStatusCanceled {
+		return ErrTaskAlreadyCanceled
+	}
+
+	// Update task status
+	updates := store.TaskUpdates{
+		Status: stringPtr(TaskStatusCanceled),
+	}
+
+	if err := m.store.UpdateTask(ctx, taskID, updates); err != nil {
+		return err
+	}
+
+	// Cancel any running task runs
+	runs, err := m.store.ListTaskRuns(ctx, store.ListTaskRunsOptions{
+		TaskID: &taskID,
+		Status: []string{TaskRunStatusPending, TaskRunStatusAssigned, TaskRunStatusRunning},
+	})
+	if err != nil {
+		m.logger.Warn("failed to list task runs for cancellation",
+			zap.String("task_id", taskID),
+			zap.Error(err),
+		)
+	} else {
+		for _, run := range runs.Items {
+			if err := m.cancelRun(ctx, run.ID); err != nil {
+				m.logger.Warn("failed to cancel task run",
+					zap.String("run_id", run.ID),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+
+	m.logger.Info("task canceled",
+		zap.String("task_id", taskID),
+		zap.String("from_status", task.Status),
+	)
+
+	return nil
+}
+
+// Execute sends a task to a runner for execution.
+func (m *TaskManager) Execute(ctx context.Context, taskID string) error {
+	// Get task
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrTaskNotFound
+		}
+		return err
+	}
+
+	// Get session
+	session, err := m.store.GetSession(ctx, task.SessionID)
+	if err != nil {
+		return err
+	}
+
+	// Check if session has a runner
+	if session.RunnerID == nil || *session.RunnerID == "" {
+		return ErrNoRunnerAttached
+	}
+
+	// Create a new task run
+	run, err := m.CreateRun(ctx, taskID)
+	if err != nil {
+		return err
+	}
+
+	// Update task status to running
+	if err := m.store.UpdateTask(ctx, taskID, store.TaskUpdates{
+		Status: stringPtr(TaskStatusRunning),
+	}); err != nil {
+		return err
+	}
+
+	// Send ExecuteTask command to runner
+	// Note: Attempt is bounded by MaxRetries (small value), so int32 conversion is safe
+	cmd := &pb.ServerCommand{
+		Payload: &pb.ServerCommand_ExecuteTask{
+			ExecuteTask: &pb.ExecuteTask{
+				TaskId:    task.ID,
+				RunId:     run.ID,
+				Attempt:   int32(run.Attempt), //nolint:gosec // Attempt is bounded by MaxRetries
+				SessionId: session.ID,
+				Prompt:    task.Prompt,
+				Sandbox: &pb.SandboxConfig{
+					TimeoutSeconds: int64(task.TimeoutSeconds),
+				},
+			},
+		},
+	}
+
+	if err := m.cmdSender.SendCommand(*session.RunnerID, cmd); err != nil {
+		// If we can't send the command, fail the run
+		_ = m.FailRun(ctx, run.ID, "failed to send command to runner: "+err.Error())
+		return err
+	}
+
+	m.logger.Info("task execution started",
+		zap.String("task_id", taskID),
+		zap.String("run_id", run.ID),
+		zap.String("runner_id", *session.RunnerID),
+	)
+
+	return nil
+}
+
+// CreateRun creates a new task run.
+func (m *TaskManager) CreateRun(ctx context.Context, taskID string) (*store.TaskRun, error) {
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+
+	// Get session for runner ID
+	session, err := m.store.GetSession(ctx, task.SessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate attempt number
+	attempt := task.RetryCount + 1
+
+	now := time.Now()
+	run := &store.TaskRun{
+		ID:        id.TaskRun(),
+		TaskID:    taskID,
+		Attempt:   attempt,
+		RunnerID:  session.RunnerID,
+		Status:    TaskRunStatusPending,
+		TenantID:  task.TenantID,
+		QueuedAt:  now,
+		UpdatedAt: now,
+	}
+
+	if err := m.store.CreateTaskRun(ctx, run); err != nil {
+		return nil, err
+	}
+
+	m.logger.Debug("task run created",
+		zap.String("run_id", run.ID),
+		zap.String("task_id", taskID),
+		zap.Int("attempt", attempt),
+	)
+
+	return run, nil
+}
+
+// OnTaskAccepted is called when a runner accepts a task (pending → assigned).
+func (m *TaskManager) OnTaskAccepted(ctx context.Context, runID string) error {
+	run, err := m.store.GetTaskRun(ctx, runID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrTaskRunNotFound
+		}
+		return err
+	}
+
+	if !isValidTaskRunTransition(run.Status, TaskRunStatusAssigned) {
+		m.logger.Warn("invalid task run transition",
+			zap.String("run_id", runID),
+			zap.String("from", run.Status),
+			zap.String("to", TaskRunStatusAssigned),
+		)
+		return ErrInvalidTaskRunTransition
+	}
+
+	now := time.Now()
+	updates := store.TaskRunUpdates{
+		Status:     stringPtr(TaskRunStatusAssigned),
+		AssignedAt: &now,
+	}
+
+	if err := m.store.UpdateTaskRun(ctx, runID, updates); err != nil {
+		return err
+	}
+
+	m.logger.Debug("task run accepted",
+		zap.String("run_id", runID),
+		zap.String("task_id", run.TaskID),
+	)
+
+	return nil
+}
+
+// OnTaskStarted is called when a runner starts executing a task (assigned → running).
+func (m *TaskManager) OnTaskStarted(ctx context.Context, runID string) error {
+	run, err := m.store.GetTaskRun(ctx, runID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrTaskRunNotFound
+		}
+		return err
+	}
+
+	if !isValidTaskRunTransition(run.Status, TaskRunStatusRunning) {
+		m.logger.Warn("invalid task run transition",
+			zap.String("run_id", runID),
+			zap.String("from", run.Status),
+			zap.String("to", TaskRunStatusRunning),
+		)
+		return ErrInvalidTaskRunTransition
+	}
+
+	now := time.Now()
+	updates := store.TaskRunUpdates{
+		Status:    stringPtr(TaskRunStatusRunning),
+		StartedAt: &now,
+	}
+
+	if err := m.store.UpdateTaskRun(ctx, runID, updates); err != nil {
+		return err
+	}
+
+	m.logger.Debug("task run started",
+		zap.String("run_id", runID),
+		zap.String("task_id", run.TaskID),
+	)
+
+	return nil
+}
+
+// OnTaskProgress is called when a runner reports progress.
+// Currently a no-op since we don't store progress in DB, but could be used for real-time updates.
+func (m *TaskManager) OnTaskProgress(_ context.Context, runID string, progress int) error {
+	m.logger.Debug("task run progress",
+		zap.String("run_id", runID),
+		zap.Int("progress", progress),
+	)
+	// Future: emit to websocket subscribers
+	return nil
+}
+
+// OnTaskCompleted is called when a task run completes (running → completed/failed).
+func (m *TaskManager) OnTaskCompleted(ctx context.Context, result *TaskCompletedResult) error {
+	run, err := m.store.GetTaskRun(ctx, result.RunID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrTaskRunNotFound
+		}
+		return err
+	}
+
+	now := time.Now()
+	var runStatus string
+	if result.Success {
+		runStatus = TaskRunStatusCompleted
+	} else {
+		runStatus = TaskRunStatusFailed
+	}
+
+	updates := store.TaskRunUpdates{
+		Status:       stringPtr(runStatus),
+		EndedAt:      &now,
+		TokensInput:  &result.TokensInput,
+		TokensOutput: &result.TokensOutput,
+		ExitCode:     result.ExitCode,
+	}
+
+	if result.Error != "" {
+		updates.Error = &result.Error
+	}
+
+	if err := m.store.UpdateTaskRun(ctx, result.RunID, updates); err != nil {
+		return err
+	}
+
+	// Update task status
+	var taskStatus string
+	switch {
+	case result.Success:
+		taskStatus = TaskStatusCompleted
+	default:
+		// Check if we should retry
+		shouldRetry, retryErr := m.ShouldRetry(ctx, run.TaskID)
+		switch {
+		case retryErr != nil:
+			m.logger.Warn("failed to check retry policy",
+				zap.String("task_id", run.TaskID),
+				zap.Error(retryErr),
+			)
+			taskStatus = TaskStatusFailed
+		case shouldRetry:
+			// Will retry - keep status as running
+			m.logger.Info("task will be retried",
+				zap.String("task_id", run.TaskID),
+				zap.String("run_id", result.RunID),
+			)
+			// Trigger retry asynchronously
+			go func() {
+				retryCtx := context.Background()
+				if _, err := m.Retry(retryCtx, run.TaskID); err != nil {
+					m.logger.Error("failed to retry task",
+						zap.String("task_id", run.TaskID),
+						zap.Error(err),
+					)
+				}
+			}()
+			return nil
+		default:
+			taskStatus = TaskStatusFailed
+		}
+	}
+
+	if err := m.store.UpdateTask(ctx, run.TaskID, store.TaskUpdates{
+		Status: stringPtr(taskStatus),
+	}); err != nil {
+		return err
+	}
+
+	m.logger.Info("task run completed",
+		zap.String("run_id", result.RunID),
+		zap.String("task_id", run.TaskID),
+		zap.Bool("success", result.Success),
+		zap.String("task_status", taskStatus),
+	)
+
+	return nil
+}
+
+// FailRun marks a task run as failed.
+func (m *TaskManager) FailRun(ctx context.Context, runID, reason string) error {
+	now := time.Now()
+	updates := store.TaskRunUpdates{
+		Status:  stringPtr(TaskRunStatusFailed),
+		Error:   &reason,
+		EndedAt: &now,
+	}
+
+	if err := m.store.UpdateTaskRun(ctx, runID, updates); err != nil {
+		return err
+	}
+
+	m.logger.Info("task run failed",
+		zap.String("run_id", runID),
+		zap.String("reason", reason),
+	)
+
+	return nil
+}
+
+// ShouldRetry checks if a task should be retried.
+func (m *TaskManager) ShouldRetry(ctx context.Context, taskID string) (bool, error) {
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		return false, err
+	}
+
+	// Check if we've exceeded max retries
+	if task.RetryCount >= task.MaxRetries {
+		return false, nil
+	}
+
+	// Check if task is in a state that allows retry
+	if task.Status == TaskStatusCompleted || task.Status == TaskStatusCanceled {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// Retry creates a new run for a failed task.
+func (m *TaskManager) Retry(ctx context.Context, taskID string) (*store.TaskRun, error) {
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate retry is allowed
+	if task.RetryCount >= task.MaxRetries {
+		return nil, ErrMaxRetriesExceeded
+	}
+
+	// Increment retry count
+	newRetryCount := task.RetryCount + 1
+	if err := m.store.UpdateTask(ctx, taskID, store.TaskUpdates{
+		RetryCount: &newRetryCount,
+	}); err != nil {
+		return nil, err
+	}
+
+	m.logger.Info("retrying task",
+		zap.String("task_id", taskID),
+		zap.Int("attempt", newRetryCount+1),
+		zap.Int("max_retries", task.MaxRetries),
+	)
+
+	// Execute the task again
+	if err := m.Execute(ctx, taskID); err != nil {
+		return nil, err
+	}
+
+	// Get the newly created run
+	runs, err := m.store.ListTaskRuns(ctx, store.ListTaskRunsOptions{
+		TaskID: &taskID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(runs.Items) == 0 {
+		return nil, errors.New("no runs found after retry")
+	}
+
+	// Return the most recent run (last in list by default ordering)
+	return runs.Items[len(runs.Items)-1], nil
+}
+
+// cancelRun marks a task run as canceled.
+func (m *TaskManager) cancelRun(ctx context.Context, runID string) error {
+	now := time.Now()
+	updates := store.TaskRunUpdates{
+		Status:  stringPtr(TaskRunStatusCanceled),
+		EndedAt: &now,
+	}
+
+	if err := m.store.UpdateTaskRun(ctx, runID, updates); err != nil {
+		return err
+	}
+
+	m.logger.Debug("task run canceled",
+		zap.String("run_id", runID),
+	)
+
+	return nil
+}
+
+// isValidTaskTransition checks if a task status transition is valid.
+//
+// Valid transitions:
+//   - pending → running (execution started)
+//   - running → completed (success)
+//   - running → failed (error)
+//   - pending → canceled
+//   - running → canceled
+func isValidTaskTransition(from, to string) bool {
+	switch from {
+	case TaskStatusPending:
+		return to == TaskStatusRunning || to == TaskStatusCanceled
+	case TaskStatusRunning:
+		return to == TaskStatusCompleted || to == TaskStatusFailed || to == TaskStatusCanceled
+	case TaskStatusCompleted, TaskStatusFailed, TaskStatusCanceled:
+		return false // Terminal states
+	default:
+		return false
+	}
+}
+
+// IsValidTaskTransition is exported for testing.
+func IsValidTaskTransition(from, to string) bool {
+	return isValidTaskTransition(from, to)
+}
+
+// isValidTaskRunTransition checks if a task run status transition is valid.
+//
+// Valid transitions:
+//   - pending → assigned (runner accepts)
+//   - assigned → running (execution starts)
+//   - running → completed/failed/timeout (execution ends)
+//   - pending/assigned/running → canceled
+func isValidTaskRunTransition(from, to string) bool {
+	// Cancel is always allowed from non-terminal states
+	if to == TaskRunStatusCanceled {
+		return from == TaskRunStatusPending ||
+			from == TaskRunStatusAssigned ||
+			from == TaskRunStatusRunning
+	}
+
+	switch from {
+	case TaskRunStatusPending:
+		return to == TaskRunStatusAssigned
+	case TaskRunStatusAssigned:
+		return to == TaskRunStatusRunning
+	case TaskRunStatusRunning:
+		return to == TaskRunStatusCompleted ||
+			to == TaskRunStatusFailed ||
+			to == TaskRunStatusTimeout
+	case TaskRunStatusCompleted, TaskRunStatusFailed, TaskRunStatusTimeout, TaskRunStatusCanceled:
+		return false // Terminal states
+	default:
+		return false
+	}
+}
+
+// IsValidTaskRunTransition is exported for testing.
+func IsValidTaskRunTransition(from, to string) bool {
+	return isValidTaskRunTransition(from, to)
+}
