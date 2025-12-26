@@ -559,7 +559,45 @@
 
 ## Phase 4: HTTP API & CLI
 
-### 4.1 HTTP Server Setup
+### 4.1 CLI Framework ✓
+
+- [x] Set up Cobra CLI framework (`cmd/mctl/`):
+  - [x] Root command with global persistent flags
+  - [x] `--server` / `-s` (API URL)
+  - [x] `--api-key` / `-k` (API Key)
+  - [x] `--output` / `-o` (table|json|yaml)
+  - [x] `--config` (config file path)
+  - [x] `--context` (context name)
+- [x] Config management commands:
+  - [x] `set-context` - Create/update context
+  - [x] `use-context` - Switch active context
+  - [x] `view` - Show config
+  - [x] `delete-context` - Remove context
+  - [x] `get-contexts` - List all contexts
+- [x] Config file at `~/.config/marionette/config.yaml`
+- [x] Environment overrides: `MARIONETTE_API_URL`, `MARIONETTE_API_KEY`, `MARIONETTE_CONTEXT`
+- [x] Define Client interface (`pkg/client/interface.go`)
+- [x] Implement mock client for testing (`pkg/client/mock.go`)
+- [x] Session commands (with mock):
+  - [x] `mctl sessions create`
+  - [x] `mctl sessions list`
+  - [x] `mctl sessions get`
+  - [x] `mctl sessions suspend`
+  - [x] `mctl sessions resume`
+  - [x] `mctl sessions terminate`
+- [x] Task commands (with mock):
+  - [x] `mctl tasks create`
+  - [x] `mctl tasks list`
+  - [x] `mctl tasks get`
+  - [x] `mctl tasks logs`
+  - [x] `mctl tasks cancel`
+- [x] Output formatting:
+  - [x] Table format using `text/tabwriter`
+  - [x] JSON format with `encoding/json`
+  - [x] YAML format with `gopkg.in/yaml.v3`
+- [x] CLI command tests with mock client
+
+### 4.2 HTTP Server Setup
 
 - [ ] Set up HTTP servers:
   - [ ] Port 8080: Public API (API key auth)
@@ -576,7 +614,7 @@
   - [ ] Inject tenant_id into context
   - [ ] Scope checking
 
-### 4.2 Public API Endpoints
+### 4.3 Public API Endpoints
 
 - [ ] Sessions API (`/api/v1/sessions`):
   - [ ] `POST /` - Create session
@@ -603,7 +641,7 @@
   - [ ] `GET /:task_id` - Get task logs
   - [ ] `GET /:task_id/stream` - WebSocket log stream
 
-### 4.3 Admin API Endpoints
+### 4.4 Admin API Endpoints
 
 - [ ] API Keys (`/admin/api/v1/keys`):
   - [ ] `POST /` - Create API key
@@ -624,7 +662,7 @@
   - [ ] `POST /spawn` - Spawn new runner
   - [ ] `DELETE /:id` - Destroy runner
 
-### 4.4 WebSocket Support
+### 4.5 WebSocket Support
 
 - [ ] Log streaming WebSocket:
   - [ ] Endpoint: `/api/v1/logs/:task_id/stream`
@@ -637,7 +675,7 @@
   - [ ] Filter by labels/selectors
   - [ ] Session state changes, task updates, permission requests
 
-### 4.5 OpenAPI Documentation
+### 4.6 OpenAPI Documentation
 
 - [ ] Generate OpenAPI spec:
   - [ ] Use swaggo or manual spec
@@ -648,32 +686,11 @@
   - [ ] Swagger UI at `/docs`
   - [ ] OpenAPI JSON at `/openapi.json`
 
-### 4.6 CLI (mctl)
+### 4.7 CLI Advanced Commands
 
-- [ ] CLI framework setup (`cmd/mctl/`):
-  - [ ] Use cobra for commands
-  - [ ] Config file support (`~/.marionette/config.yaml`)
-  - [ ] Environment variable support
-- [ ] Config commands:
-  - [ ] `mctl config set-context <name> --api-url <url> --api-key <key>`
-  - [ ] `mctl config use-context <name>`
-  - [ ] `mctl config get-contexts`
-  - [ ] `mctl config current-context`
-- [ ] Session commands:
-  - [ ] `mctl sessions create --agent claude --name <name>`
-  - [ ] `mctl sessions list`
-  - [ ] `mctl sessions get <id>`
-  - [ ] `mctl sessions attach <id>` - interactive mode
-  - [ ] `mctl sessions suspend <id>`
-  - [ ] `mctl sessions resume <id>`
-  - [ ] `mctl sessions terminate <id>`
-- [ ] Task commands:
-  - [ ] `mctl tasks create --session <id> --prompt "<prompt>"`
-  - [ ] `mctl tasks create --continue <task_id> --prompt "<prompt>"`
-  - [ ] `mctl tasks list --session <id>`
-  - [ ] `mctl tasks get <id>`
-  - [ ] `mctl tasks logs <id> [--follow]`
-  - [ ] `mctl tasks cancel <id>`
+- [ ] Interactive session commands:
+  - [ ] `mctl sessions attach <id>` - interactive mode with WebSocket
+- [ ] Task retry command:
   - [ ] `mctl tasks retry <id>`
 - [ ] Runner commands:
   - [ ] `mctl runners list`
@@ -690,10 +707,6 @@
   - [ ] `mctl admin agent-configs list`
   - [ ] `mctl admin runners spawn --provider <provider>`
   - [ ] `mctl admin runners destroy <id>`
-- [ ] Output formatting:
-  - [ ] Table format (default)
-  - [ ] JSON format (`--output json`)
-  - [ ] YAML format (`--output yaml`)
 
 ---
 
