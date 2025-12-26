@@ -1316,3 +1316,33 @@ func TestAuthMiddlewareExpired(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
+
+func TestOpenAPIDocumentation(t *testing.T) {
+	srv, _, _ := testServer(t)
+
+	t.Run("swagger UI returns HTML", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "text/html; charset=utf-8", rec.Header().Get("Content-Type"))
+		assert.Contains(t, rec.Body.String(), "<!DOCTYPE html>")
+		assert.Contains(t, rec.Body.String(), "swagger-ui")
+		assert.Contains(t, rec.Body.String(), "Marionette API Documentation")
+	})
+
+	t.Run("openapi spec returns YAML", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "application/yaml", rec.Header().Get("Content-Type"))
+		assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
+		assert.Contains(t, rec.Body.String(), "openapi:")
+		assert.Contains(t, rec.Body.String(), "Marionette API")
+	})
+}
