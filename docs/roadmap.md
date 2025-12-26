@@ -491,36 +491,36 @@
 
 ### 3.5 Agent Execution
 
-- [ ] Agent interface (`pkg/agent/executor/executor.go`):
+- [x] Agent interface (`pkg/agent/executor/executor.go`):
   ```go
   type Executor interface {
       Execute(ctx, task *Task, config *AgentConfig) (*Result, error)
       Kill() error
   }
   ```
-- [ ] Claude Code executor (`pkg/agent/executor/claude/`):
-  - [ ] Spawn Claude Code process via PTY
-  - [ ] Pass API key as environment variable
-  - [ ] Send prompt to stdin
-  - [ ] Stream stdout/stderr
-  - [ ] Handle permission requests
-  - [ ] Capture exit code
-- [ ] Environment setup:
-  - [ ] Set `ANTHROPIC_API_KEY`
-  - [ ] Set working directory to workspace
-  - [ ] Set any extra environment from config
-- [ ] Process management:
-  - [ ] PTY-based process spawning
-  - [ ] Signal handling (SIGTERM, SIGKILL)
-  - [ ] Graceful termination
-  - [ ] Resource cleanup
+- [x] Claude Code executor (`pkg/agent/executor/claude/`):
+  - [x] Spawn Claude Code process via PTY
+  - [x] Pass API key as environment variable
+  - [x] Send prompt to stdin
+  - [x] Stream stdout/stderr
+  - [ ] Handle permission requests (placeholder, G4)
+  - [x] Capture exit code
+- [x] Environment setup:
+  - [x] Set `ANTHROPIC_API_KEY`
+  - [x] Set working directory to workspace
+  - [x] Set any extra environment from config
+- [x] Process management:
+  - [x] PTY-based process spawning
+  - [x] Signal handling (SIGTERM, SIGKILL)
+  - [x] Graceful termination
+  - [x] Resource cleanup
 
 ### 3.6 Log Streaming (Server) ✓
 
-- [ ] Log stream implementation (Agent-side, deferred):
-  - [ ] Agent captures stdout/stderr from executor
-  - [ ] Wrap in `LogEntry` protobuf messages
-  - [ ] Send via `StreamLogs` RPC
+- [x] Log stream implementation (Agent):
+  - [x] Agent captures stdout/stderr from executor
+  - [x] Wrap in `LogEntry` protobuf messages
+  - [x] Send via `StreamLogs` RPC
 - [x] Log entry structure:
   - [x] task_id, run_id, session_id
   - [x] stream (stdout, stderr, system)
@@ -532,9 +532,9 @@
   - [x] Persist logs to database (never drop)
   - [x] Forward to real-time subscribers (stub - can drop under pressure)
 - [x] Batching:
-  - [ ] Buffer logs on agent side (100ms or 100 entries) - Agent-side
+  - [x] Buffer logs on agent side (100ms or 100 entries)
   - [x] Batch insert on server (100 entries)
-  - [x] Flush on stream close
+  - [x] Flush on stream close / task completion
 - [x] Sequence tracking:
   - [x] Monotonic sequence per run
   - [x] Detect gaps for debugging (in log entry metadata)
