@@ -129,6 +129,10 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	r.Get("/health", srv.handleHealth)
 	r.Get("/healthz", srv.handleHealth)
 
+	// Documentation endpoints (no auth required)
+	r.Get("/docs", srv.handleSwaggerUI)
+	r.Get("/openapi.yaml", srv.handleOpenAPISpec)
+
 	// API v1 routes (auth required)
 	r.Route("/api/v1", func(r chi.Router) {
 		// Apply authentication middleware

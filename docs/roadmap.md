@@ -705,16 +705,16 @@
   - [x] `MockEventStreamService` with subscribe/publish
 - [x] WebSocket tests (89.8% coverage for public package)
 
-### 4.7 OpenAPI Documentation
+### 4.7 OpenAPI Documentation ✓
 
-- [ ] Generate OpenAPI spec:
-  - [ ] Use swaggo or manual spec
-  - [ ] Document all endpoints
-  - [ ] Include request/response schemas
-  - [ ] Include authentication requirements
-- [ ] Serve documentation:
-  - [ ] Swagger UI at `/docs`
-  - [ ] OpenAPI JSON at `/openapi.json`
+- [x] Generate OpenAPI spec:
+  - [x] Manual OpenAPI 3.1.0 spec at `api/openapi.yaml`
+  - [x] Document all endpoints (Public API + Admin API)
+  - [x] Include request/response schemas
+  - [x] Include authentication requirements (Bearer token, Basic Auth)
+- [x] Serve documentation:
+  - [x] Swagger UI at `/docs`
+  - [x] OpenAPI YAML at `/openapi.yaml`
 
 ### 4.8 CLI Advanced Commands ✓
 
