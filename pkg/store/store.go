@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
 // Store defines the persistence interface for Marionette.
@@ -145,6 +146,10 @@ type Store interface {
 	DeleteChunk(ctx context.Context, tenantID, hash string) error
 	IncrementChunkRefCount(ctx context.Context, tenantID, hash string) error
 	DecrementChunkRefCount(ctx context.Context, tenantID, hash string) error
+	ListUnreferencedChunks(ctx context.Context, tenantID string, limit int) ([]*Chunk, error)
+	ListSoftDeletedChunks(ctx context.Context, tenantID string, olderThan time.Time, limit int) ([]*Chunk, error)
+	MarkChunkDeleted(ctx context.Context, tenantID, hash string) error
+	ClearChunkDeleted(ctx context.Context, tenantID, hash string) error
 
 	// Manifests
 	CreateManifest(ctx context.Context, manifest *Manifest) error
@@ -303,6 +308,10 @@ type Tx interface {
 	DeleteChunk(ctx context.Context, tenantID, hash string) error
 	IncrementChunkRefCount(ctx context.Context, tenantID, hash string) error
 	DecrementChunkRefCount(ctx context.Context, tenantID, hash string) error
+	ListUnreferencedChunks(ctx context.Context, tenantID string, limit int) ([]*Chunk, error)
+	ListSoftDeletedChunks(ctx context.Context, tenantID string, olderThan time.Time, limit int) ([]*Chunk, error)
+	MarkChunkDeleted(ctx context.Context, tenantID, hash string) error
+	ClearChunkDeleted(ctx context.Context, tenantID, hash string) error
 
 	// Manifests
 	CreateManifest(ctx context.Context, manifest *Manifest) error

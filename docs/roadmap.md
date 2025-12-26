@@ -858,20 +858,20 @@
   - [x] StreamingFileReader for restore
   - [x] Parallel upload with bounded concurrency
 
-### 5.6 Garbage Collection
+### 5.6 Garbage Collection ✓
 
-- [ ] Mark-and-sweep GC (`pkg/jobs/chunk_gc.go`):
-  - [ ] Phase 1: Mark orphaned chunks (ref_count = 0)
-  - [ ] Set deleted_at timestamp (soft delete)
-  - [ ] Phase 2: Sweep after grace period (7 days)
-  - [ ] Re-verify ref_count before physical delete
-- [ ] Chunk resurrection:
-  - [ ] Clear deleted_at if chunk referenced during grace period
-  - [ ] Atomic ref_count update
-- [ ] GC job scheduling:
-  - [ ] Run daily at low-traffic time
-  - [ ] Configurable schedule
-  - [ ] Metrics for deleted chunks
+- [x] Mark-and-sweep GC (`pkg/storage/cas/gc.go`, `pkg/jobs/chunk_gc.go`):
+  - [x] Phase 1: Mark orphaned chunks (ref_count = 0)
+  - [x] Set deleted_at timestamp (soft delete)
+  - [x] Phase 2: Sweep after grace period (7 days)
+  - [x] Re-verify ref_count before physical delete
+- [x] Chunk resurrection:
+  - [x] Clear deleted_at if chunk referenced during grace period
+  - [x] Atomic ref_count update via ResurrectIfNeeded
+- [x] GC job scheduling:
+  - [x] ChunkGCJob for per-tenant periodic GC
+  - [x] ChunkGCScheduler for multi-tenant management
+  - [x] Configurable interval (default: 24h)
 
 ### 5.7 Permission Timeout Suspend
 

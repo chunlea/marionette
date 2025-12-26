@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -248,6 +249,105 @@ func listUnreferencedChunks(ctx context.Context, q querier, tenantID string, lim
 	}
 
 	return chunks, nil
+}
+
+// ListSoftDeletedChunks lists chunks that have been soft-deleted and are past the grace period.
+func (s *Store) ListSoftDeletedChunks(ctx context.Context, tenantID string, olderThan time.Time, limit int) ([]*store.Chunk, error) {
+	return listSoftDeletedChunks(ctx, s.pool, tenantID, olderThan, limit)
+}
+
+// ListSoftDeletedChunks lists soft-deleted chunks within a transaction.
+func (t *Tx) ListSoftDeletedChunks(ctx context.Context, tenantID string, olderThan time.Time, limit int) ([]*store.Chunk, error) {
+	return listSoftDeletedChunks(ctx, t.tx, tenantID, olderThan, limit)
+}
+
+func listSoftDeletedChunks(ctx context.Context, q querier, tenantID string, olderThan time.Time, limit int) ([]*store.Chunk, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s FROM chunks
+		WHERE tenant_id = $1 AND deleted_at IS NOT NULL AND deleted_at < $2
+		ORDER BY deleted_at ASC
+		LIMIT $3`,
+		chunkColumns)
+
+	rows, err := q.Query(ctx, query, tenantID, olderThan, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying soft-deleted chunks: %w", err)
+	}
+	defer rows.Close()
+
+	var chunks []*store.Chunk
+	for rows.Next() {
+		chunk, err := scanChunkFromRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning chunk: %w", err)
+		}
+		chunks = append(chunks, chunk)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating chunks: %w", err)
+	}
+
+	return chunks, nil
+}
+
+// MarkChunkDeleted sets the deleted_at timestamp on a chunk (soft delete).
+func (s *Store) MarkChunkDeleted(ctx context.Context, tenantID, hash string) error {
+	return markChunkDeleted(ctx, s.pool, tenantID, hash)
+}
+
+// MarkChunkDeleted sets deleted_at within a transaction.
+func (t *Tx) MarkChunkDeleted(ctx context.Context, tenantID, hash string) error {
+	return markChunkDeleted(ctx, t.tx, tenantID, hash)
+}
+
+func markChunkDeleted(ctx context.Context, q querier, tenantID, hash string) error {
+	query := `UPDATE chunks SET deleted_at = NOW() WHERE tenant_id = $1 AND hash = $2 AND deleted_at IS NULL`
+	result, err := q.Exec(ctx, query, tenantID, hash)
+	if err != nil {
+		return handlePgError(err, "chunk", hash)
+	}
+
+	if result.RowsAffected() == 0 {
+		// Check if chunk exists
+		checkQuery := `SELECT 1 FROM chunks WHERE tenant_id = $1 AND hash = $2`
+		var exists int
+		err := q.QueryRow(ctx, checkQuery, tenantID, hash).Scan(&exists)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &store.NotFoundError{Resource: "chunk", ID: hash}
+		}
+		// Chunk exists but already deleted - not an error
+	}
+
+	return nil
+}
+
+// ClearChunkDeleted clears the deleted_at timestamp (resurrects a chunk).
+func (s *Store) ClearChunkDeleted(ctx context.Context, tenantID, hash string) error {
+	return clearChunkDeleted(ctx, s.pool, tenantID, hash)
+}
+
+// ClearChunkDeleted clears deleted_at within a transaction.
+func (t *Tx) ClearChunkDeleted(ctx context.Context, tenantID, hash string) error {
+	return clearChunkDeleted(ctx, t.tx, tenantID, hash)
+}
+
+func clearChunkDeleted(ctx context.Context, q querier, tenantID, hash string) error {
+	query := `UPDATE chunks SET deleted_at = NULL WHERE tenant_id = $1 AND hash = $2`
+	result, err := q.Exec(ctx, query, tenantID, hash)
+	if err != nil {
+		return handlePgError(err, "chunk", hash)
+	}
+
+	if result.RowsAffected() == 0 {
+		return &store.NotFoundError{Resource: "chunk", ID: hash}
+	}
+
+	return nil
 }
 
 func scanChunk(row pgx.Row, identifier string) (*store.Chunk, error) {
