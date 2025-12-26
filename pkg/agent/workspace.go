@@ -295,6 +295,12 @@ func (m *WorkspaceManager) Clean(path string) error {
 	return nil
 }
 
+// ResolvePath resolves a workspace path to an absolute path.
+// If absolute, returns the cleaned path; if relative, joins with baseDir.
+func (m *WorkspaceManager) ResolvePath(path string) string {
+	return m.resolvePath(path)
+}
+
 // resolvePath resolves a workspace path.
 // If absolute, returns the cleaned path; if relative, joins with baseDir.
 func (m *WorkspaceManager) resolvePath(path string) string {
