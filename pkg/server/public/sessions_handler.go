@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -190,16 +191,10 @@ func parseIntQuery(r *http.Request, key string, defaultVal int) int {
 	if val == "" {
 		return defaultVal
 	}
-	var result int
-	if _, err := json.Number(val).Int64(); err == nil {
-		if n, err := json.Number(val).Int64(); err == nil {
-			result = int(n)
-		}
+	if n, err := strconv.Atoi(val); err == nil && n > 0 {
+		return n
 	}
-	if result <= 0 {
-		return defaultVal
-	}
-	return result
+	return defaultVal
 }
 
 // parseLabelsQuery parses label query parameters in the format labels[key]=value.

@@ -71,11 +71,16 @@ func (s *Server) AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Update last used timestamp (async to not block request)
-		go func() {
+		go func(keyID string) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_ = s.apiKeyService.UpdateLastUsed(ctx, apiKey.ID)
-		}()
+			if err := s.apiKeyService.UpdateLastUsed(ctx, keyID); err != nil {
+				s.logger.Warn("failed to update API key last used timestamp",
+					zap.String("key_id", keyID),
+					zap.Error(err),
+				)
+			}
+		}(apiKey.ID)
 
 		// Add API key to context
 		ctx := context.WithValue(r.Context(), APIKeyContextKey, apiKey)
