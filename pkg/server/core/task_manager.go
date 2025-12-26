@@ -727,3 +727,239 @@ func isValidTaskRunTransition(from, to string) bool {
 func IsValidTaskRunTransition(from, to string) bool {
 	return isValidTaskRunTransition(from, to)
 }
+
+// Default timeout enforcement configuration.
+const (
+	DefaultTimeoutCheckInterval = 30 * time.Second
+)
+
+// TaskTimeoutEnforcer monitors running tasks and enforces timeouts.
+type TaskTimeoutEnforcer struct {
+	store         store.Store
+	taskMgr       *TaskManager
+	cmdSender     CommandSender
+	checkInterval time.Duration
+	logger        *zap.Logger
+
+	stopCh chan struct{}
+	doneCh chan struct{}
+}
+
+// TaskTimeoutEnforcerOption is a functional option for TaskTimeoutEnforcer.
+type TaskTimeoutEnforcerOption func(*TaskTimeoutEnforcer)
+
+// WithTimeoutCheckInterval sets the check interval for the timeout enforcer.
+func WithTimeoutCheckInterval(d time.Duration) TaskTimeoutEnforcerOption {
+	return func(e *TaskTimeoutEnforcer) {
+		e.checkInterval = d
+	}
+}
+
+// NewTaskTimeoutEnforcer creates a new TaskTimeoutEnforcer.
+func NewTaskTimeoutEnforcer(
+	store store.Store,
+	taskMgr *TaskManager,
+	cmdSender CommandSender,
+	logger *zap.Logger,
+	opts ...TaskTimeoutEnforcerOption,
+) *TaskTimeoutEnforcer {
+	e := &TaskTimeoutEnforcer{
+		store:         store,
+		taskMgr:       taskMgr,
+		cmdSender:     cmdSender,
+		checkInterval: DefaultTimeoutCheckInterval,
+		logger:        logger,
+		stopCh:        make(chan struct{}),
+		doneCh:        make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		opt(e)
+	}
+
+	return e
+}
+
+// Start begins the background timeout enforcement loop.
+func (e *TaskTimeoutEnforcer) Start(ctx context.Context) {
+	e.logger.Info("starting task timeout enforcer",
+		zap.Duration("check_interval", e.checkInterval),
+	)
+
+	go e.run(ctx)
+}
+
+// Stop stops the timeout enforcer.
+func (e *TaskTimeoutEnforcer) Stop() {
+	e.logger.Info("stopping task timeout enforcer")
+	close(e.stopCh)
+	<-e.doneCh
+	e.logger.Info("task timeout enforcer stopped")
+}
+
+// run is the main loop for the timeout enforcer.
+func (e *TaskTimeoutEnforcer) run(ctx context.Context) {
+	defer close(e.doneCh)
+
+	ticker := time.NewTicker(e.checkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-e.stopCh:
+			return
+		case <-ticker.C:
+			if err := e.checkTimeouts(ctx); err != nil {
+				e.logger.Error("failed to check task timeouts", zap.Error(err))
+			}
+		}
+	}
+}
+
+// checkTimeouts checks all running task runs for timeout.
+func (e *TaskTimeoutEnforcer) checkTimeouts(ctx context.Context) error {
+	// Get all running task runs
+	runs, err := e.store.ListTaskRuns(ctx, store.ListTaskRunsOptions{
+		Status: []string{TaskRunStatusRunning},
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(runs.Items) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	timeoutCount := 0
+
+	for _, run := range runs.Items {
+		// Get the task to check timeout
+		task, err := e.store.GetTask(ctx, run.TaskID)
+		if err != nil {
+			e.logger.Warn("failed to get task for timeout check",
+				zap.String("run_id", run.ID),
+				zap.String("task_id", run.TaskID),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// Check if task has exceeded timeout
+		if run.StartedAt == nil {
+			continue
+		}
+
+		elapsed := now.Sub(*run.StartedAt)
+		timeout := time.Duration(task.TimeoutSeconds) * time.Second
+
+		if elapsed > timeout {
+			e.logger.Warn("task run exceeded timeout",
+				zap.String("run_id", run.ID),
+				zap.String("task_id", run.TaskID),
+				zap.Duration("elapsed", elapsed),
+				zap.Duration("timeout", timeout),
+			)
+
+			// Mark run as timed out
+			if err := e.timeoutRun(ctx, run, task); err != nil {
+				e.logger.Error("failed to timeout task run",
+					zap.String("run_id", run.ID),
+					zap.Error(err),
+				)
+				continue
+			}
+			timeoutCount++
+		}
+	}
+
+	if timeoutCount > 0 {
+		e.logger.Info("timed out task runs",
+			zap.Int("count", timeoutCount),
+		)
+	}
+
+	return nil
+}
+
+// timeoutRun marks a task run as timed out and handles cleanup.
+func (e *TaskTimeoutEnforcer) timeoutRun(ctx context.Context, run *store.TaskRun, task *store.Task) error {
+	// Update task run status to timeout
+	now := time.Now()
+	updates := store.TaskRunUpdates{
+		Status:  stringPtr(TaskRunStatusTimeout),
+		Error:   stringPtr("task execution timed out"),
+		EndedAt: &now,
+	}
+
+	if err := e.store.UpdateTaskRun(ctx, run.ID, updates); err != nil {
+		return err
+	}
+
+	// Send kill command to runner if connected
+	if run.RunnerID != nil && e.cmdSender != nil {
+		killCmd := &pb.ServerCommand{
+			Payload: &pb.ServerCommand_KillTask{
+				KillTask: &pb.KillTask{
+					TaskId: task.ID,
+					RunId:  run.ID,
+					Reason: "timeout",
+				},
+			},
+		}
+
+		if err := e.cmdSender.SendCommand(*run.RunnerID, killCmd); err != nil {
+			e.logger.Warn("failed to send kill command to runner",
+				zap.String("run_id", run.ID),
+				zap.String("runner_id", *run.RunnerID),
+				zap.Error(err),
+			)
+			// Continue - the timeout is still recorded
+		}
+	}
+
+	// Check if we should retry
+	if e.taskMgr != nil {
+		shouldRetry, retryErr := e.taskMgr.ShouldRetry(ctx, task.ID)
+		switch {
+		case retryErr != nil:
+			e.logger.Warn("failed to check retry policy after timeout",
+				zap.String("task_id", task.ID),
+				zap.Error(retryErr),
+			)
+		case shouldRetry:
+			e.logger.Info("task will be retried after timeout",
+				zap.String("task_id", task.ID),
+			)
+			// Trigger retry asynchronously
+			go func() {
+				retryCtx := context.Background()
+				if _, err := e.taskMgr.Retry(retryCtx, task.ID); err != nil {
+					e.logger.Error("failed to retry timed out task",
+						zap.String("task_id", task.ID),
+						zap.Error(err),
+					)
+				}
+			}()
+		default:
+			// No more retries - mark task as failed
+			if err := e.store.UpdateTask(ctx, task.ID, store.TaskUpdates{
+				Status: stringPtr(TaskStatusFailed),
+			}); err != nil {
+				e.logger.Warn("failed to mark task as failed after timeout",
+					zap.String("task_id", task.ID),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+
+	e.logger.Info("task run timed out",
+		zap.String("run_id", run.ID),
+		zap.String("task_id", task.ID),
+	)
+
+	return nil
+}
