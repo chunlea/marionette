@@ -161,3 +161,55 @@ func TestMessageRouter_HandleMessage_UnknownType(t *testing.T) {
 	err := router.HandleMessage(context.Background(), "run_123", msg)
 	require.NoError(t, err) // Should handle gracefully
 }
+
+func TestMessageRouter_HandleMessage_SessionAttached(t *testing.T) {
+	logger := zap.NewNop()
+	router := NewMessageRouter(logger, nil)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_SessionAttached{
+			SessionAttached: &pb.SessionAttached{
+				SessionId: "sess_123",
+			},
+		},
+	}
+
+	// Should not error (stub handler)
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+}
+
+func TestMessageRouter_HandleMessage_SessionSuspended(t *testing.T) {
+	logger := zap.NewNop()
+	router := NewMessageRouter(logger, nil)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_SessionSuspended{
+			SessionSuspended: &pb.SessionSuspended{
+				SessionId: "sess_123",
+			},
+		},
+	}
+
+	// Should not error (stub handler)
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+}
+
+func TestMessageRouter_HandleHeartbeat_NilManager(t *testing.T) {
+	logger := zap.NewNop()
+	// Router with nil runnerManager
+	router := NewMessageRouter(logger, nil)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_Heartbeat{
+			Heartbeat: &pb.Heartbeat{
+				Status: "idle",
+			},
+		},
+	}
+
+	// Should not error when runnerManager is nil
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+}

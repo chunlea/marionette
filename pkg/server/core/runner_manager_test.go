@@ -12,14 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// RunnerStore is the minimal interface needed by RunnerManager.
-type RunnerStore interface {
-	GetRunner(ctx context.Context, id string) (*store.Runner, error)
-	UpdateRunner(ctx context.Context, id string, updates store.RunnerUpdates) error
-	ListRunners(ctx context.Context, opts store.ListRunnersOptions) (*store.ListResult[store.Runner], error)
-}
-
-// testRunnerStore implements RunnerStore for testing.
+// testRunnerStore implements store.Store for testing.
 type testRunnerStore struct {
 	runners map[string]*store.Runner
 }
@@ -74,7 +67,8 @@ func (m *testRunnerStore) ListRunners(_ context.Context, opts store.ListRunnersO
 
 // testConnManager implements ConnectionManagerInterface for testing.
 type testConnManager struct {
-	connected map[string]bool
+	connected   map[string]bool
+	lastSeenErr error
 }
 
 func newTestConnManager() *testConnManager {
@@ -88,226 +82,7 @@ func (m *testConnManager) IsConnected(runnerID string) bool {
 }
 
 func (m *testConnManager) UpdateLastSeen(_ string) error {
-	return nil
-}
-
-// testRunnerManager wraps RunnerManager for testing with our mock store.
-type testRunnerManager struct {
-	store       *testRunnerStore
-	connManager *testConnManager
-	logger      *zap.Logger
-}
-
-func newTestRunnerManager() *testRunnerManager {
-	return &testRunnerManager{
-		store:       newTestRunnerStore(),
-		connManager: newTestConnManager(),
-		logger:      zap.NewNop(),
-	}
-}
-
-func (t *testRunnerManager) OnConnect(ctx context.Context, runnerID string) error {
-	_, err := t.store.GetRunner(ctx, runnerID)
-	if err != nil {
-		return err
-	}
-
-	now := time.Now()
-	updates := store.RunnerUpdates{
-		Status:     stringPtr(StatusIdle),
-		LastSeenAt: &now,
-	}
-	return t.store.UpdateRunner(ctx, runnerID, updates)
-}
-
-func (t *testRunnerManager) OnDisconnect(ctx context.Context, runnerID string) error {
-	updates := store.RunnerUpdates{
-		Status: stringPtr(StatusOffline),
-	}
-	return t.store.UpdateRunner(ctx, runnerID, updates)
-}
-
-func (t *testRunnerManager) OnHeartbeat(ctx context.Context, runnerID string, hb *pb.Heartbeat) error {
-	runner, err := t.store.GetRunner(ctx, runnerID)
-	if err != nil {
-		return err
-	}
-
-	now := time.Now()
-	updates := store.RunnerUpdates{
-		LastSeenAt: &now,
-	}
-
-	if hb.GetStatus() != "" && isValidTransition(runner.Status, hb.GetStatus()) {
-		updates.Status = stringPtr(hb.GetStatus())
-	}
-
-	return t.store.UpdateRunner(ctx, runnerID, updates)
-}
-
-func (t *testRunnerManager) SetStatus(ctx context.Context, runnerID, status string) error {
-	runner, err := t.store.GetRunner(ctx, runnerID)
-	if err != nil {
-		return err
-	}
-
-	if !isValidTransition(runner.Status, status) {
-		return ErrInvalidStatusTransition
-	}
-
-	updates := store.RunnerUpdates{
-		Status: &status,
-	}
-	return t.store.UpdateRunner(ctx, runnerID, updates)
-}
-
-func TestRunnerManager_OnConnect(t *testing.T) {
-	tm := newTestRunnerManager()
-	tm.store.runners["run_123"] = &store.Runner{
-		ID:     "run_123",
-		Name:   "test-runner",
-		Status: StatusOffline,
-	}
-
-	err := tm.OnConnect(context.Background(), "run_123")
-	require.NoError(t, err)
-
-	runner := tm.store.runners["run_123"]
-	assert.Equal(t, StatusIdle, runner.Status)
-}
-
-func TestRunnerManager_OnDisconnect(t *testing.T) {
-	tm := newTestRunnerManager()
-	tm.store.runners["run_123"] = &store.Runner{
-		ID:     "run_123",
-		Name:   "test-runner",
-		Status: StatusIdle,
-	}
-
-	err := tm.OnDisconnect(context.Background(), "run_123")
-	require.NoError(t, err)
-
-	runner := tm.store.runners["run_123"]
-	assert.Equal(t, StatusOffline, runner.Status)
-}
-
-func TestRunnerManager_OnHeartbeat(t *testing.T) {
-	tm := newTestRunnerManager()
-	tm.store.runners["run_123"] = &store.Runner{
-		ID:     "run_123",
-		Name:   "test-runner",
-		Status: StatusIdle,
-	}
-
-	hb := &pb.Heartbeat{
-		Status: StatusIdle,
-	}
-
-	err := tm.OnHeartbeat(context.Background(), "run_123", hb)
-	require.NoError(t, err)
-
-	runner := tm.store.runners["run_123"]
-	assert.NotNil(t, runner.LastSeenAt)
-}
-
-func TestRunnerManager_SetStatus(t *testing.T) {
-	tm := newTestRunnerManager()
-	tm.store.runners["run_123"] = &store.Runner{
-		ID:     "run_123",
-		Name:   "test-runner",
-		Status: StatusIdle,
-	}
-
-	err := tm.SetStatus(context.Background(), "run_123", StatusBusy)
-	require.NoError(t, err)
-
-	runner := tm.store.runners["run_123"]
-	assert.Equal(t, StatusBusy, runner.Status)
-}
-
-func TestRunnerManager_SetStatus_InvalidTransition(t *testing.T) {
-	tm := newTestRunnerManager()
-	tm.store.runners["run_123"] = &store.Runner{
-		ID:     "run_123",
-		Name:   "test-runner",
-		Status: StatusOffline,
-	}
-
-	err := tm.SetStatus(context.Background(), "run_123", StatusBusy)
-	assert.ErrorIs(t, err, ErrInvalidStatusTransition)
-}
-
-func TestIsValidTransition(t *testing.T) {
-	tests := []struct {
-		name     string
-		from     string
-		to       string
-		expected bool
-	}{
-		{"offline to idle", StatusOffline, StatusIdle, true},
-		{"offline to busy", StatusOffline, StatusBusy, false},
-		{"offline to offline", StatusOffline, StatusOffline, true},
-		{"idle to busy", StatusIdle, StatusBusy, true},
-		{"idle to idle", StatusIdle, StatusIdle, true},
-		{"idle to offline", StatusIdle, StatusOffline, true},
-		{"idle to paused", StatusIdle, StatusPaused, true},
-		{"busy to idle", StatusBusy, StatusIdle, true},
-		{"busy to busy", StatusBusy, StatusBusy, true},
-		{"busy to offline", StatusBusy, StatusOffline, true},
-		{"paused to idle", StatusPaused, StatusIdle, true},
-		{"paused to busy", StatusPaused, StatusBusy, false},
-		{"paused to offline", StatusPaused, StatusOffline, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsValidTransition(tt.from, tt.to)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestStaleDetector_CheckStaleRunners(t *testing.T) {
-	s := newTestRunnerStore()
-	staleTime := time.Now().Add(-2 * time.Minute)
-	s.runners["run_stale"] = &store.Runner{
-		ID:         "run_stale",
-		Name:       "stale-runner",
-		Status:     StatusIdle,
-		LastSeenAt: &staleTime,
-	}
-
-	freshTime := time.Now()
-	s.runners["run_fresh"] = &store.Runner{
-		ID:         "run_fresh",
-		Name:       "fresh-runner",
-		Status:     StatusIdle,
-		LastSeenAt: &freshTime,
-	}
-
-	connMgr := newTestConnManager()
-	logger := zap.NewNop()
-
-	// Create a wrapper store that calls our test store
-	wrapperStore := &testStoreWrapper{testStore: s}
-	manager := NewRunnerManager(wrapperStore, connMgr, logger)
-
-	detector := NewStaleDetector(
-		wrapperStore,
-		connMgr,
-		manager,
-		logger,
-		WithStaleThreshold(30*time.Second),
-	)
-
-	err := detector.checkStaleRunners(context.Background())
-	require.NoError(t, err)
-
-	// Stale runner should be offline
-	assert.Equal(t, StatusOffline, s.runners["run_stale"].Status)
-
-	// Fresh runner should still be idle
-	assert.Equal(t, StatusIdle, s.runners["run_fresh"].Status)
+	return m.lastSeenErr
 }
 
 // testStoreWrapper wraps testRunnerStore to implement store.Store.
@@ -599,3 +374,495 @@ func (w *testStoreWrapper) DeleteManifest(_ context.Context, _ string) error { r
 func (w *testStoreWrapper) BeginTx(_ context.Context) (store.Tx, error) { return nil, nil }
 func (w *testStoreWrapper) Ping(_ context.Context) error                { return nil }
 func (w *testStoreWrapper) Close() error                                { return nil }
+
+// Helper to create test setup with real RunnerManager
+func setupRunnerManagerTest() (*RunnerManager, *testRunnerStore) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+	return manager, s
+}
+
+// =============================================================================
+// RunnerManager Tests
+// =============================================================================
+
+func TestRunnerManager_OnConnect(t *testing.T) {
+	manager, s := setupRunnerManagerTest()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusOffline,
+	}
+
+	err := manager.OnConnect(context.Background(), "run_123")
+	require.NoError(t, err)
+
+	runner := s.runners["run_123"]
+	assert.Equal(t, StatusIdle, runner.Status)
+	assert.NotNil(t, runner.LastSeenAt)
+}
+
+func TestRunnerManager_OnConnect_RunnerNotFound(t *testing.T) {
+	manager, _ := setupRunnerManagerTest()
+
+	err := manager.OnConnect(context.Background(), "run_nonexistent")
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestRunnerManager_OnConnect_InvalidTransition(t *testing.T) {
+	manager, s := setupRunnerManagerTest()
+	// Runner already busy - invalid transition but allowed for reconnection
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusBusy,
+	}
+
+	// Should succeed anyway (reconnection scenario)
+	err := manager.OnConnect(context.Background(), "run_123")
+	require.NoError(t, err)
+	assert.Equal(t, StatusIdle, s.runners["run_123"].Status)
+}
+
+func TestRunnerManager_OnDisconnect(t *testing.T) {
+	manager, s := setupRunnerManagerTest()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	err := manager.OnDisconnect(context.Background(), "run_123")
+	require.NoError(t, err)
+
+	runner := s.runners["run_123"]
+	assert.Equal(t, StatusOffline, runner.Status)
+}
+
+func TestRunnerManager_OnDisconnect_RunnerNotFound(t *testing.T) {
+	manager, _ := setupRunnerManagerTest()
+
+	err := manager.OnDisconnect(context.Background(), "run_nonexistent")
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestRunnerManager_OnHeartbeat(t *testing.T) {
+	manager, s := setupRunnerManagerTest()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	hb := &pb.Heartbeat{
+		Status: StatusIdle,
+	}
+
+	err := manager.OnHeartbeat(context.Background(), "run_123", hb)
+	require.NoError(t, err)
+
+	runner := s.runners["run_123"]
+	assert.NotNil(t, runner.LastSeenAt)
+}
+
+func TestRunnerManager_OnHeartbeat_WithStatusChange(t *testing.T) {
+	manager, s := setupRunnerManagerTest()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	hb := &pb.Heartbeat{
+		Status: StatusBusy,
+	}
+
+	err := manager.OnHeartbeat(context.Background(), "run_123", hb)
+	require.NoError(t, err)
+
+	runner := s.runners["run_123"]
+	assert.Equal(t, StatusBusy, runner.Status)
+}
+
+func TestRunnerManager_OnHeartbeat_InvalidStatusChange(t *testing.T) {
+	manager, s := setupRunnerManagerTest()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusOffline,
+	}
+
+	hb := &pb.Heartbeat{
+		Status: StatusBusy, // Invalid: offline -> busy
+	}
+
+	err := manager.OnHeartbeat(context.Background(), "run_123", hb)
+	require.NoError(t, err)
+
+	// Status should not change
+	runner := s.runners["run_123"]
+	assert.Equal(t, StatusOffline, runner.Status)
+}
+
+func TestRunnerManager_OnHeartbeat_EmptyStatus(t *testing.T) {
+	manager, s := setupRunnerManagerTest()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	hb := &pb.Heartbeat{
+		Status: "", // Empty status
+	}
+
+	err := manager.OnHeartbeat(context.Background(), "run_123", hb)
+	require.NoError(t, err)
+
+	// Status should not change, but LastSeenAt should be updated
+	runner := s.runners["run_123"]
+	assert.Equal(t, StatusIdle, runner.Status)
+	assert.NotNil(t, runner.LastSeenAt)
+}
+
+func TestRunnerManager_OnHeartbeat_RunnerNotFound(t *testing.T) {
+	manager, _ := setupRunnerManagerTest()
+
+	hb := &pb.Heartbeat{Status: StatusIdle}
+	err := manager.OnHeartbeat(context.Background(), "run_nonexistent", hb)
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestRunnerManager_SetStatus(t *testing.T) {
+	manager, s := setupRunnerManagerTest()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	err := manager.SetStatus(context.Background(), "run_123", StatusBusy)
+	require.NoError(t, err)
+
+	runner := s.runners["run_123"]
+	assert.Equal(t, StatusBusy, runner.Status)
+}
+
+func TestRunnerManager_SetStatus_InvalidTransition(t *testing.T) {
+	manager, s := setupRunnerManagerTest()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusOffline,
+	}
+
+	err := manager.SetStatus(context.Background(), "run_123", StatusBusy)
+	assert.ErrorIs(t, err, ErrInvalidStatusTransition)
+}
+
+func TestRunnerManager_SetStatus_RunnerNotFound(t *testing.T) {
+	manager, _ := setupRunnerManagerTest()
+
+	err := manager.SetStatus(context.Background(), "run_nonexistent", StatusIdle)
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+// =============================================================================
+// IsValidTransition Tests
+// =============================================================================
+
+func TestIsValidTransition(t *testing.T) {
+	tests := []struct {
+		name     string
+		from     string
+		to       string
+		expected bool
+	}{
+		// Offline transitions
+		{"offline to idle", StatusOffline, StatusIdle, true},
+		{"offline to busy", StatusOffline, StatusBusy, false},
+		{"offline to offline", StatusOffline, StatusOffline, true},
+		{"offline to paused", StatusOffline, StatusPaused, true},
+
+		// Idle transitions
+		{"idle to busy", StatusIdle, StatusBusy, true},
+		{"idle to idle", StatusIdle, StatusIdle, true},
+		{"idle to offline", StatusIdle, StatusOffline, true},
+		{"idle to paused", StatusIdle, StatusPaused, true},
+
+		// Busy transitions
+		{"busy to idle", StatusBusy, StatusIdle, true},
+		{"busy to busy", StatusBusy, StatusBusy, true},
+		{"busy to offline", StatusBusy, StatusOffline, true},
+		{"busy to paused", StatusBusy, StatusPaused, true},
+
+		// Paused transitions
+		{"paused to idle", StatusPaused, StatusIdle, true},
+		{"paused to busy", StatusPaused, StatusBusy, false},
+		{"paused to offline", StatusPaused, StatusOffline, true},
+		{"paused to paused", StatusPaused, StatusPaused, true},
+
+		// Unknown status (should allow any transition)
+		{"unknown to idle", "unknown", StatusIdle, true},
+		{"unknown to busy", "unknown", StatusBusy, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsValidTransition(tt.from, tt.to)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// =============================================================================
+// StaleDetector Tests
+// =============================================================================
+
+func TestStaleDetector_CheckStaleRunners(t *testing.T) {
+	s := newTestRunnerStore()
+	staleTime := time.Now().Add(-2 * time.Minute)
+	s.runners["run_stale"] = &store.Runner{
+		ID:         "run_stale",
+		Name:       "stale-runner",
+		Status:     StatusIdle,
+		LastSeenAt: &staleTime,
+	}
+
+	freshTime := time.Now()
+	s.runners["run_fresh"] = &store.Runner{
+		ID:         "run_fresh",
+		Name:       "fresh-runner",
+		Status:     StatusIdle,
+		LastSeenAt: &freshTime,
+	}
+
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		wrapperStore,
+		connMgr,
+		manager,
+		logger,
+		WithStaleThreshold(30*time.Second),
+	)
+
+	err := detector.checkStaleRunners(context.Background())
+	require.NoError(t, err)
+
+	// Stale runner should be offline
+	assert.Equal(t, StatusOffline, s.runners["run_stale"].Status)
+
+	// Fresh runner should still be idle
+	assert.Equal(t, StatusIdle, s.runners["run_fresh"].Status)
+}
+
+func TestStaleDetector_CheckStaleRunners_NoLastSeen(t *testing.T) {
+	s := newTestRunnerStore()
+	// Runner with no LastSeenAt and not connected
+	s.runners["run_no_lastseen"] = &store.Runner{
+		ID:         "run_no_lastseen",
+		Name:       "no-lastseen-runner",
+		Status:     StatusIdle,
+		LastSeenAt: nil,
+	}
+
+	connMgr := newTestConnManager()
+	connMgr.connected["run_no_lastseen"] = false // Not connected
+
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		wrapperStore,
+		connMgr,
+		manager,
+		logger,
+		WithStaleThreshold(30*time.Second),
+	)
+
+	err := detector.checkStaleRunners(context.Background())
+	require.NoError(t, err)
+
+	// Should be marked offline because no LastSeenAt and not connected
+	assert.Equal(t, StatusOffline, s.runners["run_no_lastseen"].Status)
+}
+
+func TestStaleDetector_CheckStaleRunners_NoLastSeenButConnected(t *testing.T) {
+	s := newTestRunnerStore()
+	s.runners["run_connected"] = &store.Runner{
+		ID:         "run_connected",
+		Name:       "connected-runner",
+		Status:     StatusIdle,
+		LastSeenAt: nil,
+	}
+
+	connMgr := newTestConnManager()
+	connMgr.connected["run_connected"] = true // Connected
+
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		wrapperStore,
+		connMgr,
+		manager,
+		logger,
+		WithStaleThreshold(30*time.Second),
+	)
+
+	err := detector.checkStaleRunners(context.Background())
+	require.NoError(t, err)
+
+	// Should NOT be marked offline because it's connected
+	assert.Equal(t, StatusIdle, s.runners["run_connected"].Status)
+}
+
+func TestStaleDetector_WithCheckInterval(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		wrapperStore,
+		connMgr,
+		manager,
+		logger,
+		WithCheckInterval(5*time.Second),
+	)
+
+	assert.Equal(t, 5*time.Second, detector.checkInterval)
+}
+
+func TestStaleDetector_StartStop(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		wrapperStore,
+		connMgr,
+		manager,
+		logger,
+		WithCheckInterval(100*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	detector.Start(ctx)
+
+	// Let it run briefly
+	time.Sleep(50 * time.Millisecond)
+
+	// Stop should complete without hanging
+	done := make(chan struct{})
+	go func() {
+		detector.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(time.Second):
+		t.Fatal("Stop() did not complete in time")
+	}
+}
+
+func TestStaleDetector_ContextCancellation(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+
+	detector := NewStaleDetector(
+		wrapperStore,
+		connMgr,
+		manager,
+		logger,
+		WithCheckInterval(100*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	detector.Start(ctx)
+
+	// Cancel context
+	cancel()
+
+	// doneCh should be closed
+	select {
+	case <-detector.doneCh:
+		// Success
+	case <-time.After(time.Second):
+		t.Fatal("detector did not stop after context cancellation")
+	}
+}
+
+func TestStaleDetector_MarkStale_WithoutRunnerManager(t *testing.T) {
+	s := newTestRunnerStore()
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+
+	// Create detector WITHOUT runner manager
+	detector := NewStaleDetector(
+		wrapperStore,
+		connMgr,
+		nil, // No runner manager
+		logger,
+	)
+
+	err := detector.markStale(context.Background(), "run_123", "test reason")
+	require.NoError(t, err)
+
+	// Should still be marked offline via fallback
+	assert.Equal(t, StatusOffline, s.runners["run_123"].Status)
+}
+
+func TestStaleDetector_MarkStale_RunnerNotFound(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+
+	detector := NewStaleDetector(
+		wrapperStore,
+		connMgr,
+		nil,
+		logger,
+	)
+
+	err := detector.markStale(context.Background(), "run_nonexistent", "test reason")
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+// =============================================================================
+// stringPtr Helper Test
+// =============================================================================
+
+func TestStringPtr(t *testing.T) {
+	ptr := stringPtr("test")
+	require.NotNil(t, ptr)
+	assert.Equal(t, "test", *ptr)
+}
