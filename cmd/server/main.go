@@ -88,6 +88,7 @@ func main() {
 	grpcServer, err := grpcserver.New(grpcserver.Config{
 		Host: cfg.Server.GRPC.Host,
 		Port: cfg.Server.GRPC.Port,
+		TLS:  &cfg.TLS,
 	}, logger)
 	if err != nil {
 		logger.Fatal("failed to create gRPC server", zap.Error(err))
