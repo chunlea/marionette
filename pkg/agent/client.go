@@ -306,6 +306,15 @@ func (c *Client) GRPCClient() pb.RunnerServiceClient {
 	return c.grpcClient
 }
 
+// StreamLogs creates a log streaming client.
+// Returns ErrNotConnected if the client is not connected.
+func (c *Client) StreamLogs(ctx context.Context) (pb.RunnerService_StreamLogsClient, error) {
+	if c.grpcClient == nil {
+		return nil, ErrNotConnected
+	}
+	return c.grpcClient.StreamLogs(ctx)
+}
+
 // Close closes the client connection.
 func (c *Client) Close() error {
 	c.setState(StateStopped)
