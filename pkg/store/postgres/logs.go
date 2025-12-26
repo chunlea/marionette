@@ -70,8 +70,18 @@ func (s *Store) CreateLogBatch(ctx context.Context, logs []*store.Log) error {
 	return createLogBatch(ctx, s.pool, logs)
 }
 
+// CreateLogs creates multiple log entries (alias for CreateLogBatch).
+func (s *Store) CreateLogs(ctx context.Context, logs []*store.Log) error {
+	return createLogBatch(ctx, s.pool, logs)
+}
+
 // CreateLogBatch creates multiple log entries within a transaction.
 func (t *Tx) CreateLogBatch(ctx context.Context, logs []*store.Log) error {
+	return createLogBatch(ctx, t.tx, logs)
+}
+
+// CreateLogs creates multiple log entries within a transaction (alias for CreateLogBatch).
+func (t *Tx) CreateLogs(ctx context.Context, logs []*store.Log) error {
 	return createLogBatch(ctx, t.tx, logs)
 }
 

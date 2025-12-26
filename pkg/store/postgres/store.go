@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"github.com/chunlea/marionette/pkg/store"
 )
 
 // Config holds PostgreSQL connection configuration.
@@ -127,8 +129,7 @@ func (s *Store) Close() error {
 }
 
 // BeginTx starts a new transaction.
-// NOTE: Returns *Tx temporarily; will return store.Tx when all CRUD methods are implemented.
-func (s *Store) BeginTx(ctx context.Context) (*Tx, error) {
+func (s *Store) BeginTx(ctx context.Context) (store.Tx, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("beginning transaction: %w", err)

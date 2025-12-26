@@ -242,9 +242,9 @@
   - [x] Different tenants have different DEKs
   - [x] Tampering detection
 
-### 1.8 Docker Provider (Basic)
+### 1.8 Docker Provider (Basic) ✓
 
-- [ ] Define provider interface (`pkg/provider/provider.go`):
+- [x] Define provider interface (`pkg/provider/provider.go`):
   ```go
   type Provider interface {
       Name() string
@@ -256,29 +256,29 @@
       Capabilities() ProviderCapabilities
   }
   ```
-- [ ] Implement Docker provider (`pkg/provider/docker/`):
-  - [ ] `docker.go` - provider implementation
-  - [ ] Docker client setup (docker.sock or TCP)
-  - [ ] Container creation with labels
-  - [ ] Volume mounts for workspace
-  - [ ] Network configuration (bridge)
-- [ ] Spawn options:
-  - [ ] Image name (default: `marionette/agent:latest`)
-  - [ ] Environment variables
-  - [ ] Resource limits (memory, CPU)
-  - [ ] Labels and annotations
-- [ ] Container lifecycle:
-  - [ ] `Spawn()` - create and start container
-  - [ ] `Destroy()` - stop and remove container
-  - [ ] `Status()` - inspect container state
-- [ ] Provider registry:
-  - [ ] Register providers by name
-  - [ ] Default provider configuration
-  - [ ] Provider config from database
-- [ ] Write provider tests:
-  - [ ] Use testcontainers or mock Docker client
-  - [ ] Test spawn/destroy lifecycle
-  - [ ] Test status reporting
+- [x] Implement Docker provider (`pkg/provider/docker/`):
+  - [x] `docker.go` - provider implementation
+  - [x] Docker client setup (docker.sock or TCP)
+  - [x] Container creation with labels
+  - [x] Volume mounts for workspace
+  - [x] Network configuration (bridge)
+- [x] Spawn options:
+  - [x] Image name (default: `marionette/agent:latest`)
+  - [x] Environment variables
+  - [x] Resource limits (memory, CPU)
+  - [x] Labels and annotations
+- [x] Container lifecycle:
+  - [x] `Spawn()` - create and start container
+  - [x] `Destroy()` - stop and remove container
+  - [x] `Status()` - inspect container state
+- [x] Provider registry:
+  - [x] Register providers by name
+  - [x] Default provider configuration
+  - [x] Provider config from database
+- [x] Write provider tests:
+  - [x] Use testcontainers or mock Docker client
+  - [x] Test spawn/destroy lifecycle
+  - [x] Test status reporting
 
 ---
 

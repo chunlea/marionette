@@ -45,8 +45,28 @@ type ProvidersConfig struct {
 
 // DockerProviderConfig holds Docker-specific provider settings.
 type DockerProviderConfig struct {
-	Image   string `mapstructure:"image"`
+	// Host is the Docker daemon endpoint.
+	// Examples: "unix:///var/run/docker.sock", "tcp://localhost:2376"
+	Host string `mapstructure:"host"`
+
+	// Image is the container image to use for runners.
+	Image string `mapstructure:"image"`
+
+	// Network is the Docker network to attach containers to.
+	// If empty, containers use the default bridge network.
 	Network string `mapstructure:"network"`
+
+	// Resources holds default resource limits for containers.
+	Resources DockerResourcesConfig `mapstructure:"resources"`
+}
+
+// DockerResourcesConfig holds Docker container resource limits.
+type DockerResourcesConfig struct {
+	// Memory is the memory limit (e.g., "2g", "2048m").
+	Memory string `mapstructure:"memory"`
+
+	// CPUs is the CPU limit (e.g., "2", "1.5").
+	CPUs string `mapstructure:"cpus"`
 }
 
 // StorageConfig holds storage backend configuration.
