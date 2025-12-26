@@ -511,55 +511,55 @@
   - [ ] Graceful termination
   - [ ] Resource cleanup
 
-### 3.6 Log Streaming
+### 3.6 Log Streaming (Server) ✓
 
-- [ ] Log stream implementation:
+- [ ] Log stream implementation (Agent-side, deferred):
   - [ ] Agent captures stdout/stderr from executor
   - [ ] Wrap in `LogEntry` protobuf messages
   - [ ] Send via `StreamLogs` RPC
-- [ ] Log entry structure:
-  - [ ] task_id, run_id, session_id
-  - [ ] stream (stdout, stderr, system)
-  - [ ] level (debug, info, warn, error)
-  - [ ] content, sequence number, timestamp
-- [ ] Server-side handling:
-  - [ ] Validate `StreamLogsInit` message
-  - [ ] Verify runner authorization
-  - [ ] Persist logs to database (never drop)
-  - [ ] Forward to real-time subscribers (can drop under pressure)
-- [ ] Batching:
-  - [ ] Buffer logs on agent side (100ms or 100 entries)
-  - [ ] Send batches to reduce RPC overhead
-  - [ ] Flush on task completion
-- [ ] Sequence tracking:
-  - [ ] Monotonic sequence per run
-  - [ ] Detect gaps for debugging
-  - [ ] Re-order if needed on server
+- [x] Log entry structure:
+  - [x] task_id, run_id, session_id
+  - [x] stream (stdout, stderr, system)
+  - [x] level (debug, info, warn, error)
+  - [x] content, sequence number, timestamp
+- [x] Server-side handling:
+  - [x] Validate `StreamLogsInit` message
+  - [x] Verify runner authorization
+  - [x] Persist logs to database (never drop)
+  - [x] Forward to real-time subscribers (stub - can drop under pressure)
+- [x] Batching:
+  - [ ] Buffer logs on agent side (100ms or 100 entries) - Agent-side
+  - [x] Batch insert on server (100 entries)
+  - [x] Flush on stream close
+- [x] Sequence tracking:
+  - [x] Monotonic sequence per run
+  - [x] Detect gaps for debugging (in log entry metadata)
+  - [x] Store sequence in database
 
-### 3.7 Permission Handling
+### 3.7 Permission Handling (Server) ✓
 
-- [ ] Permission request detection:
+- [ ] Permission request detection (Agent-side, deferred):
   - [ ] Parse Claude Code output for permission patterns
   - [ ] Extract tool name, action, context
   - [ ] Determine risk level
-- [ ] Permission request flow:
-  - [ ] Agent sends `PermissionRequest` message
-  - [ ] Server creates permission_request record
-  - [ ] Server notifies subscribers (WebSocket, webhook)
-  - [ ] Agent blocks waiting for response
-- [ ] Permission response flow:
-  - [ ] User approves/denies via API or WebUI
-  - [ ] Server sends `ApprovePermission` command
-  - [ ] Agent receives and unblocks executor
-  - [ ] Executor continues or handles denial
-- [ ] Timeout handling:
-  - [ ] `suspend_after_seconds`: auto-suspend session (default: 30 min)
-  - [ ] Permission stays pending (no auto-deny)
-  - [ ] On resume: deliver cached response to agent
-- [ ] Permission caching:
-  - [ ] Store response in database
-  - [ ] Include `responded_by`, `response_reason`
-  - [ ] Deliver on session resume via `pending_permissions`
+- [x] Permission request flow:
+  - [x] Agent sends `PermissionRequest` message
+  - [x] Server creates permission_request record (PermissionManager)
+  - [x] MessageRouter routes to PermissionManager
+  - [ ] Server notifies subscribers (WebSocket, webhook) - Phase 4
+- [x] Permission response flow:
+  - [x] User approves/denies via API (PermissionManager.Respond)
+  - [x] Server sends `ApprovePermission` command
+  - [x] Session resumed if suspended
+  - [ ] Agent receives and unblocks executor - Agent-side
+- [x] Timeout handling:
+  - [x] `suspend_after_seconds`: auto-suspend session (PermissionTimeoutEnforcer)
+  - [x] Permission stays pending (no auto-deny)
+  - [ ] On resume: deliver cached response to agent - Agent-side
+- [x] Permission caching:
+  - [x] Store response in database
+  - [x] Include `responded_by`, `response_reason`, `responded_at`
+  - [ ] Deliver on session resume via `pending_permissions` - Agent-side
 
 ---
 
