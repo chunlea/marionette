@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -14,18 +15,74 @@ import (
 // Server is the admin API HTTP server.
 type Server struct {
 	server *http.Server
+	router chi.Router
 	logger *zap.Logger
+
+	// Services
+	apiKeys         APIKeyService
+	agentConfigs    AgentConfigService
+	providerConfigs ProviderConfigService
+	runners         RunnerAdminService
+
+	// Basic auth credentials
+	username string
+	password string
 }
 
 // Config holds configuration for the admin server.
 type Config struct {
-	Host string
-	Port int
+	Host     string
+	Port     int
+	Username string // Basic auth username
+	Password string // Basic auth password
+}
+
+// Option is a functional option for configuring the server.
+type Option func(*Server)
+
+// WithAPIKeyService sets the API key service.
+func WithAPIKeyService(s APIKeyService) Option {
+	return func(srv *Server) {
+		srv.apiKeys = s
+	}
+}
+
+// WithAgentConfigService sets the agent config service.
+func WithAgentConfigService(s AgentConfigService) Option {
+	return func(srv *Server) {
+		srv.agentConfigs = s
+	}
+}
+
+// WithProviderConfigService sets the provider config service.
+func WithProviderConfigService(s ProviderConfigService) Option {
+	return func(srv *Server) {
+		srv.providerConfigs = s
+	}
+}
+
+// WithRunnerAdminService sets the runner admin service.
+func WithRunnerAdminService(s RunnerAdminService) Option {
+	return func(srv *Server) {
+		srv.runners = s
+	}
 }
 
 // New creates a new admin server.
-func New(cfg Config, logger *zap.Logger) *Server {
+func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
+	srv := &Server{
+		logger:   logger,
+		username: cfg.Username,
+		password: cfg.Password,
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(srv)
+	}
+
 	r := chi.NewRouter()
+	srv.router = r
 
 	// Middleware
 	r.Use(middleware.RequestID)
@@ -33,26 +90,72 @@ func New(cfg Config, logger *zap.Logger) *Server {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
 
-	// Health endpoints
+	// Health endpoints (no auth required)
 	r.Get("/health", healthHandler)
 	r.Get("/healthz", healthHandler)
 
 	// Status endpoint - returns all service statuses
 	r.Get("/api/status", statusHandler)
 
+	// Admin API routes (with basic auth)
+	r.Route("/admin/api/v1", func(r chi.Router) {
+		// Apply basic auth middleware if credentials are set
+		if srv.username != "" && srv.password != "" {
+			r.Use(srv.BasicAuthMiddleware)
+		}
+
+		// API Keys
+		r.Route("/keys", func(r chi.Router) {
+			r.Post("/", srv.handleCreateAPIKey)
+			r.Get("/", srv.handleListAPIKeys)
+			r.Get("/{keyID}", srv.handleGetAPIKey)
+			r.Delete("/{keyID}", srv.handleRevokeAPIKey)
+		})
+
+		// Agent Configs
+		r.Route("/agent-configs", func(r chi.Router) {
+			r.Post("/", srv.handleCreateAgentConfig)
+			r.Get("/", srv.handleListAgentConfigs)
+			r.Get("/{configID}", srv.handleGetAgentConfig)
+			r.Put("/{configID}", srv.handleUpdateAgentConfig)
+			r.Delete("/{configID}", srv.handleDeleteAgentConfig)
+		})
+
+		// Provider Configs
+		r.Route("/provider-configs", func(r chi.Router) {
+			r.Post("/", srv.handleCreateProviderConfig)
+			r.Get("/", srv.handleListProviderConfigs)
+			r.Get("/{configID}", srv.handleGetProviderConfig)
+			r.Put("/{configID}", srv.handleUpdateProviderConfig)
+			r.Delete("/{configID}", srv.handleDeleteProviderConfig)
+		})
+
+		// Runners
+		r.Route("/runners", func(r chi.Router) {
+			r.Post("/spawn", srv.handleSpawnRunner)
+			r.Get("/", srv.handleListRunners)
+			r.Get("/{runnerID}", srv.handleGetRunner)
+			r.Delete("/{runnerID}", srv.handleDestroyRunner)
+		})
+	})
+
 	// Serve embedded frontend for all other routes
 	r.Handle("/*", staticHandler())
 
-	return &Server{
-		server: &http.Server{
-			Addr:         fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-			Handler:      r,
-			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 30 * time.Second,
-			IdleTimeout:  60 * time.Second,
-		},
-		logger: logger,
+	srv.server = &http.Server{
+		Addr:         fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		Handler:      r,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
+
+	return srv
+}
+
+// Router returns the chi router for testing.
+func (s *Server) Router() chi.Router {
+	return s.router
 }
 
 // Start starts the admin server.
@@ -68,4 +171,24 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down admin API server")
 	return s.server.Shutdown(ctx)
+}
+
+// WriteJSON writes a JSON response.
+func WriteJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if v != nil {
+		_ = json.NewEncoder(w).Encode(v)
+	}
+}
+
+// ErrorResponse represents an error response.
+type ErrorResponse struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// WriteError writes an error response.
+func WriteError(w http.ResponseWriter, status int, code, message string) {
+	WriteJSON(w, status, ErrorResponse{Code: code, Message: message})
 }

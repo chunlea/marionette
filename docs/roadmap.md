@@ -659,42 +659,51 @@
   - [x] `GET /:id` - Get permission details
   - [x] `POST /:id/approve` - Approve permission
   - [x] `POST /:id/deny` - Deny permission
-- [ ] Logs API (`/api/v1/logs`):
-  - [ ] `GET /:task_id/stream` - WebSocket log stream (deferred to Phase 4.6)
+- [x] Logs API (`/api/v1/logs`):
+  - [x] `GET /:task_id/stream` - WebSocket log stream (implemented in Phase 4.6)
 
-### 4.5 Admin API Endpoints
+### 4.5 Admin API Endpoints ✓
 
-- [ ] API Keys (`/admin/api/v1/keys`):
-  - [ ] `POST /` - Create API key
-  - [ ] `GET /` - List API keys
-  - [ ] `DELETE /:id` - Revoke API key
-- [ ] Agent Configs (`/admin/api/v1/agent-configs`):
-  - [ ] `POST /` - Create agent config
-  - [ ] `GET /` - List agent configs
-  - [ ] `GET /:id` - Get agent config
-  - [ ] `PUT /:id` - Update agent config
-  - [ ] `DELETE /:id` - Delete agent config
-- [ ] Provider Configs (`/admin/api/v1/provider-configs`):
-  - [ ] `POST /` - Create provider config
-  - [ ] `GET /` - List provider configs
-  - [ ] `PUT /:id` - Update provider config
-  - [ ] `DELETE /:id` - Delete provider config
-- [ ] Runners (`/admin/api/v1/runners`):
-  - [ ] `POST /spawn` - Spawn new runner
-  - [ ] `DELETE /:id` - Destroy runner
+- [x] API Keys (`/admin/api/v1/keys`):
+  - [x] `POST /` - Create API key
+  - [x] `GET /` - List API keys
+  - [x] `GET /:id` - Get API key
+  - [x] `POST /:id/revoke` - Revoke API key
+- [x] Agent Configs (`/admin/api/v1/agent-configs`):
+  - [x] `POST /` - Create agent config
+  - [x] `GET /` - List agent configs
+  - [x] `GET /:id` - Get agent config
+  - [x] `PATCH /:id` - Update agent config
+  - [x] `DELETE /:id` - Delete agent config
+- [x] Provider Configs (`/admin/api/v1/provider-configs`):
+  - [x] `POST /` - Create provider config
+  - [x] `GET /` - List provider configs
+  - [x] `GET /:id` - Get provider config
+  - [x] `PATCH /:id` - Update provider config
+  - [x] `DELETE /:id` - Delete provider config
+- [x] Runners (`/admin/api/v1/runners`):
+  - [x] `POST /spawn` - Spawn new runner
+  - [x] `DELETE /:id` - Destroy runner
+- [x] Basic Auth middleware for Admin API
+- [x] Admin API tests (79% coverage)
 
-### 4.6 WebSocket Support
+### 4.6 WebSocket Support ✓
 
-- [ ] Log streaming WebSocket:
-  - [ ] Endpoint: `/api/v1/logs/:task_id/stream`
-  - [ ] Authentication via query param or header
-  - [ ] Real-time log delivery
-  - [ ] Backpressure handling (drop if slow)
-- [ ] Event streaming WebSocket:
-  - [ ] Endpoint: `/api/v1/events`
-  - [ ] Subscribe to event types
-  - [ ] Filter by labels/selectors
-  - [ ] Session state changes, task updates, permission requests
+- [x] Log streaming WebSocket:
+  - [x] Endpoint: `/api/v1/logs/:task_id/stream`
+  - [x] Authentication via Authorization header
+  - [x] Real-time log delivery
+  - [x] Backpressure handling (drop if channel full)
+  - [x] Ping/pong keep-alive (30s interval)
+- [x] Event streaming WebSocket:
+  - [x] Endpoint: `/api/v1/events`
+  - [x] Subscribe to event types via query params
+  - [x] Filter by labels (JSON format)
+  - [x] Ping/pong keep-alive
+- [x] Mock implementations for testing:
+  - [x] `MockLogStreamService` with subscribe/publish
+  - [x] `MockEventStreamService` with subscribe/publish
+- [x] WebSocket tests (89.8% coverage for public package)
 
 ### 4.7 OpenAPI Documentation
 

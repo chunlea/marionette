@@ -27,6 +27,10 @@ type Server struct {
 	runners     RunnerService
 	permissions PermissionService
 
+	// Streaming services
+	logStream   LogStreamService
+	eventStream EventStreamService
+
 	// Auth
 	apiKeyService *auth.APIKeyService
 }
@@ -72,6 +76,20 @@ func WithPermissionService(s PermissionService) Option {
 func WithAPIKeyService(s *auth.APIKeyService) Option {
 	return func(srv *Server) {
 		srv.apiKeyService = s
+	}
+}
+
+// WithLogStreamService sets the log stream service for WebSocket log streaming.
+func WithLogStreamService(s LogStreamService) Option {
+	return func(srv *Server) {
+		srv.logStream = s
+	}
+}
+
+// WithEventStreamService sets the event stream service for WebSocket event streaming.
+func WithEventStreamService(s EventStreamService) Option {
+	return func(srv *Server) {
+		srv.eventStream = s
 	}
 }
 
@@ -149,6 +167,13 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.With(RequireScope("permissions:write")).Post("/{permissionID}/approve", srv.handleApprovePermission)
 			r.With(RequireScope("permissions:write")).Post("/{permissionID}/deny", srv.handleDenyPermission)
 		})
+
+		// WebSocket endpoints
+		r.Route("/logs", func(r chi.Router) {
+			r.With(RequireScope("tasks:read")).Get("/{taskID}/stream", srv.handleLogStream)
+		})
+
+		r.With(RequireScope("events:read")).Get("/events", srv.handleEventStream)
 	})
 
 	srv.server = &http.Server{
