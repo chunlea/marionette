@@ -291,3 +291,183 @@ func IsValidTransition(from, to string) bool {
 func stringPtr(s string) *string {
 	return &s
 }
+
+// Default stale detection configuration.
+const (
+	DefaultCheckInterval  = 30 * time.Second // How often to check for stale runners
+	DefaultStaleThreshold = 90 * time.Second // 3 missed heartbeats (30s interval)
+)
+
+// StaleDetector monitors runners and marks stale ones as offline.
+type StaleDetector struct {
+	store          store.Store
+	connManager    ConnectionManagerInterface
+	runnerManager  *RunnerManager
+	checkInterval  time.Duration
+	staleThreshold time.Duration
+	logger         *zap.Logger
+
+	stopCh chan struct{}
+	doneCh chan struct{}
+}
+
+// StaleDetectorOption is a functional option for StaleDetector.
+type StaleDetectorOption func(*StaleDetector)
+
+// WithCheckInterval sets the check interval for the stale detector.
+func WithCheckInterval(d time.Duration) StaleDetectorOption {
+	return func(sd *StaleDetector) {
+		sd.checkInterval = d
+	}
+}
+
+// WithStaleThreshold sets the stale threshold for the stale detector.
+func WithStaleThreshold(d time.Duration) StaleDetectorOption {
+	return func(sd *StaleDetector) {
+		sd.staleThreshold = d
+	}
+}
+
+// NewStaleDetector creates a new StaleDetector.
+func NewStaleDetector(
+	store store.Store,
+	connManager ConnectionManagerInterface,
+	runnerManager *RunnerManager,
+	logger *zap.Logger,
+	opts ...StaleDetectorOption,
+) *StaleDetector {
+	sd := &StaleDetector{
+		store:          store,
+		connManager:    connManager,
+		runnerManager:  runnerManager,
+		checkInterval:  DefaultCheckInterval,
+		staleThreshold: DefaultStaleThreshold,
+		logger:         logger,
+		stopCh:         make(chan struct{}),
+		doneCh:         make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		opt(sd)
+	}
+
+	return sd
+}
+
+// Start begins the background stale detection loop.
+func (sd *StaleDetector) Start(ctx context.Context) {
+	sd.logger.Info("starting stale detector",
+		zap.Duration("check_interval", sd.checkInterval),
+		zap.Duration("stale_threshold", sd.staleThreshold),
+	)
+
+	go sd.run(ctx)
+}
+
+// Stop stops the stale detector.
+func (sd *StaleDetector) Stop() {
+	sd.logger.Info("stopping stale detector")
+	close(sd.stopCh)
+	<-sd.doneCh
+	sd.logger.Info("stale detector stopped")
+}
+
+// run is the main loop for the stale detector.
+func (sd *StaleDetector) run(ctx context.Context) {
+	defer close(sd.doneCh)
+
+	ticker := time.NewTicker(sd.checkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-sd.stopCh:
+			return
+		case <-ticker.C:
+			if err := sd.checkStaleRunners(ctx); err != nil {
+				sd.logger.Error("failed to check stale runners", zap.Error(err))
+			}
+		}
+	}
+}
+
+// checkStaleRunners checks all connected runners and marks stale ones as offline.
+func (sd *StaleDetector) checkStaleRunners(ctx context.Context) error {
+	// Get all runners that are online (idle, busy, or paused)
+	runners, err := sd.store.ListRunners(ctx, store.ListRunnersOptions{
+		Status: []string{StatusIdle, StatusBusy, StatusPaused},
+	})
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	staleCount := 0
+
+	for _, runner := range runners.Items {
+		// Check if runner has been seen recently
+		if runner.LastSeenAt == nil {
+			// No last_seen, assume stale if not connected
+			if sd.connManager != nil && !sd.connManager.IsConnected(runner.ID) {
+				if err := sd.markStale(ctx, runner.ID, "no heartbeat received"); err != nil {
+					sd.logger.Error("failed to mark runner as stale",
+						zap.String("runner_id", runner.ID),
+						zap.Error(err),
+					)
+				} else {
+					staleCount++
+				}
+			}
+			continue
+		}
+
+		// Check if last seen is beyond threshold
+		age := now.Sub(*runner.LastSeenAt)
+		if age > sd.staleThreshold {
+			sd.logger.Warn("runner is stale",
+				zap.String("runner_id", runner.ID),
+				zap.String("name", runner.Name),
+				zap.Duration("age", age),
+				zap.Time("last_seen", *runner.LastSeenAt),
+			)
+
+			if err := sd.markStale(ctx, runner.ID, "heartbeat timeout"); err != nil {
+				sd.logger.Error("failed to mark runner as stale",
+					zap.String("runner_id", runner.ID),
+					zap.Error(err),
+				)
+			} else {
+				staleCount++
+			}
+		}
+	}
+
+	if staleCount > 0 {
+		sd.logger.Info("marked stale runners as offline",
+			zap.Int("count", staleCount),
+		)
+	}
+
+	return nil
+}
+
+// markStale marks a runner as offline due to staleness.
+func (sd *StaleDetector) markStale(ctx context.Context, runnerID, reason string) error {
+	sd.logger.Info("marking runner as stale",
+		zap.String("runner_id", runnerID),
+		zap.String("reason", reason),
+	)
+
+	// Use runner manager to handle disconnect (handles in-flight tasks, sessions, etc.)
+	if sd.runnerManager != nil {
+		return sd.runnerManager.OnDisconnect(ctx, runnerID)
+	}
+
+	// Fallback: directly update status
+	updates := store.RunnerUpdates{
+		Status: stringPtr(StatusOffline),
+	}
+	return sd.store.UpdateRunner(ctx, runnerID, updates)
+}
