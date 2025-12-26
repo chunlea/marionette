@@ -828,7 +828,7 @@ func TestIntegration_StreamLogs(t *testing.T) {
 	// Close and get response
 	resp, err := stream.CloseAndRecv()
 	require.NoError(t, err)
-	assert.Equal(t, int64(11), resp.LogsReceived) // 1 init + 10 log entries
+	assert.Equal(t, int64(10), resp.LogsReceived) // 10 log entries (init not counted)
 }
 
 // TestIntegration_RegisterRunner tests runner registration.
