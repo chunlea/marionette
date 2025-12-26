@@ -618,49 +618,49 @@
   - [x] `NotAuthorizedError` - Permission denied
 - [x] Comprehensive mock service tests
 
-### 4.3 HTTP Server Setup
+### 4.3 HTTP Server Setup ✓
 
-- [ ] Set up HTTP servers:
-  - [ ] Port 8080: Public API (API key auth)
-  - [ ] Port 8081: Admin API (Basic Auth)
-- [ ] Middleware stack:
-  - [ ] Request ID injection
-  - [ ] Structured logging
-  - [ ] Panic recovery
-  - [ ] CORS (configurable)
-  - [ ] Rate limiting (optional)
-- [ ] Authentication middleware:
-  - [ ] Extract `Authorization: Bearer <token>` header
-  - [ ] Validate API key
-  - [ ] Inject tenant_id into context
-  - [ ] Scope checking
+- [x] Set up HTTP servers:
+  - [x] Port 8080: Public API (API key auth)
+  - [ ] Port 8081: Admin API (Basic Auth) - deferred to Phase 4.5
+- [x] Middleware stack:
+  - [x] Request ID injection
+  - [x] Structured logging
+  - [x] Panic recovery
+  - [x] CORS (configurable)
+  - [ ] Rate limiting (optional) - deferred
+- [x] Authentication middleware:
+  - [x] Extract `Authorization: Bearer <token>` header
+  - [x] Validate API key
+  - [ ] Inject tenant_id into context - deferred to tenant isolation
+  - [x] Scope checking
 
-### 4.4 Public API Endpoints
+### 4.4 Public API Endpoints ✓
 
-- [ ] Sessions API (`/api/v1/sessions`):
-  - [ ] `POST /` - Create session
-  - [ ] `GET /` - List sessions
-  - [ ] `GET /:id` - Get session
-  - [ ] `POST /:id/suspend` - Suspend session
-  - [ ] `POST /:id/resume` - Resume session
-  - [ ] `DELETE /:id` - Terminate session
-- [ ] Tasks API (`/api/v1/tasks`):
-  - [ ] `POST /` - Create task (with session_id)
-  - [ ] `GET /` - List tasks (filter by session)
-  - [ ] `GET /:id` - Get task
-  - [ ] `POST /:id/cancel` - Cancel task
-  - [ ] `POST /:id/retry` - Retry task
-- [ ] Runners API (`/api/v1/runners`):
-  - [ ] `GET /` - List runners
-  - [ ] `GET /:id` - Get runner
-- [ ] Permissions API (`/api/v1/permissions`):
-  - [ ] `GET /` - List pending permissions
-  - [ ] `GET /:id` - Get permission details
-  - [ ] `POST /:id/approve` - Approve permission
-  - [ ] `POST /:id/deny` - Deny permission
+- [x] Sessions API (`/api/v1/sessions`):
+  - [x] `POST /` - Create session
+  - [x] `GET /` - List sessions
+  - [x] `GET /:id` - Get session
+  - [x] `POST /:id/suspend` - Suspend session
+  - [x] `POST /:id/resume` - Resume session
+  - [x] `DELETE /:id` - Terminate session
+- [x] Tasks API (`/api/v1/tasks`):
+  - [x] `POST /` - Create task (with session_id)
+  - [x] `GET /` - List tasks (filter by session)
+  - [x] `GET /:id` - Get task
+  - [x] `POST /:id/cancel` - Cancel task
+  - [x] `POST /:id/retry` - Retry task
+  - [x] `GET /:id/logs` - Get task logs
+- [x] Runners API (`/api/v1/runners`):
+  - [x] `GET /` - List runners
+  - [x] `GET /:id` - Get runner
+- [x] Permissions API (`/api/v1/permissions`):
+  - [x] `GET /` - List pending permissions
+  - [x] `GET /:id` - Get permission details
+  - [x] `POST /:id/approve` - Approve permission
+  - [x] `POST /:id/deny` - Deny permission
 - [ ] Logs API (`/api/v1/logs`):
-  - [ ] `GET /:task_id` - Get task logs
-  - [ ] `GET /:task_id/stream` - WebSocket log stream
+  - [ ] `GET /:task_id/stream` - WebSocket log stream (deferred to Phase 4.6)
 
 ### 4.5 Admin API Endpoints
 
