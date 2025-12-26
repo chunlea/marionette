@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -199,4 +200,61 @@ func TestRegistry_DefaultName(t *testing.T) {
 
 	r.SetDefault("my-default")
 	assert.Equal(t, "my-default", r.DefaultName())
+}
+
+func TestRegistry_CreateFromConfig_NoFactory(t *testing.T) {
+	r := NewRegistry(nil)
+
+	cfg := &store.ProviderConfig{
+		Name:     "test-config",
+		Provider: "unknown",
+		Config:   json.RawMessage(`{}`),
+	}
+
+	_, err := r.CreateFromConfig(cfg)
+	assert.Error(t, err)
+
+	var notFoundErr *ErrProviderNotFound
+	assert.ErrorAs(t, err, &notFoundErr)
+}
+
+func TestRegistry_LoadFromDB_NoStore(t *testing.T) {
+	r := NewRegistry(nil)
+
+	_, err := r.Get(context.Background(), "nonexistent")
+	assert.Error(t, err)
+
+	var notFoundErr *ErrProviderNotFound
+	assert.ErrorAs(t, err, &notFoundErr)
+}
+
+func TestRegistry_LoadFromDB_NoFactory(t *testing.T) {
+	mockS := &mockStore{
+		configs: map[string]*store.ProviderConfig{
+			"db-provider": {
+				Name:     "db-provider",
+				Provider: "unknown", // No factory registered
+				Config:   json.RawMessage(`{}`),
+			},
+		},
+	}
+
+	r := NewRegistryWithStore(mockS)
+
+	_, err := r.Get(context.Background(), "db-provider")
+	assert.Error(t, err)
+
+	var notFoundErr *ErrProviderNotFound
+	assert.ErrorAs(t, err, &notFoundErr)
+}
+
+// Provider tests
+
+func TestDefaultSuspendConfig(t *testing.T) {
+	cfg := DefaultSuspendConfig()
+
+	assert.Equal(t, SuspendStrategyPause, cfg.Strategy)
+	assert.Equal(t, 60*time.Second, cfg.MinDuration)
+	assert.Equal(t, 24*time.Hour, cfg.MaxDuration)
+	assert.Equal(t, SuspendStrategyTerminatePreserveStorage, cfg.Fallback)
 }

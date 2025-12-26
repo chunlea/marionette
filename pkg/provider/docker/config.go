@@ -45,6 +45,10 @@ type Config struct {
 
 	// LabelPrefix is the prefix for Docker labels (default: marionette.dev).
 	LabelPrefix string `json:"label_prefix"`
+
+	// Cmd is the default command to run in the container.
+	// If empty, the image's default entrypoint/cmd is used.
+	Cmd []string `json:"cmd,omitempty"`
 }
 
 // ResourceConfig holds default resource limits.

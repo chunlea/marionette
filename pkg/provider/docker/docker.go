@@ -313,11 +313,18 @@ func (p *Provider) buildContainerConfig(opts provider.SpawnOptions) *container.C
 	env := p.buildEnv(opts)
 	labels := p.buildLabels(opts)
 
-	return &container.Config{
+	cfg := &container.Config{
 		Image:  p.config.Image,
 		Env:    env,
 		Labels: labels,
 	}
+
+	// Add command if specified in config.
+	if len(p.config.Cmd) > 0 {
+		cfg.Cmd = p.config.Cmd
+	}
+
+	return cfg
 }
 
 func (p *Provider) buildHostConfig(opts provider.SpawnOptions) *container.HostConfig {
@@ -457,11 +464,12 @@ func mapContainerState(state *container.State) provider.InstanceStatus {
 		return provider.InstanceStatusFailed
 	}
 
+	// Check Paused before Running - when paused, both Paused AND Running are true
 	switch {
-	case state.Running:
-		return provider.InstanceStatusRunning
 	case state.Paused:
 		return provider.InstanceStatusPaused
+	case state.Running:
+		return provider.InstanceStatusRunning
 	case state.Dead, state.OOMKilled:
 		return provider.InstanceStatusFailed
 	case state.Status == "created":

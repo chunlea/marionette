@@ -30,6 +30,7 @@ func TestDockerProvider_SpawnDestroy_Integration(t *testing.T) {
 		Host:        "unix:///var/run/docker.sock",
 		Image:       "alpine:latest", // Use small image for fast tests
 		LabelPrefix: "marionette.dev",
+		Cmd:         []string{"sh", "-c", "tail -f /dev/null"}, // Keep container running
 		Resources: ResourceConfig{
 			Memory: "128m",
 			CPUs:   "0.5",
@@ -104,6 +105,7 @@ func TestDockerProvider_PauseUnpause_Integration(t *testing.T) {
 		Host:        "unix:///var/run/docker.sock",
 		Image:       "alpine:latest",
 		LabelPrefix: "marionette.dev",
+		Cmd:         []string{"sh", "-c", "tail -f /dev/null"}, // Keep container running
 		Resources: ResourceConfig{
 			Memory: "128m",
 			CPUs:   "0.5",
@@ -137,6 +139,9 @@ func TestDockerProvider_PauseUnpause_Integration(t *testing.T) {
 	err = p.Pause(ctx, runnerID)
 	require.NoError(t, err)
 
+	// Wait for pause to take effect
+	time.Sleep(200 * time.Millisecond)
+
 	// Verify paused
 	status, err := p.Status(ctx, runnerID)
 	require.NoError(t, err)
@@ -145,6 +150,9 @@ func TestDockerProvider_PauseUnpause_Integration(t *testing.T) {
 	// Unpause
 	err = p.Unpause(ctx, runnerID)
 	require.NoError(t, err)
+
+	// Wait for unpause to take effect
+	time.Sleep(200 * time.Millisecond)
 
 	// Verify running again
 	status, err = p.Status(ctx, runnerID)
@@ -167,6 +175,7 @@ func TestDockerProvider_NetworkAutoCreate_Integration(t *testing.T) {
 		Image:       "alpine:latest",
 		Network:     networkName,
 		LabelPrefix: "marionette.dev",
+		Cmd:         []string{"sh", "-c", "tail -f /dev/null"}, // Keep container running
 		Resources: ResourceConfig{
 			Memory: "128m",
 			CPUs:   "0.5",
@@ -222,6 +231,7 @@ func TestDockerProvider_ResourceLimits_Integration(t *testing.T) {
 		Host:        "unix:///var/run/docker.sock",
 		Image:       "alpine:latest",
 		LabelPrefix: "marionette.dev",
+		Cmd:         []string{"sh", "-c", "tail -f /dev/null"}, // Keep container running
 		Resources: ResourceConfig{
 			Memory: "256m",
 			CPUs:   "1",
@@ -274,6 +284,7 @@ func TestDockerProvider_Labels_Integration(t *testing.T) {
 		Host:        "unix:///var/run/docker.sock",
 		Image:       "alpine:latest",
 		LabelPrefix: "marionette.dev",
+		Cmd:         []string{"sh", "-c", "tail -f /dev/null"}, // Keep container running
 		Resources: ResourceConfig{
 			Memory: "128m",
 			CPUs:   "0.5",
@@ -327,6 +338,7 @@ func TestDockerProvider_Environment_Integration(t *testing.T) {
 		Host:        "unix:///var/run/docker.sock",
 		Image:       "alpine:latest",
 		LabelPrefix: "marionette.dev",
+		Cmd:         []string{"sh", "-c", "tail -f /dev/null"}, // Keep container running
 		Resources: ResourceConfig{
 			Memory: "128m",
 			CPUs:   "0.5",
@@ -386,6 +398,7 @@ func TestDockerProvider_NewFromJSON_Integration(t *testing.T) {
 	configJSON := json.RawMessage(`{
 		"host": "unix:///var/run/docker.sock",
 		"image": "alpine:latest",
+		"cmd": ["sh", "-c", "tail -f /dev/null"],
 		"resources": {
 			"memory": "128m",
 			"cpus": "0.5"

@@ -372,11 +372,12 @@ func TestProvider_Status_Paused(t *testing.T) {
 		{ID: "abc123", Labels: map[string]string{"marionette.dev/runner-id": runnerID}},
 	}, nil)
 
-	// Mock inspect - paused
+	// Mock inspect - paused (note: both Paused and Running are true when paused)
 	mockClient.On("ContainerInspect", ctx, "abc123").Return(types.ContainerJSON{
 		ContainerJSONBase: &types.ContainerJSONBase{
 			State: &container.State{
-				Paused: true,
+				Paused:  true,
+				Running: true, // Docker sets both to true when paused
 			},
 		},
 	}, nil)
@@ -624,4 +625,687 @@ func TestSuspendConfig_Parse(t *testing.T) {
 	assert.Equal(t, 30*time.Second, cfg.MinDuration.Duration())
 	assert.Equal(t, 1*time.Hour, cfg.MaxDuration.Duration())
 	assert.Equal(t, provider.SuspendStrategyTerminate, cfg.Fallback)
+}
+
+// Additional config tests for coverage
+
+func TestDuration_UnmarshalJSON_NumericSeconds(t *testing.T) {
+	jsonData := []byte(`60`)
+	var d Duration
+	err := d.UnmarshalJSON(jsonData)
+
+	require.NoError(t, err)
+	assert.Equal(t, 60*time.Second, d.Duration())
+}
+
+func TestDuration_UnmarshalJSON_InvalidString(t *testing.T) {
+	jsonData := []byte(`"invalid"`)
+	var d Duration
+	err := d.UnmarshalJSON(jsonData)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid duration")
+}
+
+func TestDuration_UnmarshalJSON_InvalidValue(t *testing.T) {
+	jsonData := []byte(`true`)
+	var d Duration
+	err := d.UnmarshalJSON(jsonData)
+
+	assert.Error(t, err)
+}
+
+func TestDuration_MarshalJSON(t *testing.T) {
+	d := Duration(5 * time.Minute)
+	data, err := d.MarshalJSON()
+
+	require.NoError(t, err)
+	assert.Equal(t, `"5m0s"`, string(data))
+}
+
+func TestConfig_MemoryMB(t *testing.T) {
+	cfg := &Config{
+		Resources: ResourceConfig{Memory: "2g"},
+	}
+
+	mb, err := cfg.MemoryMB()
+
+	require.NoError(t, err)
+	assert.Equal(t, 2048, mb)
+}
+
+func TestConfig_MemoryMB_Invalid(t *testing.T) {
+	cfg := &Config{
+		Resources: ResourceConfig{Memory: "invalid"},
+	}
+
+	_, err := cfg.MemoryMB()
+
+	assert.Error(t, err)
+}
+
+func TestConfig_CPUs(t *testing.T) {
+	cfg := &Config{
+		Resources: ResourceConfig{CPUs: "2.5"},
+	}
+
+	cpus, err := cfg.CPUs()
+
+	require.NoError(t, err)
+	assert.Equal(t, 2.5, cpus)
+}
+
+func TestConfig_CPUs_Invalid(t *testing.T) {
+	cfg := &Config{
+		Resources: ResourceConfig{CPUs: "invalid"},
+	}
+
+	_, err := cfg.CPUs()
+
+	assert.Error(t, err)
+}
+
+func TestSuspendConfig_ToProviderSuspendConfig(t *testing.T) {
+	cfg := &SuspendConfig{
+		Strategy:    provider.SuspendStrategyPause,
+		MinDuration: Duration(30 * time.Second),
+		MaxDuration: Duration(1 * time.Hour),
+		Fallback:    provider.SuspendStrategyTerminate,
+	}
+
+	psc := cfg.ToProviderSuspendConfig()
+
+	assert.Equal(t, provider.SuspendStrategyPause, psc.Strategy)
+	assert.Equal(t, 30*time.Second, psc.MinDuration)
+	assert.Equal(t, 1*time.Hour, psc.MaxDuration)
+	assert.Equal(t, provider.SuspendStrategyTerminate, psc.Fallback)
+}
+
+// Additional Provider tests for coverage
+
+func TestProvider_Pause_NotFound(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	runnerID := "run_nonexistent"
+
+	// Mock container not found
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{}, nil)
+
+	err := p.Pause(ctx, runnerID)
+
+	assert.Error(t, err)
+	var notFoundErr *provider.ErrRunnerNotFound
+	assert.True(t, errors.As(err, &notFoundErr))
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Pause_Fails(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	runnerID := "run_test123"
+
+	// Mock finding container
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{
+		{ID: "abc123", Labels: map[string]string{"marionette.dev/runner-id": runnerID}},
+	}, nil)
+
+	// Mock pause fails
+	mockClient.On("ContainerPause", ctx, "abc123").Return(errors.New("container not running"))
+
+	err := p.Pause(ctx, runnerID)
+
+	assert.Error(t, err)
+	var pauseErr *provider.ErrPauseFailed
+	assert.True(t, errors.As(err, &pauseErr))
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Unpause_NotFound(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	runnerID := "run_nonexistent"
+
+	// Mock container not found
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{}, nil)
+
+	err := p.Unpause(ctx, runnerID)
+
+	assert.Error(t, err)
+	var notFoundErr *provider.ErrRunnerNotFound
+	assert.True(t, errors.As(err, &notFoundErr))
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Unpause_Fails(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	runnerID := "run_test123"
+
+	// Mock finding container
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{
+		{ID: "abc123", Labels: map[string]string{"marionette.dev/runner-id": runnerID}},
+	}, nil)
+
+	// Mock unpause fails
+	mockClient.On("ContainerUnpause", ctx, "abc123").Return(errors.New("container not paused"))
+
+	err := p.Unpause(ctx, runnerID)
+
+	assert.Error(t, err)
+	var unpauseErr *provider.ErrUnpauseFailed
+	assert.True(t, errors.As(err, &unpauseErr))
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Destroy_StopFails(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	runnerID := "run_test123"
+
+	// Mock finding container
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{
+		{ID: "abc123", Labels: map[string]string{"marionette.dev/runner-id": runnerID}},
+	}, nil)
+
+	// Mock stop fails with non-"not running" error
+	mockClient.On("ContainerStop", ctx, "abc123", mock.Anything).Return(errors.New("timeout"))
+
+	err := p.Destroy(ctx, runnerID)
+
+	assert.Error(t, err)
+	var destroyErr *provider.ErrDestroyFailed
+	assert.True(t, errors.As(err, &destroyErr))
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Destroy_StopNotRunning_RemoveSucceeds(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	runnerID := "run_test123"
+
+	// Mock finding container
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{
+		{ID: "abc123", Labels: map[string]string{"marionette.dev/runner-id": runnerID}},
+	}, nil)
+
+	// Mock stop fails with "not running" error
+	mockClient.On("ContainerStop", ctx, "abc123", mock.Anything).Return(errors.New("container is not running"))
+
+	// Mock remove succeeds
+	mockClient.On("ContainerRemove", ctx, "abc123", mock.Anything).Return(nil)
+
+	err := p.Destroy(ctx, runnerID)
+
+	assert.NoError(t, err)
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Destroy_RemoveFails(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	runnerID := "run_test123"
+
+	// Mock finding container
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{
+		{ID: "abc123", Labels: map[string]string{"marionette.dev/runner-id": runnerID}},
+	}, nil)
+
+	// Mock stop succeeds
+	mockClient.On("ContainerStop", ctx, "abc123", mock.Anything).Return(nil)
+
+	// Mock remove fails
+	mockClient.On("ContainerRemove", ctx, "abc123", mock.Anything).Return(errors.New("permission denied"))
+
+	err := p.Destroy(ctx, runnerID)
+
+	assert.Error(t, err)
+	var destroyErr *provider.ErrDestroyFailed
+	assert.True(t, errors.As(err, &destroyErr))
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Status_NotFound(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	runnerID := "run_nonexistent"
+
+	// Mock container not found
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{}, nil)
+
+	status, err := p.Status(ctx, runnerID)
+
+	assert.Nil(t, status)
+	assert.Error(t, err)
+	var notFoundErr *provider.ErrRunnerNotFound
+	assert.True(t, errors.As(err, &notFoundErr))
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Status_InspectFails(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	runnerID := "run_test123"
+
+	// Mock finding container
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{
+		{ID: "abc123", Labels: map[string]string{"marionette.dev/runner-id": runnerID}},
+	}, nil)
+
+	// Mock inspect fails
+	mockClient.On("ContainerInspect", ctx, "abc123").Return(types.ContainerJSON{}, errors.New("inspect failed"))
+
+	status, err := p.Status(ctx, runnerID)
+
+	assert.Nil(t, status)
+	assert.Error(t, err)
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_List_Error(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	// Mock list fails
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{}, errors.New("docker daemon unreachable"))
+
+	instances, err := p.List(ctx)
+
+	assert.Nil(t, instances)
+	assert.Error(t, err)
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Close(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+
+	mockClient.On("Close").Return(nil)
+
+	err := p.Close()
+
+	assert.NoError(t, err)
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_SuspendConfig(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	cfg := &Config{
+		Host:        "unix:///var/run/docker.sock",
+		Image:       "marionette/agent:latest",
+		LabelPrefix: "marionette.dev",
+		Resources:   ResourceConfig{Memory: "2g", CPUs: "2"},
+	}
+	suspendCfg := &SuspendConfig{
+		Strategy:    provider.SuspendStrategyPause,
+		MinDuration: Duration(60 * time.Second),
+		MaxDuration: Duration(24 * time.Hour),
+		Fallback:    provider.SuspendStrategyTerminate,
+	}
+	p := NewWithClient("test", cfg, suspendCfg, mockClient)
+
+	sc := p.SuspendConfig()
+
+	assert.Equal(t, provider.SuspendStrategyPause, sc.Strategy)
+	assert.Equal(t, 60*time.Second, sc.MinDuration)
+}
+
+// mapContainerState tests for all states
+
+func TestMapContainerState_NilState(t *testing.T) {
+	status := mapContainerState(nil)
+	assert.Equal(t, provider.InstanceStatusFailed, status)
+}
+
+func TestMapContainerState_Dead(t *testing.T) {
+	state := &container.State{Dead: true}
+	status := mapContainerState(state)
+	assert.Equal(t, provider.InstanceStatusFailed, status)
+}
+
+func TestMapContainerState_OOMKilled(t *testing.T) {
+	state := &container.State{OOMKilled: true}
+	status := mapContainerState(state)
+	assert.Equal(t, provider.InstanceStatusFailed, status)
+}
+
+func TestMapContainerState_Created(t *testing.T) {
+	state := &container.State{Status: "created"}
+	status := mapContainerState(state)
+	assert.Equal(t, provider.InstanceStatusPending, status)
+}
+
+func TestMapContainerState_Stopped(t *testing.T) {
+	state := &container.State{Status: "exited"}
+	status := mapContainerState(state)
+	assert.Equal(t, provider.InstanceStatusStopped, status)
+}
+
+// mapContainerStateString tests for all states
+
+func TestMapContainerStateString_Exited(t *testing.T) {
+	status := mapContainerStateString("exited")
+	assert.Equal(t, provider.InstanceStatusStopped, status)
+}
+
+func TestMapContainerStateString_Dead(t *testing.T) {
+	status := mapContainerStateString("dead")
+	assert.Equal(t, provider.InstanceStatusStopped, status)
+}
+
+func TestMapContainerStateString_Unknown(t *testing.T) {
+	status := mapContainerStateString("unknown")
+	assert.Equal(t, provider.InstanceStatusFailed, status)
+}
+
+// isNotRunningError tests
+
+func TestIsNotRunningError_Nil(t *testing.T) {
+	assert.False(t, isNotRunningError(nil))
+}
+
+func TestIsNotRunningError_NotRunning(t *testing.T) {
+	err := errors.New("container abc123 is not running")
+	assert.True(t, isNotRunningError(err))
+}
+
+func TestIsNotRunningError_NoSuchContainer(t *testing.T) {
+	err := errors.New("No such container: abc123")
+	assert.True(t, isNotRunningError(err))
+}
+
+func TestIsNotRunningError_OtherError(t *testing.T) {
+	err := errors.New("some other error")
+	assert.False(t, isNotRunningError(err))
+}
+
+// Additional Spawn tests
+
+func TestProvider_Spawn_WithEnvironment(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	// Mock network exists
+	mockClient.On("NetworkList", ctx, mock.Anything).Return([]network.Summary{
+		{Name: "test-network"},
+	}, nil)
+
+	// Mock container create and start
+	mockClient.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *container.Config) bool {
+		// Verify environment includes custom env vars
+		for _, env := range cfg.Env {
+			if env == "CUSTOM_VAR=custom_value" {
+				return true
+			}
+		}
+		return false
+	}), mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(container.CreateResponse{ID: "abc123"}, nil)
+	mockClient.On("ContainerStart", ctx, "abc123", mock.Anything).
+		Return(nil)
+
+	opts := provider.SpawnOptions{
+		RunnerID:    "run_test123",
+		Name:        "test-runner",
+		ServerURL:   "localhost:9090",
+		RunnerToken: "test-token",
+		Environment: map[string]string{"CUSTOM_VAR": "custom_value"},
+	}
+
+	instance, err := p.Spawn(ctx, opts)
+
+	require.NoError(t, err)
+	assert.NotNil(t, instance)
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Spawn_WithTenantID(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	// Mock network exists
+	mockClient.On("NetworkList", ctx, mock.Anything).Return([]network.Summary{
+		{Name: "test-network"},
+	}, nil)
+
+	// Mock container create and start
+	mockClient.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *container.Config) bool {
+		// Verify labels include tenant ID
+		return cfg.Labels["marionette.dev/tenant-id"] == "tenant_123"
+	}), mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(container.CreateResponse{ID: "abc123"}, nil)
+	mockClient.On("ContainerStart", ctx, "abc123", mock.Anything).
+		Return(nil)
+
+	opts := provider.SpawnOptions{
+		RunnerID:    "run_test123",
+		Name:        "test-runner",
+		ServerURL:   "localhost:9090",
+		RunnerToken: "test-token",
+		TenantID:    "tenant_123",
+	}
+
+	instance, err := p.Spawn(ctx, opts)
+
+	require.NoError(t, err)
+	assert.NotNil(t, instance)
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Spawn_WithWorkspaceMount(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	// Mock network exists
+	mockClient.On("NetworkList", ctx, mock.Anything).Return([]network.Summary{
+		{Name: "test-network"},
+	}, nil)
+
+	// Mock container create and start
+	mockClient.On("ContainerCreate", ctx, mock.Anything, mock.MatchedBy(func(hc *container.HostConfig) bool {
+		// Verify mount is configured
+		for _, m := range hc.Mounts {
+			if m.Source == "/host/workspace" && m.Target == "/workspace" {
+				return true
+			}
+		}
+		return false
+	}), mock.Anything, mock.Anything, mock.Anything).
+		Return(container.CreateResponse{ID: "abc123"}, nil)
+	mockClient.On("ContainerStart", ctx, "abc123", mock.Anything).
+		Return(nil)
+
+	opts := provider.SpawnOptions{
+		RunnerID:       "run_test123",
+		Name:           "test-runner",
+		ServerURL:      "localhost:9090",
+		RunnerToken:    "test-token",
+		WorkspaceMount: "/host/workspace",
+	}
+
+	instance, err := p.Spawn(ctx, opts)
+
+	require.NoError(t, err)
+	assert.NotNil(t, instance)
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Spawn_WithResourceOverrides(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	// Mock network exists
+	mockClient.On("NetworkList", ctx, mock.Anything).Return([]network.Summary{
+		{Name: "test-network"},
+	}, nil)
+
+	// Mock container create and start
+	mockClient.On("ContainerCreate", ctx, mock.Anything, mock.MatchedBy(func(hc *container.HostConfig) bool {
+		// Verify resource overrides
+		return hc.Resources.Memory == 4*1024*1024*1024 && hc.Resources.NanoCPUs == int64(4*1e9)
+	}), mock.Anything, mock.Anything, mock.Anything).
+		Return(container.CreateResponse{ID: "abc123"}, nil)
+	mockClient.On("ContainerStart", ctx, "abc123", mock.Anything).
+		Return(nil)
+
+	opts := provider.SpawnOptions{
+		RunnerID:    "run_test123",
+		Name:        "test-runner",
+		ServerURL:   "localhost:9090",
+		RunnerToken: "test-token",
+		MemoryMB:    4096,
+		CPUs:        4.0,
+	}
+
+	instance, err := p.Spawn(ctx, opts)
+
+	require.NoError(t, err)
+	assert.NotNil(t, instance)
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Spawn_NoNetwork(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	cfg := &Config{
+		Host:        "unix:///var/run/docker.sock",
+		Image:       "marionette/agent:latest",
+		Network:     "", // No network
+		LabelPrefix: "marionette.dev",
+		Resources:   ResourceConfig{Memory: "2g", CPUs: "2"},
+	}
+	p := NewWithClient("test", cfg, nil, mockClient)
+	ctx := context.Background()
+
+	// Mock container create and start (no network list needed)
+	mockClient.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), mock.Anything, mock.Anything).
+		Return(container.CreateResponse{ID: "abc123"}, nil)
+	mockClient.On("ContainerStart", ctx, "abc123", mock.Anything).
+		Return(nil)
+
+	opts := provider.SpawnOptions{
+		RunnerID:    "run_test123",
+		ServerURL:   "localhost:9090",
+		RunnerToken: "test-token",
+	}
+
+	instance, err := p.Spawn(ctx, opts)
+
+	require.NoError(t, err)
+	assert.NotNil(t, instance)
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Spawn_NetworkCreateFails(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	// Mock network doesn't exist
+	mockClient.On("NetworkList", ctx, mock.Anything).Return([]network.Summary{}, nil)
+
+	// Mock network create fails
+	mockClient.On("NetworkCreate", ctx, "test-network", mock.Anything).
+		Return(network.CreateResponse{}, errors.New("network create failed"))
+
+	opts := provider.SpawnOptions{
+		RunnerID:    "run_test123",
+		Name:        "test-runner",
+		ServerURL:   "localhost:9090",
+		RunnerToken: "test-token",
+	}
+
+	instance, err := p.Spawn(ctx, opts)
+
+	assert.Nil(t, instance)
+	assert.Error(t, err)
+
+	var spawnErr *provider.ErrSpawnFailed
+	assert.True(t, errors.As(err, &spawnErr))
+	assert.Contains(t, spawnErr.Reason, "network setup failed")
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestProvider_Spawn_ContainerNameWithoutName(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	// Mock network exists
+	mockClient.On("NetworkList", ctx, mock.Anything).Return([]network.Summary{
+		{Name: "test-network"},
+	}, nil)
+
+	// Mock container create and start - container name should be based on runnerID
+	mockClient.On("ContainerCreate", ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything, "marionette-run_test123").
+		Return(container.CreateResponse{ID: "abc123"}, nil)
+	mockClient.On("ContainerStart", ctx, "abc123", mock.Anything).
+		Return(nil)
+
+	opts := provider.SpawnOptions{
+		RunnerID:    "run_test123",
+		Name:        "", // No name, should use runnerID
+		ServerURL:   "localhost:9090",
+		RunnerToken: "test-token",
+	}
+
+	instance, err := p.Spawn(ctx, opts)
+
+	require.NoError(t, err)
+	assert.NotNil(t, instance)
+
+	mockClient.AssertExpectations(t)
+}
+
+// Test findContainerByRunnerID list error
+func TestProvider_FindContainer_ListError(t *testing.T) {
+	mockClient := new(MockDockerClient)
+	p := newTestProvider(mockClient)
+	ctx := context.Background()
+
+	// Mock list fails
+	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{}, errors.New("docker error"))
+
+	err := p.Destroy(ctx, "run_test123")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "listing containers")
+
+	mockClient.AssertExpectations(t)
 }
