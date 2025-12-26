@@ -3,7 +3,8 @@ package claude
 import (
 	"context"
 	"os"
-	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +51,26 @@ func (m *MockOutputHandler) GetOutputs() []OutputRecord {
 	return result
 }
 
+func (m *MockOutputHandler) GetCombinedOutput() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var sb strings.Builder
+	for _, o := range m.Outputs {
+		sb.Write(o.Data)
+	}
+	return sb.String()
+}
+
+// createMockScript creates a temporary script that simulates claude behavior.
+func createMockScript(t *testing.T, script string) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "mock-claude")
+	err := os.WriteFile(scriptPath, []byte(script), 0755) //nolint:gosec // test script needs exec
+	require.NoError(t, err)
+	return scriptPath
+}
+
 func TestExecutor_Name(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	e := New(logger)
@@ -65,59 +86,349 @@ func TestExecutor_Kill_NotRunning(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestExecutor_AlreadyRunning(t *testing.T) {
-	// Skip if echo is not available
-	if _, err := exec.LookPath("echo"); err != nil {
-		t.Skip("echo not found in PATH")
-	}
+func TestExecutor_WithCommandPath(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	e := New(logger).WithCommandPath("/custom/path")
+	assert.Equal(t, "/custom/path", e.commandPath)
+}
+
+func TestExecutor_Execute_Success(t *testing.T) {
+	// Create a mock script that outputs some text and exits successfully
+	script := `#!/bin/bash
+echo "Starting task"
+echo "Processing prompt: $*"
+echo "Task completed"
+exit 0
+`
+	scriptPath := createMockScript(t, script)
 
 	logger := zaptest.NewLogger(t)
-	e := New(logger)
+	e := New(logger).WithCommandPath(scriptPath)
 	handler := NewMockOutputHandler()
 
-	// Start a long-running task
 	ctx := context.Background()
 	task := &executor.Task{
 		ID:      "task_1",
 		RunID:   "run_1",
-		Prompt:  "",
-		Timeout: 5 * time.Second,
+		Prompt:  "Test prompt",
+		Timeout: 10 * time.Second,
 	}
 	config := &executor.AgentConfig{
-		WorkingDir: os.TempDir(),
+		WorkingDir: t.TempDir(),
 	}
 
-	// We can't easily test AlreadyRunning with the real claude executor
-	// because it requires the claude binary. This test verifies the structure.
-	_ = e
-	_ = handler
-	_ = ctx
-	_ = task
-	_ = config
+	result, err := e.Execute(ctx, task, config, handler)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.True(t, result.Success)
+	assert.Equal(t, 0, result.ExitCode)
+	assert.Empty(t, result.Error)
+
+	// Verify output was captured
+	output := handler.GetCombinedOutput()
+	assert.Contains(t, output, "Starting task")
+	assert.Contains(t, output, "Task completed")
 }
 
-func TestExecutor_ExecuteWithEcho(t *testing.T) {
-	// This test uses a helper script instead of claude
-	// to verify the executor mechanics
+func TestExecutor_Execute_Failure(t *testing.T) {
+	// Create a mock script that fails
+	script := `#!/bin/bash
+echo "Error occurred"
+exit 1
+`
+	scriptPath := createMockScript(t, script)
 
-	// Create a temporary script that echoes output
-	tmpDir := t.TempDir()
-	scriptPath := tmpDir + "/test-agent.sh"
+	logger := zaptest.NewLogger(t)
+	e := New(logger).WithCommandPath(scriptPath)
+	handler := NewMockOutputHandler()
+
+	ctx := context.Background()
+	task := &executor.Task{
+		ID:      "task_1",
+		RunID:   "run_1",
+		Prompt:  "Test prompt",
+		Timeout: 10 * time.Second,
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: t.TempDir(),
+	}
+
+	result, err := e.Execute(ctx, task, config, handler)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.False(t, result.Success)
+	assert.Equal(t, 1, result.ExitCode)
+	assert.Contains(t, result.Error, "exited with code 1")
+}
+
+func TestExecutor_Execute_Timeout(t *testing.T) {
+	// Create a mock script that runs forever
+	script := `#!/bin/bash
+echo "Starting long task"
+sleep 60
+echo "Should not reach here"
+`
+	scriptPath := createMockScript(t, script)
+
+	logger := zaptest.NewLogger(t)
+	e := New(logger).WithCommandPath(scriptPath)
+	handler := NewMockOutputHandler()
+
+	ctx := context.Background()
+	task := &executor.Task{
+		ID:      "task_1",
+		RunID:   "run_1",
+		Prompt:  "Test prompt",
+		Timeout: 500 * time.Millisecond, // Short timeout
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: t.TempDir(),
+	}
+
+	result, err := e.Execute(ctx, task, config, handler)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.False(t, result.Success)
+	assert.NotEqual(t, 0, result.ExitCode)
+}
+
+func TestExecutor_Execute_ContextCancel(t *testing.T) {
+	// Create a mock script that runs for a while
 	script := `#!/bin/bash
 echo "Starting task"
-echo "Processing: $1"
-echo "Done"
-exit 0
+sleep 60
 `
-	err := os.WriteFile(scriptPath, []byte(script), 0600)
+	scriptPath := createMockScript(t, script)
+
+	logger := zaptest.NewLogger(t)
+	e := New(logger).WithCommandPath(scriptPath)
+	handler := NewMockOutputHandler()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	task := &executor.Task{
+		ID:      "task_1",
+		RunID:   "run_1",
+		Prompt:  "Test prompt",
+		Timeout: 0, // No timeout
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: t.TempDir(),
+	}
+
+	// Cancel context after a short delay
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+	}()
+
+	result, err := e.Execute(ctx, task, config, handler)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.False(t, result.Success)
+}
+
+func TestExecutor_Execute_Kill(t *testing.T) {
+	// Create a mock script that runs for a while
+	script := `#!/bin/bash
+trap 'echo "Received signal"; exit 0' SIGTERM
+echo "Starting task"
+sleep 60
+`
+	scriptPath := createMockScript(t, script)
+
+	logger := zaptest.NewLogger(t)
+	e := New(logger).WithCommandPath(scriptPath)
+	handler := NewMockOutputHandler()
+
+	ctx := context.Background()
+	task := &executor.Task{
+		ID:      "task_1",
+		RunID:   "run_1",
+		Prompt:  "Test prompt",
+		Timeout: 0, // No timeout
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: t.TempDir(),
+	}
+
+	// Run execute in goroutine
+	done := make(chan *executor.Result)
+	go func() {
+		result, _ := e.Execute(ctx, task, config, handler)
+		done <- result
+	}()
+
+	// Wait for task to start, then kill
+	time.Sleep(200 * time.Millisecond)
+	err := e.Kill()
 	require.NoError(t, err)
 
-	// We can't directly test with claude, but we can verify the interface
-	logger := zaptest.NewLogger(t)
-	e := New(logger)
+	result := <-done
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "killed")
+}
 
-	assert.Equal(t, "claude", e.Name())
-	assert.NotNil(t, e)
+func TestExecutor_Execute_AlreadyRunning(t *testing.T) {
+	// Create a mock script that runs for a while
+	script := `#!/bin/bash
+echo "Task running"
+sleep 60
+`
+	scriptPath := createMockScript(t, script)
+
+	logger := zaptest.NewLogger(t)
+	e := New(logger).WithCommandPath(scriptPath)
+	handler := NewMockOutputHandler()
+
+	ctx := context.Background()
+	task := &executor.Task{
+		ID:      "task_1",
+		RunID:   "run_1",
+		Prompt:  "Test prompt",
+		Timeout: 0,
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: t.TempDir(),
+	}
+
+	// Start first task
+	go func() {
+		_, _ = e.Execute(ctx, task, config, handler)
+	}()
+
+	// Wait for task to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Try to start second task - should fail
+	_, err := e.Execute(ctx, task, config, handler)
+	assert.ErrorIs(t, err, ErrAlreadyRunning)
+
+	// Clean up
+	_ = e.Kill()
+}
+
+func TestExecutor_Execute_EnvironmentVariables(t *testing.T) {
+	// Create a mock script that prints environment variables
+	script := `#!/bin/bash
+echo "API_KEY=${ANTHROPIC_API_KEY}"
+echo "BASE_URL=${ANTHROPIC_BASE_URL}"
+echo "EXTRA_VAR=${MY_EXTRA_VAR}"
+`
+	scriptPath := createMockScript(t, script)
+
+	logger := zaptest.NewLogger(t)
+	e := New(logger).WithCommandPath(scriptPath)
+	handler := NewMockOutputHandler()
+
+	ctx := context.Background()
+	task := &executor.Task{
+		ID:      "task_1",
+		RunID:   "run_1",
+		Prompt:  "Test prompt",
+		Timeout: 10 * time.Second,
+	}
+	config := &executor.AgentConfig{
+		APIKey:     "test-api-key",
+		BaseURL:    "https://test.api.com",
+		WorkingDir: t.TempDir(),
+		Extra: map[string]string{
+			"MY_EXTRA_VAR": "extra-value",
+		},
+	}
+
+	result, err := e.Execute(ctx, task, config, handler)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.True(t, result.Success)
+
+	output := handler.GetCombinedOutput()
+	assert.Contains(t, output, "API_KEY=test-api-key")
+	assert.Contains(t, output, "BASE_URL=https://test.api.com")
+	assert.Contains(t, output, "EXTRA_VAR=extra-value")
+}
+
+func TestExecutor_Execute_WorkingDirectory(t *testing.T) {
+	// Create a mock script that prints working directory
+	script := `#!/bin/bash
+echo "CWD=$(pwd)"
+`
+	scriptPath := createMockScript(t, script)
+
+	logger := zaptest.NewLogger(t)
+	e := New(logger).WithCommandPath(scriptPath)
+	handler := NewMockOutputHandler()
+
+	workDir := t.TempDir()
+	// Resolve symlinks for comparison (macOS /var -> /private/var)
+	workDirResolved, err := filepath.EvalSymlinks(workDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	task := &executor.Task{
+		ID:      "task_1",
+		RunID:   "run_1",
+		Prompt:  "Test prompt",
+		Timeout: 10 * time.Second,
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: workDir,
+	}
+
+	result, err := e.Execute(ctx, task, config, handler)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.True(t, result.Success)
+
+	output := handler.GetCombinedOutput()
+	assert.Contains(t, output, "CWD="+workDirResolved)
+}
+
+func TestExecutor_Execute_MultilineOutput(t *testing.T) {
+	// Create a mock script with multiple lines of output
+	script := `#!/bin/bash
+echo "Line 1"
+echo "Line 2"
+echo "Line 3"
+echo ""
+echo "Line after empty"
+`
+	scriptPath := createMockScript(t, script)
+
+	logger := zaptest.NewLogger(t)
+	e := New(logger).WithCommandPath(scriptPath)
+	handler := NewMockOutputHandler()
+
+	ctx := context.Background()
+	task := &executor.Task{
+		ID:      "task_1",
+		RunID:   "run_1",
+		Prompt:  "Test prompt",
+		Timeout: 10 * time.Second,
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: t.TempDir(),
+	}
+
+	result, err := e.Execute(ctx, task, config, handler)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.True(t, result.Success)
+
+	outputs := handler.GetOutputs()
+	assert.GreaterOrEqual(t, len(outputs), 4) // At least 4 non-empty lines
+
+	// All outputs should be stdout
+	for _, o := range outputs {
+		assert.Equal(t, "stdout", o.Stream)
+	}
 }
 
 func TestResult_ToExecutorResult(t *testing.T) {
@@ -152,41 +463,34 @@ func TestErrors(t *testing.T) {
 	assert.Equal(t, "task was killed", ErrKilled.Error())
 }
 
-// TestMockExecutor tests using a mock command instead of claude.
-// This verifies the PTY handling and output capture work correctly.
-func TestMockExecutor(t *testing.T) {
-	// Skip on CI or if no PTY support
-	if os.Getenv("CI") != "" {
-		t.Skip("Skipping PTY test in CI")
-	}
-
-	// Create a simple test that just verifies the executor can be created
-	logger := zaptest.NewLogger(t)
-	e := New(logger)
-
-	assert.NotNil(t, e)
-	assert.Equal(t, "claude", e.Name())
-
-	// Test that Kill is safe when not running
-	err := e.Kill()
-	assert.NoError(t, err)
-}
-
 // TestExecutor_Interface ensures Executor implements the interface.
 func TestExecutor_Interface(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	var _ executor.Executor = New(logger)
 }
 
-func TestBuildCommand(t *testing.T) {
-	// We can't test buildCommand directly as it's private,
-	// but we can verify the command structure through Execute
-
+func TestExecutor_Execute_CommandNotFound(t *testing.T) {
+	// Test that executor fails gracefully when command is not found
 	logger := zaptest.NewLogger(t)
-	e := New(logger)
+	// Use a non-existent command path
+	e := New(logger).WithCommandPath("/nonexistent/path/to/command")
+	handler := NewMockOutputHandler()
 
-	// Verify executor is properly initialized
-	assert.NotNil(t, e.logger)
-	assert.False(t, e.running)
-	assert.False(t, e.killed)
+	ctx := context.Background()
+	task := &executor.Task{
+		ID:      "task_1",
+		RunID:   "run_1",
+		Prompt:  "Test prompt",
+		Timeout: 10 * time.Second,
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: t.TempDir(),
+	}
+
+	result, err := e.Execute(ctx, task, config, handler)
+	// Should not return error, but result should indicate failure
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "starting pty")
 }
