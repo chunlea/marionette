@@ -254,6 +254,11 @@ func (c *Client) register(ctx context.Context) error {
 	return nil
 }
 
+// AttachMetadata adds authentication headers to outgoing requests.
+func (c *Client) AttachMetadata(ctx context.Context) context.Context {
+	return c.attachMetadata(ctx)
+}
+
 // attachMetadata adds authentication headers to outgoing requests.
 func (c *Client) attachMetadata(ctx context.Context) context.Context {
 	md := metadata.New(map[string]string{
