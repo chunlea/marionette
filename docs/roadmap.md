@@ -597,7 +597,28 @@
   - [x] YAML format with `gopkg.in/yaml.v3`
 - [x] CLI command tests with mock client
 
-### 4.2 HTTP Server Setup
+### 4.2 Service Interfaces ✓
+
+- [x] Define service interfaces (`pkg/server/public/`):
+  - [x] `SessionService` - CRUD + lifecycle (suspend, resume, terminate)
+  - [x] `TaskService` - CRUD + cancel/retry + log streaming
+  - [x] `RunnerService` - Read-only (Get, List)
+  - [x] `PermissionService` - Get, List, Approve, Deny
+  - [x] `LogStream` interface for real-time log delivery
+- [x] Implement mock services for testing HTTP handlers:
+  - [x] `MockSessionService` with function stubs
+  - [x] `MockTaskService` with log management
+  - [x] `MockRunnerService` with label matching
+  - [x] `MockPermissionService` with state validation
+  - [x] `MockLogStream` for testing log streaming
+- [x] Custom error types:
+  - [x] `InvalidStateError` - Invalid state transition
+  - [x] `MaxRetriesExceededError` - Retry limit reached
+  - [x] `ValidationError` - Input validation failure
+  - [x] `NotAuthorizedError` - Permission denied
+- [x] Comprehensive mock service tests
+
+### 4.3 HTTP Server Setup
 
 - [ ] Set up HTTP servers:
   - [ ] Port 8080: Public API (API key auth)
@@ -614,7 +635,7 @@
   - [ ] Inject tenant_id into context
   - [ ] Scope checking
 
-### 4.3 Public API Endpoints
+### 4.4 Public API Endpoints
 
 - [ ] Sessions API (`/api/v1/sessions`):
   - [ ] `POST /` - Create session
@@ -641,7 +662,7 @@
   - [ ] `GET /:task_id` - Get task logs
   - [ ] `GET /:task_id/stream` - WebSocket log stream
 
-### 4.4 Admin API Endpoints
+### 4.5 Admin API Endpoints
 
 - [ ] API Keys (`/admin/api/v1/keys`):
   - [ ] `POST /` - Create API key
@@ -662,7 +683,7 @@
   - [ ] `POST /spawn` - Spawn new runner
   - [ ] `DELETE /:id` - Destroy runner
 
-### 4.5 WebSocket Support
+### 4.6 WebSocket Support
 
 - [ ] Log streaming WebSocket:
   - [ ] Endpoint: `/api/v1/logs/:task_id/stream`
@@ -675,7 +696,7 @@
   - [ ] Filter by labels/selectors
   - [ ] Session state changes, task updates, permission requests
 
-### 4.6 OpenAPI Documentation
+### 4.7 OpenAPI Documentation
 
 - [ ] Generate OpenAPI spec:
   - [ ] Use swaggo or manual spec
@@ -686,7 +707,7 @@
   - [ ] Swagger UI at `/docs`
   - [ ] OpenAPI JSON at `/openapi.json`
 
-### 4.7 CLI Advanced Commands
+### 4.8 CLI Advanced Commands
 
 - [ ] Interactive session commands:
   - [ ] `mctl sessions attach <id>` - interactive mode with WebSocket
