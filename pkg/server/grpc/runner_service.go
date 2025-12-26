@@ -3,10 +3,13 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/auth"
+	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/server/core"
 	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
@@ -34,16 +37,22 @@ type MessageRouterInterface interface {
 	HandleMessage(ctx context.Context, runnerID string, msg *pb.RunnerMessage) error
 }
 
+// Default log batch configuration.
+const (
+	DefaultLogBatchSize = 100
+)
+
 // RunnerService implements the RunnerServiceServer interface.
 type RunnerService struct {
 	pb.UnimplementedRunnerServiceServer
-	logger        *zap.Logger
-	store         store.Store
-	tokenSvc      *auth.RunnerTokenService
-	connManager   *ConnectionManager
-	runnerManager RunnerManagerInterface
-	router        MessageRouterInterface
-	registry      *core.RunnerRegistry
+	logger           *zap.Logger
+	store            store.Store
+	tokenSvc         *auth.RunnerTokenService
+	connManager      *ConnectionManager
+	runnerManager    RunnerManagerInterface
+	router           MessageRouterInterface
+	registry         *core.RunnerRegistry
+	logSubscriberMgr core.LogSubscriberManagerInterface
 }
 
 // RunnerServiceOption is a functional option for RunnerService.
@@ -99,6 +108,13 @@ func WithRouter(r MessageRouterInterface) RunnerServiceOption {
 func WithRegistry(reg *core.RunnerRegistry) RunnerServiceOption {
 	return func(svc *RunnerService) {
 		svc.registry = reg
+	}
+}
+
+// WithLogSubscriberManager sets the log subscriber manager for the RunnerService.
+func WithLogSubscriberManager(lsm core.LogSubscriberManagerInterface) RunnerServiceOption {
+	return func(svc *RunnerService) {
+		svc.logSubscriberMgr = lsm
 	}
 }
 
@@ -217,21 +233,144 @@ func (s *RunnerService) createConnection(runner *store.Runner, stream grpc.BidiS
 	}
 }
 
-// StreamLogs handles the log upload stream.
-// This is a stub that counts messages and returns the count.
+// StreamLogs handles the log upload stream from runners.
+// Receives log entries, batches them for efficient persistence, and broadcasts to subscribers.
 func (s *RunnerService) StreamLogs(stream grpc.ClientStreamingServer[pb.StreamLogsMessage, pb.StreamLogsResponse]) error {
-	s.logger.Info("StreamLogs stream opened (stub)")
-	var count int64
-	for {
-		_, err := stream.Recv()
-		if err != nil {
-			s.logger.Info("StreamLogs stream closed", zap.Int64("logs_received", count), zap.Error(err))
-			return stream.SendAndClose(&pb.StreamLogsResponse{
-				LogsReceived: count,
-				LogsStored:   count,
-				LogsDropped:  0,
-			})
+	ctx := stream.Context()
+
+	var runnerID string
+	var sessionID string
+	var logsReceived, logsStored, logsDropped int64
+
+	// Batch for efficient inserts
+	batch := make([]*store.Log, 0, DefaultLogBatchSize)
+
+	// Flush helper function
+	flushBatch := func() {
+		if len(batch) == 0 {
+			return
 		}
-		count++
+		if s.store == nil {
+			s.logger.Warn("store not configured, dropping logs",
+				zap.Int("count", len(batch)),
+			)
+			logsDropped += int64(len(batch))
+			batch = batch[:0]
+			return
+		}
+
+		if err := s.store.CreateLogs(ctx, batch); err != nil {
+			s.logger.Error("batch log insert failed",
+				zap.Error(err),
+				zap.Int("count", len(batch)),
+			)
+			logsDropped += int64(len(batch))
+		} else {
+			logsStored += int64(len(batch))
+			// Broadcast to subscribers
+			if s.logSubscriberMgr != nil {
+				for _, log := range batch {
+					s.logSubscriberMgr.Broadcast(log)
+				}
+			}
+		}
+		batch = batch[:0]
 	}
+
+	s.logger.Debug("StreamLogs stream opened")
+
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				// Normal stream close
+				flushBatch() // Flush remaining logs
+				s.logger.Debug("StreamLogs stream closed normally",
+					zap.String("runner_id", runnerID),
+					zap.Int64("logs_received", logsReceived),
+					zap.Int64("logs_stored", logsStored),
+					zap.Int64("logs_dropped", logsDropped),
+				)
+				return stream.SendAndClose(&pb.StreamLogsResponse{
+					LogsReceived: logsReceived,
+					LogsStored:   logsStored,
+					LogsDropped:  logsDropped,
+				})
+			}
+			// Abnormal error
+			flushBatch() // Try to flush what we have
+			s.logger.Error("StreamLogs stream error",
+				zap.String("runner_id", runnerID),
+				zap.Error(err),
+			)
+			return status.Errorf(codes.Internal, "stream error: %v", err)
+		}
+
+		// Handle init message (first message)
+		if init := msg.GetInit(); init != nil {
+			runnerID = init.GetRunnerId()
+			sessionID = init.GetSessionId()
+			s.logger.Debug("StreamLogs init received",
+				zap.String("runner_id", runnerID),
+				zap.String("session_id", sessionID),
+				zap.String("task_id", init.GetTaskId()),
+			)
+			// TODO: Validate runner is authorized for this session
+			continue
+		}
+
+		// Handle log entry
+		if entry := msg.GetLogEntry(); entry != nil {
+			logsReceived++
+
+			// Convert to store.Log
+			log := s.convertLogEntry(runnerID, entry)
+			batch = append(batch, log)
+
+			// Flush when batch is full
+			if len(batch) >= DefaultLogBatchSize {
+				flushBatch()
+			}
+		}
+	}
+}
+
+// convertLogEntry converts a protobuf LogEntry to a store.Log.
+func (s *RunnerService) convertLogEntry(runnerID string, entry *pb.LogEntry) *store.Log {
+	// Convert metadata map to JSON
+	var metadata json.RawMessage = []byte("{}")
+	if len(entry.GetMetadata()) > 0 {
+		if jsonBytes, err := json.Marshal(entry.GetMetadata()); err == nil {
+			metadata = jsonBytes
+		}
+	}
+
+	// Use entry's runner_id if provided, otherwise use stream's runner_id
+	entryRunnerID := entry.GetRunnerId()
+	if entryRunnerID == "" {
+		entryRunnerID = runnerID
+	}
+
+	return &store.Log{
+		ID:        id.Log(),
+		SessionID: entry.GetSessionId(),
+		TaskID:    entry.GetTaskId(),
+		RunID:     entry.GetRunId(),
+		RunnerID:  entryRunnerID,
+		Stream:    entry.GetStream(),
+		Level:     entry.GetLevel(),
+		Content:   entry.GetContent(),
+		Sequence:  entry.GetSequence(),
+		TenantID:  stringPtrOrNil(entry.GetTenantId()),
+		Metadata:  metadata,
+		CreatedAt: time.Now(),
+	}
+}
+
+// stringPtrOrNil returns a pointer to the string if non-empty, otherwise nil.
+func stringPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
