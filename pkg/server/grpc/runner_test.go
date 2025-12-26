@@ -12,7 +12,7 @@ import (
 
 func TestRunnerService_RegisterRunner(t *testing.T) {
 	logger := zap.NewNop()
-	svc := &runnerService{logger: logger}
+	svc := NewRunnerService(logger)
 
 	req := &pb.RegisterRunnerRequest{
 		Name:     "test-runner",
@@ -31,7 +31,7 @@ func TestRunnerService_RegisterRunner(t *testing.T) {
 
 func TestRunnerService_GetRunnerStatus(t *testing.T) {
 	logger := zap.NewNop()
-	svc := &runnerService{logger: logger}
+	svc := NewRunnerService(logger)
 
 	req := &pb.GetRunnerStatusRequest{
 		RunnerId: "run_123",
@@ -43,4 +43,16 @@ func TestRunnerService_GetRunnerStatus(t *testing.T) {
 
 	assert.Equal(t, "run_123", resp.RunnerId)
 	assert.Equal(t, "unknown", resp.Status)
+}
+
+func TestNewRunnerService_WithOptions(t *testing.T) {
+	logger := zap.NewNop()
+	connMgr := NewConnectionManager(logger)
+
+	svc := NewRunnerService(logger,
+		WithConnectionManager(connMgr),
+	)
+
+	require.NotNil(t, svc)
+	assert.Equal(t, connMgr, svc.connManager)
 }

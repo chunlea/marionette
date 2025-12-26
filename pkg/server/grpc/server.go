@@ -18,9 +18,10 @@ import (
 
 // Server is the gRPC server for runner communication.
 type Server struct {
-	server   *grpc.Server
-	listener net.Listener
-	logger   *zap.Logger
+	server      *grpc.Server
+	listener    net.Listener
+	logger      *zap.Logger
+	connManager *ConnectionManager
 }
 
 // Config holds configuration for the gRPC server.
@@ -56,18 +57,27 @@ func New(cfg Config, logger *zap.Logger) (*Server, error) {
 
 	s := grpc.NewServer(opts...)
 
+	// Create connection manager
+	connManager := NewConnectionManager(logger)
+
 	// Register the RunnerService
-	runnerSvc := &runnerService{logger: logger}
+	runnerSvc := NewRunnerService(logger, WithConnectionManager(connManager))
 	pb.RegisterRunnerServiceServer(s, runnerSvc)
 
 	// Enable reflection for grpcurl and debugging
 	reflection.Register(s)
 
 	return &Server{
-		server:   s,
-		listener: lis,
-		logger:   logger,
+		server:      s,
+		listener:    lis,
+		logger:      logger,
+		connManager: connManager,
 	}, nil
+}
+
+// ConnectionManager returns the server's connection manager.
+func (s *Server) ConnectionManager() *ConnectionManager {
+	return s.connManager
 }
 
 // loadTLSCredentials loads TLS certificates and returns gRPC transport credentials.
