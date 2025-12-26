@@ -1,4 +1,5 @@
-.PHONY: deps build test lint proto migrate dev clean help
+.PHONY: deps build test lint proto migrate dev clean help \
+	test-docker test-docker-v test-docker-pkg test-docker-root test-docker-coverage
 
 # Go parameters
 GOCMD=go
@@ -133,15 +134,36 @@ fmt:
 	gofmt -s -w .
 	goimports -w .
 
-## test-linux: Run tests in Linux Docker container (for Linux-specific code)
-test-linux:
+## test-docker: Run tests in Docker (bypasses sandbox restrictions)
+test-docker:
 	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
 	docker run --rm marionette/test:latest
 
-## test-linux-root: Run tests as root in Linux Docker container (for namespace detection)
-test-linux-root:
+## test-docker-v: Run tests in Docker with verbose output
+test-docker-v:
+	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
+	docker run --rm marionette/test:latest go test -race -cover -v ./pkg/agent/...
+
+## test-docker-pkg: Run tests for specific package (usage: make test-docker-pkg PKG=./pkg/agent/executor/permission)
+test-docker-pkg:
+	@if [ -z "$(PKG)" ]; then \
+		echo "Error: PKG is required. Usage: make test-docker-pkg PKG=./pkg/agent/..."; \
+		exit 1; \
+	fi
+	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
+	docker run --rm marionette/test:latest go test -race -cover -v $(PKG)
+
+## test-docker-root: Run tests as root in Docker (for namespace detection)
+test-docker-root:
 	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
 	docker run --rm --user root marionette/test:latest
+
+## test-docker-coverage: Run tests in Docker with coverage report
+test-docker-coverage:
+	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
+	docker run --rm -v "$(PWD)":/app marionette/test:latest go test -race -coverprofile=coverage.out ./pkg/agent/...
+	$(GOCMD) tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
 
 ## docker-build: Build Docker images
 docker-build:
