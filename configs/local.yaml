@@ -16,8 +16,12 @@ server:
 providers:
   default: docker
   docker:
+    host: "unix:///var/run/docker.sock"
     image: "marionette/agent:latest"
     network: "marionette-network"
+    resources:
+      memory: "2g"
+      cpus: "2"
 
 # Storage configuration
 storage:
