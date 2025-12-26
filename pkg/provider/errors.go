@@ -97,3 +97,42 @@ type ErrNetworkNotFound struct {
 func (e *ErrNetworkNotFound) Error() string {
 	return fmt.Sprintf("network not found: %s", e.Network)
 }
+
+// ErrSuspendFailed is returned when suspending a runner fails.
+type ErrSuspendFailed struct {
+	RunnerID string
+	Strategy SuspendStrategy
+	Cause    error
+}
+
+func (e *ErrSuspendFailed) Error() string {
+	return fmt.Sprintf("suspend failed for runner %s (strategy: %s): %v", e.RunnerID, e.Strategy, e.Cause)
+}
+
+func (e *ErrSuspendFailed) Unwrap() error {
+	return e.Cause
+}
+
+// ErrResumeFailed is returned when resuming a runner fails.
+type ErrResumeFailed struct {
+	SessionID string
+	Cause     error
+}
+
+func (e *ErrResumeFailed) Error() string {
+	return fmt.Sprintf("resume failed for session %s: %v", e.SessionID, e.Cause)
+}
+
+func (e *ErrResumeFailed) Unwrap() error {
+	return e.Cause
+}
+
+// ErrStrategyNotSupported is returned when a suspend strategy is not supported.
+type ErrStrategyNotSupported struct {
+	Strategy SuspendStrategy
+	Provider string
+}
+
+func (e *ErrStrategyNotSupported) Error() string {
+	return fmt.Sprintf("strategy %s not supported by provider %s", e.Strategy, e.Provider)
+}

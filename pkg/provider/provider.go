@@ -109,6 +109,66 @@ type PausableProvider interface {
 	Unpause(ctx context.Context, runnerID string) error
 }
 
+// SuspendableProvider extends Provider with suspend/resume using configured strategy.
+// This is the preferred interface for session suspend/resume operations.
+type SuspendableProvider interface {
+	Provider
+
+	// Suspend suspends the runner using the configured or specified strategy.
+	// Returns the actual strategy used (may differ from requested if fallback).
+	Suspend(ctx context.Context, runnerID string, opts SuspendOptions) (*SuspendResult, error)
+
+	// Resume restores a suspended runner.
+	// For terminate_preserve_storage: spawns new runner with same storage.
+	// For release_to_pool: acquires runner from pool and restores workspace.
+	Resume(ctx context.Context, sessionID string, opts ResumeOptions) (*RunnerInstance, error)
+}
+
+// SuspendOptions contains parameters for suspend operation.
+type SuspendOptions struct {
+	// Strategy is the requested suspend strategy (uses provider default if empty).
+	Strategy SuspendStrategy
+
+	// SaveSnapshot creates a snapshot before suspend (if provider supports).
+	SaveSnapshot bool
+
+	// SyncWorkspace syncs workspace to object storage before suspend.
+	SyncWorkspace bool
+
+	// Timeout is the maximum time to wait for suspend to complete.
+	Timeout time.Duration
+}
+
+// SuspendResult contains the result of a suspend operation.
+type SuspendResult struct {
+	// Strategy is the actual strategy used (may differ if fallback was needed).
+	Strategy SuspendStrategy
+
+	// SnapshotID is the ID of the snapshot created (if SaveSnapshot was true).
+	SnapshotID string
+
+	// WorkspaceSynced indicates if workspace was synced to object storage.
+	WorkspaceSynced bool
+
+	// SuspendedAt is when the suspend completed.
+	SuspendedAt time.Time
+}
+
+// ResumeOptions contains parameters for resume operation.
+type ResumeOptions struct {
+	// RunnerID is the preferred runner ID (for pool, may get different one).
+	RunnerID string
+
+	// SnapshotID is the snapshot to restore from (if available).
+	SnapshotID string
+
+	// Timeout is the maximum time to wait for resume to complete.
+	Timeout time.Duration
+
+	// SpawnOptions contains options for spawning a new runner if needed.
+	SpawnOpts *SpawnOptions
+}
+
 // ProviderCapabilities describes what the provider supports.
 type ProviderCapabilities struct {
 	// Pause indicates if the provider can pause/resume runners.
