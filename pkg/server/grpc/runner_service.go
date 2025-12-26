@@ -4,8 +4,8 @@ package grpc
 import (
 	"context"
 
-	"github.com/chunlea/marionette/pkg/auth"
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

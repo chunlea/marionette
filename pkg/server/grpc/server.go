@@ -8,8 +8,8 @@ import (
 	"net"
 	"os"
 
-	"github.com/chunlea/marionette/pkg/config"
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/config"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
