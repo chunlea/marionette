@@ -24,6 +24,8 @@ type RunnerManagerInterface interface {
 	OnDisconnect(ctx context.Context, runnerID string) error
 	// OnHeartbeat is called when a heartbeat is received from a runner.
 	OnHeartbeat(ctx context.Context, runnerID string, hb *pb.Heartbeat) error
+	// SetStatus updates a runner's status.
+	SetStatus(ctx context.Context, runnerID, status string) error
 }
 
 // MessageRouterInterface defines the interface for routing runner messages.

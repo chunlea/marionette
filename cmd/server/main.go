@@ -11,11 +11,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
+	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/provider/docker"
 	"github.com/chunlea/marionette/pkg/server/admin"
 	"github.com/chunlea/marionette/pkg/server/api"
+	"github.com/chunlea/marionette/pkg/server/core"
 	grpcserver "github.com/chunlea/marionette/pkg/server/grpc"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/store/postgres"
@@ -74,16 +77,52 @@ func main() {
 	// Initialize provider registry
 	providerRegistry := initProviderRegistry(dbStore, cfg, logger)
 
+	// Create core managers (only if database is available)
+	var sessionMgr *core.SessionManager
+	var taskMgr *core.TaskManager
+	var apiOpts []api.Option
+	var apiKeySvc *auth.APIKeyService
+
+	if dbStore != nil {
+		// Create API key service (needed for both public and admin APIs)
+		apiKeySvc = auth.NewAPIKeyService(dbStore, id.APIKey)
+
+		// Create core managers
+		sessionMgr = core.NewSessionManager(dbStore, nil, logger)
+		taskMgr = core.NewTaskManager(dbStore, nil, nil, logger)
+
+		// Create adapters and add to API options
+		sessionAdapter := api.NewSessionAdapter(sessionMgr, dbStore)
+		taskAdapter := api.NewTaskAdapter(taskMgr, dbStore)
+
+		apiOpts = append(apiOpts,
+			api.WithSessionService(sessionAdapter),
+			api.WithTaskService(taskAdapter),
+			api.WithAPIKeyService(apiKeySvc),
+		)
+
+		logger.Info("core services initialized and wired to API")
+	}
+
 	// Create servers
 	apiServer := api.New(api.Config{
 		Host: cfg.Server.API.Host,
 		Port: cfg.Server.API.Port,
-	}, logger)
+	}, logger, apiOpts...)
+
+	// Create admin server options
+	var adminOpts []admin.Option
+	if apiKeySvc != nil {
+		// Create adapter for admin API using existing API key service
+		apiKeyAdapter := admin.NewAPIKeyAdapter(apiKeySvc)
+		adminOpts = append(adminOpts, admin.WithAPIKeyService(apiKeyAdapter))
+		logger.Info("API key service wired to Admin API")
+	}
 
 	adminServer := admin.New(admin.Config{
 		Host: cfg.Server.Admin.Host,
 		Port: cfg.Server.Admin.Port,
-	}, logger)
+	}, logger, adminOpts...)
 
 	grpcServer, err := grpcserver.New(grpcserver.Config{
 		Host:  cfg.Server.GRPC.Host,

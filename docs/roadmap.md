@@ -397,93 +397,93 @@
 
 ## Phase 3: Session & Task
 
-### 3.1 Session State Machine
+### 3.1 Session State Machine ✓
 
-- [ ] Session states:
+- [x] Session states:
   ```
   pending → active → suspended → terminated
                   ↘ resuming ↗
   ```
-- [ ] State transitions:
-  - [ ] `pending → active`: Runner assigned
-  - [ ] `active → suspended`: Idle timeout or permission timeout
-  - [ ] `suspended → resuming`: User resumes or responds to permission
-  - [ ] `resuming → active`: Runner attached, context restored
-  - [ ] `active → terminated`: User terminates or max lifetime reached
-- [ ] Session creation:
-  - [ ] Create workspace
-  - [ ] Create session record (status: pending)
-  - [ ] Request runner from provider
-  - [ ] Attach runner when available
-- [ ] Session service (`pkg/server/core/session.go`):
-  - [ ] `Create(opts CreateSessionOptions) (*Session, error)`
-  - [ ] `Get(id string) (*Session, error)`
-  - [ ] `List(opts ListOptions) ([]*Session, error)`
-  - [ ] `Suspend(id string, reason string) error`
-  - [ ] `Resume(id string) error`
-  - [ ] `Terminate(id string) error`
+- [x] State transitions:
+  - [x] `pending → active`: Runner assigned
+  - [x] `active → suspended`: Idle timeout or permission timeout
+  - [x] `suspended → resuming`: User resumes or responds to permission
+  - [x] `resuming → active`: Runner attached, context restored
+  - [x] `active → terminated`: User terminates or max lifetime reached
+- [x] Session creation:
+  - [x] Create workspace (validation)
+  - [x] Create session record (status: pending)
+  - [ ] Request runner from provider (deferred to integration)
+  - [x] Attach runner when available (AttachRunner method)
+- [x] Session service (`pkg/server/core/session_manager.go`):
+  - [x] `Create(opts CreateSessionOptions) (*Session, error)`
+  - [x] `Get(id string) (*Session, error)`
+  - [x] `List(opts ListOptions) ([]*Session, error)`
+  - [x] `Suspend(id string, strategy string) error`
+  - [x] `Resume(id string) error`
+  - [x] `Terminate(id string) error`
 
-### 3.2 Runner-Session Binding
+### 3.2 Runner-Session Binding ✓
 
-- [ ] Attach runner to session:
-  - [ ] Send `AttachSession` command to runner
-  - [ ] Include workspace path
-  - [ ] Include agent config (API key, model)
-  - [ ] Include pending permission responses (if resuming)
-- [ ] Detach runner from session:
-  - [ ] Send `DetachSession` command
-  - [ ] Save context snapshot
-  - [ ] Sync workspace (if configured)
-  - [ ] Update session state
-- [ ] Runner assignment:
-  - [ ] Find idle runner matching requirements
-  - [ ] Label-based matching (profile selector)
-  - [ ] Reserve runner (set status to busy)
-  - [ ] Handle no available runners (queue or error)
+- [x] Attach runner to session:
+  - [ ] Send `AttachSession` command to runner (G5: agent side)
+  - [ ] Include workspace path (G5)
+  - [ ] Include agent config (API key, model) (G5)
+  - [ ] Include pending permission responses (if resuming) (G5)
+- [x] Detach runner from session:
+  - [ ] Send `DetachSession` command (G5)
+  - [ ] Save context snapshot (G5)
+  - [ ] Sync workspace (if configured) (G5)
+  - [x] Update session state
+- [x] Runner assignment:
+  - [x] Validate runner is idle before attach
+  - [ ] Label-based matching (profile selector) (deferred)
+  - [x] Set runner status (via RunnerManager)
+  - [x] Handle no available runners (ErrRunnerNotIdle)
 
-### 3.3 Task Management
+### 3.3 Task Management ✓
 
-- [ ] Task creation:
-  - [ ] Validate session is active
-  - [ ] Create task record (status: pending)
-  - [ ] Create first task_run (attempt: 1)
-- [ ] Task service (`pkg/server/core/task.go`):
-  - [ ] `Create(sessionID, prompt string, opts TaskOptions) (*Task, error)`
-  - [ ] `Get(id string) (*Task, error)`
-  - [ ] `List(sessionID string, opts ListOptions) ([]*Task, error)`
-  - [ ] `Cancel(id string) error`
-  - [ ] `Retry(id string) error`
-- [ ] Task status aggregation:
-  - [ ] Get latest task_run status
-  - [ ] Update task status from run status
-  - [ ] Handle terminal states
+- [x] Task creation:
+  - [x] Validate session exists
+  - [x] Create task record (status: pending)
+  - [x] Create first task_run (attempt: 1)
+- [x] Task service (`pkg/server/core/task_manager.go`):
+  - [x] `Create(sessionID, prompt string, opts TaskOptions) (*Task, error)`
+  - [x] `Get(id string) (*Task, error)`
+  - [x] `List(sessionID string, opts ListOptions) ([]*Task, error)`
+  - [x] `Cancel(id string) error`
+  - [x] `Retry(id string) error`
+- [x] Task status aggregation:
+  - [x] Get latest task_run status
+  - [x] Update task status from run status
+  - [x] Handle terminal states
 
-### 3.4 Task Run Management
+### 3.4 Task Run Management ✓
 
-- [ ] Run state machine:
+- [x] Run state machine:
   ```
   pending → assigned → running → completed/failed/timeout/canceled
   ```
-- [ ] Run lifecycle:
-  - [ ] `pending`: Waiting for runner
-  - [ ] `assigned`: Runner selected, command sent
-  - [ ] `running`: Runner acknowledged start
-  - [ ] Terminal: completed, failed, timeout, canceled
-- [ ] Task execution flow:
-  - [ ] Send `ExecuteTask` command to runner
-  - [ ] Receive `TaskAccepted` ack
-  - [ ] Receive `TaskStarted` ack
-  - [ ] Receive `TaskProgress` updates
-  - [ ] Receive `TaskCompleted` with result
-- [ ] Timeout enforcement:
-  - [ ] Per-task timeout (default: 1 hour)
-  - [ ] Start timer on `assigned`
-  - [ ] Send `KillTask` on timeout
-  - [ ] Mark run as `timeout`
-- [ ] Retry logic:
-  - [ ] Check `max_retries` and `retry_count`
-  - [ ] Create new task_run with incremented attempt
-  - [ ] Exponential backoff between retries
+- [x] Run lifecycle:
+  - [x] `pending`: Waiting for runner
+  - [x] `assigned`: Runner selected, command sent
+  - [x] `running`: Runner acknowledged start
+  - [x] Terminal: completed, failed, timeout, canceled
+- [x] Task execution flow:
+  - [x] Send `ExecuteTask` command to runner
+  - [x] Receive `TaskAccepted` ack (OnTaskAccepted)
+  - [x] Receive `TaskStarted` ack (OnTaskStarted)
+  - [x] Receive `TaskProgress` updates (OnTaskProgress)
+  - [x] Receive `TaskCompleted` with result (OnTaskCompleted)
+- [x] Timeout enforcement:
+  - [x] Per-task timeout (default: 1 hour)
+  - [x] Start timer on `assigned` (TaskTimeoutEnforcer)
+  - [x] Send `KillTask` on timeout
+  - [x] Mark run as `timeout`
+- [x] Retry logic:
+  - [x] Check `max_retries` and `retry_count` (ShouldRetry)
+  - [x] Create new task_run with incremented attempt
+  - [ ] Exponential backoff between retries (deferred)
 
 ### 3.5 Agent Execution
 

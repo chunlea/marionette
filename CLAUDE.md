@@ -10,7 +10,7 @@ make deps
 createdb marionette
 make migrate
 
-# Build
+# Build (always use make, not bare `go build`)
 make build
 
 # Run tests

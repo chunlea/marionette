@@ -1167,3 +1167,551 @@ func TestStaleDetector_Run_TickerLoop(t *testing.T) {
 		t.Fatal("detector did not stop")
 	}
 }
+
+// =============================================================================
+// RunnerManager Options Tests
+// =============================================================================
+
+// mockTaskMgrForRunner implements TaskManagerInterface for testing runner manager.
+type mockTaskMgrForRunner struct {
+	failRunCalled     bool
+	failRunID         string
+	failRunReason     string
+	failRunErr        error
+	shouldRetryCalled bool
+	shouldRetryTaskID string
+	shouldRetryResult bool
+	shouldRetryErr    error
+	retryCalled       bool
+	retryTaskID       string
+	retryErr          error
+}
+
+func (m *mockTaskMgrForRunner) Create(_ context.Context, _ CreateTaskOptions) (*store.Task, error) {
+	return nil, nil
+}
+
+func (m *mockTaskMgrForRunner) Get(_ context.Context, _ string) (*store.Task, error) {
+	return nil, nil
+}
+
+func (m *mockTaskMgrForRunner) List(_ context.Context, _ ListTasksOptions) (*store.ListResult[store.Task], error) {
+	return nil, nil
+}
+
+func (m *mockTaskMgrForRunner) Cancel(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockTaskMgrForRunner) Execute(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockTaskMgrForRunner) CreateRun(_ context.Context, _ string) (*store.TaskRun, error) {
+	return nil, nil
+}
+
+func (m *mockTaskMgrForRunner) OnTaskAccepted(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockTaskMgrForRunner) OnTaskStarted(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockTaskMgrForRunner) OnTaskProgress(_ context.Context, _ string, _ int) error {
+	return nil
+}
+
+func (m *mockTaskMgrForRunner) OnTaskCompleted(_ context.Context, _ *TaskCompletedResult) error {
+	return nil
+}
+
+func (m *mockTaskMgrForRunner) FailRun(_ context.Context, runID, reason string) error {
+	m.failRunCalled = true
+	m.failRunID = runID
+	m.failRunReason = reason
+	return m.failRunErr
+}
+
+func (m *mockTaskMgrForRunner) ShouldRetry(_ context.Context, taskID string) (bool, error) {
+	m.shouldRetryCalled = true
+	m.shouldRetryTaskID = taskID
+	return m.shouldRetryResult, m.shouldRetryErr
+}
+
+func (m *mockTaskMgrForRunner) Retry(_ context.Context, taskID string) (*store.TaskRun, error) {
+	m.retryCalled = true
+	m.retryTaskID = taskID
+	return nil, m.retryErr
+}
+
+// mockSessionMgrForRunner implements SessionManagerInterface for testing runner manager.
+type mockSessionMgrForRunner struct {
+	attachRunnerCalled bool
+	attachSessionID    string
+	attachRunnerID     string
+	attachErr          error
+	detachRunnerCalled bool
+	detachSessionID    string
+	detachErr          error
+	suspendCalled      bool
+	suspendSessionID   string
+	suspendStrategy    string
+	suspendErr         error
+}
+
+func (m *mockSessionMgrForRunner) Create(_ context.Context, _ CreateSessionOptions) (*store.Session, error) {
+	return nil, nil
+}
+
+func (m *mockSessionMgrForRunner) Get(_ context.Context, _ string) (*store.Session, error) {
+	return nil, nil
+}
+
+func (m *mockSessionMgrForRunner) List(_ context.Context, _ ListSessionsOptions) (*store.ListResult[store.Session], error) {
+	return nil, nil
+}
+
+func (m *mockSessionMgrForRunner) Activate(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockSessionMgrForRunner) Resume(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockSessionMgrForRunner) Terminate(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockSessionMgrForRunner) AttachRunner(_ context.Context, sessionID, runnerID string) error {
+	m.attachRunnerCalled = true
+	m.attachSessionID = sessionID
+	m.attachRunnerID = runnerID
+	return m.attachErr
+}
+
+func (m *mockSessionMgrForRunner) DetachRunner(_ context.Context, sessionID string) error {
+	m.detachRunnerCalled = true
+	m.detachSessionID = sessionID
+	return m.detachErr
+}
+
+func (m *mockSessionMgrForRunner) Suspend(_ context.Context, sessionID, strategy string) error {
+	m.suspendCalled = true
+	m.suspendSessionID = sessionID
+	m.suspendStrategy = strategy
+	return m.suspendErr
+}
+
+func TestWithTaskManager(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+
+	taskMgr := &mockTaskMgrForRunner{}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger, WithTaskManager(taskMgr))
+
+	assert.NotNil(t, manager.taskMgr)
+	assert.Equal(t, taskMgr, manager.taskMgr)
+}
+
+func TestWithSessionManager(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+
+	sessionMgr := &mockSessionMgrForRunner{}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger, WithSessionManager(sessionMgr))
+
+	assert.NotNil(t, manager.sessionMgr)
+	assert.Equal(t, sessionMgr, manager.sessionMgr)
+}
+
+func TestWithBothManagers(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := &testStoreWrapper{testStore: s}
+
+	taskMgr := &mockTaskMgrForRunner{}
+	sessionMgr := &mockSessionMgrForRunner{}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger,
+		WithTaskManager(taskMgr),
+		WithSessionManager(sessionMgr),
+	)
+
+	assert.NotNil(t, manager.taskMgr)
+	assert.NotNil(t, manager.sessionMgr)
+}
+
+// =============================================================================
+// handleInFlightTasks Tests
+// =============================================================================
+
+// extendedTestStoreWrapper extends testStoreWrapper to support task runs and sessions for disconnect tests.
+type extendedTestStoreWrapper struct {
+	*testStoreWrapper
+	taskRuns map[string]*store.TaskRun
+	sessions map[string]*store.Session
+}
+
+func newExtendedTestStoreWrapper(s *testRunnerStore) *extendedTestStoreWrapper {
+	return &extendedTestStoreWrapper{
+		testStoreWrapper: &testStoreWrapper{testStore: s},
+		taskRuns:         make(map[string]*store.TaskRun),
+		sessions:         make(map[string]*store.Session),
+	}
+}
+
+func (w *extendedTestStoreWrapper) ListTaskRuns(_ context.Context, opts store.ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	items := make([]*store.TaskRun, 0)
+	for _, run := range w.taskRuns {
+		// Filter by runner ID
+		if opts.RunnerID != nil && (run.RunnerID == nil || *run.RunnerID != *opts.RunnerID) {
+			continue
+		}
+		// Filter by status
+		if len(opts.Status) > 0 {
+			matched := false
+			for _, s := range opts.Status {
+				if run.Status == s {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		items = append(items, run)
+	}
+	return &store.ListResult[store.TaskRun]{Items: items}, nil
+}
+
+func (w *extendedTestStoreWrapper) ListSessions(_ context.Context, opts store.ListSessionsOptions) (*store.ListResult[store.Session], error) {
+	items := make([]*store.Session, 0)
+	for _, sess := range w.sessions {
+		// Filter by runner ID
+		if opts.RunnerID != nil && (sess.RunnerID == nil || *sess.RunnerID != *opts.RunnerID) {
+			continue
+		}
+		// Filter by status
+		if len(opts.Status) > 0 {
+			matched := false
+			for _, s := range opts.Status {
+				if sess.Status == s {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		items = append(items, sess)
+	}
+	return &store.ListResult[store.Session]{Items: items}, nil
+}
+
+func TestRunnerManager_HandleInFlightTasks_NoTaskManager(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := newExtendedTestStoreWrapper(s)
+
+	// Runner with no task manager
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	// Should succeed without task manager (just logs and returns)
+	err := manager.OnDisconnect(context.Background(), "run_123")
+	require.NoError(t, err)
+}
+
+func TestRunnerManager_HandleInFlightTasks_NoRunningTasks(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := newExtendedTestStoreWrapper(s)
+
+	taskMgr := &mockTaskMgrForRunner{}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger, WithTaskManager(taskMgr))
+
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	// No task runs in store
+	err := manager.OnDisconnect(context.Background(), "run_123")
+	require.NoError(t, err)
+
+	// TaskManager should not be called
+	assert.False(t, taskMgr.failRunCalled)
+}
+
+func TestRunnerManager_HandleInFlightTasks_WithRunningTasks(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := newExtendedTestStoreWrapper(s)
+
+	runnerID := "run_123"
+	taskMgr := &mockTaskMgrForRunner{shouldRetryResult: false}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger, WithTaskManager(taskMgr))
+
+	s.runners[runnerID] = &store.Runner{
+		ID:     runnerID,
+		Name:   "test-runner",
+		Status: StatusBusy,
+	}
+
+	// Add running task runs
+	wrapperStore.taskRuns["trun_1"] = &store.TaskRun{
+		ID:       "trun_1",
+		TaskID:   "task_1",
+		RunnerID: &runnerID,
+		Status:   TaskRunStatusRunning,
+	}
+	wrapperStore.taskRuns["trun_2"] = &store.TaskRun{
+		ID:       "trun_2",
+		TaskID:   "task_2",
+		RunnerID: &runnerID,
+		Status:   TaskRunStatusAssigned,
+	}
+
+	err := manager.OnDisconnect(context.Background(), runnerID)
+	require.NoError(t, err)
+
+	// TaskManager should be called to fail runs
+	assert.True(t, taskMgr.failRunCalled)
+	assert.True(t, taskMgr.shouldRetryCalled)
+}
+
+func TestRunnerManager_HandleInFlightTasks_WithRetry(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := newExtendedTestStoreWrapper(s)
+
+	runnerID := "run_123"
+	taskMgr := &mockTaskMgrForRunner{shouldRetryResult: true}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger, WithTaskManager(taskMgr))
+
+	s.runners[runnerID] = &store.Runner{
+		ID:     runnerID,
+		Name:   "test-runner",
+		Status: StatusBusy,
+	}
+
+	// Add running task run
+	wrapperStore.taskRuns["trun_1"] = &store.TaskRun{
+		ID:       "trun_1",
+		TaskID:   "task_1",
+		RunnerID: &runnerID,
+		Status:   TaskRunStatusRunning,
+	}
+
+	err := manager.OnDisconnect(context.Background(), runnerID)
+	require.NoError(t, err)
+
+	// Should have checked for retry
+	assert.True(t, taskMgr.shouldRetryCalled)
+	assert.Equal(t, "task_1", taskMgr.shouldRetryTaskID)
+}
+
+func TestRunnerManager_HandleInFlightTasks_FailRunError(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := newExtendedTestStoreWrapper(s)
+
+	runnerID := "run_123"
+	taskMgr := &mockTaskMgrForRunner{failRunErr: errors.New("fail run error")}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger, WithTaskManager(taskMgr))
+
+	s.runners[runnerID] = &store.Runner{
+		ID:     runnerID,
+		Name:   "test-runner",
+		Status: StatusBusy,
+	}
+
+	wrapperStore.taskRuns["trun_1"] = &store.TaskRun{
+		ID:       "trun_1",
+		TaskID:   "task_1",
+		RunnerID: &runnerID,
+		Status:   TaskRunStatusRunning,
+	}
+
+	// Should not return error (just logs)
+	err := manager.OnDisconnect(context.Background(), runnerID)
+	require.NoError(t, err)
+
+	assert.True(t, taskMgr.failRunCalled)
+	// ShouldRetry should not be called because FailRun failed
+	assert.False(t, taskMgr.shouldRetryCalled)
+}
+
+// =============================================================================
+// detachSessions Tests
+// =============================================================================
+
+func TestRunnerManager_DetachSessions_NoSessionManager(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := newExtendedTestStoreWrapper(s)
+
+	// Runner with no session manager
+	manager := NewRunnerManager(wrapperStore, connMgr, logger)
+
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	// Should succeed without session manager
+	err := manager.OnDisconnect(context.Background(), "run_123")
+	require.NoError(t, err)
+}
+
+func TestRunnerManager_DetachSessions_NoActiveSessions(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := newExtendedTestStoreWrapper(s)
+
+	sessionMgr := &mockSessionMgrForRunner{}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger, WithSessionManager(sessionMgr))
+
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	// No sessions in store
+	err := manager.OnDisconnect(context.Background(), "run_123")
+	require.NoError(t, err)
+
+	// SessionManager should not be called
+	assert.False(t, sessionMgr.suspendCalled)
+}
+
+func TestRunnerManager_DetachSessions_WithActiveSessions(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := newExtendedTestStoreWrapper(s)
+
+	runnerID := "run_123"
+	sessionMgr := &mockSessionMgrForRunner{}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger, WithSessionManager(sessionMgr))
+
+	s.runners[runnerID] = &store.Runner{
+		ID:     runnerID,
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	// Add active session
+	wrapperStore.sessions["sess_1"] = &store.Session{
+		ID:       "sess_1",
+		RunnerID: &runnerID,
+		Status:   SessionStatusActive,
+	}
+
+	err := manager.OnDisconnect(context.Background(), runnerID)
+	require.NoError(t, err)
+
+	// SessionManager should be called to suspend
+	assert.True(t, sessionMgr.suspendCalled)
+	assert.Equal(t, "sess_1", sessionMgr.suspendSessionID)
+	assert.Equal(t, "terminate", sessionMgr.suspendStrategy)
+}
+
+func TestRunnerManager_DetachSessions_MultipleSessions(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := newExtendedTestStoreWrapper(s)
+
+	runnerID := "run_123"
+	suspendCount := 0
+	sessionMgr := &mockSessionMgrForRunner{}
+	// Override suspend to count calls
+	originalSuspend := sessionMgr.Suspend
+	_ = originalSuspend
+	manager := NewRunnerManager(wrapperStore, connMgr, logger, WithSessionManager(sessionMgr))
+
+	s.runners[runnerID] = &store.Runner{
+		ID:     runnerID,
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	// Add multiple active sessions
+	wrapperStore.sessions["sess_1"] = &store.Session{
+		ID:       "sess_1",
+		RunnerID: &runnerID,
+		Status:   SessionStatusActive,
+	}
+	wrapperStore.sessions["sess_2"] = &store.Session{
+		ID:       "sess_2",
+		RunnerID: &runnerID,
+		Status:   SessionStatusActive,
+	}
+
+	err := manager.OnDisconnect(context.Background(), runnerID)
+	require.NoError(t, err)
+
+	// Count suspended sessions manually
+	for _, sess := range wrapperStore.sessions {
+		if sess.RunnerID != nil && *sess.RunnerID == runnerID && sess.Status == SessionStatusActive {
+			suspendCount++
+		}
+	}
+
+	// SessionManager should be called
+	assert.True(t, sessionMgr.suspendCalled)
+}
+
+func TestRunnerManager_DetachSessions_SuspendError(t *testing.T) {
+	s := newTestRunnerStore()
+	connMgr := newTestConnManager()
+	logger := zap.NewNop()
+	wrapperStore := newExtendedTestStoreWrapper(s)
+
+	runnerID := "run_123"
+	sessionMgr := &mockSessionMgrForRunner{suspendErr: errors.New("suspend error")}
+	manager := NewRunnerManager(wrapperStore, connMgr, logger, WithSessionManager(sessionMgr))
+
+	s.runners[runnerID] = &store.Runner{
+		ID:     runnerID,
+		Name:   "test-runner",
+		Status: StatusIdle,
+	}
+
+	wrapperStore.sessions["sess_1"] = &store.Session{
+		ID:       "sess_1",
+		RunnerID: &runnerID,
+		Status:   SessionStatusActive,
+	}
+
+	// Should not return error (just logs)
+	err := manager.OnDisconnect(context.Background(), runnerID)
+	require.NoError(t, err)
+
+	assert.True(t, sessionMgr.suspendCalled)
+}

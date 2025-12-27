@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/server/core"
 	"go.uber.org/zap"
 )
 
@@ -12,14 +13,29 @@ import (
 type MessageRouter struct {
 	logger        *zap.Logger
 	runnerManager RunnerManagerInterface
+	taskManager   core.TaskManagerInterface
+}
+
+// MessageRouterOption is a functional option for MessageRouter.
+type MessageRouterOption func(*MessageRouter)
+
+// WithMRTaskManager sets the task manager for the message router.
+func WithMRTaskManager(tm core.TaskManagerInterface) MessageRouterOption {
+	return func(r *MessageRouter) {
+		r.taskManager = tm
+	}
 }
 
 // NewMessageRouter creates a new MessageRouter.
-func NewMessageRouter(logger *zap.Logger, runnerManager RunnerManagerInterface) *MessageRouter {
-	return &MessageRouter{
+func NewMessageRouter(logger *zap.Logger, runnerManager RunnerManagerInterface, opts ...MessageRouterOption) *MessageRouter {
+	r := &MessageRouter{
 		logger:        logger,
 		runnerManager: runnerManager,
 	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // HandleMessage routes a message from a runner to the appropriate handler.
@@ -76,52 +92,103 @@ func (r *MessageRouter) handleHeartbeat(ctx context.Context, runnerID string, hb
 }
 
 // handleTaskAccepted processes a task accepted message.
-// G3: Will notify TaskManager that runner accepted the task.
-func (r *MessageRouter) handleTaskAccepted(_ context.Context, runnerID string, msg *pb.TaskAccepted) error {
-	r.logger.Debug("task accepted (stub)",
+// Updates task run status to "assigned".
+func (r *MessageRouter) handleTaskAccepted(ctx context.Context, runnerID string, msg *pb.TaskAccepted) error {
+	r.logger.Debug("task accepted",
 		zap.String("runner_id", runnerID),
 		zap.String("task_id", msg.GetTaskId()),
 		zap.String("run_id", msg.GetRunId()),
 	)
-	// G3: Implement task acceptance handling
-	return nil
+
+	if r.taskManager == nil {
+		r.logger.Warn("no task manager configured, skipping task accepted handling")
+		return nil
+	}
+
+	return r.taskManager.OnTaskAccepted(ctx, msg.GetRunId())
 }
 
 // handleTaskStarted processes a task started message.
-// G3: Will update task run status to "running".
-func (r *MessageRouter) handleTaskStarted(_ context.Context, runnerID string, msg *pb.TaskStarted) error {
-	r.logger.Debug("task started (stub)",
+// Updates task run status to "running" and runner to "busy".
+func (r *MessageRouter) handleTaskStarted(ctx context.Context, runnerID string, msg *pb.TaskStarted) error {
+	r.logger.Debug("task started",
 		zap.String("runner_id", runnerID),
 		zap.String("task_id", msg.GetTaskId()),
 		zap.String("run_id", msg.GetRunId()),
 	)
-	// G3: Implement task started handling
+
+	if r.taskManager == nil {
+		r.logger.Warn("no task manager configured, skipping task started handling")
+		return nil
+	}
+
+	// Update task run status
+	if err := r.taskManager.OnTaskStarted(ctx, msg.GetRunId()); err != nil {
+		return err
+	}
+
+	// Set runner to busy
+	if r.runnerManager != nil {
+		return r.runnerManager.SetStatus(ctx, runnerID, "busy")
+	}
 	return nil
 }
 
 // handleTaskProgress processes a task progress message.
-// G3: Will update task progress and forward to subscribers.
-func (r *MessageRouter) handleTaskProgress(_ context.Context, runnerID string, msg *pb.TaskProgress) error {
-	r.logger.Debug("task progress (stub)",
+// Forwards progress to TaskManager for real-time updates.
+func (r *MessageRouter) handleTaskProgress(ctx context.Context, runnerID string, msg *pb.TaskProgress) error {
+	r.logger.Debug("task progress",
 		zap.String("runner_id", runnerID),
 		zap.String("task_id", msg.GetTaskId()),
 		zap.String("run_id", msg.GetRunId()),
 		zap.Int32("progress_pct", msg.GetProgressPercent()),
 	)
-	// G3: Implement task progress handling
-	return nil
+
+	if r.taskManager == nil {
+		return nil
+	}
+
+	return r.taskManager.OnTaskProgress(ctx, msg.GetRunId(), int(msg.GetProgressPercent()))
 }
 
 // handleTaskCompleted processes a task completed message.
-// G3: Will update task/run status and trigger post-task actions.
-func (r *MessageRouter) handleTaskCompleted(_ context.Context, runnerID string, msg *pb.TaskCompleted) error {
-	r.logger.Debug("task completed (stub)",
+// Updates task/run status and sets runner back to idle.
+func (r *MessageRouter) handleTaskCompleted(ctx context.Context, runnerID string, msg *pb.TaskCompleted) error {
+	r.logger.Debug("task completed",
 		zap.String("runner_id", runnerID),
 		zap.String("task_id", msg.GetTaskId()),
 		zap.String("run_id", msg.GetRunId()),
 		zap.Bool("success", msg.GetSuccess()),
 	)
-	// G3: Implement task completion handling
+
+	if r.taskManager == nil {
+		r.logger.Warn("no task manager configured, skipping task completed handling")
+		return nil
+	}
+
+	// Build result
+	result := &core.TaskCompletedResult{
+		RunID:        msg.GetRunId(),
+		Success:      msg.GetSuccess(),
+		Error:        msg.GetError(),
+		TokensInput:  int(msg.GetTokensInput()),
+		TokensOutput: int(msg.GetTokensOutput()),
+	}
+
+	if msg.GetExitCode() != 0 {
+		exitCode := int(msg.GetExitCode())
+		result.ExitCode = &exitCode
+	}
+
+	// Update task/run status
+	if err := r.taskManager.OnTaskCompleted(ctx, result); err != nil {
+		return err
+	}
+
+	// Set runner back to idle
+	if r.runnerManager != nil {
+		return r.runnerManager.SetStatus(ctx, runnerID, "idle")
+	}
 	return nil
 }
 
