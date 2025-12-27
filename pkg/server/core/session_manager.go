@@ -261,9 +261,30 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 	return nil
 }
 
+// SuspendOptions contains options for suspending a session.
+type SuspendOptions struct {
+	// Strategy specifies how to handle the suspend (pause, snapshot, etc.).
+	Strategy string
+
+	// ContextSnapshot is the context to save with the session.
+	// If nil, a basic snapshot is created automatically.
+	ContextSnapshot *ContextSnapshot
+
+	// WorkspaceSynced indicates if workspace was synced to object storage.
+	WorkspaceSynced bool
+
+	// SnapshotID is the ID of any snapshot created during suspend.
+	SnapshotID string
+}
+
 // Suspend transitions a session from active to suspended.
 // The strategy parameter specifies how to handle the suspend (pause, snapshot, etc.).
 func (m *SessionManager) Suspend(ctx context.Context, sessionID, strategy string) error {
+	return m.SuspendWithOptions(ctx, sessionID, SuspendOptions{Strategy: strategy})
+}
+
+// SuspendWithOptions transitions a session from active to suspended with full options.
+func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID string, opts SuspendOptions) error {
 	session, err := m.store.GetSession(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -285,13 +306,35 @@ func (m *SessionManager) Suspend(ctx context.Context, sessionID, strategy string
 	// Store previous runner ID before detaching
 	previousRunnerID := session.RunnerID
 
+	// Prepare context snapshot
+	var snapshotJSON json.RawMessage
+	if opts.ContextSnapshot != nil {
+		snapshotJSON, err = opts.ContextSnapshot.ToJSON()
+		if err != nil {
+			m.logger.Warn("failed to serialize context snapshot",
+				zap.String("session_id", sessionID),
+				zap.Error(err),
+			)
+		}
+	} else {
+		// Create basic snapshot
+		snapshot := NewContextSnapshot()
+		snapshotJSON, _ = snapshot.ToJSON()
+	}
+
 	now := time.Now()
 	updates := store.SessionUpdates{
-		Status:           stringPtr(SessionStatusSuspended),
-		RunnerID:         nil, // Detach runner
-		SuspendedAt:      &now,
-		SuspendStrategy:  &strategy,
-		PreviousRunnerID: previousRunnerID,
+		Status:                 stringPtr(SessionStatusSuspended),
+		RunnerID:               nil, // Detach runner
+		SuspendedAt:            &now,
+		SuspendStrategy:        &opts.Strategy,
+		PreviousRunnerID:       previousRunnerID,
+		ContextSnapshot:        snapshotJSON,
+		SuspendWorkspaceSynced: &opts.WorkspaceSynced,
+	}
+
+	if opts.SnapshotID != "" {
+		updates.SuspendSnapshotID = &opts.SnapshotID
 	}
 
 	// Clear runner_id by setting empty string pointer (store layer will handle NULL)
@@ -304,25 +347,47 @@ func (m *SessionManager) Suspend(ctx context.Context, sessionID, strategy string
 
 	m.logger.Info("session suspended",
 		zap.String("session_id", sessionID),
-		zap.String("strategy", strategy),
+		zap.String("strategy", opts.Strategy),
 		zap.Stringp("previous_runner_id", previousRunnerID),
+		zap.Bool("workspace_synced", opts.WorkspaceSynced),
 	)
 
-	// G5: Execute suspend strategy (pause, snapshot, terminate_preserve_storage, etc.)
-	// Currently a stub - will be implemented in G5
-
 	return nil
+}
+
+// ResumeResult contains information about a resumed session.
+type ResumeResult struct {
+	// Session is the resumed session.
+	Session *store.Session
+
+	// ContextSnapshot is the saved context to restore.
+	ContextSnapshot *ContextSnapshot
+
+	// SuspendStrategy is the strategy used when suspended.
+	SuspendStrategy string
+
+	// SnapshotID is the snapshot ID if one was created during suspend.
+	SnapshotID string
+
+	// WorkspaceSynced indicates if workspace was synced during suspend.
+	WorkspaceSynced bool
 }
 
 // Resume transitions a session from suspended to resuming.
 // The session will be fully activated once a runner is attached.
 func (m *SessionManager) Resume(ctx context.Context, sessionID string) error {
+	_, err := m.ResumeWithResult(ctx, sessionID)
+	return err
+}
+
+// ResumeWithResult transitions a session from suspended to resuming and returns resume info.
+func (m *SessionManager) ResumeWithResult(ctx context.Context, sessionID string) (*ResumeResult, error) {
 	session, err := m.store.GetSession(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return ErrSessionNotFound
+			return nil, ErrSessionNotFound
 		}
-		return err
+		return nil, err
 	}
 
 	// Validate transition
@@ -332,22 +397,87 @@ func (m *SessionManager) Resume(ctx context.Context, sessionID string) error {
 			zap.String("from", session.Status),
 			zap.String("to", SessionStatusResuming),
 		)
-		return ErrInvalidSessionTransition
+		return nil, ErrInvalidSessionTransition
 	}
 
+	// Parse context snapshot
+	var contextSnapshot *ContextSnapshot
+	if len(session.ContextSnapshot) > 0 {
+		contextSnapshot, err = ParseContextSnapshot(session.ContextSnapshot)
+		if err != nil {
+			m.logger.Warn("failed to parse context snapshot",
+				zap.String("session_id", sessionID),
+				zap.Error(err),
+			)
+		}
+	}
+
+	now := time.Now()
 	updates := store.SessionUpdates{
-		Status: stringPtr(SessionStatusResuming),
+		Status:    stringPtr(SessionStatusResuming),
+		ResumedAt: &now,
 	}
 
 	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
-		return err
+		return nil, err
 	}
 
 	m.logger.Info("session resuming",
 		zap.String("session_id", sessionID),
+		zap.Stringp("suspend_strategy", session.SuspendStrategy),
 	)
 
-	return nil
+	result := &ResumeResult{
+		Session:         session,
+		ContextSnapshot: contextSnapshot,
+	}
+
+	if session.SuspendStrategy != nil {
+		result.SuspendStrategy = *session.SuspendStrategy
+	}
+	if session.SuspendSnapshotID != nil {
+		result.SnapshotID = *session.SuspendSnapshotID
+	}
+	if session.SuspendWorkspaceSynced != nil {
+		result.WorkspaceSynced = *session.SuspendWorkspaceSynced
+	}
+
+	return result, nil
+}
+
+// GetContextSnapshot retrieves the context snapshot for a session.
+func (m *SessionManager) GetContextSnapshot(ctx context.Context, sessionID string) (*ContextSnapshot, error) {
+	session, err := m.store.GetSession(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrSessionNotFound
+		}
+		return nil, err
+	}
+
+	if len(session.ContextSnapshot) == 0 {
+		return nil, nil
+	}
+
+	return ParseContextSnapshot(session.ContextSnapshot)
+}
+
+// UpdateContextSnapshot updates the context snapshot for a session.
+func (m *SessionManager) UpdateContextSnapshot(ctx context.Context, sessionID string, snapshot *ContextSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+
+	snapshotJSON, err := snapshot.ToJSON()
+	if err != nil {
+		return err
+	}
+
+	updates := store.SessionUpdates{
+		ContextSnapshot: snapshotJSON,
+	}
+
+	return m.store.UpdateSession(ctx, sessionID, updates)
 }
 
 // Terminate transitions a session to terminated status.

@@ -753,9 +753,9 @@
 
 ## Phase 5: Suspend/Resume
 
-### 5.1 Suspend Strategy Framework
+### 5.1 Suspend Strategy Framework ✓
 
-- [ ] Define suspend strategies:
+- [x] Define suspend strategies:
   ```go
   type SuspendStrategy string
   const (
@@ -766,7 +766,7 @@
       SuspendStrategyTerminate                // Full termination
   )
   ```
-- [ ] SuspendableProvider interface:
+- [x] SuspendableProvider interface:
   ```go
   type SuspendableProvider interface {
       Provider
@@ -774,25 +774,25 @@
       Resume(ctx, sessionID string, opts ResumeOptions) (*RunnerInstance, error)
   }
   ```
-- [ ] Suspend configuration per provider:
-  - [ ] Default strategy
-  - [ ] Fallback strategy
-  - [ ] Min/max suspend duration
-  - [ ] Workspace sync options
+- [x] Suspend configuration per provider:
+  - [x] Default strategy
+  - [x] Fallback strategy
+  - [x] Min/max suspend duration
+  - [x] Workspace sync options
 
-### 5.2 Docker Pause/Resume
+### 5.2 Docker Pause/Resume ✓
 
-- [ ] Implement pause strategy for Docker:
-  - [ ] `docker pause <container>` on suspend
-  - [ ] `docker unpause <container>` on resume
-  - [ ] Memory preserved, instant resume
-- [ ] Fallback to terminate_preserve_storage:
-  - [ ] Stop container but keep volume
-  - [ ] Create new container with same volume on resume
+- [x] Implement pause strategy for Docker:
+  - [x] `docker pause <container>` on suspend
+  - [x] `docker unpause <container>` on resume
+  - [x] Memory preserved, instant resume
+- [x] Fallback to terminate_preserve_storage:
+  - [x] Stop container but keep volume
+  - [x] Create new container with same volume on resume
 
-### 5.3 Context Snapshot
+### 5.3 Context Snapshot ✓
 
-- [ ] Define context snapshot schema:
+- [x] Define context snapshot schema:
   ```go
   type ContextSnapshot struct {
       WorkingDirectory string
@@ -802,14 +802,15 @@
       LastActivity     time.Time
   }
   ```
-- [ ] Save context on suspend:
-  - [ ] Request context from agent via gRPC
-  - [ ] Store in session.context_snapshot (JSONB)
-  - [ ] Store agent_version for compatibility check
-- [ ] Restore context on resume:
-  - [ ] Check agent version compatibility
-  - [ ] Send context in AttachSession command
-  - [ ] Agent restores working directory, environment
+- [x] Save context on suspend:
+  - [x] Store in session.context_snapshot (JSONB)
+  - [x] Store agent_version for compatibility check
+  - [ ] Request context from agent via gRPC (Agent-side)
+- [x] Restore context on resume:
+  - [x] Parse context snapshot on resume
+  - [x] Return context in ResumeResult
+  - [ ] Send context in AttachSession command (Agent-side)
+  - [ ] Agent restores working directory, environment (Agent-side)
 
 ### 5.4 CAS Storage Implementation
 

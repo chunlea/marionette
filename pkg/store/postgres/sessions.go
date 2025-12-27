@@ -213,9 +213,15 @@ func updateSession(ctx context.Context, q querier, sessionID string, updates sto
 		argNum++
 	}
 	if updates.RunnerID != nil {
-		setClauses = append(setClauses, fmt.Sprintf("runner_id = $%d", argNum))
-		args = append(args, *updates.RunnerID)
-		argNum++
+		// Empty string means set to NULL (detach runner).
+		// Foreign key constraint requires NULL or a valid runner ID, not empty string.
+		if *updates.RunnerID == "" {
+			setClauses = append(setClauses, "runner_id = NULL")
+		} else {
+			setClauses = append(setClauses, fmt.Sprintf("runner_id = $%d", argNum))
+			args = append(args, *updates.RunnerID)
+			argNum++
+		}
 	}
 	if updates.AgentConfigID != nil {
 		setClauses = append(setClauses, fmt.Sprintf("agent_config_id = $%d", argNum))
