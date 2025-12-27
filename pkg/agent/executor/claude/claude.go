@@ -356,9 +356,12 @@ func (e *Executor) readStreamJSON(r io.Reader, parser *outputParser) error {
 			continue
 		}
 
+		// Always record raw JSON line for audit/replay
+		parser.handler.HandleOutput("json", append(append([]byte{}, line...), '\n'))
+
 		var msg StreamMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			// Not valid JSON, just forward as text
+			// Not valid JSON, also forward as text
 			parser.handler.HandleOutput("stdout", append(line, '\n'))
 			continue
 		}
@@ -400,19 +403,16 @@ func (p *outputParser) handleMessage(msg *StreamMessage) {
 		}
 
 	case "tool_use":
-		// Tool is being used
+		// Tool invocation - raw JSON already recorded
 		if msg.ToolUse != nil {
 			p.logger.Debug("tool use",
 				zap.String("tool", msg.ToolUse.Name),
 				zap.String("id", msg.ToolUse.ID),
 			)
-			// Optionally send as system message
-			toolInfo := fmt.Sprintf("[Tool: %s]\n", msg.ToolUse.Name)
-			p.handler.HandleOutput("system", []byte(toolInfo))
 		}
 
 	case "tool_result":
-		// Tool result received
+		// Tool result - raw JSON already recorded
 		if msg.ToolResult != nil {
 			p.logger.Debug("tool result",
 				zap.String("tool_use_id", msg.ToolResult.ToolUseID),
