@@ -89,8 +89,9 @@ func main() {
 	claudeExecutor := claude.New(logger)
 
 	// Wire executor callbacks
+	sandboxMode := cfg.Sandbox.Mode
 	cmdHandler.OnExecuteTask = func(ctx context.Context, cmd *pb.ExecuteTask) (*pb.RunnerMessage, error) {
-		return executeTask(ctx, cmd, cmdHandler, claudeExecutor, logStreamer, logger)
+		return executeTask(ctx, cmd, cmdHandler, claudeExecutor, logStreamer, logger, sandboxMode)
 	}
 
 	cmdHandler.OnKillTask = func(_ context.Context, _ *pb.KillTask) error {
@@ -226,6 +227,7 @@ func executeTask(
 	exec executor.Executor,
 	logStreamer *agent.LogStreamer,
 	logger *zap.Logger,
+	sandboxMode string,
 ) (*pb.RunnerMessage, error) {
 	// Get session state for workspace and agent config
 	session, exists := cmdHandler.GetSession(cmd.SessionId)
@@ -266,14 +268,20 @@ func executeTask(
 	// Build agent config from session
 	agentConfig := &executor.AgentConfig{
 		WorkingDir: workspacePath,
+		Extra:      make(map[string]string),
 	}
 	if session.AgentConfig != nil {
 		agentConfig.Agent = session.AgentConfig.Agent
 		agentConfig.Model = session.AgentConfig.Model
 		agentConfig.APIKey = session.AgentConfig.ApiKey
 		agentConfig.BaseURL = session.AgentConfig.BaseUrl
-		agentConfig.Extra = session.AgentConfig.Extra
+		// Copy Extra from session config
+		for k, v := range session.AgentConfig.Extra {
+			agentConfig.Extra[k] = v
+		}
 	}
+	// Add sandbox_mode from runner configuration
+	agentConfig.Extra["sandbox_mode"] = sandboxMode
 
 	logger.Info("executing task",
 		zap.String("task_id", cmd.TaskId),

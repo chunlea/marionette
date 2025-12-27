@@ -271,8 +271,26 @@ func (e *Executor) buildCommand(task *executor.Task, config *executor.AgentConfi
 
 	// Build arguments
 	args := []string{
-		"-p",                          // Print mode (non-interactive)
+		"-p",                             // Print mode (non-interactive)
+		"--verbose",                      // Required for stream-json with -p
 		"--output-format", "stream-json", // Stream JSON output for structured data
+	}
+
+	// Add permission mode based on sandbox_mode
+	// See docs/agents.md for sandbox mode design
+	sandboxMode := config.Extra["sandbox_mode"]
+	switch sandboxMode {
+	case "runner-is-sandbox", "runner-creates-sandbox":
+		// Sandboxed environment - skip all permission prompts
+		args = append(args, "--dangerously-skip-permissions")
+	case "none", "":
+		// No sandbox - use permission mode to handle prompts
+		// Default to acceptEdits for non-sandboxed environments
+		permMode := config.Extra["permission_mode"]
+		if permMode == "" {
+			permMode = "acceptEdits"
+		}
+		args = append(args, "--permission-mode", permMode)
 	}
 
 	// Add model if specified
