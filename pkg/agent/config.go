@@ -18,8 +18,15 @@ type Config struct {
 	Runner    RunnerConfig    `mapstructure:"runner"`
 	Heartbeat HeartbeatConfig `mapstructure:"heartbeat"`
 	Sandbox   SandboxConfig   `mapstructure:"sandbox"`
+	Workspace WorkspaceConfig `mapstructure:"workspace"`
 	TLS       TLSConfig       `mapstructure:"tls"`
 	Logging   LoggingConfig   `mapstructure:"logging"`
+}
+
+// WorkspaceConfig contains workspace directory settings.
+type WorkspaceConfig struct {
+	// BaseDir is the base directory for workspaces. Default: /workspace.
+	BaseDir string `mapstructure:"base_dir"`
 }
 
 // ServerConfig contains gRPC server connection settings.
@@ -108,6 +115,7 @@ func BindFlags(flags *pflag.FlagSet) {
 	flags.String("tls-cert", "", "Path to TLS client certificate")
 	flags.String("tls-key", "", "Path to TLS client key")
 	flags.String("tls-ca", "", "Path to TLS CA certificate")
+	flags.String("workspace-dir", "/workspace", "Base directory for workspaces")
 }
 
 // bindPFlags binds parsed pflags to a viper instance.
@@ -124,6 +132,7 @@ func bindPFlags(v *viper.Viper, flags *pflag.FlagSet) {
 	_ = v.BindPFlag("tls.cert_file", flags.Lookup("tls-cert"))
 	_ = v.BindPFlag("tls.key_file", flags.Lookup("tls-key"))
 	_ = v.BindPFlag("tls.ca_file", flags.Lookup("tls-ca"))
+	_ = v.BindPFlag("workspace.base_dir", flags.Lookup("workspace-dir"))
 }
 
 // LoadWithFlags loads configuration from file, environment variables, and command-line flags.
@@ -197,6 +206,9 @@ func setDefaults(v *viper.Viper) {
 	// Sandbox defaults
 	v.SetDefault("sandbox.mode", "runner-is-sandbox")
 
+	// Workspace defaults
+	v.SetDefault("workspace.base_dir", "/workspace")
+
 	// TLS defaults
 	v.SetDefault("tls.enabled", false)
 	v.SetDefault("tls.skip_verify", false)
@@ -224,6 +236,9 @@ func bindEnvVars(v *viper.Viper) {
 
 	// Sandbox
 	_ = v.BindEnv("sandbox.mode")
+
+	// Workspace
+	_ = v.BindEnv("workspace.base_dir")
 
 	// TLS
 	_ = v.BindEnv("tls.enabled")

@@ -76,9 +76,7 @@ func main() {
 	)
 
 	// Create workspace manager and command handler
-	// TODO: Add workspace configuration to Config struct
-	workspaceBasePath := "/workspace"
-	workspaceMgr := agent.NewWorkspaceManager(workspaceBasePath, logger)
+	workspaceMgr := agent.NewWorkspaceManager(cfg.Workspace.BaseDir, logger)
 	cmdHandler := agent.NewDefaultCommandHandler(workspaceMgr, logger)
 
 	// Create control channel
