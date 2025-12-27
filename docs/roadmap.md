@@ -426,10 +426,10 @@
 ### 3.2 Runner-Session Binding ✓
 
 - [x] Attach runner to session:
-  - [ ] Send `AttachSession` command to runner (G5: agent side)
-  - [ ] Include workspace path (G5)
-  - [ ] Include agent config (API key, model) (G5)
-  - [ ] Include pending permission responses (if resuming) (G5)
+  - [x] Send `AttachSession` command to runner (Server: PR #28, Agent: PR #13)
+  - [x] Include workspace path
+  - [x] Include agent config (API key, model)
+  - [x] Include pending permission responses (if resuming)
 - [x] Detach runner from session:
   - [ ] Send `DetachSession` command (G5)
   - [ ] Save context snapshot (G5)
