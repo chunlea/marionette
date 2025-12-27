@@ -43,6 +43,7 @@ type ServerOption func(*serverOptions)
 type serverOptions struct {
 	permissionManager core.PermissionManagerInterface
 	sessionManager    core.SessionManagerInterface
+	taskManager       core.TaskManagerInterface
 	connManager       *ConnectionManager
 }
 
@@ -57,6 +58,13 @@ func WithPermissionManager(pm core.PermissionManagerInterface) ServerOption {
 func WithSessionManager(sm core.SessionManagerInterface) ServerOption {
 	return func(o *serverOptions) {
 		o.sessionManager = sm
+	}
+}
+
+// WithTaskManager sets the task manager for handling task lifecycle events from runners.
+func WithTaskManager(tm core.TaskManagerInterface) ServerOption {
+	return func(o *serverOptions) {
+		o.taskManager = tm
 	}
 }
 
@@ -138,6 +146,9 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 		routerOpts := []MessageRouterOption{}
 		if srvOpts.permissionManager != nil {
 			routerOpts = append(routerOpts, WithMRPermissionManager(srvOpts.permissionManager))
+		}
+		if srvOpts.taskManager != nil {
+			routerOpts = append(routerOpts, WithMRTaskManager(srvOpts.taskManager))
 		}
 		router := NewMessageRouter(logger, runnerManager, routerOpts...)
 

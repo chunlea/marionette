@@ -120,6 +120,7 @@ func main() {
 		grpcOpts = append(grpcOpts,
 			grpcserver.WithConnManager(connManager),
 			grpcserver.WithPermissionManager(permMgr),
+			grpcserver.WithTaskManager(taskMgr),
 		)
 
 		logger.Info("core services initialized and wired to API")
