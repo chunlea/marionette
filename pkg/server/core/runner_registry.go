@@ -182,13 +182,23 @@ func (r *RunnerRegistry) handleUnboundToken(ctx context.Context, req *RegisterRe
 
 // createNewRunner creates a new runner and binds the token to it.
 func (r *RunnerRegistry) createNewRunner(ctx context.Context, req *RegisterRequest, tokenInfo *store.RunnerToken) (*RegisterResult, error) {
+	// Ensure slice fields are never nil (database has NOT NULL constraints)
+	sandboxTypes := req.SandboxTypes
+	if sandboxTypes == nil {
+		sandboxTypes = []string{}
+	}
+	capabilities := req.Capabilities
+	if capabilities == nil {
+		capabilities = []string{}
+	}
+
 	runner := &store.Runner{
 		Name:         req.Name,
 		Hostname:     req.Hostname,
 		Status:       "offline", // Will be set to idle on Connect
 		SandboxMode:  req.SandboxMode,
-		SandboxTypes: req.SandboxTypes,
-		Capabilities: req.Capabilities,
+		SandboxTypes: sandboxTypes,
+		Capabilities: capabilities,
 		PoolName:     &tokenInfo.PoolName,
 		TenantID:     tokenInfo.TenantID,
 	}

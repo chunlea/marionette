@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"io"
+	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"go.uber.org/zap"
@@ -11,6 +12,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+// disconnectTimeout is the timeout for cleanup operations during disconnect.
+const disconnectTimeout = 5 * time.Second
 
 // Connect handles the bidirectional stream for control messages.
 func (s *RunnerService) Connect(stream grpc.BidiStreamingServer[pb.RunnerMessage, pb.ServerCommand]) error {
@@ -135,7 +139,8 @@ func (s *RunnerService) sendCommands(ctx context.Context, conn *RunnerConnection
 }
 
 // handleDisconnect cleans up when a runner disconnects.
-func (s *RunnerService) handleDisconnect(ctx context.Context, runnerID string) {
+// Note: We use a background context here because the stream context may be canceled.
+func (s *RunnerService) handleDisconnect(_ context.Context, runnerID string) {
 	s.logger.Info("runner disconnecting", zap.String("runner_id", runnerID))
 
 	// Close command channel to stop sender goroutine
@@ -148,7 +153,10 @@ func (s *RunnerService) handleDisconnect(ctx context.Context, runnerID string) {
 	s.connManager.Unregister(runnerID)
 
 	// Notify runner manager (updates DB status to offline)
+	// Use a fresh background context since the stream context may be canceled
 	if s.runnerManager != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), disconnectTimeout)
+		defer cancel()
 		if err := s.runnerManager.OnDisconnect(ctx, runnerID); err != nil {
 			s.logger.Error("failed to process runner disconnect", zap.Error(err))
 		}

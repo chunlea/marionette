@@ -160,13 +160,41 @@ func (s *RunnerService) RegisterRunner(ctx context.Context, req *pb.RegisterRunn
 }
 
 // GetRunnerStatus returns the status of a runner.
-// This is a stub that returns a mock response.
-func (s *RunnerService) GetRunnerStatus(_ context.Context, req *pb.GetRunnerStatusRequest) (*pb.RunnerStatus, error) {
-	s.logger.Info("GetRunnerStatus called (stub)",
+func (s *RunnerService) GetRunnerStatus(ctx context.Context, req *pb.GetRunnerStatusRequest) (*pb.RunnerStatus, error) {
+	s.logger.Debug("GetRunnerStatus called",
 		zap.String("runner_id", req.RunnerId),
 	)
 
-	// Stub implementation - actual implementation will come in G3
+	// First check if runner is connected (live status from ConnectionManager)
+	if s.connManager != nil {
+		if conn, exists := s.connManager.Get(req.RunnerId); exists {
+			return &pb.RunnerStatus{
+				RunnerId: req.RunnerId,
+				Status:   conn.Status,
+			}, nil
+		}
+	}
+
+	// Runner not connected - check database for last known status
+	if s.store != nil {
+		runner, err := s.store.GetRunner(ctx, req.RunnerId)
+		if err != nil {
+			s.logger.Warn("failed to get runner status",
+				zap.String("runner_id", req.RunnerId),
+				zap.Error(err),
+			)
+			return &pb.RunnerStatus{
+				RunnerId: req.RunnerId,
+				Status:   "unknown",
+			}, nil
+		}
+		return &pb.RunnerStatus{
+			RunnerId: req.RunnerId,
+			Status:   runner.Status,
+		}, nil
+	}
+
+	// No connManager or store configured
 	return &pb.RunnerStatus{
 		RunnerId: req.RunnerId,
 		Status:   "unknown",
