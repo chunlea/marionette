@@ -312,3 +312,18 @@ func (h *DefaultCommandHandler) ActiveSessionCount() int {
 	defer h.sessionsMu.RUnlock()
 	return len(h.sessions)
 }
+
+// GetWorkspacePath returns the absolute workspace path for a session.
+// It uses the workspace manager to resolve relative paths.
+func (h *DefaultCommandHandler) GetWorkspacePath(sessionID string) (string, bool) {
+	h.sessionsMu.RLock()
+	session, exists := h.sessions[sessionID]
+	h.sessionsMu.RUnlock()
+
+	if !exists {
+		return "", false
+	}
+
+	// Use workspace manager to resolve the path
+	return h.workspace.ResolvePath(session.WorkspacePath), true
+}
