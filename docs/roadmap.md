@@ -435,7 +435,7 @@
   - [x] Include agent config (API key, model)
   - [x] Include pending permission responses (if resuming)
 - [x] Detach runner from session:
-  - [ ] Send `DetachSession` command (G5)
+  - [x] Send `DetachSession` command (G2 - PR #13)
   - [ ] Save context snapshot (G5)
   - [ ] Sync workspace (if configured) (G5)
   - [x] Update session state
