@@ -133,6 +133,16 @@ fmt:
 	gofmt -s -w .
 	goimports -w .
 
+## test-linux: Run tests in Linux Docker container (for Linux-specific code)
+test-linux:
+	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
+	docker run --rm marionette/test:latest
+
+## test-linux-root: Run tests as root in Linux Docker container (for namespace detection)
+test-linux-root:
+	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
+	docker run --rm --user root marionette/test:latest
+
 ## docker-build: Build Docker images
 docker-build:
 	docker build -t marionette/server:latest -f deploy/docker/Dockerfile.server .
