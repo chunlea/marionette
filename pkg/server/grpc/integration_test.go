@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,7 +23,9 @@ import (
 )
 
 // integrationTestStore implements store.Store for integration testing.
+// Uses mutex + copy-on-read to avoid race conditions in concurrent tests.
 type integrationTestStore struct {
+	mu           sync.RWMutex
 	runners      map[string]*store.Runner
 	runnerByName map[string]*store.Runner
 	nextID       int
@@ -37,34 +40,52 @@ func newIntegrationTestStore() *integrationTestStore {
 }
 
 func (s *integrationTestStore) CreateRunner(_ context.Context, runner *store.Runner) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if runner.ID == "" {
 		runner.ID = fmt.Sprintf("run_test%d", s.nextID)
 		s.nextID++
 	}
-	s.runners[runner.ID] = runner
+	// Store a copy to avoid external mutations
+	copy := *runner
+	s.runners[runner.ID] = &copy
 	if runner.Name != "" {
-		s.runnerByName[runner.Name] = runner
+		s.runnerByName[runner.Name] = &copy
 	}
 	return nil
 }
 
 func (s *integrationTestStore) GetRunner(_ context.Context, id string) (*store.Runner, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	runner, ok := s.runners[id]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return runner, nil
+	// Return a copy to avoid race conditions
+	copy := *runner
+	return &copy, nil
 }
 
 func (s *integrationTestStore) GetRunnerByName(_ context.Context, name string) (*store.Runner, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	runner, ok := s.runnerByName[name]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return runner, nil
+	// Return a copy to avoid race conditions
+	copy := *runner
+	return &copy, nil
 }
 
 func (s *integrationTestStore) UpdateRunner(_ context.Context, id string, updates store.RunnerUpdates) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	runner, ok := s.runners[id]
 	if !ok {
 		return store.ErrNotFound
@@ -82,6 +103,9 @@ func (s *integrationTestStore) UpdateRunner(_ context.Context, id string, update
 }
 
 func (s *integrationTestStore) ListRunners(_ context.Context, opts store.ListRunnersOptions) (*store.ListResult[store.Runner], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	items := make([]*store.Runner, 0, len(s.runners))
 	for _, r := range s.runners {
 		if len(opts.Status) > 0 {
@@ -96,12 +120,17 @@ func (s *integrationTestStore) ListRunners(_ context.Context, opts store.ListRun
 				continue
 			}
 		}
-		items = append(items, r)
+		// Return copies to avoid race conditions
+		copy := *r
+		items = append(items, &copy)
 	}
 	return &store.ListResult[store.Runner]{Items: items}, nil
 }
 
 func (s *integrationTestStore) DeleteRunner(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	delete(s.runners, id)
 	return nil
 }

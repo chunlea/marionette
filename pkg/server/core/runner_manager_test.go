@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,7 +15,9 @@ import (
 )
 
 // testRunnerStore implements store.Store for testing.
+// Uses mutex + copy-on-read to avoid race conditions in concurrent tests.
 type testRunnerStore struct {
+	mu      sync.RWMutex
 	runners map[string]*store.Runner
 }
 
@@ -24,15 +27,32 @@ func newTestRunnerStore() *testRunnerStore {
 	}
 }
 
+// SetRunner is a helper for tests to safely add/update runners.
+func (m *testRunnerStore) SetRunner(runner *store.Runner) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Store a copy
+	copy := *runner
+	m.runners[runner.ID] = &copy
+}
+
 func (m *testRunnerStore) GetRunner(_ context.Context, id string) (*store.Runner, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	runner, ok := m.runners[id]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return runner, nil
+	// Return a copy to avoid race conditions
+	copy := *runner
+	return &copy, nil
 }
 
 func (m *testRunnerStore) UpdateRunner(_ context.Context, id string, updates store.RunnerUpdates) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	runner, ok := m.runners[id]
 	if !ok {
 		return store.ErrNotFound
@@ -47,6 +67,9 @@ func (m *testRunnerStore) UpdateRunner(_ context.Context, id string, updates sto
 }
 
 func (m *testRunnerStore) ListRunners(_ context.Context, opts store.ListRunnersOptions) (*store.ListResult[store.Runner], error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	items := make([]*store.Runner, 0, len(m.runners))
 	for _, r := range m.runners {
 		if len(opts.Status) > 0 {
@@ -61,7 +84,9 @@ func (m *testRunnerStore) ListRunners(_ context.Context, opts store.ListRunnersO
 				continue
 			}
 		}
-		items = append(items, r)
+		// Return copies to avoid race conditions
+		copy := *r
+		items = append(items, &copy)
 	}
 	return &store.ListResult[store.Runner]{Items: items}, nil
 }
@@ -1100,12 +1125,12 @@ func TestRunnerManager_OnHeartbeat_NilConnManager(t *testing.T) {
 func TestStaleDetector_Run_TickerLoop(t *testing.T) {
 	s := newTestRunnerStore()
 	staleTime := time.Now().Add(-2 * time.Minute)
-	s.runners["run_stale"] = &store.Runner{
+	s.SetRunner(&store.Runner{
 		ID:         "run_stale",
 		Name:       "stale-runner",
 		Status:     StatusIdle,
 		LastSeenAt: &staleTime,
-	}
+	})
 
 	connMgr := newTestConnManager()
 	logger := zap.NewNop()
@@ -1128,7 +1153,9 @@ func TestStaleDetector_Run_TickerLoop(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Stale runner should be marked offline by the ticker
-	assert.Equal(t, StatusOffline, s.runners["run_stale"].Status)
+	runner, err := s.GetRunner(context.Background(), "run_stale")
+	require.NoError(t, err)
+	assert.Equal(t, StatusOffline, runner.Status)
 
 	cancel()
 
