@@ -8,10 +8,15 @@ import (
 	"github.com/chunlea/marionette/pkg/store"
 )
 
+// workspaceCreator is the interface needed by SessionAdapter for workspace operations.
+type workspaceCreator interface {
+	CreateWorkspace(ctx context.Context, ws *store.Workspace) error
+}
+
 // SessionAdapter adapts core.SessionManager to api.SessionService.
 type SessionAdapter struct {
 	manager *core.SessionManager
-	store   store.Store
+	store   workspaceCreator
 }
 
 // NewSessionAdapter creates a new SessionAdapter.

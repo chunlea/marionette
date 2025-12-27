@@ -8,10 +8,15 @@ import (
 	"github.com/chunlea/marionette/pkg/store"
 )
 
+// logLister is the interface needed by TaskAdapter for log operations.
+type logLister interface {
+	ListLogs(ctx context.Context, opts store.ListLogsOptions) (*store.ListResult[store.Log], error)
+}
+
 // TaskAdapter adapts core.TaskManager to api.TaskService.
 type TaskAdapter struct {
 	manager *core.TaskManager
-	store   store.Store
+	store   logLister
 }
 
 // NewTaskAdapter creates a new TaskAdapter.
