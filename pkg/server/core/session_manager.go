@@ -317,6 +317,15 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 		return ErrInvalidSessionTransition
 	}
 
+	// Send DetachSession command to runner before updating database
+	// This notifies the agent to clean up and save context
+	if err := m.sendDetachSession(ctx, session, opts); err != nil {
+		m.logger.Warn("failed to send DetachSession command, continuing with suspend",
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+	}
+
 	// Store previous runner ID before detaching
 	previousRunnerID := session.RunnerID
 
@@ -755,4 +764,56 @@ func stringValue(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// sendDetachSession sends a DetachSession command to the runner.
+// This is called before a session is suspended to notify the agent.
+func (m *SessionManager) sendDetachSession(ctx context.Context, session *store.Session, opts SuspendOptions) error {
+	if m.cmdSender == nil {
+		m.logger.Debug("cmdSender not configured, skipping DetachSession command")
+		return nil
+	}
+
+	if session.RunnerID == nil || *session.RunnerID == "" {
+		m.logger.Debug("no runner attached, skipping DetachSession command",
+			zap.String("session_id", session.ID),
+		)
+		return nil
+	}
+
+	runnerID := *session.RunnerID
+
+	// Build and send the command
+	cmd := &pb.ServerCommand{
+		Payload: &pb.ServerCommand_DetachSession{
+			DetachSession: &pb.DetachSession{
+				SessionId:   session.ID,
+				SaveContext: true, // Always save context for potential resume
+				Suspend: &pb.SuspendConfig{
+					Strategy:      opts.Strategy,
+					SyncWorkspace: opts.WorkspaceSynced,
+					SaveSnapshot:  opts.SnapshotID != "",
+				},
+			},
+		},
+	}
+
+	if err := m.cmdSender.SendCommand(runnerID, cmd); err != nil {
+		m.logger.Warn("failed to send DetachSession command",
+			zap.String("session_id", session.ID),
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+		// Don't fail the suspend if we can't notify the runner
+		// The suspend will proceed and the runner will eventually time out
+		return nil
+	}
+
+	m.logger.Debug("DetachSession command sent",
+		zap.String("session_id", session.ID),
+		zap.String("runner_id", runnerID),
+		zap.String("strategy", opts.Strategy),
+	)
+
+	return nil
 }

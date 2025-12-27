@@ -330,8 +330,10 @@
 
 - [x] Implement bidirectional streaming:
   - [x] Server: send `ServerCommand` messages
-  - [x] Agent: send `RunnerMessage` responses (handler ready)
-  - [ ] Keep-alive pings (agent side)
+  - [x] Agent: send `RunnerMessage` responses
+  - [x] Keep-alive pings (via heartbeat)
+  - [x] Command handler dispatching (`pkg/agent/command_handler.go`)
+  - [x] Session attach/detach handling
 - [x] Message routing:
   - [x] Route commands to specific runner by ID
   - [x] Queue commands if runner temporarily disconnected
@@ -342,7 +344,7 @@
   - [ ] Emit events for state transitions (Phase 4)
 - [x] Error handling:
   - [x] Graceful handling of stream errors
-  - [ ] Reconnection without losing state (agent side)
+  - [x] Reconnection without losing state (Agent)
   - [ ] Dead letter queue for failed deliveries (Phase 3)
 - [x] Server wiring:
   - [x] gRPC server accepts store in config
@@ -376,22 +378,24 @@
 
 ### 2.5 Workspace (Basic)
 
-- [ ] Workspace creation:
+- [ ] Workspace creation (Server side):
   - [ ] Generate workspace ID
   - [ ] Create workspace record in database
-  - [ ] Create workspace directory on runner
+  - [x] Create workspace directory on runner (`pkg/agent/workspace.go`)
 - [ ] Local volume storage:
   - [ ] Mount host directory to container
-  - [ ] Workspace path: `/workspace`
+  - [x] Workspace path: `/workspace` (default)
   - [ ] Persist across container restarts
 - [ ] Workspace lifecycle:
-  - [ ] Create on session creation
-  - [ ] Persist while session exists
+  - [ ] Create on session creation (Server)
+  - [x] Ensure workspace exists on attach (Agent)
+  - [x] Track workspace state (Agent)
   - [ ] Delete on session termination (configurable)
-- [ ] Basic workspace operations:
-  - [ ] List files (for debugging)
-  - [ ] Get workspace size
-  - [ ] Check workspace exists
+- [x] Basic workspace operations (Agent side):
+  - [x] List files (for debugging)
+  - [x] Get workspace size and info
+  - [x] Check workspace exists
+  - [x] Clean workspace contents
 
 ---
 
@@ -431,7 +435,7 @@
   - [x] Include agent config (API key, model)
   - [x] Include pending permission responses (if resuming)
 - [x] Detach runner from session:
-  - [ ] Send `DetachSession` command (G5)
+  - [x] Send `DetachSession` command (G2 - PR #13)
   - [ ] Save context snapshot (G5)
   - [ ] Sync workspace (if configured) (G5)
   - [x] Update session state
