@@ -2,10 +2,13 @@ package grpc
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
+	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 // Runner status constants.
@@ -13,6 +16,9 @@ const (
 	RunnerStatusIdle = "idle"
 	RunnerStatusBusy = "busy"
 )
+
+// commandBufferSize is the maximum number of commands that can be queued per connection.
+const commandBufferSize = 100
 
 // ErrRunnerAlreadyConnected is returned when trying to register a runner that is already connected.
 var ErrRunnerAlreadyConnected = errors.New("runner already connected")
@@ -29,6 +35,13 @@ type RunnerConnection struct {
 	ConnectedAt time.Time
 	LastSeen    time.Time
 	mu          sync.RWMutex
+
+	// commandCh is a buffered channel for outgoing commands to the runner.
+	// Commands are sent by the server and consumed by the sendCommands goroutine.
+	commandCh chan *pb.ServerCommand
+
+	// stream is the bidirectional gRPC stream for this connection.
+	stream grpc.BidiStreamingServer[pb.RunnerMessage, pb.ServerCommand]
 }
 
 // UpdateStatus updates the runner status.
@@ -192,4 +205,35 @@ func (cm *ConnectionManager) IsConnected(runnerID string) bool {
 
 	_, exists := cm.connections[runnerID]
 	return exists
+}
+
+// ErrCommandQueueFull is returned when the command queue is full.
+var ErrCommandQueueFull = errors.New("command queue full")
+
+// SendCommand queues a command to be sent to a runner.
+// Returns ErrRunnerNotFound if the runner is not connected.
+// Returns ErrCommandQueueFull if the command queue is full (backpressure).
+func (cm *ConnectionManager) SendCommand(runnerID string, cmd *pb.ServerCommand) error {
+	cm.mu.RLock()
+	conn, exists := cm.connections[runnerID]
+	cm.mu.RUnlock()
+
+	if !exists {
+		return ErrRunnerNotFound
+	}
+
+	// Non-blocking send with backpressure
+	select {
+	case conn.commandCh <- cmd:
+		cm.logger.Debug("command queued",
+			zap.String("runner_id", runnerID),
+			zap.String("command_type", fmt.Sprintf("%T", cmd.Payload)),
+		)
+		return nil
+	default:
+		cm.logger.Warn("command queue full, applying backpressure",
+			zap.String("runner_id", runnerID),
+		)
+		return ErrCommandQueueFull
+	}
 }

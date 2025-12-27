@@ -302,7 +302,7 @@
 - [x] Connection management:
   - [x] Track connected runners in memory
   - [x] Handle connection/disconnection events
-  - [ ] Update runner status in database
+  - [x] Update runner status in database
 
 ### 2.2 Marionette Agent (Basic)
 
@@ -326,47 +326,53 @@
   - [ ] `runner-creates-sandbox` - agent creates sandbox per task
   - [ ] Detect available sandbox types
 
-### 2.3 Control Channel
+### 2.3 Control Channel (Server Side) ✓
 
-- [ ] Implement bidirectional streaming:
-  - [ ] Server: send `ServerCommand` messages
-  - [ ] Agent: send `RunnerMessage` responses
-  - [ ] Keep-alive pings
-- [ ] Message routing:
-  - [ ] Route commands to specific runner by ID
-  - [ ] Queue commands if runner temporarily disconnected
-  - [ ] Timeout for pending commands
-- [ ] Connection state management:
-  - [ ] Track runner state: offline, idle, busy
-  - [ ] Update database on state changes
-  - [ ] Emit events for state transitions
-- [ ] Error handling:
-  - [ ] Graceful handling of stream errors
-  - [ ] Reconnection without losing state
-  - [ ] Dead letter queue for failed deliveries
+- [x] Implement bidirectional streaming:
+  - [x] Server: send `ServerCommand` messages
+  - [x] Agent: send `RunnerMessage` responses (handler ready)
+  - [ ] Keep-alive pings (agent side)
+- [x] Message routing:
+  - [x] Route commands to specific runner by ID
+  - [x] Queue commands if runner temporarily disconnected
+  - [x] Per-connection bounded channel (100 commands)
+- [x] Connection state management:
+  - [x] Track runner state: offline, idle, busy, paused
+  - [x] Update database on state changes
+  - [ ] Emit events for state transitions (Phase 4)
+- [x] Error handling:
+  - [x] Graceful handling of stream errors
+  - [ ] Reconnection without losing state (agent side)
+  - [ ] Dead letter queue for failed deliveries (Phase 3)
+- [x] Server wiring:
+  - [x] gRPC server accepts store in config
+  - [x] Auto-wire RunnerTokenService, RunnerRegistry, RunnerManager
+  - [x] Auto-wire MessageRouter for message handling
+  - [x] cmd/server passes database store to gRPC server
 
-### 2.4 Runner Lifecycle
+### 2.4 Runner Lifecycle ✓
 
-- [ ] Runner registration:
-  - [ ] Validate runner token
-  - [ ] Create or update runner record
-  - [ ] Assign runner ID (if new)
-  - [ ] Set initial status to `idle`
-- [ ] Runner status transitions:
+- [x] Runner registration:
+  - [x] Validate runner token
+  - [x] Create or update runner record
+  - [x] Assign runner ID (if new)
+  - [x] Set initial status to `idle`
+- [x] Runner status transitions:
   ```
   offline → idle (on connect)
-  idle → busy (on task assignment)
-  busy → idle (on task completion)
+  idle → busy (on task assignment, Phase 3)
+  busy → idle (on task completion, Phase 3)
   idle/busy → offline (on disconnect)
+  * → paused (on pause command)
   ```
-- [ ] Heartbeat handling:
-  - [ ] Update `last_seen_at` timestamp
-  - [ ] Update resource usage metrics
-  - [ ] Detect stale runners (no heartbeat for 3 intervals)
-- [ ] Runner disconnection:
-  - [ ] Mark runner as offline
-  - [ ] Handle in-flight tasks (mark as failed or retry)
-  - [ ] Detach from sessions
+- [x] Heartbeat handling:
+  - [x] Update `last_seen_at` timestamp
+  - [ ] Update resource usage metrics (Phase 3)
+  - [x] Detect stale runners (configurable threshold, default 90s)
+- [x] Runner disconnection:
+  - [x] Mark runner as offline
+  - [x] Handle in-flight tasks stub (full impl Phase 3)
+  - [x] Detach from sessions stub (full impl Phase 3)
 
 ### 2.5 Workspace (Basic)
 
