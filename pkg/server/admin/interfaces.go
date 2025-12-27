@@ -171,3 +171,12 @@ type ListResult[T any] struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 	TotalCount int64  `json:"total_count,omitempty"`
 }
+
+// SessionActivator defines the interface for activating sessions (for testing).
+type SessionActivator interface {
+	// Activate activates a session with the given runner.
+	Activate(ctx context.Context, sessionID, runnerID string) error
+
+	// Suspend suspends a session with the given strategy.
+	Suspend(ctx context.Context, sessionID, strategy string) error
+}

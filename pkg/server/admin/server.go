@@ -19,10 +19,11 @@ type Server struct {
 	logger *zap.Logger
 
 	// Services
-	apiKeys         APIKeyService
-	agentConfigs    AgentConfigService
-	providerConfigs ProviderConfigService
-	runners         RunnerAdminService
+	apiKeys          APIKeyService
+	agentConfigs     AgentConfigService
+	providerConfigs  ProviderConfigService
+	runners          RunnerAdminService
+	sessionActivator SessionActivator
 
 	// Basic auth credentials
 	username string
@@ -65,6 +66,13 @@ func WithProviderConfigService(s ProviderConfigService) Option {
 func WithRunnerAdminService(s RunnerAdminService) Option {
 	return func(srv *Server) {
 		srv.runners = s
+	}
+}
+
+// WithSessionActivator sets the session activator (for testing).
+func WithSessionActivator(s SessionActivator) Option {
+	return func(srv *Server) {
+		srv.sessionActivator = s
 	}
 }
 
@@ -141,6 +149,12 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.Get("/{runnerID}", srv.handleGetRunner)
 			r.Delete("/{runnerID}", srv.handleDestroyRunner)
 		})
+
+		// Sessions (for testing)
+		r.Route("/sessions", func(r chi.Router) {
+			r.Post("/{sessionID}/activate", srv.handleActivateSession)
+			r.Post("/{sessionID}/suspend", srv.handleSuspendSession)
+		})
 	})
 
 	// Serve embedded frontend for all other routes
@@ -195,4 +209,75 @@ type ErrorResponse struct {
 // WriteError writes an error response.
 func WriteError(w http.ResponseWriter, status int, code, message string) {
 	WriteJSON(w, status, ErrorResponse{Code: code, Message: message})
+}
+
+// handleActivateSession handles POST /admin/api/v1/sessions/{sessionID}/activate.
+func (s *Server) handleActivateSession(w http.ResponseWriter, r *http.Request) {
+	if s.sessionActivator == nil {
+		WriteError(w, http.StatusInternalServerError, "service_unavailable", "Session activator not configured")
+		return
+	}
+
+	sessionID := chi.URLParam(r, "sessionID")
+	if sessionID == "" {
+		WriteError(w, http.StatusBadRequest, "invalid_id", "Session ID is required")
+		return
+	}
+
+	// Parse request body for runner_id
+	var req struct {
+		RunnerID string `json:"runner_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_json", "Invalid request body")
+		return
+	}
+
+	if req.RunnerID == "" {
+		WriteError(w, http.StatusBadRequest, "validation_error", "runner_id is required")
+		return
+	}
+
+	if err := s.sessionActivator.Activate(r.Context(), sessionID, req.RunnerID); err != nil {
+		s.logger.Error("failed to activate session", zap.Error(err))
+		WriteError(w, http.StatusInternalServerError, "activation_failed", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "activated"})
+}
+
+// handleSuspendSession handles POST /admin/api/v1/sessions/{sessionID}/suspend.
+func (s *Server) handleSuspendSession(w http.ResponseWriter, r *http.Request) {
+	if s.sessionActivator == nil {
+		WriteError(w, http.StatusInternalServerError, "service_unavailable", "Session activator not configured")
+		return
+	}
+
+	sessionID := chi.URLParam(r, "sessionID")
+	if sessionID == "" {
+		WriteError(w, http.StatusBadRequest, "invalid_id", "Session ID is required")
+		return
+	}
+
+	// Parse request body for strategy (optional)
+	var req struct {
+		Strategy string `json:"strategy"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	// Default strategy is terminate
+	if req.Strategy == "" {
+		req.Strategy = "terminate"
+	}
+
+	if err := s.sessionActivator.Suspend(r.Context(), sessionID, req.Strategy); err != nil {
+		s.logger.Error("failed to suspend session", zap.Error(err))
+		WriteError(w, http.StatusInternalServerError, "suspend_failed", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "suspended"})
 }

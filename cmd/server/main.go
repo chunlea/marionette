@@ -139,6 +139,10 @@ func main() {
 		adminOpts = append(adminOpts, admin.WithAPIKeyService(apiKeyAdapter))
 		logger.Info("API key service wired to Admin API")
 	}
+	if sessionMgr != nil {
+		adminOpts = append(adminOpts, admin.WithSessionActivator(sessionMgr))
+		logger.Info("Session activator wired to Admin API")
+	}
 
 	adminServer := admin.New(admin.Config{
 		Host: cfg.Server.Admin.Host,
