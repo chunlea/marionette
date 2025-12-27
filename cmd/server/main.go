@@ -95,7 +95,7 @@ func main() {
 		connManager = grpcserver.NewConnectionManager(logger)
 
 		// Create core managers
-		sessionMgr = core.NewSessionManager(dbStore, nil, logger)
+		sessionMgr = core.NewSessionManager(dbStore, connManager, connManager, logger)
 		taskMgr = core.NewTaskManager(dbStore, nil, nil, logger)
 
 		// Create permission manager with connection manager as command sender

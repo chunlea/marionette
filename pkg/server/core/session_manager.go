@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
@@ -68,14 +69,16 @@ type SessionManagerInterface interface {
 type SessionManager struct {
 	store       store.Store
 	connManager ConnectionManagerInterface
+	cmdSender   CommandSender
 	logger      *zap.Logger
 }
 
 // NewSessionManager creates a new SessionManager.
-func NewSessionManager(store store.Store, connManager ConnectionManagerInterface, logger *zap.Logger) *SessionManager {
+func NewSessionManager(store store.Store, connManager ConnectionManagerInterface, cmdSender CommandSender, logger *zap.Logger) *SessionManager {
 	return &SessionManager{
 		store:       store,
 		connManager: connManager,
+		cmdSender:   cmdSender,
 		logger:      logger,
 	}
 }
@@ -257,6 +260,17 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 		zap.String("runner_id", runnerID),
 		zap.String("from_status", session.Status),
 	)
+
+	// Send AttachSession command to the runner
+	if err := m.sendAttachSession(ctx, session, runnerID); err != nil {
+		m.logger.Error("failed to send AttachSession command",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+		// Don't fail the activation - the session is already active
+		// The agent can request session info on next heartbeat
+	}
 
 	return nil
 }
@@ -635,4 +649,110 @@ func isValidSessionTransition(from, to string) bool {
 // IsValidSessionTransition is exported for testing.
 func IsValidSessionTransition(from, to string) bool {
 	return isValidSessionTransition(from, to)
+}
+
+// sendAttachSession sends an AttachSession command to the runner.
+// This is called after a session is activated to notify the agent.
+func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.Session, runnerID string) error {
+	if m.cmdSender == nil {
+		m.logger.Debug("cmdSender not configured, skipping AttachSession command")
+		return nil
+	}
+
+	// Get workspace info
+	workspace, err := m.store.GetWorkspace(ctx, session.WorkspaceID)
+	if err != nil {
+		return err
+	}
+
+	// Build agent config (for non-BYOK sessions)
+	var agentConfig *pb.AgentConfig
+	if !session.IsBYOK && session.AgentConfigID != nil {
+		cfg, err := m.store.GetAgentConfig(ctx, *session.AgentConfigID)
+		if err != nil {
+			m.logger.Warn("failed to get agent config",
+				zap.String("session_id", session.ID),
+				zap.Stringp("agent_config_id", session.AgentConfigID),
+				zap.Error(err),
+			)
+			// Continue without agent config - agent may use BYOK
+		} else {
+			agentConfig = &pb.AgentConfig{
+				Agent:   cfg.Agent,
+				Model:   stringValue(cfg.Model),
+				BaseUrl: stringValue(cfg.BaseURL),
+				// Note: API key is decrypted and passed separately for security
+				// The actual decryption should happen in a crypto layer
+			}
+		}
+	}
+
+	// For BYOK or when no agent config, create minimal config
+	if agentConfig == nil {
+		agentConfig = &pb.AgentConfig{
+			Agent: session.Agent,
+		}
+	}
+
+	// Get pending permission responses (for resumed sessions)
+	// Check if session was previously suspended (SuspendedAt is set)
+	var pendingPerms []*pb.PendingPermissionResponse
+	if session.SuspendedAt != nil {
+		perms, err := m.store.ListPermissionRequests(ctx, store.ListPermissionRequestsOptions{
+			SessionID: &session.ID,
+			Status:    []string{"approved", "denied"},
+		})
+		if err != nil {
+			m.logger.Warn("failed to get pending permissions",
+				zap.String("session_id", session.ID),
+				zap.Error(err),
+			)
+		} else {
+			for _, p := range perms.Items {
+				// Only include permissions that were responded to while suspended
+				if p.RespondedAt != nil && p.RespondedAt.After(*session.SuspendedAt) {
+					pendingPerms = append(pendingPerms, &pb.PendingPermissionResponse{
+						RequestId:         p.ID,
+						Approved:          p.Status == "approved",
+						Reason:            stringValue(p.ResponseReason),
+						RespondedBy:       stringValue(p.RespondedBy),
+						RespondedAtUnixMs: p.RespondedAt.UnixMilli(),
+					})
+				}
+			}
+		}
+	}
+
+	// Build and send the command
+	cmd := &pb.ServerCommand{
+		Payload: &pb.ServerCommand_AttachSession{
+			AttachSession: &pb.AttachSession{
+				SessionId:          session.ID,
+				WorkspacePath:      workspace.Name, // Use workspace name as path
+				ContextSnapshot:    session.ContextSnapshot,
+				AgentConfig:        agentConfig,
+				PendingPermissions: pendingPerms,
+			},
+		},
+	}
+
+	if err := m.cmdSender.SendCommand(runnerID, cmd); err != nil {
+		return err
+	}
+
+	m.logger.Debug("AttachSession command sent",
+		zap.String("session_id", session.ID),
+		zap.String("runner_id", runnerID),
+		zap.Int("pending_permissions", len(pendingPerms)),
+	)
+
+	return nil
+}
+
+// stringValue returns the string value or empty string if nil.
+func stringValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
