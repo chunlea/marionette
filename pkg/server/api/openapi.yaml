@@ -1,0 +1,868 @@
+openapi: 3.1.0
+info:
+  title: Marionette Public API
+  description: |
+    Remote agent orchestration and observability platform for controlling coding agents
+    (like Claude Code) running in isolated environments.
+
+    ## Authentication
+
+    All API endpoints use Bearer token authentication with API keys:
+    ```
+    Authorization: Bearer mk_xxxxxxxxxxxxx
+    ```
+
+    API keys are scoped to control access:
+    - `sessions:read`, `sessions:write` - Session management
+    - `tasks:read`, `tasks:write` - Task management
+    - `runners:read` - Runner visibility
+    - `permissions:read`, `permissions:write` - Permission handling
+    - `events:read` - Event streaming
+
+    > **Note**: For admin operations (API key management, agent configs, provider configs),
+    > use the Admin API on port 8081.
+
+  version: 1.0.0
+  contact:
+    name: Marionette Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Public API (development)
+
+tags:
+  - name: Sessions
+    description: |
+      Manage long-lived work contexts for AI coding agents.
+      **Scopes**: `sessions:read`, `sessions:write`
+  - name: Tasks
+    description: |
+      Manage units of work within sessions.
+      **Scopes**: `tasks:read`, `tasks:write`
+  - name: Runners
+    description: |
+      View execution environments (read-only for public API).
+      **Scopes**: `runners:read`
+  - name: Permissions
+    description: |
+      Handle agent permission requests.
+      **Scopes**: `permissions:read`, `permissions:write`
+
+paths:
+  # Health endpoints
+  /health:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  # Sessions API
+  /api/v1/sessions:
+    post:
+      tags: [Sessions]
+      summary: Create a new session
+      operationId: createSession
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    get:
+      tags: [Sessions]
+      summary: List sessions
+      operationId: listSessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [pending, active, suspended, resuming, terminated]
+        - name: agent
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/sessions/{sessionId}:
+    get:
+      tags: [Sessions]
+      summary: Get session details
+      operationId: getSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Sessions]
+      summary: Terminate a session
+      operationId: terminateSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '204':
+          description: Session terminated
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/sessions/{sessionId}/suspend:
+    post:
+      tags: [Sessions]
+      summary: Suspend a session
+      operationId: suspendSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '204':
+          description: Session suspended
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/sessions/{sessionId}/resume:
+    post:
+      tags: [Sessions]
+      summary: Resume a suspended session
+      operationId: resumeSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '204':
+          description: Session resuming
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  # Tasks API
+  /api/v1/tasks:
+    post:
+      tags: [Tasks]
+      summary: Create a new task
+      operationId: createTask
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+    get:
+      tags: [Tasks]
+      summary: List tasks
+      operationId: listTasks
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [pending, running, completed, failed, canceled]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskList'
+
+  /api/v1/tasks/{taskId}:
+    get:
+      tags: [Tasks]
+      summary: Get task details
+      operationId: getTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskId'
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/tasks/{taskId}/cancel:
+    post:
+      tags: [Tasks]
+      summary: Cancel a running task
+      operationId: cancelTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskId'
+      responses:
+        '204':
+          description: Task canceled
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/tasks/{taskId}/retry:
+    post:
+      tags: [Tasks]
+      summary: Retry a failed task
+      operationId: retryTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskId'
+      responses:
+        '200':
+          description: Task retry started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/tasks/{taskId}/logs:
+    get:
+      tags: [Tasks]
+      summary: Get task logs
+      operationId: getTaskLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskId'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 1000
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task logs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogList'
+
+  # Runners API
+  /api/v1/runners:
+    get:
+      tags: [Runners]
+      summary: List runners
+      operationId: listRunners
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [offline, idle, busy, paused]
+        - name: pool_name
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: List of runners
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerList'
+
+  /api/v1/runners/{runnerId}:
+    get:
+      tags: [Runners]
+      summary: Get runner details
+      operationId: getRunner
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/runnerId'
+      responses:
+        '200':
+          description: Runner details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Runner'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # Permissions API
+  /api/v1/permissions:
+    get:
+      tags: [Permissions]
+      summary: List permission requests
+      operationId: listPermissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          schema:
+            type: string
+        - name: task_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [pending, approved, denied, canceled]
+        - name: risk_level
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [low, medium, high, critical]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: List of permission requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionList'
+
+  /api/v1/permissions/{permissionId}:
+    get:
+      tags: [Permissions]
+      summary: Get permission request details
+      operationId: getPermission
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/permissionId'
+      responses:
+        '200':
+          description: Permission request details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/permissions/{permissionId}/approve:
+    post:
+      tags: [Permissions]
+      summary: Approve a permission request
+      operationId: approvePermission
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/permissionId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '204':
+          description: Permission approved
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/permissions/{permissionId}/deny:
+    post:
+      tags: [Permissions]
+      summary: Deny a permission request
+      operationId: denyPermission
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/permissionId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '204':
+          description: Permission denied
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  # WebSocket endpoints
+  /api/v1/logs/{taskId}/stream:
+    get:
+      tags: [Tasks]
+      summary: Stream task logs via WebSocket
+      operationId: streamTaskLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskId'
+      responses:
+        '101':
+          description: WebSocket connection established
+
+  /api/v1/events:
+    get:
+      tags: [Sessions]
+      summary: Stream events via WebSocket
+      operationId: streamEvents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: types
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+        - name: labels
+          in: query
+          schema:
+            type: string
+            description: JSON object for label filtering
+      responses:
+        '101':
+          description: WebSocket connection established
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API key authentication (mk_xxxxx)
+
+  parameters:
+    sessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^sess_[a-zA-Z0-9]+$'
+    taskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^task_[a-zA-Z0-9]+$'
+    runnerId:
+      name: runnerId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^run_[a-zA-Z0-9]+$'
+    permissionId:
+      name: permissionId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^perm_[a-zA-Z0-9]+$'
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Conflict - invalid state transition
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    Labels:
+      type: object
+      additionalProperties:
+        type: string
+
+    # Session schemas
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+          example: sess_0002xK9mNpV1StGXR8
+        name:
+          type: string
+        status:
+          type: string
+          enum: [pending, active, suspended, resuming, terminated]
+        agent:
+          type: string
+        runner_id:
+          type: string
+        workspace_id:
+          type: string
+        lifecycle_mode:
+          type: string
+          enum: [on_demand, always_on, scheduled]
+        labels:
+          $ref: '#/components/schemas/Labels'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateSessionRequest:
+      type: object
+      required:
+        - agent
+      properties:
+        name:
+          type: string
+        agent:
+          type: string
+          example: claude
+        agent_config_id:
+          type: string
+        agent_api_key:
+          type: string
+          description: BYOK - API key for the agent
+        lifecycle_mode:
+          type: string
+          enum: [on_demand, always_on, scheduled]
+          default: on_demand
+        idle_timeout_seconds:
+          type: integer
+        labels:
+          $ref: '#/components/schemas/Labels'
+
+    SessionList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Session'
+        next_cursor:
+          type: string
+
+    # Task schemas
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+          example: task_0002xK9mNqW2TuHYS9
+        session_id:
+          type: string
+        prompt:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, completed, failed, canceled]
+        max_retries:
+          type: integer
+        retry_count:
+          type: integer
+        timeout_seconds:
+          type: integer
+        labels:
+          $ref: '#/components/schemas/Labels'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateTaskRequest:
+      type: object
+      required:
+        - session_id
+        - prompt
+      properties:
+        session_id:
+          type: string
+        prompt:
+          type: string
+        continue_from:
+          type: string
+          description: Task ID to continue from
+        max_retries:
+          type: integer
+          default: 0
+        timeout_seconds:
+          type: integer
+          default: 3600
+        labels:
+          $ref: '#/components/schemas/Labels'
+
+    TaskList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        next_cursor:
+          type: string
+
+    # Log schemas
+    Log:
+      type: object
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        task_id:
+          type: string
+        run_id:
+          type: string
+        stream:
+          type: string
+          enum: [stdout, stderr, system]
+        level:
+          type: string
+          enum: [debug, info, warn, error]
+        content:
+          type: string
+        sequence:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    LogList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Log'
+        next_cursor:
+          type: string
+
+    # Runner schemas
+    Runner:
+      type: object
+      properties:
+        id:
+          type: string
+          example: run_0002xK9mNrX3VwIZT1
+        name:
+          type: string
+        hostname:
+          type: string
+        status:
+          type: string
+          enum: [offline, idle, busy, paused]
+        pool_name:
+          type: string
+        sandbox_mode:
+          type: string
+          enum: [runner-is-sandbox, runner-creates-sandbox, none]
+        labels:
+          $ref: '#/components/schemas/Labels'
+        last_seen_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    RunnerList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Runner'
+        next_cursor:
+          type: string
+
+    # Permission schemas
+    PermissionRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          example: perm_0002xK9mNsY4WxJAU2
+        session_id:
+          type: string
+        task_id:
+          type: string
+        run_id:
+          type: string
+        tool:
+          type: string
+        action:
+          type: string
+        context:
+          type: string
+        risk_level:
+          type: string
+          enum: [low, medium, high, critical]
+        status:
+          type: string
+          enum: [pending, approved, denied, canceled]
+        responded_by:
+          type: string
+        response_reason:
+          type: string
+        responded_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    PermissionList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionRequest'
+        next_cursor:
+          type: string

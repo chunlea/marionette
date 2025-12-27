@@ -1,5 +1,5 @@
 // Package public provides the public HTTP API server for Marionette.
-package public
+package api
 
 import (
 	"context"

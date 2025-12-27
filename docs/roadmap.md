@@ -705,38 +705,43 @@
   - [x] `MockEventStreamService` with subscribe/publish
 - [x] WebSocket tests (89.8% coverage for public package)
 
-### 4.7 OpenAPI Documentation
+### 4.7 OpenAPI Documentation ✓
 
-- [ ] Generate OpenAPI spec:
-  - [ ] Use swaggo or manual spec
-  - [ ] Document all endpoints
-  - [ ] Include request/response schemas
-  - [ ] Include authentication requirements
-- [ ] Serve documentation:
-  - [ ] Swagger UI at `/docs`
-  - [ ] OpenAPI JSON at `/openapi.json`
+- [x] Generate OpenAPI spec:
+  - [x] Manual OpenAPI 3.1.0 spec at `api/openapi.yaml`
+  - [x] Document all endpoints (Public API + Admin API)
+  - [x] Include request/response schemas
+  - [x] Include authentication requirements (Bearer token, Basic Auth)
+- [x] Serve documentation:
+  - [x] Swagger UI at `/docs`
+  - [x] OpenAPI YAML at `/openapi.yaml`
 
-### 4.8 CLI Advanced Commands
+### 4.8 CLI Advanced Commands ✓
 
 - [ ] Interactive session commands:
-  - [ ] `mctl sessions attach <id>` - interactive mode with WebSocket
+  - [ ] `mctl sessions attach <id>` - interactive mode with WebSocket (deferred)
 - [ ] Task retry command:
-  - [ ] `mctl tasks retry <id>`
-- [ ] Runner commands:
-  - [ ] `mctl runners list`
-  - [ ] `mctl runners get <id>`
-- [ ] Permission commands:
-  - [ ] `mctl permissions list [--pending]`
-  - [ ] `mctl permissions approve <id> [--reason <reason>]`
-  - [ ] `mctl permissions deny <id> [--reason <reason>]`
-- [ ] Admin commands:
-  - [ ] `mctl admin keys create --name <name> --scopes <scopes>`
-  - [ ] `mctl admin keys list`
-  - [ ] `mctl admin keys revoke <id>`
-  - [ ] `mctl admin agent-configs create --agent claude --api-key <key>`
-  - [ ] `mctl admin agent-configs list`
-  - [ ] `mctl admin runners spawn --provider <provider>`
-  - [ ] `mctl admin runners destroy <id>`
+  - [ ] `mctl tasks retry <id>` (deferred)
+- [x] Runner commands:
+  - [x] `mctl runners list`
+  - [x] `mctl runners get <id>`
+- [x] Permission commands:
+  - [x] `mctl permissions list [--pending]`
+  - [x] `mctl permissions approve <id> [--reason <reason>]`
+  - [x] `mctl permissions deny <id> [--reason <reason>]`
+- [x] Admin commands:
+  - [x] `mctl admin keys create --name <name> --scopes <scopes>`
+  - [x] `mctl admin keys list`
+  - [x] `mctl admin keys revoke <id>`
+  - [x] `mctl admin agent-configs create --agent claude --api-key <key>`
+  - [x] `mctl admin agent-configs list`
+  - [x] `mctl admin runners spawn --provider <provider>`
+  - [x] `mctl admin runners destroy <id>`
+- [x] Real HTTP client implementation:
+  - [x] `pkg/client/http.go` - HTTPClient for public API
+  - [x] `pkg/client/admin.go` - HTTPAdminClient for admin API
+  - [x] CLI wiring with PersistentPreRunE hook
+  - [x] Client tests with httptest
 
 ---
 

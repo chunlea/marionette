@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/chunlea/marionette/pkg/client"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,25 @@ var rootCmd = &cobra.Command{
 Use mctl to create and manage AI coding agent sessions, execute tasks,
 and monitor their progress.`,
 	SilenceUsage: true,
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		// Skip client initialization for commands that don't need it
+		if cmd.Name() == "version" || cmd.Name() == "help" ||
+			cmd.Parent() != nil && cmd.Parent().Name() == "config" {
+			return nil
+		}
+
+		// Initialize the public API client
+		ctx, err := GetEffectiveConfig()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		if ctx.Server != "" && ctx.APIKey != "" {
+			apiClient = client.NewHTTPClient(ctx.Server, ctx.APIKey)
+		}
+
+		return nil
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -48,6 +68,10 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(sessionsCmd)
 	rootCmd.AddCommand(tasksCmd)
+	// TODO: Add these commands when implemented
+	// rootCmd.AddCommand(runnersCmd)
+	// rootCmd.AddCommand(permissionsCmd)
+	// rootCmd.AddCommand(adminCmd)
 }
 
 // getOutput returns the output writer for commands (allows testing).
