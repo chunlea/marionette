@@ -143,6 +143,10 @@ func main() {
 		adminOpts = append(adminOpts, admin.WithSessionActivator(sessionMgr))
 		logger.Info("Session activator wired to Admin API")
 	}
+	if taskMgr != nil {
+		adminOpts = append(adminOpts, admin.WithTaskDispatcher(taskMgr))
+		logger.Info("Task dispatcher wired to Admin API")
+	}
 
 	adminServer := admin.New(admin.Config{
 		Host: cfg.Server.Admin.Host,

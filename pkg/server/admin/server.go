@@ -24,6 +24,7 @@ type Server struct {
 	providerConfigs  ProviderConfigService
 	runners          RunnerAdminService
 	sessionActivator SessionActivator
+	taskDispatcher   TaskDispatcher
 
 	// Basic auth credentials
 	username string
@@ -73,6 +74,13 @@ func WithRunnerAdminService(s RunnerAdminService) Option {
 func WithSessionActivator(s SessionActivator) Option {
 	return func(srv *Server) {
 		srv.sessionActivator = s
+	}
+}
+
+// WithTaskDispatcher sets the task dispatcher (for testing).
+func WithTaskDispatcher(t TaskDispatcher) Option {
+	return func(srv *Server) {
+		srv.taskDispatcher = t
 	}
 }
 
@@ -154,6 +162,11 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 		r.Route("/sessions", func(r chi.Router) {
 			r.Post("/{sessionID}/activate", srv.handleActivateSession)
 			r.Post("/{sessionID}/suspend", srv.handleSuspendSession)
+		})
+
+		// Tasks (for testing)
+		r.Route("/tasks", func(r chi.Router) {
+			r.Post("/{taskID}/dispatch", srv.handleDispatchTask)
 		})
 	})
 
@@ -280,4 +293,26 @@ func (s *Server) handleSuspendSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]string{"status": "suspended"})
+}
+
+// handleDispatchTask handles POST /admin/api/v1/tasks/{taskID}/dispatch.
+func (s *Server) handleDispatchTask(w http.ResponseWriter, r *http.Request) {
+	if s.taskDispatcher == nil {
+		WriteError(w, http.StatusInternalServerError, "service_unavailable", "Task dispatcher not configured")
+		return
+	}
+
+	taskID := chi.URLParam(r, "taskID")
+	if taskID == "" {
+		WriteError(w, http.StatusBadRequest, "invalid_id", "Task ID is required")
+		return
+	}
+
+	if err := s.taskDispatcher.Dispatch(r.Context(), taskID); err != nil {
+		s.logger.Error("failed to dispatch task", zap.Error(err))
+		WriteError(w, http.StatusInternalServerError, "dispatch_failed", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "dispatched"})
 }

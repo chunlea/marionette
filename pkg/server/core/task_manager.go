@@ -343,6 +343,12 @@ func (m *TaskManager) Execute(ctx context.Context, taskID string) error {
 	return nil
 }
 
+// Dispatch sends a task to its session's runner for execution.
+// This is an alias for Execute to satisfy the TaskDispatcher interface.
+func (m *TaskManager) Dispatch(ctx context.Context, taskID string) error {
+	return m.Execute(ctx, taskID)
+}
+
 // CreateRun creates a new task run.
 func (m *TaskManager) CreateRun(ctx context.Context, taskID string) (*store.TaskRun, error) {
 	task, err := m.store.GetTask(ctx, taskID)

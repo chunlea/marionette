@@ -180,3 +180,9 @@ type SessionActivator interface {
 	// Suspend suspends a session with the given strategy.
 	Suspend(ctx context.Context, sessionID, strategy string) error
 }
+
+// TaskDispatcher defines the interface for dispatching tasks (for testing).
+type TaskDispatcher interface {
+	// Dispatch sends a task to its session's runner for execution.
+	Dispatch(ctx context.Context, taskID string) error
+}
