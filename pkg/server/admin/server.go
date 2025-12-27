@@ -94,6 +94,10 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	r.Get("/health", healthHandler)
 	r.Get("/healthz", healthHandler)
 
+	// Documentation endpoints (no auth required)
+	r.Get("/docs", srv.handleSwaggerUI)
+	r.Get("/openapi.yaml", srv.handleOpenAPISpec)
+
 	// Status endpoint - returns all service statuses
 	r.Get("/api/status", statusHandler)
 

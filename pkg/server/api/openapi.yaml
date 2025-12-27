@@ -1,23 +1,27 @@
 openapi: 3.1.0
 info:
-  title: Marionette API
+  title: Marionette Public API
   description: |
     Remote agent orchestration and observability platform for controlling coding agents
     (like Claude Code) running in isolated environments.
 
     ## Authentication
 
-    ### Public API (Port 8080)
-    Use Bearer token authentication with API keys:
+    All API endpoints use Bearer token authentication with API keys:
     ```
     Authorization: Bearer mk_xxxxxxxxxxxxx
     ```
 
-    ### Admin API (Port 8081)
-    Use HTTP Basic Authentication:
-    ```
-    Authorization: Basic base64(username:password)
-    ```
+    API keys are scoped to control access:
+    - `sessions:read`, `sessions:write` - Session management
+    - `tasks:read`, `tasks:write` - Task management
+    - `runners:read` - Runner visibility
+    - `permissions:read`, `permissions:write` - Permission handling
+    - `events:read` - Event streaming
+
+    > **Note**: For admin operations (API key management, agent configs, provider configs),
+    > use the Admin API on port 8081.
+
   version: 1.0.0
   contact:
     name: Marionette Team
@@ -27,26 +31,24 @@ info:
 servers:
   - url: http://localhost:8080
     description: Public API (development)
-  - url: http://localhost:8081
-    description: Admin API (development)
 
 tags:
   - name: Sessions
-    description: Manage long-lived work contexts for AI coding agents
+    description: |
+      Manage long-lived work contexts for AI coding agents.
+      **Scopes**: `sessions:read`, `sessions:write`
   - name: Tasks
-    description: Manage units of work within sessions
+    description: |
+      Manage units of work within sessions.
+      **Scopes**: `tasks:read`, `tasks:write`
   - name: Runners
-    description: View execution environments
+    description: |
+      View execution environments (read-only for public API).
+      **Scopes**: `runners:read`
   - name: Permissions
-    description: Handle agent permission requests
-  - name: API Keys
-    description: Manage API keys (Admin)
-  - name: Agent Configs
-    description: Manage agent configurations (Admin)
-  - name: Provider Configs
-    description: Manage provider configurations (Admin)
-  - name: Admin Runners
-    description: Manage runners lifecycle (Admin)
+    description: |
+      Handle agent permission requests.
+      **Scopes**: `permissions:read`, `permissions:write`
 
 paths:
   # Health endpoints
@@ -540,345 +542,12 @@ paths:
         '101':
           description: WebSocket connection established
 
-  # Admin API - API Keys
-  /admin/api/v1/keys:
-    post:
-      tags: [API Keys]
-      summary: Create an API key
-      operationId: createAPIKey
-      security:
-        - basicAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateAPIKeyRequest'
-      responses:
-        '201':
-          description: API key created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIKeyWithSecret'
-
-    get:
-      tags: [API Keys]
-      summary: List API keys
-      operationId: listAPIKeys
-      security:
-        - basicAuth: []
-      parameters:
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-        - name: cursor
-          in: query
-          schema:
-            type: string
-      responses:
-        '200':
-          description: List of API keys
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIKeyList'
-
-  /admin/api/v1/keys/{keyId}:
-    get:
-      tags: [API Keys]
-      summary: Get API key details
-      operationId: getAPIKey
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/keyId'
-      responses:
-        '200':
-          description: API key details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIKey'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-    delete:
-      tags: [API Keys]
-      summary: Revoke an API key
-      operationId: revokeAPIKey
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/keyId'
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                reason:
-                  type: string
-      responses:
-        '204':
-          description: API key revoked
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  # Admin API - Agent Configs
-  /admin/api/v1/agent-configs:
-    post:
-      tags: [Agent Configs]
-      summary: Create an agent configuration
-      operationId: createAgentConfig
-      security:
-        - basicAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateAgentConfigRequest'
-      responses:
-        '201':
-          description: Agent config created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentConfig'
-
-    get:
-      tags: [Agent Configs]
-      summary: List agent configurations
-      operationId: listAgentConfigs
-      security:
-        - basicAuth: []
-      parameters:
-        - name: agent
-          in: query
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-      responses:
-        '200':
-          description: List of agent configs
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentConfigList'
-
-  /admin/api/v1/agent-configs/{configId}:
-    get:
-      tags: [Agent Configs]
-      summary: Get agent configuration
-      operationId: getAgentConfig
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/configId'
-      responses:
-        '200':
-          description: Agent config details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentConfig'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-    put:
-      tags: [Agent Configs]
-      summary: Update an agent configuration
-      operationId: updateAgentConfig
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/configId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateAgentConfigRequest'
-      responses:
-        '200':
-          description: Agent config updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentConfig'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-    delete:
-      tags: [Agent Configs]
-      summary: Delete an agent configuration
-      operationId: deleteAgentConfig
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/configId'
-      responses:
-        '204':
-          description: Agent config deleted
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  # Admin API - Provider Configs
-  /admin/api/v1/provider-configs:
-    post:
-      tags: [Provider Configs]
-      summary: Create a provider configuration
-      operationId: createProviderConfig
-      security:
-        - basicAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateProviderConfigRequest'
-      responses:
-        '201':
-          description: Provider config created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProviderConfig'
-
-    get:
-      tags: [Provider Configs]
-      summary: List provider configurations
-      operationId: listProviderConfigs
-      security:
-        - basicAuth: []
-      parameters:
-        - name: provider
-          in: query
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-      responses:
-        '200':
-          description: List of provider configs
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProviderConfigList'
-
-  /admin/api/v1/provider-configs/{configId}:
-    get:
-      tags: [Provider Configs]
-      summary: Get provider configuration
-      operationId: getProviderConfig
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/configId'
-      responses:
-        '200':
-          description: Provider config details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProviderConfig'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-    put:
-      tags: [Provider Configs]
-      summary: Update a provider configuration
-      operationId: updateProviderConfig
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/configId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateProviderConfigRequest'
-      responses:
-        '200':
-          description: Provider config updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProviderConfig'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-    delete:
-      tags: [Provider Configs]
-      summary: Delete a provider configuration
-      operationId: deleteProviderConfig
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/configId'
-      responses:
-        '204':
-          description: Provider config deleted
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  # Admin API - Runners
-  /admin/api/v1/runners/spawn:
-    post:
-      tags: [Admin Runners]
-      summary: Spawn a new runner
-      operationId: spawnRunner
-      security:
-        - basicAuth: []
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SpawnRunnerRequest'
-      responses:
-        '201':
-          description: Runner spawned
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Runner'
-
-  /admin/api/v1/runners/{runnerId}:
-    delete:
-      tags: [Admin Runners]
-      summary: Destroy a runner
-      operationId: destroyRunner
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/runnerId'
-      responses:
-        '204':
-          description: Runner destroyed
-        '404':
-          $ref: '#/components/responses/NotFound'
-
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       description: API key authentication (mk_xxxxx)
-    basicAuth:
-      type: http
-      scheme: basic
-      description: Admin Basic Auth
 
   parameters:
     sessionId:
@@ -909,19 +578,6 @@ components:
       schema:
         type: string
         pattern: '^perm_[a-zA-Z0-9]+$'
-    keyId:
-      name: keyId
-      in: path
-      required: true
-      schema:
-        type: string
-        pattern: '^key_[a-zA-Z0-9]+$'
-    configId:
-      name: configId
-      in: path
-      required: true
-      schema:
-        type: string
 
   responses:
     BadRequest:
@@ -1165,18 +821,6 @@ components:
         next_cursor:
           type: string
 
-    SpawnRunnerRequest:
-      type: object
-      properties:
-        name:
-          type: string
-        provider_config_id:
-          type: string
-        profile_id:
-          type: string
-        labels:
-          $ref: '#/components/schemas/Labels'
-
     # Permission schemas
     PermissionRequest:
       type: object
@@ -1220,211 +864,5 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PermissionRequest'
-        next_cursor:
-          type: string
-
-    # API Key schemas
-    APIKey:
-      type: object
-      properties:
-        id:
-          type: string
-          example: key_0002xK9mNtZ5XyKBV3
-        name:
-          type: string
-        key_prefix:
-          type: string
-          example: mk_xxxxxxxx
-        scopes:
-          type: array
-          items:
-            type: string
-        labels:
-          $ref: '#/components/schemas/Labels'
-        created_at:
-          type: string
-          format: date-time
-        last_used_at:
-          type: string
-          format: date-time
-        revoked_at:
-          type: string
-          format: date-time
-
-    APIKeyWithSecret:
-      allOf:
-        - $ref: '#/components/schemas/APIKey'
-        - type: object
-          properties:
-            key:
-              type: string
-              description: Full API key (only returned on creation)
-
-    CreateAPIKeyRequest:
-      type: object
-      required:
-        - name
-      properties:
-        name:
-          type: string
-        scopes:
-          type: array
-          items:
-            type: string
-        labels:
-          $ref: '#/components/schemas/Labels'
-
-    APIKeyList:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/APIKey'
-        next_cursor:
-          type: string
-
-    # Agent Config schemas
-    AgentConfig:
-      type: object
-      properties:
-        id:
-          type: string
-          example: acfg_0002xK9mNuA6YzLCW4
-        name:
-          type: string
-        agent:
-          type: string
-        model:
-          type: string
-        base_url:
-          type: string
-        is_default:
-          type: boolean
-        labels:
-          $ref: '#/components/schemas/Labels'
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-
-    CreateAgentConfigRequest:
-      type: object
-      required:
-        - name
-        - agent
-        - api_key
-      properties:
-        name:
-          type: string
-        agent:
-          type: string
-          example: claude
-        api_key:
-          type: string
-        model:
-          type: string
-        base_url:
-          type: string
-        is_default:
-          type: boolean
-        labels:
-          $ref: '#/components/schemas/Labels'
-
-    UpdateAgentConfigRequest:
-      type: object
-      properties:
-        name:
-          type: string
-        api_key:
-          type: string
-        model:
-          type: string
-        base_url:
-          type: string
-        is_default:
-          type: boolean
-        labels:
-          $ref: '#/components/schemas/Labels'
-
-    AgentConfigList:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/AgentConfig'
-        next_cursor:
-          type: string
-
-    # Provider Config schemas
-    ProviderConfig:
-      type: object
-      properties:
-        id:
-          type: string
-          example: pcfg_0002xK9mNvB7ZaMDX5
-        name:
-          type: string
-        provider:
-          type: string
-          example: docker
-        config:
-          type: object
-        suspend_config:
-          type: object
-        is_default:
-          type: boolean
-        labels:
-          $ref: '#/components/schemas/Labels'
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-
-    CreateProviderConfigRequest:
-      type: object
-      required:
-        - name
-        - provider
-      properties:
-        name:
-          type: string
-        provider:
-          type: string
-        config:
-          type: object
-        suspend_config:
-          type: object
-        is_default:
-          type: boolean
-        labels:
-          $ref: '#/components/schemas/Labels'
-
-    UpdateProviderConfigRequest:
-      type: object
-      properties:
-        name:
-          type: string
-        config:
-          type: object
-        suspend_config:
-          type: object
-        is_default:
-          type: boolean
-        labels:
-          $ref: '#/components/schemas/Labels'
-
-    ProviderConfigList:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ProviderConfig'
         next_cursor:
           type: string
