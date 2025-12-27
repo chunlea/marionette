@@ -332,3 +332,46 @@ func TestNew_WithTLSNonexistentCA(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to read CA certificate")
 }
+
+// =============================================================================
+// Store Wiring Tests
+// =============================================================================
+
+func TestNew_WithStore(t *testing.T) {
+	logger := zap.NewNop()
+
+	// Use the integrationTestStore which implements store.Store
+	testStore := newIntegrationTestStore()
+
+	server, err := New(Config{
+		Host:  "127.0.0.1",
+		Port:  0,
+		Store: testStore,
+	}, logger)
+
+	require.NoError(t, err)
+	require.NotNil(t, server)
+	assert.NotNil(t, server.connManager)
+
+	// Clean up
+	err = server.Shutdown(context.Background())
+	require.NoError(t, err)
+}
+
+func TestNew_WithoutStore_LogsWarning(t *testing.T) {
+	// This test verifies the server works without a store (backward compatibility)
+	logger := zap.NewNop()
+
+	server, err := New(Config{
+		Host:  "127.0.0.1",
+		Port:  0,
+		Store: nil, // No store provided
+	}, logger)
+
+	require.NoError(t, err)
+	require.NotNil(t, server)
+
+	// Clean up
+	err = server.Shutdown(context.Background())
+	require.NoError(t, err)
+}

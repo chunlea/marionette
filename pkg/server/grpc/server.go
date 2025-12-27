@@ -9,7 +9,11 @@ import (
 	"os"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
+	"github.com/chunlea/marionette/pkg/id"
+	"github.com/chunlea/marionette/pkg/server/core"
+	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -26,9 +30,10 @@ type Server struct {
 
 // Config holds configuration for the gRPC server.
 type Config struct {
-	Host string
-	Port int
-	TLS  *config.TLSConfig
+	Host  string
+	Port  int
+	TLS   *config.TLSConfig
+	Store store.Store // Optional: enables full runner lifecycle management
 }
 
 // New creates a new gRPC server.
@@ -72,8 +77,40 @@ func New(cfg Config, logger *zap.Logger) (*Server, error) {
 	// Create connection manager
 	connManager := NewConnectionManager(logger)
 
+	// Build RunnerService options
+	svcOpts := []RunnerServiceOption{
+		WithConnectionManager(connManager),
+	}
+
+	// If store is provided, wire up the full runner lifecycle
+	if cfg.Store != nil {
+		// Create token service for runner authentication
+		tokenSvc := auth.NewRunnerTokenService(cfg.Store, id.RunnerToken)
+
+		// Create runner registry for registration
+		registry := core.NewRunnerRegistry(cfg.Store, tokenSvc, logger)
+
+		// Create runner manager for lifecycle management
+		runnerManager := core.NewRunnerManager(cfg.Store, connManager, logger)
+
+		// Create message router
+		router := NewMessageRouter(logger, runnerManager)
+
+		svcOpts = append(svcOpts,
+			WithStore(cfg.Store),
+			WithTokenService(tokenSvc),
+			WithRegistry(registry),
+			WithRunnerManager(runnerManager),
+			WithRouter(router),
+		)
+
+		logger.Info("runner lifecycle services initialized")
+	} else {
+		logger.Warn("store not configured - runner registration will not work")
+	}
+
 	// Register the RunnerService
-	runnerSvc := NewRunnerService(logger, WithConnectionManager(connManager))
+	runnerSvc := NewRunnerService(logger, svcOpts...)
 	pb.RegisterRunnerServiceServer(s, runnerSvc)
 
 	// Enable reflection for grpcurl and debugging

@@ -344,6 +344,11 @@
   - [x] Graceful handling of stream errors
   - [ ] Reconnection without losing state (agent side)
   - [ ] Dead letter queue for failed deliveries (Phase 3)
+- [x] Server wiring:
+  - [x] gRPC server accepts store in config
+  - [x] Auto-wire RunnerTokenService, RunnerRegistry, RunnerManager
+  - [x] Auto-wire MessageRouter for message handling
+  - [x] cmd/server passes database store to gRPC server
 
 ### 2.4 Runner Lifecycle ✓
 
