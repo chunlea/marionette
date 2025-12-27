@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/agent/executor"
 	"go.uber.org/zap"
 )
 
@@ -158,8 +159,14 @@ func (s *LogStreamer) HandleOutput(stream string, data []byte) {
 
 // HandlePermissionRequest implements executor.OutputHandler.
 // This is a placeholder - actual permission handling will be implemented in G4.
-func (s *LogStreamer) HandlePermissionRequest(_ context.Context, _ interface{}) (bool, error) {
-	// TODO: Implement in G4
+func (s *LogStreamer) HandlePermissionRequest(_ context.Context, req *executor.PermissionRequest) (bool, error) {
+	s.logger.Info("permission request received (auto-approving for now)",
+		zap.String("id", req.ID),
+		zap.String("tool", req.Tool),
+		zap.String("action", req.Action),
+		zap.String("risk_level", req.RiskLevel),
+	)
+	// TODO: Implement proper permission handling in G4
 	return true, nil
 }
 
@@ -342,3 +349,6 @@ func (s *LogStreamer) sendBatch(ctx context.Context, sessionID, taskID, runID st
 
 	return nil
 }
+
+// Ensure LogStreamer implements executor.OutputHandler.
+var _ executor.OutputHandler = (*LogStreamer)(nil)
