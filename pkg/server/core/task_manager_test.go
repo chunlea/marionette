@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 // testTaskStore extends testSessionStore with task-specific functionality.
 type testTaskStore struct {
 	*testSessionStore
+	mu       sync.RWMutex
 	tasks    map[string]*store.Task
 	taskRuns map[string]*store.TaskRun
 }
@@ -27,20 +29,92 @@ func newTestTaskStore() *testTaskStore {
 	}
 }
 
+// copyTask returns a deep copy of a task to prevent race conditions.
+func copyTask(t *store.Task) *store.Task {
+	if t == nil {
+		return nil
+	}
+	cp := *t
+	if t.TenantID != nil {
+		tenantID := *t.TenantID
+		cp.TenantID = &tenantID
+	}
+	if t.Labels != nil {
+		cp.Labels = make([]byte, len(t.Labels))
+		copy(cp.Labels, t.Labels)
+	}
+	if t.Annotations != nil {
+		cp.Annotations = make([]byte, len(t.Annotations))
+		copy(cp.Annotations, t.Annotations)
+	}
+	return &cp
+}
+
+// copyTaskRun returns a deep copy of a task run to prevent race conditions.
+func copyTaskRun(r *store.TaskRun) *store.TaskRun {
+	if r == nil {
+		return nil
+	}
+	cp := *r
+	if r.RunnerID != nil {
+		runnerID := *r.RunnerID
+		cp.RunnerID = &runnerID
+	}
+	if r.Error != nil {
+		errStr := *r.Error
+		cp.Error = &errStr
+	}
+	if r.ExitCode != nil {
+		code := *r.ExitCode
+		cp.ExitCode = &code
+	}
+	if r.TokensInput != nil {
+		v := *r.TokensInput
+		cp.TokensInput = &v
+	}
+	if r.TokensOutput != nil {
+		v := *r.TokensOutput
+		cp.TokensOutput = &v
+	}
+	if r.TenantID != nil {
+		tenantID := *r.TenantID
+		cp.TenantID = &tenantID
+	}
+	if r.AssignedAt != nil {
+		t := *r.AssignedAt
+		cp.AssignedAt = &t
+	}
+	if r.StartedAt != nil {
+		t := *r.StartedAt
+		cp.StartedAt = &t
+	}
+	if r.EndedAt != nil {
+		t := *r.EndedAt
+		cp.EndedAt = &t
+	}
+	return &cp
+}
+
 func (s *testTaskStore) CreateTask(_ context.Context, task *store.Task) error {
-	s.tasks[task.ID] = task
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tasks[task.ID] = copyTask(task)
 	return nil
 }
 
 func (s *testTaskStore) GetTask(_ context.Context, id string) (*store.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	task, ok := s.tasks[id]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return task, nil
+	return copyTask(task), nil
 }
 
 func (s *testTaskStore) ListTasks(_ context.Context, opts store.ListTasksOptions) (*store.ListResult[store.Task], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	items := make([]*store.Task, 0, len(s.tasks))
 	for _, task := range s.tasks {
 		// Filter by session_id
@@ -60,12 +134,14 @@ func (s *testTaskStore) ListTasks(_ context.Context, opts store.ListTasksOptions
 				continue
 			}
 		}
-		items = append(items, task)
+		items = append(items, copyTask(task))
 	}
 	return &store.ListResult[store.Task]{Items: items}, nil
 }
 
 func (s *testTaskStore) UpdateTask(_ context.Context, id string, updates store.TaskUpdates) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	task, ok := s.tasks[id]
 	if !ok {
 		return store.ErrNotFound
@@ -81,24 +157,32 @@ func (s *testTaskStore) UpdateTask(_ context.Context, id string, updates store.T
 }
 
 func (s *testTaskStore) DeleteTask(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.tasks, id)
 	return nil
 }
 
 func (s *testTaskStore) CreateTaskRun(_ context.Context, run *store.TaskRun) error {
-	s.taskRuns[run.ID] = run
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.taskRuns[run.ID] = copyTaskRun(run)
 	return nil
 }
 
 func (s *testTaskStore) GetTaskRun(_ context.Context, id string) (*store.TaskRun, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	run, ok := s.taskRuns[id]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return run, nil
+	return copyTaskRun(run), nil
 }
 
 func (s *testTaskStore) ListTaskRuns(_ context.Context, opts store.ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	items := make([]*store.TaskRun, 0, len(s.taskRuns))
 	for _, run := range s.taskRuns {
 		// Filter by task_id
@@ -122,12 +206,14 @@ func (s *testTaskStore) ListTaskRuns(_ context.Context, opts store.ListTaskRunsO
 				continue
 			}
 		}
-		items = append(items, run)
+		items = append(items, copyTaskRun(run))
 	}
 	return &store.ListResult[store.TaskRun]{Items: items}, nil
 }
 
 func (s *testTaskStore) UpdateTaskRun(_ context.Context, id string, updates store.TaskRunUpdates) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	run, ok := s.taskRuns[id]
 	if !ok {
 		return store.ErrNotFound
@@ -158,6 +244,34 @@ func (s *testTaskStore) UpdateTaskRun(_ context.Context, id string, updates stor
 	}
 	run.UpdatedAt = time.Now()
 	return nil
+}
+
+// getTask is a helper for tests to safely read task state.
+func (s *testTaskStore) getTask(id string) *store.Task {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return copyTask(s.tasks[id])
+}
+
+// getTaskRun is a helper for tests to safely read task run state.
+func (s *testTaskStore) getTaskRun(id string) *store.TaskRun {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return copyTaskRun(s.taskRuns[id])
+}
+
+// setTask is a helper for tests to safely set task state.
+func (s *testTaskStore) setTask(id string, task *store.Task) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tasks[id] = task
+}
+
+// setTaskRun is a helper for tests to safely set task run state.
+func (s *testTaskStore) setTaskRun(id string, run *store.TaskRun) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.taskRuns[id] = run
 }
 
 // mockCommandSender implements CommandSender for testing.
@@ -1342,14 +1456,14 @@ func TestTaskManager_OnTaskCompleted_FailedWithRetry(t *testing.T) {
 	manager, s, _ := setupTaskManagerTest()
 
 	// Create task with retries available
-	s.tasks["task_1"] = &store.Task{
+	s.setTask("task_1", &store.Task{
 		ID:             "task_1",
 		SessionID:      "sess_1",
 		Status:         TaskStatusRunning,
 		MaxRetries:     2,
 		RetryCount:     0,
 		TimeoutSeconds: 3600,
-	}
+	})
 
 	// Create active session with a runner attached
 	runnerID := "run_1"
@@ -1360,12 +1474,12 @@ func TestTaskManager_OnTaskCompleted_FailedWithRetry(t *testing.T) {
 	}
 
 	// Create running task run
-	s.taskRuns["trun_1"] = &store.TaskRun{
+	s.setTaskRun("trun_1", &store.TaskRun{
 		ID:      "trun_1",
 		TaskID:  "task_1",
 		Status:  TaskRunStatusRunning,
 		Attempt: 1,
-	}
+	})
 
 	result := &TaskCompletedResult{
 		RunID:   "trun_1",
@@ -1377,15 +1491,16 @@ func TestTaskManager_OnTaskCompleted_FailedWithRetry(t *testing.T) {
 	require.NoError(t, err)
 
 	// Task run should be failed
-	assert.Equal(t, TaskRunStatusFailed, s.taskRuns["trun_1"].Status)
+	assert.Equal(t, TaskRunStatusFailed, s.getTaskRun("trun_1").Status)
 
 	// Give goroutine time to retry (async retry)
 	time.Sleep(100 * time.Millisecond)
 
 	// Task should still be running (retry pending or in progress)
-	assert.Equal(t, TaskStatusRunning, s.tasks["task_1"].Status)
+	task := s.getTask("task_1")
+	assert.Equal(t, TaskStatusRunning, task.Status)
 	// RetryCount should be incremented by the Retry goroutine
-	assert.Equal(t, 1, s.tasks["task_1"].RetryCount)
+	assert.Equal(t, 1, task.RetryCount)
 }
 
 func TestTaskManager_OnTaskCompleted_FailedNoRetry(t *testing.T) {
