@@ -146,6 +146,12 @@ func (m *SessionManager) Create(ctx context.Context, opts CreateSessionOptions) 
 		annotations = []byte("{}")
 	}
 
+	// Ensure AllowedHosts is never nil (database has NOT NULL constraint)
+	allowedHosts := opts.AllowedHosts
+	if allowedHosts == nil {
+		allowedHosts = []string{}
+	}
+
 	// Create session
 	session := &store.Session{
 		ID:                 id.Session(),
@@ -156,7 +162,7 @@ func (m *SessionManager) Create(ctx context.Context, opts CreateSessionOptions) 
 		IsBYOK:             opts.IsBYOK,
 		AgentConfigID:      opts.AgentConfigID,
 		NetworkPolicy:      networkPolicy,
-		AllowedHosts:       opts.AllowedHosts,
+		AllowedHosts:       allowedHosts,
 		LifecycleMode:      lifecycleMode,
 		IdleTimeoutSeconds: opts.IdleTimeout,
 		ScheduleCron:       opts.ScheduleCron,
