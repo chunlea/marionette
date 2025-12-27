@@ -80,25 +80,46 @@ func main() {
 	// Create core managers (only if database is available)
 	var sessionMgr *core.SessionManager
 	var taskMgr *core.TaskManager
+	var permMgr *core.PermissionManager
+	var permEnforcer *core.PermissionTimeoutEnforcer
+	var connManager *grpcserver.ConnectionManager
 	var apiOpts []api.Option
 	var apiKeySvc *auth.APIKeyService
+	var grpcOpts []grpcserver.ServerOption
 
 	if dbStore != nil {
 		// Create API key service (needed for both public and admin APIs)
 		apiKeySvc = auth.NewAPIKeyService(dbStore, id.APIKey)
 
+		// Create connection manager first (needed by PermissionManager)
+		connManager = grpcserver.NewConnectionManager(logger)
+
 		// Create core managers
 		sessionMgr = core.NewSessionManager(dbStore, nil, logger)
 		taskMgr = core.NewTaskManager(dbStore, nil, nil, logger)
 
+		// Create permission manager with connection manager as command sender
+		permMgr = core.NewPermissionManager(dbStore, connManager, sessionMgr, logger)
+
+		// Create permission timeout enforcer
+		permEnforcer = core.NewPermissionTimeoutEnforcer(dbStore, sessionMgr, logger)
+
 		// Create adapters and add to API options
 		sessionAdapter := api.NewSessionAdapter(sessionMgr, dbStore)
 		taskAdapter := api.NewTaskAdapter(taskMgr, dbStore)
+		permAdapter := api.NewPermissionAdapter(permMgr)
 
 		apiOpts = append(apiOpts,
 			api.WithSessionService(sessionAdapter),
 			api.WithTaskService(taskAdapter),
+			api.WithPermissionService(permAdapter),
 			api.WithAPIKeyService(apiKeySvc),
+		)
+
+		// Wire gRPC server options
+		grpcOpts = append(grpcOpts,
+			grpcserver.WithConnManager(connManager),
+			grpcserver.WithPermissionManager(permMgr),
 		)
 
 		logger.Info("core services initialized and wired to API")
@@ -129,7 +150,7 @@ func main() {
 		Port:  cfg.Server.GRPC.Port,
 		TLS:   &cfg.TLS,
 		Store: dbStore,
-	}, logger)
+	}, logger, grpcOpts...)
 	if err != nil {
 		logger.Fatal("failed to create gRPC server", zap.Error(err))
 	}
@@ -166,6 +187,12 @@ func main() {
 		zap.String("grpc_addr", fmt.Sprintf("%s:%d", cfg.Server.GRPC.Host, cfg.Server.GRPC.Port)),
 	)
 
+	// Start permission timeout enforcer if available
+	if permEnforcer != nil {
+		permEnforcer.Start(context.Background())
+		logger.Info("permission timeout enforcer started")
+	}
+
 	// Wait for interrupt signal or server error
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -181,6 +208,11 @@ func main() {
 	logger.Info("initiating graceful shutdown")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Stop permission timeout enforcer first
+	if permEnforcer != nil {
+		permEnforcer.Stop()
+	}
 
 	// Shutdown all servers
 	if err := apiServer.Shutdown(ctx); err != nil {
