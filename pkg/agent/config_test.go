@@ -316,3 +316,107 @@ func TestBindFlags(t *testing.T) {
 	logFormatFlag := flags.Lookup("log-format")
 	assert.Equal(t, "json", logFormatFlag.DefValue)
 }
+
+func TestLoadWithFlags(t *testing.T) {
+	t.Run("flags override defaults", func(t *testing.T) {
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		BindFlags(flags)
+
+		// Parse command-line flags
+		err := flags.Parse([]string{
+			"--server", "flag-server:9090",
+			"--token", "rtok_flag_token",
+			"--log-level", "debug",
+			"--log-format", "console",
+			"--sandbox-mode", "runner-creates-sandbox",
+		})
+		require.NoError(t, err)
+
+		cfg, err := LoadWithFlags("", flags)
+		require.NoError(t, err)
+
+		assert.Equal(t, "flag-server:9090", cfg.Server.Address)
+		assert.Equal(t, "rtok_flag_token", cfg.Runner.Token)
+		assert.Equal(t, "debug", cfg.Logging.Level)
+		assert.Equal(t, "console", cfg.Logging.Format)
+		assert.Equal(t, "runner-creates-sandbox", cfg.Sandbox.Mode)
+	})
+
+	t.Run("flags override environment", func(t *testing.T) {
+		// Set environment variables
+		t.Setenv("MARIONETTE_SERVER_ADDRESS", "env-server:9090")
+		t.Setenv("MARIONETTE_RUNNER_TOKEN", "rtok_env_token")
+		t.Setenv("MARIONETTE_LOGGING_LEVEL", "warn")
+
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		BindFlags(flags)
+
+		// Parse command-line flags that should override env vars
+		err := flags.Parse([]string{
+			"--log-level", "debug",
+		})
+		require.NoError(t, err)
+
+		cfg, err := LoadWithFlags("", flags)
+		require.NoError(t, err)
+
+		// Flag should override environment
+		assert.Equal(t, "debug", cfg.Logging.Level)
+		// Env vars should still apply where flags not set
+		assert.Equal(t, "env-server:9090", cfg.Server.Address)
+		assert.Equal(t, "rtok_env_token", cfg.Runner.Token)
+	})
+
+	t.Run("flags override config file", func(t *testing.T) {
+		// Create config file
+		configContent := `
+server:
+  address: "file-server:9090"
+logging:
+  level: "error"
+  format: "json"
+`
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "agent.yaml")
+		err := os.WriteFile(configPath, []byte(configContent), 0600)
+		require.NoError(t, err)
+
+		t.Setenv("MARIONETTE_RUNNER_TOKEN", "rtok_test")
+
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		BindFlags(flags)
+
+		// Parse command-line flags
+		err = flags.Parse([]string{
+			"--log-level", "debug",
+		})
+		require.NoError(t, err)
+
+		cfg, err := LoadWithFlags(configPath, flags)
+		require.NoError(t, err)
+
+		// Flag should override file config
+		assert.Equal(t, "debug", cfg.Logging.Level)
+		// File config should apply where flags not set
+		assert.Equal(t, "file-server:9090", cfg.Server.Address)
+		assert.Equal(t, "json", cfg.Logging.Format)
+	})
+
+	t.Run("all logging flags work", func(t *testing.T) {
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		BindFlags(flags)
+
+		err := flags.Parse([]string{
+			"--token", "rtok_test",
+			"--log-level", "warn",
+			"--log-format", "console",
+		})
+		require.NoError(t, err)
+
+		cfg, err := LoadWithFlags("", flags)
+		require.NoError(t, err)
+
+		assert.Equal(t, "warn", cfg.Logging.Level)
+		assert.Equal(t, "console", cfg.Logging.Format)
+	})
+}

@@ -93,7 +93,8 @@ type LoggingConfig struct {
 	Format string `mapstructure:"format"`
 }
 
-// BindFlags binds command-line flags to viper for configuration.
+// BindFlags defines command-line flags for agent configuration.
+// Note: Flags are bound to viper in LoadWithFlags, not here.
 func BindFlags(flags *pflag.FlagSet) {
 	flags.String("server", "localhost:9090", "gRPC server address")
 	flags.String("token", "", "Runner authentication token (or set MARIONETTE_RUNNER_TOKEN)")
@@ -107,25 +108,34 @@ func BindFlags(flags *pflag.FlagSet) {
 	flags.String("tls-cert", "", "Path to TLS client certificate")
 	flags.String("tls-key", "", "Path to TLS client key")
 	flags.String("tls-ca", "", "Path to TLS CA certificate")
-
-	_ = viper.BindPFlag("server.address", flags.Lookup("server"))
-	_ = viper.BindPFlag("runner.token", flags.Lookup("token"))
-	_ = viper.BindPFlag("runner.name", flags.Lookup("name"))
-	_ = viper.BindPFlag("runner.pool_name", flags.Lookup("pool"))
-	_ = viper.BindPFlag("sandbox.mode", flags.Lookup("sandbox-mode"))
-	_ = viper.BindPFlag("logging.level", flags.Lookup("log-level"))
-	_ = viper.BindPFlag("logging.format", flags.Lookup("log-format"))
-	_ = viper.BindPFlag("tls.enabled", flags.Lookup("tls"))
-	_ = viper.BindPFlag("tls.skip_verify", flags.Lookup("tls-skip-verify"))
-	_ = viper.BindPFlag("tls.cert_file", flags.Lookup("tls-cert"))
-	_ = viper.BindPFlag("tls.key_file", flags.Lookup("tls-key"))
-	_ = viper.BindPFlag("tls.ca_file", flags.Lookup("tls-ca"))
 }
 
-// Load loads configuration from file, environment variables, and flags.
-func Load(configPath string) (*Config, error) {
+// bindPFlags binds parsed pflags to a viper instance.
+func bindPFlags(v *viper.Viper, flags *pflag.FlagSet) {
+	_ = v.BindPFlag("server.address", flags.Lookup("server"))
+	_ = v.BindPFlag("runner.token", flags.Lookup("token"))
+	_ = v.BindPFlag("runner.name", flags.Lookup("name"))
+	_ = v.BindPFlag("runner.pool_name", flags.Lookup("pool"))
+	_ = v.BindPFlag("sandbox.mode", flags.Lookup("sandbox-mode"))
+	_ = v.BindPFlag("logging.level", flags.Lookup("log-level"))
+	_ = v.BindPFlag("logging.format", flags.Lookup("log-format"))
+	_ = v.BindPFlag("tls.enabled", flags.Lookup("tls"))
+	_ = v.BindPFlag("tls.skip_verify", flags.Lookup("tls-skip-verify"))
+	_ = v.BindPFlag("tls.cert_file", flags.Lookup("tls-cert"))
+	_ = v.BindPFlag("tls.key_file", flags.Lookup("tls-key"))
+	_ = v.BindPFlag("tls.ca_file", flags.Lookup("tls-ca"))
+}
+
+// LoadWithFlags loads configuration from file, environment variables, and command-line flags.
+// This is the primary loading function when flags are available.
+func LoadWithFlags(configPath string, flags *pflag.FlagSet) (*Config, error) {
 	v := viper.New()
 	setDefaults(v)
+
+	// Bind command-line flags first (highest priority after env vars)
+	if flags != nil {
+		bindPFlags(v, flags)
+	}
 
 	// Environment variable binding
 	v.SetEnvPrefix(envPrefix)
@@ -163,6 +173,12 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// Load loads configuration from file and environment variables only (no flags).
+// For loading with command-line flags, use LoadWithFlags instead.
+func Load(configPath string) (*Config, error) {
+	return LoadWithFlags(configPath, nil)
 }
 
 // LoadWithDefaults loads configuration with defaults and environment variables only.

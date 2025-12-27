@@ -26,8 +26,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Load configuration
-	cfg, err := agent.Load(*configPath)
+	// Load configuration with flags
+	cfg, err := agent.LoadWithFlags(*configPath, flags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
