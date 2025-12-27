@@ -302,7 +302,7 @@
 - [x] Connection management:
   - [x] Track connected runners in memory
   - [x] Handle connection/disconnection events
-  - [ ] Update runner status in database
+  - [x] Update runner status in database
 
 ### 2.2 Marionette Agent (Basic)
 
