@@ -65,7 +65,8 @@ type HeartbeatConfig struct {
 
 // SandboxConfig contains sandbox mode settings.
 type SandboxConfig struct {
-	// Mode is the sandbox mode: "runner-is-sandbox" or "runner-creates-sandbox".
+	// Mode is the sandbox mode: "runner-is-sandbox", "runner-creates-sandbox", or "none".
+	// Use "none" for local development on host machine.
 	Mode string `mapstructure:"mode"`
 
 	// Types is the list of available sandbox types.
@@ -107,7 +108,7 @@ func BindFlags(flags *pflag.FlagSet) {
 	flags.String("token", "", "Runner authentication token (or set MARIONETTE_RUNNER_TOKEN)")
 	flags.String("name", "", "Runner name (defaults to hostname)")
 	flags.String("pool", "", "Pool name for pool runners")
-	flags.String("sandbox-mode", "runner-is-sandbox", "Sandbox mode: runner-is-sandbox or runner-creates-sandbox")
+	flags.String("sandbox-mode", "runner-is-sandbox", "Sandbox mode: runner-is-sandbox, runner-creates-sandbox, or none")
 	flags.String("log-level", "info", "Log level: debug, info, warn, error")
 	flags.String("log-format", "json", "Log format: json or console")
 	flags.Bool("tls", false, "Enable TLS for gRPC connection")
@@ -265,9 +266,10 @@ func (c *Config) Validate() error {
 	validModes := map[string]bool{
 		"runner-is-sandbox":      true,
 		"runner-creates-sandbox": true,
+		"none":                   true,
 	}
 	if !validModes[c.Sandbox.Mode] {
-		return fmt.Errorf("%w: sandbox.mode must be 'runner-is-sandbox' or 'runner-creates-sandbox', got %q",
+		return fmt.Errorf("%w: sandbox.mode must be 'runner-is-sandbox', 'runner-creates-sandbox', or 'none', got %q",
 			ErrInvalidConfig, c.Sandbox.Mode)
 	}
 
