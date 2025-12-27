@@ -36,15 +36,53 @@ type Config struct {
 	Store store.Store // Optional: enables full runner lifecycle management
 }
 
+// ServerOption is a functional option for configuring the gRPC server.
+type ServerOption func(*serverOptions)
+
+// serverOptions holds optional dependencies for the gRPC server.
+type serverOptions struct {
+	permissionManager core.PermissionManagerInterface
+	sessionManager    core.SessionManagerInterface
+	connManager       *ConnectionManager
+}
+
+// WithPermissionManager sets the permission manager for handling permission requests from runners.
+func WithPermissionManager(pm core.PermissionManagerInterface) ServerOption {
+	return func(o *serverOptions) {
+		o.permissionManager = pm
+	}
+}
+
+// WithSessionManager sets the session manager for session operations.
+func WithSessionManager(sm core.SessionManagerInterface) ServerOption {
+	return func(o *serverOptions) {
+		o.sessionManager = sm
+	}
+}
+
+// WithConnManager sets the connection manager for the server.
+// If not provided, a new ConnectionManager will be created internally.
+func WithConnManager(cm *ConnectionManager) ServerOption {
+	return func(o *serverOptions) {
+		o.connManager = cm
+	}
+}
+
 // New creates a new gRPC server.
-func New(cfg Config, logger *zap.Logger) (*Server, error) {
+func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) {
+	// Apply options
+	srvOpts := &serverOptions{}
+	for _, opt := range opts {
+		opt(srvOpts)
+	}
+
 	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Host, cfg.Port))
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
 
-	// Build server options
-	var opts []grpc.ServerOption
+	// Build gRPC server options
+	var grpcOpts []grpc.ServerOption
 
 	// Configure TLS if enabled
 	if cfg.TLS != nil && cfg.TLS.Enabled {
@@ -52,7 +90,7 @@ func New(cfg Config, logger *zap.Logger) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load TLS credentials: %w", err)
 		}
-		opts = append(opts, grpc.Creds(tlsCreds))
+		grpcOpts = append(grpcOpts, grpc.Creds(tlsCreds))
 		logger.Info("TLS enabled for gRPC server",
 			zap.Bool("verify_client", cfg.TLS.VerifyClient),
 		)
@@ -61,7 +99,7 @@ func New(cfg Config, logger *zap.Logger) (*Server, error) {
 	}
 
 	// Add interceptors (order: recovery first to catch panics, then logging)
-	opts = append(opts,
+	grpcOpts = append(grpcOpts,
 		grpc.ChainUnaryInterceptor(
 			RecoveryUnaryInterceptor(logger),
 			LoggingUnaryInterceptor(logger),
@@ -72,10 +110,13 @@ func New(cfg Config, logger *zap.Logger) (*Server, error) {
 		),
 	)
 
-	s := grpc.NewServer(opts...)
+	s := grpc.NewServer(grpcOpts...)
 
-	// Create connection manager
-	connManager := NewConnectionManager(logger)
+	// Use provided connection manager or create a new one
+	connManager := srvOpts.connManager
+	if connManager == nil {
+		connManager = NewConnectionManager(logger)
+	}
 
 	// Build RunnerService options
 	svcOpts := []RunnerServiceOption{
@@ -93,8 +134,12 @@ func New(cfg Config, logger *zap.Logger) (*Server, error) {
 		// Create runner manager for lifecycle management
 		runnerManager := core.NewRunnerManager(cfg.Store, connManager, logger)
 
-		// Create message router
-		router := NewMessageRouter(logger, runnerManager)
+		// Create message router with optional managers
+		routerOpts := []MessageRouterOption{}
+		if srvOpts.permissionManager != nil {
+			routerOpts = append(routerOpts, WithMRPermissionManager(srvOpts.permissionManager))
+		}
+		router := NewMessageRouter(logger, runnerManager, routerOpts...)
 
 		svcOpts = append(svcOpts,
 			WithStore(cfg.Store),

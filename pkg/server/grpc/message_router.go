@@ -6,14 +6,17 @@ import (
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/server/core"
+	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
 )
 
 // MessageRouter routes incoming runner messages to appropriate handlers.
 type MessageRouter struct {
-	logger        *zap.Logger
-	runnerManager RunnerManagerInterface
-	taskManager   core.TaskManagerInterface
+	logger            *zap.Logger
+	runnerManager     RunnerManagerInterface
+	taskManager       core.TaskManagerInterface
+	permissionManager core.PermissionManagerInterface
+	store             store.Store
 }
 
 // MessageRouterOption is a functional option for MessageRouter.
@@ -23,6 +26,20 @@ type MessageRouterOption func(*MessageRouter)
 func WithMRTaskManager(tm core.TaskManagerInterface) MessageRouterOption {
 	return func(r *MessageRouter) {
 		r.taskManager = tm
+	}
+}
+
+// WithMRPermissionManager sets the permission manager for the message router.
+func WithMRPermissionManager(pm core.PermissionManagerInterface) MessageRouterOption {
+	return func(r *MessageRouter) {
+		r.permissionManager = pm
+	}
+}
+
+// WithMRStore sets the store for the message router.
+func WithMRStore(s store.Store) MessageRouterOption {
+	return func(r *MessageRouter) {
+		r.store = s
 	}
 }
 
@@ -193,16 +210,125 @@ func (r *MessageRouter) handleTaskCompleted(ctx context.Context, runnerID string
 }
 
 // handlePermissionRequest processes a permission request from runner.
-// G3: Will create PermissionRequest in DB and notify user.
-func (r *MessageRouter) handlePermissionRequest(_ context.Context, runnerID string, msg *pb.PermissionRequest) error {
-	r.logger.Debug("permission request (stub)",
+// Creates a PermissionRequest in DB and blocks runner until approval.
+func (r *MessageRouter) handlePermissionRequest(ctx context.Context, runnerID string, msg *pb.PermissionRequest) error {
+	r.logger.Info("permission request received",
 		zap.String("runner_id", runnerID),
 		zap.String("request_id", msg.GetRequestId()),
 		zap.String("tool", msg.GetTool()),
 		zap.String("action", msg.GetAction()),
+		zap.String("risk_level", msg.GetRiskLevel()),
 	)
-	// G3: Implement permission request handling
+
+	if r.permissionManager == nil {
+		r.logger.Warn("no permission manager configured, skipping permission request handling")
+		return nil
+	}
+
+	if r.store == nil {
+		r.logger.Warn("no store configured, skipping permission request handling")
+		return nil
+	}
+
+	// Get session for this runner
+	session, err := r.getSessionForRunner(ctx, runnerID)
+	if err != nil {
+		r.logger.Error("failed to get session for runner",
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	// Get current running task run for this session
+	run, err := r.getCurrentRun(ctx, session.ID)
+	if err != nil {
+		r.logger.Error("failed to get current run for session",
+			zap.String("session_id", session.ID),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	// Create permission request
+	suspendAfter := int(msg.GetSuspendAfterSeconds())
+	if suspendAfter == 0 {
+		suspendAfter = core.DefaultSuspendAfterSeconds
+	}
+
+	_, err = r.permissionManager.Create(ctx, &core.CreatePermissionRequestInput{
+		SessionID:           session.ID,
+		TaskID:              run.TaskID,
+		RunID:               run.ID,
+		Tool:                msg.GetTool(),
+		Action:              msg.GetAction(),
+		Context:             msg.GetContext(),
+		RiskLevel:           msg.GetRiskLevel(),
+		SuspendAfterSeconds: suspendAfter,
+		TenantID:            session.TenantID,
+	})
+	if err != nil {
+		r.logger.Error("failed to create permission request",
+			zap.String("runner_id", runnerID),
+			zap.String("session_id", session.ID),
+			zap.Error(err),
+		)
+		return err
+	}
+
 	return nil
+}
+
+// getSessionForRunner finds the active session attached to a runner.
+func (r *MessageRouter) getSessionForRunner(ctx context.Context, runnerID string) (*store.Session, error) {
+	sessions, err := r.store.ListSessions(ctx, store.ListSessionsOptions{
+		RunnerID: &runnerID,
+		Status:   []string{"active"},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(sessions.Items) == 0 {
+		return nil, fmt.Errorf("no active session found for runner %s", runnerID)
+	}
+
+	// Return the first active session (there should only be one)
+	return sessions.Items[0], nil
+}
+
+// getCurrentRun finds the current running task run for a session.
+func (r *MessageRouter) getCurrentRun(ctx context.Context, sessionID string) (*store.TaskRun, error) {
+	// First get tasks for this session that are running
+	tasks, err := r.store.ListTasks(ctx, store.ListTasksOptions{
+		SessionID: &sessionID,
+		Status:    []string{"running"},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(tasks.Items) == 0 {
+		return nil, fmt.Errorf("no running task found for session %s", sessionID)
+	}
+
+	// Get the task ID
+	taskID := tasks.Items[0].ID
+
+	// Get running task runs for this task
+	runs, err := r.store.ListTaskRuns(ctx, store.ListTaskRunsOptions{
+		TaskID: &taskID,
+		Status: []string{"running"},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(runs.Items) == 0 {
+		return nil, fmt.Errorf("no running task run found for task %s", taskID)
+	}
+
+	return runs.Items[0], nil
 }
 
 // handleSessionAttached processes a session attached confirmation.
