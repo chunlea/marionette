@@ -9,7 +9,10 @@ import (
 	"syscall"
 	"time"
 
+	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/agent"
+	"github.com/chunlea/marionette/pkg/agent/executor"
+	"github.com/chunlea/marionette/pkg/agent/executor/claude"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -79,6 +82,26 @@ func main() {
 	workspaceMgr := agent.NewWorkspaceManager(cfg.Workspace.BaseDir, logger)
 	cmdHandler := agent.NewDefaultCommandHandler(workspaceMgr, logger)
 
+	// Create log streamer for streaming output to server
+	logStreamer := agent.NewLogStreamer(client, client.RunnerID(), "", logger)
+
+	// Create executor
+	claudeExecutor := claude.New(logger)
+
+	// Wire executor callbacks
+	cmdHandler.OnExecuteTask = func(ctx context.Context, cmd *pb.ExecuteTask) (*pb.RunnerMessage, error) {
+		return executeTask(ctx, cmd, cmdHandler, claudeExecutor, logStreamer, logger)
+	}
+
+	cmdHandler.OnKillTask = func(_ context.Context, _ *pb.KillTask) error {
+		return claudeExecutor.Kill()
+	}
+
+	// Start log streamer
+	if err := logStreamer.Start(ctx); err != nil {
+		logger.Fatal("failed to start log streamer", zap.Error(err))
+	}
+
 	// Create control channel
 	controlChannel := agent.NewControlChannel(client, cmdHandler, logger)
 
@@ -103,6 +126,9 @@ func main() {
 
 	// Stop heartbeat loop
 	hbLoop.Stop()
+
+	// Stop log streamer
+	logStreamer.Stop()
 
 	// Close client with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -190,4 +216,128 @@ func newLogger(level, format string) (*zap.Logger, error) {
 	zapCfg.Level = zap.NewAtomicLevelAt(zapLevel)
 
 	return zapCfg.Build()
+}
+
+// executeTask runs the Claude executor for a task and returns the completion message.
+func executeTask(
+	ctx context.Context,
+	cmd *pb.ExecuteTask,
+	cmdHandler *agent.DefaultCommandHandler,
+	exec executor.Executor,
+	logStreamer *agent.LogStreamer,
+	logger *zap.Logger,
+) (*pb.RunnerMessage, error) {
+	// Get session state for workspace and agent config
+	session, exists := cmdHandler.GetSession(cmd.SessionId)
+	if !exists {
+		return &pb.RunnerMessage{
+			Payload: &pb.RunnerMessage_TaskCompleted{
+				TaskCompleted: &pb.TaskCompleted{
+					TaskId:  cmd.TaskId,
+					RunId:   cmd.RunId,
+					Attempt: cmd.Attempt,
+					Success: false,
+					Error:   "session not attached",
+				},
+			},
+		}, nil
+	}
+
+	// Get absolute workspace path
+	workspacePath, ok := cmdHandler.GetWorkspacePath(cmd.SessionId)
+	if !ok {
+		workspacePath = session.WorkspacePath // Fallback
+	}
+
+	// Set log streamer context for this task
+	logStreamer.SetTask(cmd.SessionId, cmd.TaskId, cmd.RunId)
+	defer logStreamer.ClearTask()
+
+	// Build executor task
+	task := &executor.Task{
+		ID:        cmd.TaskId,
+		RunID:     cmd.RunId,
+		SessionID: cmd.SessionId,
+		Attempt:   cmd.Attempt,
+		Prompt:    cmd.Prompt,
+		Timeout:   0, // Use context timeout or default in executor
+	}
+
+	// Build agent config from session
+	agentConfig := &executor.AgentConfig{
+		WorkingDir: workspacePath,
+	}
+	if session.AgentConfig != nil {
+		agentConfig.Agent = session.AgentConfig.Agent
+		agentConfig.Model = session.AgentConfig.Model
+		agentConfig.APIKey = session.AgentConfig.ApiKey
+		agentConfig.BaseURL = session.AgentConfig.BaseUrl
+		agentConfig.Extra = session.AgentConfig.Extra
+	}
+
+	logger.Info("executing task",
+		zap.String("task_id", cmd.TaskId),
+		zap.String("run_id", cmd.RunId),
+		zap.String("agent", agentConfig.Agent),
+		zap.String("model", agentConfig.Model),
+		zap.String("working_dir", agentConfig.WorkingDir),
+	)
+
+	// Log system message for task start
+	logStreamer.Log("info", "Task execution started", map[string]string{
+		"task_id": cmd.TaskId,
+		"run_id":  cmd.RunId,
+		"prompt":  cmd.Prompt,
+	})
+
+	// Execute the task
+	result, err := exec.Execute(ctx, task, agentConfig, logStreamer)
+	if err != nil {
+		logger.Error("executor error", zap.Error(err))
+		logStreamer.Log("error", "Task execution failed: "+err.Error(), nil)
+
+		return &pb.RunnerMessage{
+			Payload: &pb.RunnerMessage_TaskCompleted{
+				TaskCompleted: &pb.TaskCompleted{
+					TaskId:  cmd.TaskId,
+					RunId:   cmd.RunId,
+					Attempt: cmd.Attempt,
+					Success: false,
+					Error:   err.Error(),
+				},
+			},
+		}, nil
+	}
+
+	// Flush any remaining logs
+	if err := logStreamer.Flush(ctx); err != nil {
+		logger.Warn("failed to flush logs", zap.Error(err))
+	}
+
+	logStreamer.Log("info", "Task execution completed", map[string]string{
+		"success":   fmt.Sprintf("%t", result.Success),
+		"exit_code": fmt.Sprintf("%d", result.ExitCode),
+	})
+
+	logger.Info("task completed",
+		zap.String("task_id", cmd.TaskId),
+		zap.Bool("success", result.Success),
+		zap.Int("exit_code", result.ExitCode),
+	)
+
+	return &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_TaskCompleted{
+			TaskCompleted: &pb.TaskCompleted{
+				TaskId:          cmd.TaskId,
+				RunId:           cmd.RunId,
+				Attempt:         cmd.Attempt,
+				Success:         result.Success,
+				ExitCode:        int32(result.ExitCode),
+				Error:           result.Error,
+				TokensInput:     result.TokensInput,
+				TokensOutput:    result.TokensOutput,
+				ContextSnapshot: result.Context,
+			},
+		},
+	}, nil
 }
