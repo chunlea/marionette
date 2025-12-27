@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,9 +15,11 @@ import (
 // testSessionStore extends testStoreWrapper with session-specific functionality.
 type testSessionStore struct {
 	*testStoreWrapper
-	sessions   map[string]*store.Session
-	workspaces map[string]*store.Workspace
-	runners    map[string]*store.Runner
+	sessions           map[string]*store.Session
+	workspaces         map[string]*store.Workspace
+	runners            map[string]*store.Runner
+	agentConfigs       map[string]*store.AgentConfig
+	permissionRequests map[string]*store.PermissionRequest
 }
 
 func newTestSessionStore() *testSessionStore {
@@ -24,9 +27,11 @@ func newTestSessionStore() *testSessionStore {
 		testStoreWrapper: &testStoreWrapper{
 			testStore: newTestRunnerStore(),
 		},
-		sessions:   make(map[string]*store.Session),
-		workspaces: make(map[string]*store.Workspace),
-		runners:    make(map[string]*store.Runner),
+		sessions:           make(map[string]*store.Session),
+		workspaces:         make(map[string]*store.Workspace),
+		runners:            make(map[string]*store.Runner),
+		agentConfigs:       make(map[string]*store.AgentConfig),
+		permissionRequests: make(map[string]*store.PermissionRequest),
 	}
 }
 
@@ -144,6 +149,39 @@ func (s *testSessionStore) UpdateRunner(_ context.Context, id string, updates st
 	return nil
 }
 
+func (s *testSessionStore) GetAgentConfig(_ context.Context, id string) (*store.AgentConfig, error) {
+	cfg, ok := s.agentConfigs[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return cfg, nil
+}
+
+func (s *testSessionStore) ListPermissionRequests(_ context.Context, opts store.ListPermissionRequestsOptions) (*store.ListResult[store.PermissionRequest], error) {
+	items := make([]*store.PermissionRequest, 0)
+	for _, req := range s.permissionRequests {
+		// Filter by session ID
+		if opts.SessionID != nil && req.SessionID != *opts.SessionID {
+			continue
+		}
+		// Filter by status
+		if len(opts.Status) > 0 {
+			matched := false
+			for _, st := range opts.Status {
+				if req.Status == st {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		items = append(items, req)
+	}
+	return &store.ListResult[store.PermissionRequest]{Items: items}, nil
+}
+
 // mockConnManagerForSession implements ConnectionManagerInterface for testing.
 type mockConnManagerForSession struct{}
 
@@ -155,12 +193,29 @@ func (m *mockConnManagerForSession) UpdateLastSeen(_ string) error {
 	return nil
 }
 
+// mockCommandSenderForSession implements CommandSender for testing.
+type mockCommandSenderForSession struct {
+	lastRunnerID string
+	lastCommand  *pb.ServerCommand
+	sendErr      error
+}
+
+func (m *mockCommandSenderForSession) SendCommand(runnerID string, cmd *pb.ServerCommand) error {
+	m.lastRunnerID = runnerID
+	m.lastCommand = cmd
+	return m.sendErr
+}
+
 // Helper to create test setup
 func setupSessionManagerTest() (*SessionManager, *testSessionStore) {
+	return setupSessionManagerTestWithCmdSender(nil)
+}
+
+func setupSessionManagerTestWithCmdSender(cmdSender CommandSender) (*SessionManager, *testSessionStore) {
 	s := newTestSessionStore()
 	connMgr := &mockConnManagerForSession{}
 	logger := zap.NewNop()
-	manager := NewSessionManager(s, connMgr, logger)
+	manager := NewSessionManager(s, connMgr, cmdSender, logger)
 	return manager, s
 }
 
@@ -787,4 +842,193 @@ func TestSessionManager_FullLifecycle(t *testing.T) {
 	session, _ = manager.Get(context.Background(), session.ID)
 	assert.Equal(t, SessionStatusTerminated, session.Status)
 	assert.Nil(t, session.RunnerID)
+}
+
+// =============================================================================
+// SendAttachSession Tests
+// =============================================================================
+
+func TestSessionManager_Activate_SendsAttachSession(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+
+	// Setup
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+		IsBYOK:      true,
+	}
+	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+
+	// Activate
+	err := manager.Activate(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	// Verify AttachSession was sent
+	assert.Equal(t, "run_123", cmdSender.lastRunnerID)
+	require.NotNil(t, cmdSender.lastCommand)
+
+	attachCmd := cmdSender.lastCommand.GetAttachSession()
+	require.NotNil(t, attachCmd)
+	assert.Equal(t, "sess_123", attachCmd.SessionId)
+	assert.Equal(t, "/workspace/test", attachCmd.WorkspacePath)
+	assert.NotNil(t, attachCmd.AgentConfig)
+	assert.Equal(t, "claude", attachCmd.AgentConfig.Agent)
+}
+
+func TestSessionManager_Activate_WithAgentConfig(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+
+	// Setup with agent config
+	agentConfigID := "acfg_123"
+	model := "claude-3-opus"
+	baseURL := "https://api.anthropic.com"
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
+	s.agentConfigs["acfg_123"] = &store.AgentConfig{
+		ID:      "acfg_123",
+		Agent:   "claude",
+		Model:   &model,
+		BaseURL: &baseURL,
+	}
+	s.sessions["sess_123"] = &store.Session{
+		ID:            "sess_123",
+		Status:        SessionStatusPending,
+		WorkspaceID:   "ws_123",
+		Agent:         "claude",
+		IsBYOK:        false,
+		AgentConfigID: &agentConfigID,
+	}
+	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+
+	// Activate
+	err := manager.Activate(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	// Verify agent config was included
+	attachCmd := cmdSender.lastCommand.GetAttachSession()
+	require.NotNil(t, attachCmd)
+	require.NotNil(t, attachCmd.AgentConfig)
+	assert.Equal(t, "claude", attachCmd.AgentConfig.Agent)
+	assert.Equal(t, "claude-3-opus", attachCmd.AgentConfig.Model)
+	assert.Equal(t, "https://api.anthropic.com", attachCmd.AgentConfig.BaseUrl)
+}
+
+func TestSessionManager_Activate_WithContextSnapshot(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+
+	// Setup with context snapshot
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:              "sess_123",
+		Status:          SessionStatusPending,
+		WorkspaceID:     "ws_123",
+		Agent:           "claude",
+		IsBYOK:          true,
+		ContextSnapshot: []byte(`{"working_dir": "/workspace/test/src"}`),
+	}
+	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+
+	// Activate
+	err := manager.Activate(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	// Verify context snapshot was included
+	attachCmd := cmdSender.lastCommand.GetAttachSession()
+	require.NotNil(t, attachCmd)
+	assert.Equal(t, []byte(`{"working_dir": "/workspace/test/src"}`), attachCmd.ContextSnapshot)
+}
+
+func TestSessionManager_Activate_ResumingWithPendingPermissions(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+
+	// Setup resuming session with pending permissions
+	suspendedAt := time.Now().Add(-1 * time.Hour)
+	respondedAt := time.Now().Add(-30 * time.Minute) // Responded while suspended
+	respondedBy := "user@example.com"
+	reason := "approved for testing"
+
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusResuming,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+		IsBYOK:      true,
+		SuspendedAt: &suspendedAt,
+	}
+	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	s.permissionRequests["perm_123"] = &store.PermissionRequest{
+		ID:             "perm_123",
+		SessionID:      "sess_123",
+		Status:         "approved",
+		RespondedAt:    &respondedAt,
+		RespondedBy:    &respondedBy,
+		ResponseReason: &reason,
+	}
+
+	// Activate
+	err := manager.Activate(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	// Verify pending permissions were included
+	attachCmd := cmdSender.lastCommand.GetAttachSession()
+	require.NotNil(t, attachCmd)
+	require.Len(t, attachCmd.PendingPermissions, 1)
+	assert.Equal(t, "perm_123", attachCmd.PendingPermissions[0].RequestId)
+	assert.True(t, attachCmd.PendingPermissions[0].Approved)
+	assert.Equal(t, "approved for testing", attachCmd.PendingPermissions[0].Reason)
+	assert.Equal(t, "user@example.com", attachCmd.PendingPermissions[0].RespondedBy)
+}
+
+func TestSessionManager_Activate_NoCmdSender(t *testing.T) {
+	// When cmdSender is nil, activation should still succeed
+	manager, s := setupSessionManagerTest() // No cmdSender
+
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+		IsBYOK:      true,
+	}
+	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+
+	// Activate should succeed even without cmdSender
+	err := manager.Activate(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	session := s.sessions["sess_123"]
+	assert.Equal(t, SessionStatusActive, session.Status)
+}
+
+func TestSessionManager_Activate_SendCommandError(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{
+		sendErr: assert.AnError,
+	}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+		IsBYOK:      true,
+	}
+	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+
+	// Activate should succeed even if SendCommand fails
+	// (session is already activated in DB, command failure is logged but not fatal)
+	err := manager.Activate(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	session := s.sessions["sess_123"]
+	assert.Equal(t, SessionStatusActive, session.Status)
 }
