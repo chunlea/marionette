@@ -45,4 +45,8 @@ tmp/
 
 # Debug
 __debug_bin*
-mctl
+
+# Binaries accidentally built in root directory (use leading / to match root only)
+/server
+/agent
+/mctl
