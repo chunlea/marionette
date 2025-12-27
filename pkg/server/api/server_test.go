@@ -1343,6 +1343,6 @@ func TestOpenAPIDocumentation(t *testing.T) {
 		assert.Equal(t, "application/yaml", rec.Header().Get("Content-Type"))
 		assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
 		assert.Contains(t, rec.Body.String(), "openapi:")
-		assert.Contains(t, rec.Body.String(), "Marionette API")
+		assert.Contains(t, rec.Body.String(), "Marionette Public API")
 	})
 }
