@@ -75,6 +75,21 @@ func main() {
 		zap.String("runner_id", client.RunnerID()),
 	)
 
+	// Create workspace manager and command handler
+	// TODO: Add workspace configuration to Config struct
+	workspaceBasePath := "/workspace"
+	workspaceMgr := agent.NewWorkspaceManager(workspaceBasePath, logger)
+	cmdHandler := agent.NewDefaultCommandHandler(workspaceMgr, logger)
+
+	// Create control channel
+	controlChannel := agent.NewControlChannel(client, cmdHandler, logger)
+
+	// Start control channel
+	if err := controlChannel.Start(ctx); err != nil {
+		logger.Fatal("failed to start control channel", zap.Error(err))
+	}
+	logger.Info("control channel started")
+
 	// Start heartbeat loop
 	hbLoop := agent.NewHeartbeatLoop(client, cfg.Heartbeat, logger)
 	hbLoop.Start(ctx)
@@ -84,6 +99,9 @@ func main() {
 
 	// Graceful shutdown
 	logger.Info("initiating graceful shutdown")
+
+	// Stop control channel
+	controlChannel.Stop()
 
 	// Stop heartbeat loop
 	hbLoop.Stop()
