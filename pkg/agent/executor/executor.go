@@ -9,12 +9,20 @@ import (
 
 // Task represents a task to be executed by an agent.
 type Task struct {
-	ID        string
-	RunID     string
-	SessionID string
-	Attempt   int32
-	Prompt    string
-	Timeout   time.Duration
+	ID             string
+	RunID          string
+	SessionID      string
+	ConversationID string // Conversation this task belongs to
+	Attempt        int32
+	Prompt         string
+	Timeout        time.Duration
+	WorkingDir     string // Working directory (may be worktree path)
+
+	// Context for resume - contains previous conversation state
+	// The executor interprets this based on agent type:
+	// - Claude: extracts session_id and uses --resume
+	// - Other agents: may parse as conversation history
+	Context []byte
 }
 
 // AgentConfig holds the configuration for running an agent.
@@ -34,6 +42,7 @@ type Result struct {
 	Error        string
 	TokensInput  int64
 	TokensOutput int64
+	AgentSession string // Agent's internal session ID (for resume)
 	Context      []byte // Context snapshot for session restore
 	CompletedAt  time.Time
 }
@@ -72,6 +81,22 @@ type Executor interface {
 
 	// Name returns the name of this executor (e.g., "claude", "codex").
 	Name() string
+}
+
+// StreamExecutor extends Executor with stream input capabilities.
+// Agents that support bidirectional communication implement this interface.
+// The executor decides internally when to use stream mode (e.g., for resume).
+type StreamExecutor interface {
+	Executor
+
+	// SendMessage sends a message to the running agent.
+	// Only valid when the executor is in stream mode.
+	// Returns ErrNotRunning if no task is running.
+	// Returns ErrNotStreamMode if not in stream mode.
+	SendMessage(msg []byte) error
+
+	// IsStreamMode returns true if the executor is currently in stream input mode.
+	IsStreamMode() bool
 }
 
 // OutputWriter wraps an OutputHandler to implement io.Writer.
