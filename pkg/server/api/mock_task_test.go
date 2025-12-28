@@ -232,20 +232,18 @@ func TestMockTaskService_GetLogs(t *testing.T) {
 	// Add logs
 	now := time.Now()
 	svc.AddLog(task.ID, &store.Log{
-		ID:        id.Log(),
+		ID:        id.RawLog(),
 		TaskID:    task.ID,
 		Stream:    "stdout",
-		Level:     "info",
-		Content:   "Log 1",
+		Content:   []byte("Log 1"),
 		Sequence:  1,
 		CreatedAt: now,
 	})
 	svc.AddLog(task.ID, &store.Log{
-		ID:        id.Log(),
+		ID:        id.RawLog(),
 		TaskID:    task.ID,
 		Stream:    "stderr",
-		Level:     "error",
-		Content:   "Error log",
+		Content:   []byte("Error log"),
 		Sequence:  2,
 		CreatedAt: now,
 	})
@@ -260,12 +258,6 @@ func TestMockTaskService_GetLogs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, result.Items, 1)
 	assert.Equal(t, "stdout", result.Items[0].Stream)
-
-	// Filter by level
-	result, err = svc.GetLogs(ctx, task.ID, GetLogsOptions{Level: []string{"error"}})
-	require.NoError(t, err)
-	assert.Len(t, result.Items, 1)
-	assert.Equal(t, "error", result.Items[0].Level)
 
 	// Get logs for non-existent task
 	_, err = svc.GetLogs(ctx, "task_nonexistent", GetLogsOptions{})
@@ -288,11 +280,10 @@ func TestMockTaskService_StreamLogs(t *testing.T) {
 	now := time.Now()
 	for i := 1; i <= 5; i++ {
 		svc.AddLog(task.ID, &store.Log{
-			ID:        id.Log(),
+			ID:        id.RawLog(),
 			TaskID:    task.ID,
 			Stream:    "stdout",
-			Level:     "info",
-			Content:   "Log message",
+			Content:   []byte("Log message"),
 			Sequence:  int64(i),
 			CreatedAt: now,
 		})
@@ -325,9 +316,9 @@ func TestMockTaskService_StreamLogs(t *testing.T) {
 
 func TestMockLogStream(t *testing.T) {
 	logs := []*store.Log{
-		{ID: "log_1", Content: "First"},
-		{ID: "log_2", Content: "Second"},
-		{ID: "log_3", Content: "Third"},
+		{ID: "log_1", Content: []byte("First")},
+		{ID: "log_2", Content: []byte("Second")},
+		{ID: "log_3", Content: []byte("Third")},
 	}
 
 	stream := NewMockLogStream(logs)

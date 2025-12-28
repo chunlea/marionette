@@ -203,9 +203,6 @@ func (m *MockTaskService) GetLogs(ctx context.Context, taskID string, opts GetLo
 
 	for _, log := range logs {
 		// Apply filters
-		if len(opts.Level) > 0 && !contains(opts.Level, log.Level) {
-			continue
-		}
 		if len(opts.Stream) > 0 && !contains(opts.Stream, log.Stream) {
 			continue
 		}
@@ -260,9 +257,6 @@ func (m *MockTaskService) StreamLogs(ctx context.Context, taskID string, opts St
 		for i := start; i < len(logs); i++ {
 			log := logs[i]
 			// Apply filters
-			if len(opts.Level) > 0 && !contains(opts.Level, log.Level) {
-				continue
-			}
 			if len(opts.Stream) > 0 && !contains(opts.Stream, log.Stream) {
 				continue
 			}

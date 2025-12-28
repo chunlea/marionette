@@ -78,8 +78,7 @@ func TestLogStreamer_HandleOutput_WithTask(t *testing.T) {
 		assert.Equal(t, "task_123", entry.TaskId)
 		assert.Equal(t, "run_123", entry.RunId)
 		assert.Equal(t, "stdout", entry.Stream)
-		assert.Equal(t, "info", entry.Level)
-		assert.Equal(t, "test output\n", entry.Content)
+		assert.Equal(t, []byte("test output\n"), entry.Content)
 		assert.Equal(t, "runner_1", entry.RunnerId)
 		assert.Equal(t, "tenant_1", entry.TenantId)
 		assert.Equal(t, int64(1), entry.Sequence)
@@ -142,14 +141,12 @@ func TestLogStreamer_Log(t *testing.T) {
 	streamer := NewLogStreamer(nil, "runner_1", "tenant_1", logger)
 
 	streamer.SetTask("sess_123", "task_123", "run_123")
-	streamer.Log("warn", "Something happened", map[string]string{"key": "value"})
+	streamer.Log("warn", "Something happened")
 
 	select {
 	case entry := <-streamer.buffer:
 		assert.Equal(t, "system", entry.Stream)
-		assert.Equal(t, "warn", entry.Level)
-		assert.Equal(t, "Something happened", entry.Content)
-		assert.Equal(t, "value", entry.Metadata["key"])
+		assert.Equal(t, []byte("Something happened"), entry.Content)
 	default:
 		t.Fatal("expected entry in buffer")
 	}
@@ -160,7 +157,7 @@ func TestLogStreamer_Log_NoTask(t *testing.T) {
 	streamer := NewLogStreamer(nil, "runner_1", "tenant_1", logger)
 
 	// Without task set, log should be dropped
-	streamer.Log("info", "test", nil)
+	streamer.Log("info", "test")
 
 	select {
 	case <-streamer.buffer:
@@ -285,7 +282,7 @@ func TestLogStreamer_Integration(t *testing.T) {
 	streamer.HandleOutput("stdout", []byte("line 1\n"))
 	streamer.HandleOutput("stdout", []byte("line 2\n"))
 	streamer.HandleOutput("stderr", []byte("error line\n"))
-	streamer.Log("info", "test message", map[string]string{"key": "value"})
+	streamer.Log("info", "test message")
 
 	// Flush logs to server
 	err = streamer.Flush(ctx)

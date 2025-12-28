@@ -332,7 +332,7 @@ message RunnerStatus {
 message StreamLogsMessage {
   oneof payload {
     StreamLogsInit init = 1;
-    LogEntry log_entry = 2;
+    RawLogEntry log_entry = 2;
   }
 }
 
@@ -347,6 +347,9 @@ message StreamLogsInit {
   // If mismatch, stream is rejected with PERMISSION_DENIED
   string runner_id = 4;       // Must match x-runner-id in metadata
   string tenant_id = 5;       // Must match runner's tenant
+
+  // Conversation context (for agents that support multi-turn conversations)
+  string conversation_id = 6;
 }
 
 // StreamLogsResponse provides feedback after stream ends
@@ -357,22 +360,34 @@ message StreamLogsResponse {
   string error = 4;           // Error message if stream terminated abnormally
 }
 
-message LogEntry {
+// RawLogEntry represents raw output from an agent.
+// Server stores these in raw_logs table and asynchronously parses
+// them into structured agent_events using the appropriate AgentEventParser.
+message RawLogEntry {
   string task_id = 1;
   string run_id = 2;
   string session_id = 3;
-  string stream = 4;        // "stdout", "stderr", "system"
-  string level = 5;         // "debug", "info", "warn", "error"
-  string content = 6;
-  int64 sequence = 7;
-  int64 timestamp_unix_ms = 8;
-  map<string, string> metadata = 9;
+
+  // Stream type: "stdout", "stderr", "json" (agent-specific structured output)
+  string stream = 4;
+
+  // Raw content as received from agent (bytes to preserve exact output)
+  bytes content = 5;
+
+  // Ordering sequence (monotonically increasing within a run)
+  int64 sequence = 6;
+
+  // Timestamp when the log was captured
+  int64 timestamp_unix_ms = 7;
 
   // Tenant isolation (denormalized for efficient routing and storage)
   // Server validates this matches the StreamLogsInit tenant_id
-  string tenant_id = 10;
+  string tenant_id = 8;
 
   // Runner context
   // Server validates this matches the authenticated runner_id
-  string runner_id = 11;
+  string runner_id = 9;
+
+  // Conversation context (for agents that support multi-turn conversations)
+  string conversation_id = 10;
 }

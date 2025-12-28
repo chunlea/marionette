@@ -816,9 +816,9 @@ func TestIntegration_StreamLogs(t *testing.T) {
 	// Send some log entries
 	for i := 0; i < 10; i++ {
 		err = stream.Send(&pb.StreamLogsMessage{
-			Payload: &pb.StreamLogsMessage_LogEntry{
-				LogEntry: &pb.LogEntry{
-					Content: fmt.Sprintf("log message %d", i),
+			Payload: &pb.StreamLogsMessage_RawLogEntry{
+				RawLogEntry: &pb.RawLogEntry{
+					Content: []byte(fmt.Sprintf("log message %d", i)),
 				},
 			},
 		})

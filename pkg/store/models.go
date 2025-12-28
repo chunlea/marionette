@@ -507,21 +507,27 @@ type ActionLog struct {
 	CreatedAt    time.Time       `json:"created_at"`
 }
 
-// Log represents a task execution log entry.
-type Log struct {
-	ID        string          `json:"id"`
-	SessionID string          `json:"session_id"`
-	TaskID    string          `json:"task_id"`
-	RunID     string          `json:"run_id"`
-	RunnerID  string          `json:"runner_id"`
-	Stream    string          `json:"stream"` // stdout, stderr, system
-	Level     string          `json:"level"`  // debug, info, warn, error
-	Content   string          `json:"content"`
-	Sequence  int64           `json:"sequence"`
-	TenantID  *string         `json:"tenant_id,omitempty"`
-	Metadata  json.RawMessage `json:"metadata"`
-	CreatedAt time.Time       `json:"created_at"`
+// RawLog represents a raw log entry from an agent.
+// These are stored in the raw_logs table and asynchronously parsed
+// into AgentEvents using the appropriate AgentEventParser.
+type RawLog struct {
+	ID             string    `json:"id"`
+	SessionID      string    `json:"session_id"`
+	ConversationID *string   `json:"conversation_id,omitempty"`
+	TaskID         string    `json:"task_id"`
+	RunID          string    `json:"run_id"`
+	RunnerID       string    `json:"runner_id"`
+	Stream         string    `json:"stream"` // stdout, stderr, json
+	Content        []byte    `json:"content"`
+	Sequence       int64     `json:"sequence"`
+	Processed      bool      `json:"processed"`
+	TenantID       *string   `json:"tenant_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
+
+// Log is an alias for RawLog for backward compatibility.
+// Deprecated: Use RawLog instead.
+type Log = RawLog
 
 // LogArchive represents an archived log storage record.
 type LogArchive struct {

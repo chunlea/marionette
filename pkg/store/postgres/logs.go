@@ -12,9 +12,9 @@ import (
 	"github.com/chunlea/marionette/pkg/store"
 )
 
-// Log column list for SELECT queries.
-const logColumns = `id, session_id, task_id, run_id, runner_id, stream, level, content,
-	sequence, tenant_id, metadata, created_at`
+// RawLog column list for SELECT queries.
+const rawLogColumns = `id, session_id, conversation_id, task_id, run_id, runner_id, stream, content,
+	sequence, processed, tenant_id, created_at`
 
 // LogArchive column list for SELECT queries.
 const logArchiveColumns = `id, session_id, tenant_id, storage_key, storage_size_bytes,
@@ -41,26 +41,25 @@ func (t *Tx) CreateLog(ctx context.Context, log *store.Log) error {
 
 func createLog(ctx context.Context, q querier, log *store.Log) error {
 	if log.ID == "" {
-		log.ID = id.Log()
+		log.ID = id.RawLog()
 	}
 
 	query := `
-		INSERT INTO logs (
-			id, session_id, task_id, run_id, runner_id, stream, level, content,
-			sequence, tenant_id, metadata, created_at
+		INSERT INTO raw_logs (
+			id, session_id, conversation_id, task_id, run_id, runner_id, stream, content,
+			sequence, processed, tenant_id, created_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW()
 		)
 		RETURNING created_at`
 
 	err := q.QueryRow(ctx, query,
-		log.ID, log.SessionID, log.TaskID, log.RunID, log.RunnerID,
-		log.Stream, log.Level, log.Content, log.Sequence, log.TenantID,
-		emptyJSONObject(log.Metadata),
+		log.ID, log.SessionID, log.ConversationID, log.TaskID, log.RunID, log.RunnerID,
+		log.Stream, log.Content, log.Sequence, log.Processed, log.TenantID,
 	).Scan(&log.CreatedAt)
 
 	if err != nil {
-		return handlePgError(err, "log", log.ID)
+		return handlePgError(err, "raw_log", log.ID)
 	}
 	return nil
 }
@@ -93,7 +92,7 @@ func createLogBatch(ctx context.Context, q querier, logs []*store.Log) error {
 	// Generate IDs for logs without them
 	for _, log := range logs {
 		if log.ID == "" {
-			log.ID = id.Log()
+			log.ID = id.RawLog()
 		}
 	}
 
@@ -108,21 +107,20 @@ func createLogBatch(ctx context.Context, q querier, logs []*store.Log) error {
 			offset+7, offset+8, offset+9, offset+10, offset+11,
 		))
 		valueArgs = append(valueArgs,
-			log.ID, log.SessionID, log.TaskID, log.RunID, log.RunnerID,
-			log.Stream, log.Level, log.Content, log.Sequence, log.TenantID,
-			emptyJSONObject(log.Metadata),
+			log.ID, log.SessionID, log.ConversationID, log.TaskID, log.RunID, log.RunnerID,
+			log.Stream, log.Content, log.Sequence, log.Processed, log.TenantID,
 		)
 	}
 
 	query := fmt.Sprintf(`
-		INSERT INTO logs (
-			id, session_id, task_id, run_id, runner_id, stream, level, content,
-			sequence, tenant_id, metadata, created_at
+		INSERT INTO raw_logs (
+			id, session_id, conversation_id, task_id, run_id, runner_id, stream, content,
+			sequence, processed, tenant_id, created_at
 		) VALUES %s`, strings.Join(valueStrings, ", "))
 
 	_, err := q.Exec(ctx, query, valueArgs...)
 	if err != nil {
-		return handlePgError(err, "log", "batch")
+		return handlePgError(err, "raw_log", "batch")
 	}
 	return nil
 }
@@ -138,7 +136,7 @@ func (t *Tx) GetLog(ctx context.Context, logID string) (*store.Log, error) {
 }
 
 func getLog(ctx context.Context, q querier, logID string) (*store.Log, error) {
-	query := fmt.Sprintf(`SELECT %s FROM logs WHERE id = $1`, logColumns)
+	query := fmt.Sprintf(`SELECT %s FROM raw_logs WHERE id = $1`, rawLogColumns)
 	row := q.QueryRow(ctx, query, logID)
 	return scanLog(row, logID)
 }
@@ -183,11 +181,7 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 		args = append(args, opts.Stream)
 		argNum++
 	}
-	if len(opts.Level) > 0 {
-		conditions = append(conditions, fmt.Sprintf("level = ANY($%d)", argNum))
-		args = append(args, opts.Level)
-		argNum++
-	}
+	// Note: Level filter removed - RawLog doesn't have level field
 
 	whereClause := ""
 	if len(conditions) > 0 {
@@ -204,22 +198,22 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 		orderDir = "DESC"
 	}
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM logs %s", whereClause)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM raw_logs %s", whereClause)
 	var totalCount int64
 	if err := q.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
-		return nil, fmt.Errorf("counting logs: %w", err)
+		return nil, fmt.Errorf("counting raw_logs: %w", err)
 	}
 
 	dataQuery := fmt.Sprintf(`
-		SELECT %s FROM logs %s
+		SELECT %s FROM raw_logs %s
 		ORDER BY %s %s
 		LIMIT $%d`,
-		logColumns, whereClause, orderBy, orderDir, argNum)
+		rawLogColumns, whereClause, orderBy, orderDir, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("querying logs: %w", err)
+		return nil, fmt.Errorf("querying raw_logs: %w", err)
 	}
 	defer rows.Close()
 
@@ -227,13 +221,13 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 	for rows.Next() {
 		log, err := scanLogFromRows(rows)
 		if err != nil {
-			return nil, fmt.Errorf("scanning log: %w", err)
+			return nil, fmt.Errorf("scanning raw_log: %w", err)
 		}
 		logs = append(logs, log)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating logs: %w", err)
+		return nil, fmt.Errorf("iterating raw_logs: %w", err)
 	}
 
 	hasMore := len(logs) > limit
@@ -259,10 +253,10 @@ func (t *Tx) DeleteLogsByRun(ctx context.Context, runID string) error {
 }
 
 func deleteLogsByRun(ctx context.Context, q querier, runID string) error {
-	query := `DELETE FROM logs WHERE run_id = $1`
+	query := `DELETE FROM raw_logs WHERE run_id = $1`
 	_, err := q.Exec(ctx, query, runID)
 	if err != nil {
-		return handlePgError(err, "log", runID)
+		return handlePgError(err, "raw_log", runID)
 	}
 	return nil
 }
@@ -270,14 +264,14 @@ func deleteLogsByRun(ctx context.Context, q querier, runID string) error {
 func scanLog(row pgx.Row, identifier string) (*store.Log, error) {
 	var l store.Log
 	err := row.Scan(
-		&l.ID, &l.SessionID, &l.TaskID, &l.RunID, &l.RunnerID, &l.Stream, &l.Level, &l.Content,
-		&l.Sequence, &l.TenantID, &l.Metadata, &l.CreatedAt,
+		&l.ID, &l.SessionID, &l.ConversationID, &l.TaskID, &l.RunID, &l.RunnerID,
+		&l.Stream, &l.Content, &l.Sequence, &l.Processed, &l.TenantID, &l.CreatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, &store.NotFoundError{Resource: "log", ID: identifier}
+			return nil, &store.NotFoundError{Resource: "raw_log", ID: identifier}
 		}
-		return nil, fmt.Errorf("scanning log: %w", err)
+		return nil, fmt.Errorf("scanning raw_log: %w", err)
 	}
 	return &l, nil
 }
@@ -285,8 +279,8 @@ func scanLog(row pgx.Row, identifier string) (*store.Log, error) {
 func scanLogFromRows(rows pgx.Rows) (*store.Log, error) {
 	var l store.Log
 	err := rows.Scan(
-		&l.ID, &l.SessionID, &l.TaskID, &l.RunID, &l.RunnerID, &l.Stream, &l.Level, &l.Content,
-		&l.Sequence, &l.TenantID, &l.Metadata, &l.CreatedAt,
+		&l.ID, &l.SessionID, &l.ConversationID, &l.TaskID, &l.RunID, &l.RunnerID,
+		&l.Stream, &l.Content, &l.Sequence, &l.Processed, &l.TenantID, &l.CreatedAt,
 	)
 	if err != nil {
 		return nil, err

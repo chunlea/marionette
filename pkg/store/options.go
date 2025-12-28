@@ -139,15 +139,14 @@ type ListActionLogsOptions struct {
 	Success      *bool   // Filter by success status
 }
 
-// ListLogsOptions for filtering task logs.
+// ListLogsOptions for filtering raw logs.
 type ListLogsOptions struct {
 	BaseListOptions
 	SessionID *string  // Filter by session
 	TaskID    *string  // Filter by task
 	RunID     *string  // Filter by task run
 	RunnerID  *string  // Filter by runner
-	Stream    []string // Filter by stream (stdout, stderr, system)
-	Level     []string // Filter by level (debug, info, warn, error)
+	Stream    []string // Filter by stream (stdout, stderr, json)
 }
 
 // ListLogArchivesOptions for filtering log archives.

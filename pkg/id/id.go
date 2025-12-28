@@ -84,8 +84,15 @@ func RunnerToken() string { return New("rtok") }
 // DataKey generates a data key ID (prefix: dek_).
 func DataKey() string { return New("dek") }
 
+// RawLog generates a raw log entry ID (prefix: rlog_).
+func RawLog() string { return New("rlog") }
+
 // Log generates a log entry ID (prefix: log_).
-func Log() string { return New("log") }
+// Deprecated: Use RawLog instead.
+func Log() string { return New("rlog") }
+
+// AgentEvent generates an agent event ID (prefix: evt_).
+func AgentEvent() string { return New("evt") }
 
 // LogArchive generates a log archive ID (prefix: arch_).
 func LogArchive() string { return New("arch") }

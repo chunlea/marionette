@@ -3,7 +3,6 @@ package grpc
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"time"
 
@@ -323,8 +322,8 @@ func (s *RunnerService) StreamLogs(stream grpc.ClientStreamingServer[pb.StreamLo
 		if entry := msg.GetLogEntry(); entry != nil {
 			logsReceived++
 
-			// Convert to store.Log
-			log := s.convertLogEntry(runnerID, entry)
+			// Convert to store.RawLog
+			log := s.convertRawLogEntry(runnerID, entry)
 			batch = append(batch, log)
 
 			// Flush when batch is full
@@ -335,35 +334,27 @@ func (s *RunnerService) StreamLogs(stream grpc.ClientStreamingServer[pb.StreamLo
 	}
 }
 
-// convertLogEntry converts a protobuf LogEntry to a store.Log.
-func (s *RunnerService) convertLogEntry(runnerID string, entry *pb.LogEntry) *store.Log {
-	// Convert metadata map to JSON
-	var metadata json.RawMessage = []byte("{}")
-	if len(entry.GetMetadata()) > 0 {
-		if jsonBytes, err := json.Marshal(entry.GetMetadata()); err == nil {
-			metadata = jsonBytes
-		}
-	}
-
+// convertRawLogEntry converts a protobuf RawLogEntry to a store.RawLog.
+func (s *RunnerService) convertRawLogEntry(runnerID string, entry *pb.RawLogEntry) *store.RawLog {
 	// Use entry's runner_id if provided, otherwise use stream's runner_id
 	entryRunnerID := entry.GetRunnerId()
 	if entryRunnerID == "" {
 		entryRunnerID = runnerID
 	}
 
-	return &store.Log{
-		ID:        id.Log(),
-		SessionID: entry.GetSessionId(),
-		TaskID:    entry.GetTaskId(),
-		RunID:     entry.GetRunId(),
-		RunnerID:  entryRunnerID,
-		Stream:    entry.GetStream(),
-		Level:     entry.GetLevel(),
-		Content:   entry.GetContent(),
-		Sequence:  entry.GetSequence(),
-		TenantID:  stringPtrOrNil(entry.GetTenantId()),
-		Metadata:  metadata,
-		CreatedAt: time.Now(),
+	return &store.RawLog{
+		ID:             id.RawLog(),
+		SessionID:      entry.GetSessionId(),
+		ConversationID: stringPtrOrNil(entry.GetConversationId()),
+		TaskID:         entry.GetTaskId(),
+		RunID:          entry.GetRunId(),
+		RunnerID:       entryRunnerID,
+		Stream:         entry.GetStream(),
+		Content:        entry.GetContent(),
+		Sequence:       entry.GetSequence(),
+		Processed:      false,
+		TenantID:       stringPtrOrNil(entry.GetTenantId()),
+		CreatedAt:      time.Now(),
 	}
 }
 

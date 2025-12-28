@@ -81,7 +81,6 @@ func (a *TaskAdapter) GetLogs(ctx context.Context, taskID string, opts GetLogsOp
 			Cursor: opts.Cursor,
 		},
 		TaskID: &taskID,
-		Level:  opts.Level,
 		Stream: opts.Stream,
 	}
 	return a.store.ListLogs(ctx, storeOpts)

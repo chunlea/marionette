@@ -53,14 +53,12 @@ type ListTasksOptions struct {
 type GetLogsOptions struct {
 	Limit  int      `json:"limit,omitempty"`
 	Cursor string   `json:"cursor,omitempty"`
-	Level  []string `json:"level,omitempty"`
 	Stream []string `json:"stream,omitempty"`
 }
 
 // StreamLogsOptions contains options for streaming task logs.
 type StreamLogsOptions struct {
 	Tail   int      `json:"tail,omitempty"` // Number of recent logs to include
-	Level  []string `json:"level,omitempty"`
 	Stream []string `json:"stream,omitempty"`
 }
 

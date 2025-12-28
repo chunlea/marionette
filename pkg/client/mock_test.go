@@ -226,8 +226,8 @@ func TestMockClient_Tasks(t *testing.T) {
 	t.Run("GetTaskLogs", func(t *testing.T) {
 		client := &MockClient{}
 		logs := []*Log{
-			{ID: "log_1", Content: "First log"},
-			{ID: "log_2", Content: "Second log"},
+			{ID: "log_1", Content: []byte("First log")},
+			{ID: "log_2", Content: []byte("Second log")},
 		}
 		client.GetTaskLogsFunc = func(ctx context.Context, id string, opts GetLogsOptions) (LogIterator, error) {
 			return &MockLogIterator{Logs: logs}, nil
@@ -299,9 +299,9 @@ func TestMockClient_CallTracking(t *testing.T) {
 func TestMockLogIterator(t *testing.T) {
 	t.Run("iterate all logs", func(t *testing.T) {
 		logs := []*Log{
-			{ID: "log_1", Content: "First"},
-			{ID: "log_2", Content: "Second"},
-			{ID: "log_3", Content: "Third"},
+			{ID: "log_1", Content: []byte("First")},
+			{ID: "log_2", Content: []byte("Second")},
+			{ID: "log_3", Content: []byte("Third")},
 		}
 		iter := &MockLogIterator{Logs: logs}
 

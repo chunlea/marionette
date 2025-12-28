@@ -292,17 +292,13 @@ func executeTask(
 	)
 
 	// Log system message for task start
-	logStreamer.Log("info", "Task execution started", map[string]string{
-		"task_id": cmd.TaskId,
-		"run_id":  cmd.RunId,
-		"prompt":  cmd.Prompt,
-	})
+	logStreamer.Log("info", fmt.Sprintf("Task execution started: task_id=%s run_id=%s", cmd.TaskId, cmd.RunId))
 
 	// Execute the task
 	result, err := exec.Execute(ctx, task, agentConfig, logStreamer)
 	if err != nil {
 		logger.Error("executor error", zap.Error(err))
-		logStreamer.Log("error", "Task execution failed: "+err.Error(), nil)
+		logStreamer.Log("error", "Task execution failed: "+err.Error())
 
 		return &pb.RunnerMessage{
 			Payload: &pb.RunnerMessage_TaskCompleted{
@@ -322,10 +318,7 @@ func executeTask(
 		logger.Warn("failed to flush logs", zap.Error(err))
 	}
 
-	logStreamer.Log("info", "Task execution completed", map[string]string{
-		"success":   fmt.Sprintf("%t", result.Success),
-		"exit_code": fmt.Sprintf("%d", result.ExitCode),
-	})
+	logStreamer.Log("info", fmt.Sprintf("Task execution completed: success=%t exit_code=%d", result.Success, result.ExitCode))
 
 	logger.Info("task completed",
 		zap.String("task_id", cmd.TaskId),

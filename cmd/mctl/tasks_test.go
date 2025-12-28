@@ -270,8 +270,8 @@ func TestTasksLogs(t *testing.T) {
 		assert.Equal(t, "task_test123", id)
 		return &client.MockLogIterator{
 			Logs: []*client.Log{
-				{ID: "log_1", Content: "Starting task...", Level: "info", CreatedAt: time.Now()},
-				{ID: "log_2", Content: "Task completed", Level: "info", CreatedAt: time.Now()},
+				{ID: "log_1", Content: []byte("Starting task..."), Stream: "stdout", CreatedAt: time.Now()},
+				{ID: "log_2", Content: []byte("Task completed"), Stream: "stdout", CreatedAt: time.Now()},
 			},
 		}, nil
 	}

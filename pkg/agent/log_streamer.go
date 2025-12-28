@@ -39,14 +39,15 @@ type LogStreamer struct {
 	tenantID string
 
 	// Current task context
-	mu        sync.RWMutex
-	sessionID string
-	taskID    string
-	runID     string
-	sequence  atomic.Int64
+	mu             sync.RWMutex
+	sessionID      string
+	taskID         string
+	runID          string
+	conversationID string
+	sequence       atomic.Int64
 
 	// Buffering
-	buffer   chan *pb.LogEntry
+	buffer   chan *pb.RawLogEntry
 	stopC    chan struct{}
 	stoppedC chan struct{}
 	running  bool
@@ -65,7 +66,7 @@ func NewLogStreamerWithConfig(client *Client, runnerID, tenantID string, config 
 		logger:   logger.Named("log-streamer"),
 		runnerID: runnerID,
 		tenantID: tenantID,
-		buffer:   make(chan *pb.LogEntry, config.BufferSize),
+		buffer:   make(chan *pb.RawLogEntry, config.BufferSize),
 	}
 }
 
@@ -76,7 +77,15 @@ func (s *LogStreamer) SetTask(sessionID, taskID, runID string) {
 	s.sessionID = sessionID
 	s.taskID = taskID
 	s.runID = runID
+	s.conversationID = "" // Reset conversation ID for new task
 	s.sequence.Store(0)
+}
+
+// SetConversationID sets the conversation ID for multi-turn conversation support.
+func (s *LogStreamer) SetConversationID(conversationID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conversationID = conversationID
 }
 
 // ClearTask clears the current task context.
@@ -86,6 +95,7 @@ func (s *LogStreamer) ClearTask() {
 	s.sessionID = ""
 	s.taskID = ""
 	s.runID = ""
+	s.conversationID = ""
 }
 
 // Start begins the log streaming loop.
@@ -124,6 +134,7 @@ func (s *LogStreamer) HandleOutput(stream string, data []byte) {
 	sessionID := s.sessionID
 	taskID := s.taskID
 	runID := s.runID
+	conversationID := s.conversationID
 	s.mu.RUnlock()
 
 	if sessionID == "" || taskID == "" || runID == "" {
@@ -131,13 +142,13 @@ func (s *LogStreamer) HandleOutput(stream string, data []byte) {
 		return
 	}
 
-	entry := &pb.LogEntry{
+	entry := &pb.RawLogEntry{
 		SessionId:       sessionID,
 		TaskId:          taskID,
 		RunId:           runID,
+		ConversationId:  conversationID,
 		Stream:          stream,
-		Level:           "info",
-		Content:         string(data),
+		Content:         data, // Raw bytes, not converted to string
 		Sequence:        s.sequence.Add(1),
 		TimestampUnixMs: time.Now().UnixMilli(),
 		RunnerId:        s.runnerID,
@@ -173,27 +184,27 @@ func (s *LogStreamer) HandlePermissionRequest(_ context.Context, req *executor.P
 }
 
 // Log sends a system log entry.
-func (s *LogStreamer) Log(level, message string, metadata map[string]string) {
+func (s *LogStreamer) Log(level, message string) {
 	s.mu.RLock()
 	sessionID := s.sessionID
 	taskID := s.taskID
 	runID := s.runID
+	conversationID := s.conversationID
 	s.mu.RUnlock()
 
 	if sessionID == "" {
 		return
 	}
 
-	entry := &pb.LogEntry{
+	entry := &pb.RawLogEntry{
 		SessionId:       sessionID,
 		TaskId:          taskID,
 		RunId:           runID,
+		ConversationId:  conversationID,
 		Stream:          "system",
-		Level:           level,
-		Content:         message,
+		Content:         []byte(message),
 		Sequence:        s.sequence.Add(1),
 		TimestampUnixMs: time.Now().UnixMilli(),
-		Metadata:        metadata,
 		RunnerId:        s.runnerID,
 		TenantId:        s.tenantID,
 	}
@@ -211,6 +222,7 @@ func (s *LogStreamer) Flush(ctx context.Context) error {
 	sessionID := s.sessionID
 	taskID := s.taskID
 	runID := s.runID
+	conversationID := s.conversationID
 	s.mu.RUnlock()
 
 	if sessionID == "" {
@@ -218,7 +230,7 @@ func (s *LogStreamer) Flush(ctx context.Context) error {
 	}
 
 	// Drain buffer
-	var entries []*pb.LogEntry
+	var entries []*pb.RawLogEntry
 	for {
 		select {
 		case entry := <-s.buffer:
@@ -226,7 +238,7 @@ func (s *LogStreamer) Flush(ctx context.Context) error {
 		default:
 			// Buffer empty
 			if len(entries) > 0 {
-				return s.sendBatch(ctx, sessionID, taskID, runID, entries)
+				return s.sendBatch(ctx, sessionID, taskID, runID, conversationID, entries)
 			}
 			return nil
 		}
@@ -240,7 +252,7 @@ func (s *LogStreamer) streamLoop(ctx context.Context) {
 	ticker := time.NewTicker(s.config.FlushInterval)
 	defer ticker.Stop()
 
-	var batch []*pb.LogEntry
+	var batch []*pb.RawLogEntry
 
 	for {
 		select {
@@ -271,7 +283,7 @@ func (s *LogStreamer) streamLoop(ctx context.Context) {
 }
 
 // flushBatch sends a batch of log entries to the server.
-func (s *LogStreamer) flushBatch(ctx context.Context, batch []*pb.LogEntry) {
+func (s *LogStreamer) flushBatch(ctx context.Context, batch []*pb.RawLogEntry) {
 	if len(batch) == 0 {
 		return
 	}
@@ -280,13 +292,14 @@ func (s *LogStreamer) flushBatch(ctx context.Context, batch []*pb.LogEntry) {
 	sessionID := s.sessionID
 	taskID := s.taskID
 	runID := s.runID
+	conversationID := s.conversationID
 	s.mu.RUnlock()
 
 	if sessionID == "" {
 		return
 	}
 
-	if err := s.sendBatch(ctx, sessionID, taskID, runID, batch); err != nil {
+	if err := s.sendBatch(ctx, sessionID, taskID, runID, conversationID, batch); err != nil {
 		s.logger.Warn("failed to send log batch",
 			zap.Error(err),
 			zap.Int("count", len(batch)),
@@ -295,7 +308,7 @@ func (s *LogStreamer) flushBatch(ctx context.Context, batch []*pb.LogEntry) {
 }
 
 // sendBatch sends a batch of log entries via gRPC.
-func (s *LogStreamer) sendBatch(ctx context.Context, sessionID, taskID, runID string, entries []*pb.LogEntry) error {
+func (s *LogStreamer) sendBatch(ctx context.Context, sessionID, taskID, runID, conversationID string, entries []*pb.RawLogEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -311,11 +324,12 @@ func (s *LogStreamer) sendBatch(ctx context.Context, sessionID, taskID, runID st
 	initMsg := &pb.StreamLogsMessage{
 		Payload: &pb.StreamLogsMessage_Init{
 			Init: &pb.StreamLogsInit{
-				SessionId: sessionID,
-				TaskId:    taskID,
-				RunId:     runID,
-				RunnerId:  s.runnerID,
-				TenantId:  s.tenantID,
+				SessionId:      sessionID,
+				TaskId:         taskID,
+				RunId:          runID,
+				RunnerId:       s.runnerID,
+				TenantId:       s.tenantID,
+				ConversationId: conversationID,
 			},
 		},
 	}

@@ -47,8 +47,8 @@ func TestTaskAdapter_GetLogs(t *testing.T) {
 
 	// Add some logs
 	st.logs[taskID] = []*store.Log{
-		{ID: "log_1", TaskID: taskID, Content: "line 1"},
-		{ID: "log_2", TaskID: taskID, Content: "line 2"},
+		{ID: "log_1", TaskID: taskID, Content: []byte("line 1")},
+		{ID: "log_2", TaskID: taskID, Content: []byte("line 2")},
 	}
 
 	// Get logs

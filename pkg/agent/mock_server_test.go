@@ -140,10 +140,10 @@ func TestMockServer_StreamLogs(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		err = stream.Send(&pb.StreamLogsMessage{
 			Payload: &pb.StreamLogsMessage_LogEntry{
-				LogEntry: &pb.LogEntry{
+				LogEntry: &pb.RawLogEntry{
 					RunId:   "trun_test",
 					Stream:  "stdout",
-					Content: "test log",
+					Content: []byte("test log"),
 				},
 			},
 		})

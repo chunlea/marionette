@@ -80,7 +80,7 @@ func TestLogSubscriberManager_Broadcast(t *testing.T) {
 		ID:        "log_test",
 		SessionID: sessionID,
 		TaskID:    "task_test",
-		Content:   "test message",
+		Content:   []byte("test message"),
 		Sequence:  1,
 	}
 	lsm.Broadcast(log)
@@ -100,7 +100,7 @@ func TestLogSubscriberManager_Broadcast_NoSubscribers(t *testing.T) {
 	log := &store.Log{
 		ID:        "log_test",
 		SessionID: "sess_no_subscribers",
-		Content:   "test message",
+		Content:   []byte("test message"),
 	}
 	lsm.Broadcast(log) // Should complete without error
 }
@@ -115,11 +115,11 @@ func TestLogSubscriberManager_Broadcast_FullChannel(t *testing.T) {
 	lsm.Subscribe(sessionID, ch)
 
 	// Fill the channel
-	log1 := &store.Log{ID: "log_1", SessionID: sessionID, Content: "first"}
+	log1 := &store.Log{ID: "log_1", SessionID: sessionID, Content: []byte("first")}
 	lsm.Broadcast(log1)
 
 	// Second broadcast should be dropped (channel full)
-	log2 := &store.Log{ID: "log_2", SessionID: sessionID, Content: "second"}
+	log2 := &store.Log{ID: "log_2", SessionID: sessionID, Content: []byte("second")}
 	lsm.Broadcast(log2) // Should not block, message dropped
 
 	// Verify first message is in channel

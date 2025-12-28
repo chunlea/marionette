@@ -394,8 +394,8 @@ func TestHTTPClient_GetTaskLogs(t *testing.T) {
 		TotalCount int64  `json:"total_count"`
 	}{
 		Items: []*Log{
-			{ID: "log_1", Content: "Hello", Stream: "stdout", Sequence: 1},
-			{ID: "log_2", Content: "World", Stream: "stdout", Sequence: 2},
+			{ID: "log_1", Content: []byte("Hello"), Stream: "stdout", Sequence: 1},
+			{ID: "log_2", Content: []byte("World"), Stream: "stdout", Sequence: 2},
 		},
 		TotalCount: 2,
 	}
@@ -429,8 +429,8 @@ func TestHTTPClient_GetTaskLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error reading log: %v", err)
 	}
-	if log1.Content != "Hello" {
-		t.Errorf("expected Hello, got %s", log1.Content)
+	if string(log1.Content) != "Hello" {
+		t.Errorf("expected Hello, got %s", string(log1.Content))
 	}
 
 	// Read second log
@@ -438,8 +438,8 @@ func TestHTTPClient_GetTaskLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error reading log: %v", err)
 	}
-	if log2.Content != "World" {
-		t.Errorf("expected World, got %s", log2.Content)
+	if string(log2.Content) != "World" {
+		t.Errorf("expected World, got %s", string(log2.Content))
 	}
 
 	// Read past end

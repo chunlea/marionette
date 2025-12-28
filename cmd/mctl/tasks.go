@@ -296,8 +296,8 @@ func streamTaskLogs(ctx interface{ Done() <-chan struct{} }, taskID string, foll
 			return fmt.Errorf("error reading logs: %w", err)
 		}
 
-		// Format: [timestamp] [level] content
+		// Format: [timestamp] [stream] content
 		timestamp := log.CreatedAt.Format("15:04:05")
-		printf("[%s] [%s] %s\n", timestamp, log.Level, log.Content)
+		printf("[%s] [%s] %s\n", timestamp, log.Stream, string(log.Content))
 	}
 }
