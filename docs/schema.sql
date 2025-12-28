@@ -27,7 +27,8 @@
 --   key_    api_key
 --   rtok_   runner_token
 --   dek_    data_key
---   log_    log entry
+--   rlog_   raw_log (original agent output)
+--   evt_    agent_event (parsed/structured event)
 --   arch_   log_archive
 --   acfg_   agent_config
 --   pcfg_   provider_config
@@ -689,45 +690,109 @@ CREATE INDEX idx_runner_tokens_expires ON runner_tokens(expires_at)
     WHERE status = 'active' AND expires_at IS NOT NULL;
 
 --------------------------------------------------------------------------------
--- Logs (Partitioned by day)
+-- Raw Logs (Partitioned by day)
 --------------------------------------------------------------------------------
+-- Stores original stream output from agents exactly as received.
+-- This is the source of truth for replay/audit.
+-- Parsed into agent_events for structured queries.
 
 -- Note: Foreign keys omitted for partitioned table compatibility
 -- Referential integrity enforced at application layer
-CREATE TABLE logs (
-    id TEXT NOT NULL,  -- log_xxx (or use run_id + sequence as natural key)
+CREATE TABLE raw_logs (
+    id TEXT NOT NULL,  -- rlog_xxx
     session_id TEXT NOT NULL,
     conversation_id TEXT,
     task_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
     runner_id TEXT NOT NULL,
-    stream TEXT NOT NULL DEFAULT 'stdout',
-    level TEXT NOT NULL DEFAULT 'info',
-    content TEXT NOT NULL,
-    sequence BIGINT NOT NULL,
-    tenant_id TEXT,
-    metadata JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    -- Generated column: auto-parse JSON content for stream='json'
-    -- NULL for non-JSON streams (stdout, stderr, system)
-    -- Enables efficient JSONB queries without runtime parsing
-    content_json JSONB GENERATED ALWAYS AS (
-        CASE WHEN stream = 'json' THEN content::jsonb ELSE NULL END
-    ) STORED,
+    -- Stream type: stdout, stderr, json (agent-specific format)
+    stream TEXT NOT NULL,
+
+    -- Raw content as received from agent
+    content BYTEA NOT NULL,
+
+    -- Ordering
+    sequence BIGINT NOT NULL,
+
+    -- Processing status for async event parsing
+    processed BOOLEAN NOT NULL DEFAULT FALSE,
+
+    tenant_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     PRIMARY KEY (id, created_at)
 ) PARTITION BY RANGE (created_at);
 
-CREATE UNIQUE INDEX idx_logs_run_seq_unique ON logs(run_id, sequence, created_at);
-CREATE INDEX idx_logs_task_seq ON logs(task_id, sequence);
-CREATE INDEX idx_logs_session ON logs(session_id, created_at);
-CREATE INDEX idx_logs_conversation ON logs(conversation_id, created_at);
-CREATE INDEX idx_logs_tenant ON logs(tenant_id, created_at);
+CREATE UNIQUE INDEX idx_raw_logs_run_seq ON raw_logs(run_id, sequence, created_at);
+CREATE INDEX idx_raw_logs_task ON raw_logs(task_id, sequence);
+CREATE INDEX idx_raw_logs_session ON raw_logs(session_id, created_at);
+CREATE INDEX idx_raw_logs_tenant ON raw_logs(tenant_id, created_at);
+CREATE INDEX idx_raw_logs_unprocessed ON raw_logs(created_at)
+    WHERE processed = FALSE;
 
--- GIN index for JSON queries (only on rows where content_json is not null)
-CREATE INDEX idx_logs_content_json ON logs USING GIN (content_json)
-    WHERE content_json IS NOT NULL;
+--------------------------------------------------------------------------------
+-- Agent Events (Structured events parsed from raw logs)
+--------------------------------------------------------------------------------
+-- Provides a unified event format across all agent types.
+-- Each agent executor implements a parser to convert raw logs to events.
+-- Used by API/WebSocket for real-time streaming and queries.
+
+CREATE TABLE agent_events (
+    id TEXT PRIMARY KEY,  -- evt_xxx
+    session_id TEXT NOT NULL,
+    conversation_id TEXT,
+    task_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+
+    -- Event type (unified across agents)
+    -- text: assistant text output
+    -- thinking: thinking/reasoning (if exposed)
+    -- tool_use: tool invocation
+    -- tool_result: tool execution result
+    -- error: error message
+    -- system: system notification
+    -- usage: token usage stats
+    type TEXT NOT NULL,
+
+    -- Text content (for text, thinking, error, system types)
+    content TEXT,
+
+    -- Structured data (for tool_use, tool_result, usage types)
+    -- tool_use: {"id": "...", "name": "bash", "input": {...}}
+    -- tool_result: {"id": "...", "output": "...", "is_error": false}
+    -- usage: {"input_tokens": 100, "output_tokens": 50}
+    data JSONB,
+
+    -- Reference to source raw log (for traceability)
+    raw_log_id TEXT,
+
+    -- Ordering (same sequence as raw_logs for correlation)
+    sequence BIGINT NOT NULL,
+
+    tenant_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT valid_event_type CHECK (
+        type IN ('text', 'thinking', 'tool_use', 'tool_result', 'error', 'system', 'usage')
+    )
+);
+
+CREATE INDEX idx_agent_events_run ON agent_events(run_id, sequence);
+CREATE INDEX idx_agent_events_task ON agent_events(task_id, sequence);
+CREATE INDEX idx_agent_events_session ON agent_events(session_id, created_at);
+CREATE INDEX idx_agent_events_conversation ON agent_events(conversation_id, created_at)
+    WHERE conversation_id IS NOT NULL;
+CREATE INDEX idx_agent_events_type ON agent_events(run_id, type);
+CREATE INDEX idx_agent_events_tenant ON agent_events(tenant_id, created_at);
+
+-- GIN index for querying structured data
+CREATE INDEX idx_agent_events_data ON agent_events USING GIN (data)
+    WHERE data IS NOT NULL;
+
+--------------------------------------------------------------------------------
+-- Log Archives
+--------------------------------------------------------------------------------
 
 CREATE TABLE log_archives (
     id TEXT PRIMARY KEY,  -- arch_xxx
@@ -877,14 +942,14 @@ CREATE INDEX idx_tunnels_tenant ON tunnels(tenant_id);
 -- Run this during initial setup
 
 -- Function to create a partition for a specific date
-CREATE OR REPLACE FUNCTION create_log_partition(partition_date DATE)
+CREATE OR REPLACE FUNCTION create_raw_log_partition(partition_date DATE)
 RETURNS void AS $$
 DECLARE
     partition_name TEXT;
     start_date DATE;
     end_date DATE;
 BEGIN
-    partition_name := 'logs_' || TO_CHAR(partition_date, 'YYYYMMDD');
+    partition_name := 'raw_logs_' || TO_CHAR(partition_date, 'YYYYMMDD');
     start_date := partition_date;
     end_date := partition_date + INTERVAL '1 day';
 
@@ -895,7 +960,7 @@ BEGIN
         WHERE c.relname = partition_name AND n.nspname = 'public'
     ) THEN
         EXECUTE format(
-            'CREATE TABLE %I PARTITION OF logs FOR VALUES FROM (%L) TO (%L)',
+            'CREATE TABLE %I PARTITION OF raw_logs FOR VALUES FROM (%L) TO (%L)',
             partition_name, start_date, end_date
         );
         RAISE NOTICE 'Created partition: %', partition_name;
@@ -905,21 +970,21 @@ $$ LANGUAGE plpgsql;
 
 -- Function to ensure partitions exist for upcoming days
 -- Should be called daily by a cron job or pg_cron
-CREATE OR REPLACE FUNCTION maintain_log_partitions(days_ahead INT DEFAULT 7)
+CREATE OR REPLACE FUNCTION maintain_raw_log_partitions(days_ahead INT DEFAULT 7)
 RETURNS void AS $$
 DECLARE
     target_date DATE;
 BEGIN
     FOR i IN 0..days_ahead LOOP
         target_date := CURRENT_DATE + (i || ' days')::INTERVAL;
-        PERFORM create_log_partition(target_date);
+        PERFORM create_raw_log_partition(target_date);
     END LOOP;
 END;
 $$ LANGUAGE plpgsql;
 
 -- Function to drop old partitions (beyond retention period)
 -- Should be called by the log archiver job after archiving
-CREATE OR REPLACE FUNCTION drop_old_log_partitions(retention_days INT DEFAULT 7)
+CREATE OR REPLACE FUNCTION drop_old_raw_log_partitions(retention_days INT DEFAULT 7)
 RETURNS void AS $$
 DECLARE
     partition_record RECORD;
@@ -933,12 +998,12 @@ BEGIN
         FROM pg_class c
         JOIN pg_inherits i ON c.oid = i.inhrelid
         JOIN pg_class p ON i.inhparent = p.oid
-        WHERE p.relname = 'logs'
+        WHERE p.relname = 'raw_logs'
     LOOP
-        -- Extract date from partition name (logs_YYYYMMDD)
+        -- Extract date from partition name (raw_logs_YYYYMMDD)
         BEGIN
             partition_date := TO_DATE(
-                SUBSTRING(partition_record.partition_name FROM 'logs_(\d{8})'),
+                SUBSTRING(partition_record.partition_name FROM 'raw_logs_(\d{8})'),
                 'YYYYMMDD'
             );
 
@@ -955,7 +1020,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Initialize partitions for current week + 7 days ahead
-SELECT maintain_log_partitions(7);
+SELECT maintain_raw_log_partitions(7);
 
 -- Example pg_cron setup (run after installing pg_cron extension):
--- SELECT cron.schedule('maintain-log-partitions', '0 0 * * *', 'SELECT maintain_log_partitions(7)');
+-- SELECT cron.schedule('maintain-raw-log-partitions', '0 0 * * *', 'SELECT maintain_raw_log_partitions(7)');
