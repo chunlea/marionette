@@ -124,15 +124,17 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 		}
 	}
 
+	// Start the process while holding the mutex to prevent race with Kill()
+	// Kill() checks e.cmd.Process, which is set by cmd.Start()
 	e.mu.Lock()
 	e.cmd = cmd
 	e.streamMode = useStreamInput
 	e.stdinWriter = stdin
+	startErr := cmd.Start()
 	e.mu.Unlock()
 
-	// Start the process
-	if err := cmd.Start(); err != nil {
-		return e.failResult(result, fmt.Errorf("starting process: %w", err)), nil
+	if startErr != nil {
+		return e.failResult(result, fmt.Errorf("starting process: %w", startErr)), nil
 	}
 
 	defer func() {
