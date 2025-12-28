@@ -100,8 +100,19 @@ func IsDataKey(id string) bool {
 }
 
 // IsLog returns true if id is a log entry ID.
+// Deprecated: Use IsRawLog instead.
 func IsLog(id string) bool {
-	return strings.HasPrefix(id, "log_")
+	return strings.HasPrefix(id, "log_") || strings.HasPrefix(id, "rlog_")
+}
+
+// IsRawLog returns true if id is a raw log entry ID.
+func IsRawLog(id string) bool {
+	return strings.HasPrefix(id, "rlog_")
+}
+
+// IsAgentEvent returns true if id is an agent event ID.
+func IsAgentEvent(id string) bool {
+	return strings.HasPrefix(id, "evt_")
 }
 
 // IsLogArchive returns true if id is a log archive ID.

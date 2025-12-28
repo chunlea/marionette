@@ -172,7 +172,7 @@ func TestConvenienceFunctions(t *testing.T) {
 		{"APIKey", APIKey, "key_", IsAPIKey},
 		{"RunnerToken", RunnerToken, "rtok_", IsRunnerToken},
 		{"DataKey", DataKey, "dek_", IsDataKey},
-		{"Log", Log, "log_", IsLog},
+		{"RawLog", RawLog, "rlog_", IsRawLog},
 		{"LogArchive", LogArchive, "arch_", IsLogArchive},
 		{"ActionLog", ActionLog, "alog_", IsActionLog},
 		{"AgentConfig", AgentConfig, "acfg_", IsAgentConfig},

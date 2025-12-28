@@ -76,8 +76,7 @@ func TestLogCRUD(t *testing.T) {
 		RunID:     taskRun.ID,
 		RunnerID:  runner.ID,
 		Stream:    "stdout",
-		Level:     "info",
-		Content:   "Test log message",
+		Content:   []byte("Test log message"),
 		Sequence:  1,
 	}
 
@@ -93,8 +92,7 @@ func TestLogCRUD(t *testing.T) {
 	assert.Equal(t, log.TaskID, got.TaskID)
 	assert.Equal(t, log.RunID, got.RunID)
 	assert.Equal(t, "stdout", got.Stream)
-	assert.Equal(t, "info", got.Level)
-	assert.Equal(t, "Test log message", got.Content)
+	assert.Equal(t, []byte("Test log message"), got.Content)
 	assert.Equal(t, int64(1), got.Sequence)
 
 	// List Logs
@@ -191,8 +189,7 @@ func TestLogBatch(t *testing.T) {
 			RunID:     taskRun.ID,
 			RunnerID:  runner.ID,
 			Stream:    "stdout",
-			Level:     "info",
-			Content:   "Log message 1",
+			Content:   []byte("Log message 1"),
 			Sequence:  1,
 		},
 		{
@@ -201,8 +198,7 @@ func TestLogBatch(t *testing.T) {
 			RunID:     taskRun.ID,
 			RunnerID:  runner.ID,
 			Stream:    "stdout",
-			Level:     "info",
-			Content:   "Log message 2",
+			Content:   []byte("Log message 2"),
 			Sequence:  2,
 		},
 		{
@@ -211,8 +207,7 @@ func TestLogBatch(t *testing.T) {
 			RunID:     taskRun.ID,
 			RunnerID:  runner.ID,
 			Stream:    "stderr",
-			Level:     "error",
-			Content:   "Error message",
+			Content:   []byte("Error message"),
 			Sequence:  3,
 		},
 	}
@@ -230,14 +225,14 @@ func TestLogBatch(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3, len(list.Items))
 
-	// Filter by level
-	listByLevel, err := testStore.ListLogs(ctx, store.ListLogsOptions{
-		RunID: &taskRun.ID,
-		Level: []string{"error"},
+	// Filter by stream
+	listByStream, err := testStore.ListLogs(ctx, store.ListLogsOptions{
+		RunID:  &taskRun.ID,
+		Stream: []string{"stderr"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, len(listByLevel.Items))
-	assert.Equal(t, "Error message", listByLevel.Items[0].Content)
+	assert.Equal(t, 1, len(listByStream.Items))
+	assert.Equal(t, []byte("Error message"), listByStream.Items[0].Content)
 
 	// Cleanup
 	_ = testStore.DeleteLogsByRun(ctx, taskRun.ID)
