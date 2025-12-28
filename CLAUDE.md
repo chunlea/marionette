@@ -78,9 +78,10 @@ A remote agent orchestration and observability platform for controlling coding a
 │  Runner             Execution environment (VM/Container/Machine)    │
 │  Agent              AI coding agent (Claude Code, Codex, etc.)      │
 │  AgentConfig        Agent credentials (API key, model, base_url)    │
-│  Session            Long-lived work context, binds Runner+Workspace │
-│  Task               Unit of work (prompt), belongs to a Session     │
-│  Workspace          Persistent working directory (/workspace)       │
+│  Workspace          Persistent code storage (core, survives all)    │
+│  Session            Runner binding + Workspace association          │
+│  Conversation       Dialogue context within Session (has worktree)  │
+│  Task               Message in queue (prompt), belongs to Convo     │
 │  Sandbox            Task isolation environment within Runner        │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
@@ -88,20 +89,36 @@ A remote agent orchestration and observability platform for controlling coding a
 
 **Key relationships**:
 ```
-Session
-  ├── Workspace (persistent storage, survives runner changes)
-  ├── Runner (attached/detached dynamically)
-  └── Tasks (sequential execution within session)
-        ├── Task 1: "Build API" [completed]
-        ├── Task 2: "Add auth" [completed]
-        └── Task 3: "Fix bug" [running]
+Workspace (code storage, persistent)
+  │
+  └── Session (Runner binding, can suspend/resume)
+        │
+        ├── Conversation 1 (main branch)
+        │     ├── working_dir: /workspace
+        │     ├── context_snapshot
+        │     └── Tasks (message queue)
+        │           ├── Task 1: "Build API" [completed]
+        │           ├── Task 2: "Add auth" [running]
+        │           └── Task 3: "Fix bug" [queued]
+        │
+        └── Conversation 2 (soft fork, worktree)
+              ├── working_dir: /workspace/.worktrees/feature-x
+              ├── parent: Conversation 1
+              └── Tasks (parallel work)
 ```
 
 **Key distinction**:
-- **Session** = persistent work context (outlives individual tasks and runners)
+- **Workspace** = code storage (core, persistent across everything)
+- **Session** = Runner binding + Workspace association (1:1 with Runner)
+- **Conversation** = dialogue context with its own worktree (soft fork within Session)
+- **Task** = message queue entry (user prompt/request)
 - **Runner** = where things run (infrastructure, can be swapped)
 - **Agent** = what does the work (AI, like Claude Code)
 - **marionette-agent** = our software that bridges them
+
+**Fork types**:
+- **Soft fork** = new Conversation in same Session (uses worktree, same Runner)
+- **Hard fork** = new Session (copies Workspace, different Runner)
 
 ## Project Overview
 
@@ -205,14 +222,15 @@ See `docs/pool.md` for agent lifecycle and sandbox types.
 
 ## Session Lifecycle
 
-Sessions are long-lived work contexts that outlive individual tasks and runners.
+Sessions bind a Runner to a Workspace (1:1 relationship with Runner).
+Conversations within a Session hold the actual dialogue context.
 
 **States**: `pending` → `active` ↔ `suspended` ↔ `resuming` → `terminated`
 
 - **pending**: Waiting for runner assignment
 - **active**: Runner attached, can execute tasks
-- **suspended**: Runner released, state preserved (workspace + context)
-- **resuming**: Acquiring new runner and restoring state
+- **suspended**: Runner released, Conversations preserved
+- **resuming**: Acquiring new runner and restoring Conversations
 - **terminated**: Ended, resources cleaned up
 
 ### Session-Runner Relationship
@@ -288,7 +306,7 @@ Sessions are long-lived work contexts that outlive individual tasks and runners.
 | Component | Storage | Survives Runner Change |
 |-----------|---------|----------------------|
 | Workspace files | CAS / PV / Volume | ✓ Yes |
-| Agent context | DB (context_snapshot) | ✓ Yes |
+| Conversation context | DB (conversations.context_snapshot) | ✓ Yes |
 | Session metadata | DB | ✓ Yes |
 | Pending permissions | DB | ✓ Yes |
 | Running processes | Memory | ✗ No (except pause strategy) |
@@ -419,7 +437,10 @@ mctl scheduled-tasks trigger $SCHEDULED_TASK_ID
 
 ## Task Lifecycle
 
-Tasks are logical units of work. Each task can have multiple runs (execution attempts).
+Tasks are message queue entries within a Conversation. Each task represents a user prompt/request.
+Tasks can have multiple runs (execution attempts) for retry support.
+
+If a task is created without specifying a conversation, a default conversation is automatically created.
 
 **Task states**: `pending` | `running` | `completed` | `failed` | `canceled`
 
