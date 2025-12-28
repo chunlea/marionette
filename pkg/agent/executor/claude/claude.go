@@ -20,12 +20,15 @@ import (
 
 // Common errors for Claude executor.
 var (
-	ErrAlreadyRunning = errors.New("executor is already running a task")
-	ErrNotRunning     = errors.New("executor is not running a task")
-	ErrKilled         = errors.New("task was killed")
+	ErrAlreadyRunning  = errors.New("executor is already running a task")
+	ErrNotRunning      = errors.New("executor is not running a task")
+	ErrNotStreamMode   = errors.New("executor is not in stream input mode")
+	ErrKilled          = errors.New("task was killed")
+	ErrStdinNotReady   = errors.New("stdin writer not ready")
 )
 
 // Executor implements the executor.Executor interface for Claude Code.
+// It also implements executor.StreamExecutor for bidirectional communication.
 type Executor struct {
 	logger *zap.Logger
 
@@ -37,6 +40,13 @@ type Executor struct {
 	cmd     *exec.Cmd
 	running bool
 	killed  bool
+
+	// Stream input mode
+	streamMode  bool
+	stdinWriter io.WriteCloser
+
+	// Session tracking
+	sessionID string
 
 	// For graceful shutdown
 	done chan struct{}
@@ -75,6 +85,11 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	defer func() {
 		e.mu.Lock()
 		e.running = false
+		e.streamMode = false
+		if e.stdinWriter != nil {
+			_ = e.stdinWriter.Close()
+			e.stdinWriter = nil
+		}
 		close(e.done)
 		e.mu.Unlock()
 	}()
@@ -83,8 +98,8 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 		StartedAt: time.Now(),
 	}
 
-	// Build the command
-	cmd, err := e.buildCommand(task, config)
+	// Build the command (returns whether to use stream input mode)
+	cmd, useStreamInput, err := e.buildCommand(task, config)
 	if err != nil {
 		return e.failResult(result, fmt.Errorf("building command: %w", err)), nil
 	}
@@ -100,8 +115,19 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 		return e.failResult(result, fmt.Errorf("getting stderr pipe: %w", err)), nil
 	}
 
+	// Get stdin pipe for stream input mode
+	var stdin io.WriteCloser
+	if useStreamInput {
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			return e.failResult(result, fmt.Errorf("getting stdin pipe: %w", err)), nil
+		}
+	}
+
 	e.mu.Lock()
 	e.cmd = cmd
+	e.streamMode = useStreamInput
+	e.stdinWriter = stdin
 	e.mu.Unlock()
 
 	// Start the process
@@ -115,11 +141,36 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 		e.mu.Unlock()
 	}()
 
+	// Determine working directory for logging
+	workingDir := task.WorkingDir
+	if workingDir == "" {
+		workingDir = config.WorkingDir
+	}
+
 	e.logger.Info("started claude code",
 		zap.String("task_id", task.ID),
 		zap.String("run_id", task.RunID),
-		zap.String("working_dir", config.WorkingDir),
+		zap.String("working_dir", workingDir),
+		zap.Bool("stream_mode", useStreamInput),
 	)
+
+	// In stream input mode, send the initial prompt via stdin
+	if useStreamInput && task.Prompt != "" {
+		msg := NewTextMessage(task.Prompt)
+		msgBytes, err := json.Marshal(msg)
+		if err != nil {
+			_ = e.Kill()
+			return e.failResult(result, fmt.Errorf("marshaling initial message: %w", err)), nil
+		}
+		// Send message with newline (NDJSON format)
+		if _, err := stdin.Write(append(msgBytes, '\n')); err != nil {
+			_ = e.Kill()
+			return e.failResult(result, fmt.Errorf("sending initial message: %w", err)), nil
+		}
+		e.logger.Debug("sent initial message via stdin",
+			zap.Int("bytes", len(msgBytes)),
+		)
+	}
 
 	// Create context with timeout if specified
 	execCtx := ctx
@@ -133,6 +184,11 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	parser := &outputParser{
 		handler: handler,
 		logger:  e.logger,
+		onSessionID: func(sessionID string) {
+			e.mu.Lock()
+			e.sessionID = sessionID
+			e.mu.Unlock()
+		},
 	}
 
 	// Read stdout (stream-json) in a goroutine
@@ -181,7 +237,23 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 
 	e.mu.Lock()
 	killed := e.killed
+	capturedSessionID := e.sessionID
 	e.mu.Unlock()
+
+	// Set agent session ID for future resume
+	result.AgentSession = capturedSessionID
+
+	// Build context snapshot for future resume
+	if capturedSessionID != "" {
+		snapshot := &ContextSnapshot{
+			SessionID:  capturedSessionID,
+			WorkingDir: workingDir,
+			CreatedAt:  result.CompletedAt.Format(time.RFC3339),
+		}
+		if contextBytes, err := json.Marshal(snapshot); err == nil {
+			result.Context = contextBytes
+		}
+	}
 
 	switch {
 	case killed:
@@ -258,22 +330,47 @@ func (e *Executor) Kill() error {
 }
 
 // buildCommand creates the exec.Cmd for running Claude Code.
-func (e *Executor) buildCommand(task *executor.Task, config *executor.AgentConfig) (*exec.Cmd, error) {
+func (e *Executor) buildCommand(task *executor.Task, config *executor.AgentConfig) (cmd *exec.Cmd, useStreamInput bool, err error) {
 	// Use custom command path if set (for testing), otherwise find claude binary
 	claudePath := e.commandPath
 	if claudePath == "" {
-		var err error
 		claudePath, err = exec.LookPath("claude")
 		if err != nil {
-			return nil, fmt.Errorf("claude not found in PATH: %w", err)
+			return nil, false, fmt.Errorf("claude not found in PATH: %w", err)
 		}
 	}
 
+	// Parse context snapshot if provided (for resume)
+	var contextSnapshot *ContextSnapshot
+	if len(task.Context) > 0 {
+		contextSnapshot = &ContextSnapshot{}
+		if err := json.Unmarshal(task.Context, contextSnapshot); err != nil {
+			e.logger.Warn("failed to parse context snapshot, starting fresh",
+				zap.Error(err),
+			)
+			contextSnapshot = nil
+		}
+	}
+
+	// Determine if we should use stream input mode
+	// Stream input is used when resuming a session (needed for --resume)
+	useStreamInput = contextSnapshot != nil && contextSnapshot.SessionID != ""
+
 	// Build arguments
 	args := []string{
-		"-p",                             // Print mode (non-interactive)
-		"--verbose",                      // Required for stream-json with -p
+		"--print",                        // Print mode (non-interactive)
+		"--verbose",                      // Required for stream-json with --print
 		"--output-format", "stream-json", // Stream JSON output for structured data
+	}
+
+	// Stream input mode (for resume and multi-turn)
+	if useStreamInput {
+		args = append(args, "--input-format", "stream-json")
+	}
+
+	// Session resume (extracted from context)
+	if contextSnapshot != nil && contextSnapshot.SessionID != "" {
+		args = append(args, "--resume", contextSnapshot.SessionID)
 	}
 
 	// Add permission mode based on sandbox_mode
@@ -298,16 +395,21 @@ func (e *Executor) buildCommand(task *executor.Task, config *executor.AgentConfi
 		args = append(args, "--model", config.Model)
 	}
 
-	// Add the prompt as the last argument
-	if task.Prompt != "" {
-		args = append(args, task.Prompt)
+	// Add the prompt as the last argument (only for non-stream mode)
+	// In stream mode, prompt is sent via stdin
+	if !useStreamInput && task.Prompt != "" {
+		args = append(args, "--", task.Prompt)
 	}
 
-	cmd := exec.Command(claudePath, args...) //nolint:gosec // claudePath is from LookPath, args are controlled
+	cmd = exec.Command(claudePath, args...) //nolint:gosec // claudePath is from LookPath, args are controlled
 
-	// Set working directory
-	if config.WorkingDir != "" {
-		cmd.Dir = config.WorkingDir
+	// Set working directory (task.WorkingDir takes precedence)
+	workingDir := task.WorkingDir
+	if workingDir == "" {
+		workingDir = config.WorkingDir
+	}
+	if workingDir != "" {
+		cmd.Dir = workingDir
 	}
 
 	// Set environment
@@ -328,13 +430,16 @@ func (e *Executor) buildCommand(task *executor.Task, config *executor.AgentConfi
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
-	return cmd, nil
+	return cmd, useStreamInput, nil
 }
 
 // outputParser parses stream-json output and forwards to handler.
 type outputParser struct {
 	handler executor.OutputHandler
 	logger  *zap.Logger
+
+	// Callback for session ID (from init message)
+	onSessionID func(sessionID string)
 
 	// Accumulated stats
 	totalInputTokens  int64
@@ -380,6 +485,10 @@ func (p *outputParser) handleMessage(msg *StreamMessage) {
 			zap.String("session_id", msg.SessionID),
 			zap.String("model", msg.Model),
 		)
+		// Notify executor of the session ID
+		if p.onSessionID != nil && msg.SessionID != "" {
+			p.onSessionID(msg.SessionID)
+		}
 
 	case "assistant":
 		// Full assistant message - extract content
@@ -501,10 +610,71 @@ func (r *Result) ToExecutorResult() *executor.Result {
 		Error:        r.Error,
 		TokensInput:  r.TokensInput,
 		TokensOutput: r.TokensOutput,
+		AgentSession: r.AgentSession,
 		Context:      r.Context,
 		CompletedAt:  r.CompletedAt,
 	}
 }
 
-// Ensure Executor implements the interface.
+// SendMessage sends a message to the running agent via stdin.
+// Only valid when the executor is in stream input mode (Task.StreamInput = true).
+func (e *Executor) SendMessage(msg []byte) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if !e.running {
+		return ErrNotRunning
+	}
+	if !e.streamMode {
+		return ErrNotStreamMode
+	}
+	if e.stdinWriter == nil {
+		return ErrStdinNotReady
+	}
+
+	// Ensure message ends with newline for NDJSON format
+	if len(msg) == 0 || msg[len(msg)-1] != '\n' {
+		msg = append(msg, '\n')
+	}
+
+	_, err := e.stdinWriter.Write(msg)
+	if err != nil {
+		return fmt.Errorf("writing to stdin: %w", err)
+	}
+
+	e.logger.Debug("sent message via stdin",
+		zap.Int("bytes", len(msg)),
+	)
+
+	return nil
+}
+
+// SendTextMessage sends a text message to the running agent.
+// This is a convenience method that wraps the text in a StreamInputMessage.
+func (e *Executor) SendTextMessage(text string) error {
+	msg := NewTextMessage(text)
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshaling message: %w", err)
+	}
+	return e.SendMessage(msgBytes)
+}
+
+// IsStreamMode returns true if the executor is currently in stream input mode.
+func (e *Executor) IsStreamMode() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.streamMode
+}
+
+// SessionID returns the session ID captured from the init message.
+// Returns empty string if no session has been started.
+func (e *Executor) SessionID() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.sessionID
+}
+
+// Ensure Executor implements the interfaces.
 var _ executor.Executor = (*Executor)(nil)
+var _ executor.StreamExecutor = (*Executor)(nil)

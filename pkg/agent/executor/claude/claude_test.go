@@ -425,9 +425,10 @@ echo "Line after empty"
 	outputs := handler.GetOutputs()
 	assert.GreaterOrEqual(t, len(outputs), 4) // At least 4 non-empty lines
 
-	// All outputs should be stdout
+	// Outputs should be either "stdout" (non-JSON) or "json" (raw JSON for audit)
 	for _, o := range outputs {
-		assert.Equal(t, "stdout", o.Stream)
+		assert.True(t, o.Stream == "stdout" || o.Stream == "json",
+			"unexpected stream type: %s", o.Stream)
 	}
 }
 
@@ -492,5 +493,5 @@ func TestExecutor_Execute_CommandNotFound(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.Success)
-	assert.Contains(t, result.Error, "starting pty")
+	assert.Contains(t, result.Error, "starting process")
 }

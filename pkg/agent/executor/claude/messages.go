@@ -127,3 +127,125 @@ type Usage struct {
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens,omitempty"`
 }
+
+// ============================================================================
+// Stream Input Types (for --input-format stream-json)
+// ============================================================================
+
+// StreamInputMessage is the envelope for sending messages to Claude via stdin.
+// Used with --input-format stream-json mode.
+type StreamInputMessage struct {
+	Type    string       `json:"type"`    // "user"
+	Message *UserMessage `json:"message"` // The user message
+}
+
+// UserMessage represents a user input message for stream input.
+type UserMessage struct {
+	Role    string          `json:"role"`    // "user"
+	Content json.RawMessage `json:"content"` // string or []InputContentBlock
+}
+
+// NewTextMessage creates a StreamInputMessage with simple text content.
+func NewTextMessage(text string) *StreamInputMessage {
+	content, _ := json.Marshal(text)
+	return &StreamInputMessage{
+		Type: "user",
+		Message: &UserMessage{
+			Role:    "user",
+			Content: content,
+		},
+	}
+}
+
+// NewContentBlockMessage creates a StreamInputMessage with content blocks.
+// Useful for sending images, tool results, etc.
+func NewContentBlockMessage(blocks []InputContentBlock) *StreamInputMessage {
+	content, _ := json.Marshal(blocks)
+	return &StreamInputMessage{
+		Type: "user",
+		Message: &UserMessage{
+			Role:    "user",
+			Content: content,
+		},
+	}
+}
+
+// InputContentBlock represents a content block for user input.
+// Supports text, images, and tool results.
+type InputContentBlock struct {
+	Type string `json:"type"` // "text", "image", "tool_result"
+
+	// For "text" type
+	Text string `json:"text,omitempty"`
+
+	// For "image" type
+	Source *ImageSource `json:"source,omitempty"`
+
+	// For "tool_result" type
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   string `json:"content,omitempty"`
+	IsError   bool   `json:"is_error,omitempty"`
+}
+
+// ImageSource represents the source of an image.
+type ImageSource struct {
+	Type      string `json:"type"`       // "base64"
+	MediaType string `json:"media_type"` // "image/png", "image/jpeg", etc.
+	Data      string `json:"data"`       // base64 encoded image data
+}
+
+// ============================================================================
+// Context Snapshot (for resume)
+// ============================================================================
+
+// ContextSnapshot stores the state needed to resume a Claude session.
+// This is serialized to JSON and stored in the database.
+type ContextSnapshot struct {
+	// SessionID is Claude's internal session ID (from init message)
+	SessionID string `json:"session_id,omitempty"`
+
+	// AgentVersion is the Claude Code version used
+	AgentVersion string `json:"agent_version,omitempty"`
+
+	// WorkingDir is the working directory at the time of snapshot
+	WorkingDir string `json:"working_dir,omitempty"`
+
+	// Additional metadata
+	CreatedAt string `json:"created_at,omitempty"`
+}
+
+// ============================================================================
+// Output Stream Types
+// ============================================================================
+
+// StreamType defines the types of output streams.
+type StreamType string
+
+const (
+	// StreamJSON is the raw JSON event (for audit/replay).
+	StreamJSON StreamType = "json"
+
+	// StreamText is parsed text content from TextBlock.
+	StreamText StreamType = "text"
+
+	// StreamThinking is thinking content from ThinkingBlock.
+	StreamThinking StreamType = "thinking"
+
+	// StreamToolUse is a tool invocation event.
+	StreamToolUse StreamType = "tool_use"
+
+	// StreamToolResult is a tool result event.
+	StreamToolResult StreamType = "tool_result"
+
+	// StreamResult is the final result message.
+	StreamResult StreamType = "result"
+
+	// StreamError is an error event.
+	StreamError StreamType = "error"
+
+	// StreamSystem is a system message.
+	StreamSystem StreamType = "system"
+
+	// StreamInit is the session initialization event.
+	StreamInit StreamType = "init"
+)
