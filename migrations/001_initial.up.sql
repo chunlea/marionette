@@ -457,6 +457,14 @@ CREATE TABLE logs (
     tenant_id TEXT,
     metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Generated column: auto-parse JSON content for stream='json'
+    -- NULL for non-JSON streams (stdout, stderr, system)
+    -- Enables efficient JSONB queries without runtime parsing
+    content_json JSONB GENERATED ALWAYS AS (
+        CASE WHEN stream = 'json' THEN content::jsonb ELSE NULL END
+    ) STORED,
+
     PRIMARY KEY (id, created_at)
 ) PARTITION BY RANGE (created_at);
 
@@ -464,6 +472,10 @@ CREATE UNIQUE INDEX idx_logs_run_seq_unique ON logs(run_id, sequence, created_at
 CREATE INDEX idx_logs_task_seq ON logs(task_id, sequence);
 CREATE INDEX idx_logs_session ON logs(session_id, created_at);
 CREATE INDEX idx_logs_tenant ON logs(tenant_id, created_at);
+
+-- GIN index for JSON queries (only on rows where content_json is not null)
+CREATE INDEX idx_logs_content_json ON logs USING GIN (content_json)
+    WHERE content_json IS NOT NULL;
 
 CREATE TABLE log_archives (
     id TEXT PRIMARY KEY,

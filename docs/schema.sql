@@ -18,6 +18,7 @@
 -- Prefixes:
 --   run_    runner
 --   sess_   session
+--   conv_   conversation
 --   task_   task
 --   trun_   task_run
 --   stsk_   scheduled_task
@@ -265,14 +266,6 @@ CREATE TABLE sessions (
     agent_config_id TEXT REFERENCES agent_configs(id) ON DELETE SET NULL,
     agent_config_metadata JSONB,
 
-    -- Context snapshot (for suspend/resume)
-    -- Contains: conversation_state, working_directory, environment, etc.
-    context_snapshot JSONB,
-
-    -- Agent version tracking (for compatibility checking on resume)
-    -- Format: semantic version string, e.g., "1.0.45"
-    agent_version TEXT,
-
     -- Suspend state tracking
     -- Which strategy was used to suspend this session
     suspend_strategy TEXT,
@@ -346,10 +339,57 @@ CREATE INDEX idx_sessions_scheduled ON sessions(next_scheduled_at)
 CREATE INDEX idx_sessions_always_on ON sessions(tenant_id)
     WHERE lifecycle_mode = 'always_on';
 
--- tasks: logical task entity
+-- conversations: dialogue contexts within a session
+-- A session can have multiple conversations (e.g., parallel work with worktrees)
+-- Each conversation maintains its own context and message queue (tasks)
+CREATE TABLE conversations (
+    id TEXT PRIMARY KEY,  -- conv_xxx
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+
+    -- Soft fork support (same session, different worktree)
+    parent_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+
+    -- Working directory (may be a worktree path)
+    working_dir TEXT,
+
+    -- Context snapshot (for suspend/resume)
+    -- Contains: conversation_state, tool history, environment, etc.
+    context_snapshot JSONB,
+
+    -- Agent version tracking (for compatibility checking on resume)
+    -- Format: semantic version string, e.g., "1.0.45"
+    agent_version TEXT,
+
+    -- Conversation status
+    status TEXT NOT NULL DEFAULT 'active',
+
+    tenant_id TEXT,
+    labels JSONB NOT NULL DEFAULT '{}',
+    annotations JSONB NOT NULL DEFAULT '{}',
+
+    last_activity_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT valid_conversation_status CHECK (
+        status IN ('active', 'completed', 'terminated')
+    )
+);
+
+CREATE INDEX idx_conversations_session ON conversations(session_id);
+CREATE INDEX idx_conversations_parent ON conversations(parent_conversation_id)
+    WHERE parent_conversation_id IS NOT NULL;
+CREATE INDEX idx_conversations_status ON conversations(status);
+CREATE INDEX idx_conversations_tenant ON conversations(tenant_id);
+CREATE INDEX idx_conversations_active ON conversations(session_id, status)
+    WHERE status = 'active';
+
+-- tasks: message queue entries within a conversation
+-- Each task is a user prompt/request that the agent processes
 CREATE TABLE tasks (
     id TEXT PRIMARY KEY,  -- task_xxx
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
     prompt TEXT NOT NULL,
 
     status TEXT NOT NULL DEFAULT 'pending',
@@ -370,9 +410,10 @@ CREATE TABLE tasks (
 );
 
 CREATE INDEX idx_tasks_session ON tasks(session_id);
+CREATE INDEX idx_tasks_conversation ON tasks(conversation_id);
 CREATE INDEX idx_tasks_status ON tasks(status);
 CREATE INDEX idx_tasks_tenant ON tasks(tenant_id);
-CREATE INDEX idx_tasks_pending ON tasks(session_id, status) WHERE status = 'pending';
+CREATE INDEX idx_tasks_pending ON tasks(conversation_id, status) WHERE status = 'pending';
 
 -- task_runs: execution attempts
 CREATE TABLE task_runs (
@@ -466,6 +507,7 @@ CREATE INDEX idx_scheduled_tasks_tenant ON scheduled_tasks(tenant_id);
 CREATE TABLE permission_requests (
     id TEXT PRIMARY KEY,  -- perm_xxx
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     run_id TEXT NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,
 
@@ -500,6 +542,7 @@ CREATE TABLE permission_requests (
 );
 
 CREATE INDEX idx_permission_requests_session ON permission_requests(session_id);
+CREATE INDEX idx_permission_requests_conversation ON permission_requests(conversation_id);
 CREATE INDEX idx_permission_requests_task ON permission_requests(task_id);
 CREATE INDEX idx_permission_requests_pending ON permission_requests(session_id, status)
     WHERE status = 'pending';
@@ -654,6 +697,7 @@ CREATE INDEX idx_runner_tokens_expires ON runner_tokens(expires_at)
 CREATE TABLE logs (
     id TEXT NOT NULL,  -- log_xxx (or use run_id + sequence as natural key)
     session_id TEXT NOT NULL,
+    conversation_id TEXT,
     task_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
     runner_id TEXT NOT NULL,
@@ -665,13 +709,25 @@ CREATE TABLE logs (
     metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
+    -- Generated column: auto-parse JSON content for stream='json'
+    -- NULL for non-JSON streams (stdout, stderr, system)
+    -- Enables efficient JSONB queries without runtime parsing
+    content_json JSONB GENERATED ALWAYS AS (
+        CASE WHEN stream = 'json' THEN content::jsonb ELSE NULL END
+    ) STORED,
+
     PRIMARY KEY (id, created_at)
 ) PARTITION BY RANGE (created_at);
 
 CREATE UNIQUE INDEX idx_logs_run_seq_unique ON logs(run_id, sequence, created_at);
 CREATE INDEX idx_logs_task_seq ON logs(task_id, sequence);
 CREATE INDEX idx_logs_session ON logs(session_id, created_at);
+CREATE INDEX idx_logs_conversation ON logs(conversation_id, created_at);
 CREATE INDEX idx_logs_tenant ON logs(tenant_id, created_at);
+
+-- GIN index for JSON queries (only on rows where content_json is not null)
+CREATE INDEX idx_logs_content_json ON logs USING GIN (content_json)
+    WHERE content_json IS NOT NULL;
 
 CREATE TABLE log_archives (
     id TEXT PRIMARY KEY,  -- arch_xxx
