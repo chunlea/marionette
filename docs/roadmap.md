@@ -816,45 +816,45 @@
   - [ ] Send context in AttachSession command (Agent-side)
   - [ ] Agent restores working directory, environment (Agent-side)
 
-### 5.4 CAS Storage Implementation
+### 5.4 CAS Storage Implementation ✓
 
-- [ ] Implement content-defined chunking (`pkg/storage/cas/`):
-  - [ ] Use restic chunker (Rabin fingerprinting)
-  - [ ] Chunk size: 512KB min, 1MB target, 8MB max
-  - [ ] SHA-256 hash per chunk
-- [ ] Chunk storage:
-  - [ ] Local storage provider (development)
-  - [ ] S3 storage provider (production)
-  - [ ] GCS storage provider (production)
-  - [ ] Tenant-scoped paths: `chunks/{tenant_id}/{hash[:2]}/{hash}.blob.enc`
-- [ ] Chunk encryption:
-  - [ ] Per-tenant DEK from envelope encryption
-  - [ ] zstd compression before encryption
-  - [ ] AES-256-GCM encryption
-- [ ] Manifest management:
-  - [ ] JSONL format for streaming
-  - [ ] Header line with metadata
-  - [ ] One file entry per line
-  - [ ] Store in `manifests/{tenant_id}/{workspace_id}/{manifest_id}.jsonl.zst.enc`
-- [ ] Single chunk mode:
-  - [ ] For workspaces < 100MB
-  - [ ] Create tar.zst archive
-  - [ ] Store as single encrypted chunk
+- [x] Implement content-defined chunking (`pkg/storage/cas/`):
+  - [x] Use restic chunker (Rabin fingerprinting)
+  - [x] Chunk size: 512KB min, 1MB target, 8MB max
+  - [x] SHA-256 hash per chunk
+- [x] Chunk storage:
+  - [x] Local storage provider (development)
+  - [x] S3 storage provider (production)
+  - [ ] GCS storage provider (production) - deferred
+  - [x] Tenant-scoped paths: `chunks/{tenant_id}/{hash[:2]}/{hash}.blob.enc`
+- [x] Chunk encryption:
+  - [x] Per-tenant DEK from envelope encryption
+  - [x] zstd compression before encryption
+  - [x] AES-256-GCM encryption
+- [x] Manifest management:
+  - [x] JSONL format for streaming
+  - [x] Header line with metadata
+  - [x] One file entry per line
+  - [x] Store in `manifests/{tenant_id}/{workspace_id}/{manifest_id}.jsonl.zst.enc`
+- [x] Single chunk mode:
+  - [x] For workspaces < 100MB
+  - [x] Create tar.zst archive
+  - [x] Store as single encrypted chunk
 
 ### 5.5 Workspace Sync
 
-- [ ] Sync service (`pkg/storage/cas/sync.go`):
-  - [ ] `Sync(ctx, workspaceID, tenantID, srcDir string) error`
-  - [ ] `Restore(ctx, workspaceID, tenantID, dstDir string) error`
-  - [ ] `ValidateManifest(ctx, manifest *Manifest) error`
+- [x] Sync service (`pkg/storage/cas/sync.go`):
+  - [x] `Sync(ctx, workspaceID, tenantID, srcDir string) error`
+  - [x] `Restore(ctx, workspaceID, tenantID, dstDir string) error`
+  - [x] `ValidateManifest(ctx, manifest *Manifest) error`
 - [ ] Incremental sync:
   - [ ] Get previous manifest chunk hashes
-  - [ ] Only upload new/modified chunks
+  - [x] Only upload new/modified chunks (dedup within single sync)
   - [ ] Update chunk ref_count
-- [ ] Memory-efficient implementation:
-  - [ ] Stream chunks to temp files (not memory)
-  - [ ] Parallel upload with bounded concurrency (10)
-  - [ ] Streaming manifest save/load
+- [x] Memory-efficient implementation:
+  - [ ] Stream chunks to temp files (not memory) - deferred
+  - [x] Parallel upload with bounded concurrency (10)
+  - [x] Streaming manifest save/load
 
 ### 5.6 Garbage Collection
 
