@@ -939,27 +939,32 @@
 
 ### 6.3 Audit Logging
 
-- [ ] Implement action_logs table operations:
-  - [ ] `CreateActionLog(ctx, log *ActionLog) error`
-  - [ ] `ListActionLogs(ctx, opts ActionLogListOptions) ([]*ActionLog, error)`
-- [ ] Log sensitive actions:
-  - [ ] Permission approved/denied
-  - [ ] Session created/terminated
-  - [ ] API key created/revoked
-  - [ ] Agent config created/updated/deleted
-  - [ ] Runner spawned/destroyed
-  - [ ] Login attempts (success/failure)
-- [ ] Action log content:
-  - [ ] Actor (api_key, system, runner)
-  - [ ] Action type
-  - [ ] Resource type and ID
-  - [ ] Details (JSON)
-  - [ ] IP address, user agent
-  - [ ] Success/failure
+- [x] Audit logging package (`pkg/audit/`):
+  - [x] Core types: `Event`, `Actor`, `Filter`, `QueryResult`, `StoredEvent`
+  - [x] `Logger` interface with `Log()` and `Query()` methods
+  - [x] `Store` interface for pluggable backends
+  - [x] `EventBuilder` fluent API for constructing events
+  - [x] Memory store for testing
+  - [x] Store adapter for postgres
+- [x] Action constants and helper functions:
+  - [x] Permission actions (approved/denied/canceled)
+  - [x] Session actions (created/resumed/suspended/terminated)
+  - [x] Task actions (created/started/completed/failed/canceled)
+  - [x] Runner actions (connected/disconnected/assigned/released)
+  - [x] Config actions (created/updated/deleted)
+  - [x] API key actions (created/revoked/used)
+- [x] Action log content:
+  - [x] Actor (api_key, system, runner, user)
+  - [x] Action type
+  - [x] Resource type and ID
+  - [x] Details (JSON)
+  - [x] IP address, user agent
+  - [x] Success/failure
 - [ ] Admin API for audit logs:
   - [ ] `GET /admin/api/v1/action-logs`
   - [ ] Filter by actor, action, resource, time range
   - [ ] Pagination support
+- [ ] Integration with existing services (deferred)
 
 ### 6.4 Network Isolation (Basic)
 
