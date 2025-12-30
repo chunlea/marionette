@@ -922,22 +922,23 @@
   - [ ] File watcher for cert changes
   - [ ] Graceful connection migration
 
-### 6.2 Sandbox Verification
+### 6.2 Sandbox Verification ✓
 
-- [ ] Sandbox escape testing:
-  - [ ] Verify container isolation
-  - [ ] Test filesystem access restrictions
-  - [ ] Test network isolation
-  - [ ] Test process isolation
-- [ ] Resource limit enforcement:
-  - [ ] Memory limits (OOM handling)
-  - [ ] CPU limits (throttling)
-  - [ ] Disk quota enforcement
-  - [ ] Process count limits
-- [ ] Sandbox type detection:
-  - [ ] Detect available sandbox types on runner
-  - [ ] Validate requested sandbox type is available
-  - [ ] Report capabilities to server
+- [x] Sandbox escape testing (`pkg/sandbox/verify.go`):
+  - [x] Verify container isolation
+  - [x] Test filesystem access restrictions
+  - [x] Test network isolation (metadata endpoint, privileged ports)
+  - [x] Test process isolation (ptrace, host process visibility)
+- [x] Resource limit enforcement (`pkg/sandbox/limits.go`):
+  - [x] Memory limits (cgroup v1/v2)
+  - [x] CPU limits (cgroup v1/v2)
+  - [x] Disk quota detection
+  - [x] Process count limits (pids cgroup)
+  - [x] Open file limits
+- [x] Sandbox type detection (`pkg/sandbox/detect.go`):
+  - [x] Detect Docker, gVisor, Firecracker, Kata
+  - [x] Detect VM environment
+  - [x] Report capabilities to server
 
 ### 6.3 Audit Logging
 
