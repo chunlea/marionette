@@ -2,6 +2,7 @@ package cas
 
 import (
 	"context"
+	"time"
 )
 
 // ChunkStore defines operations for storing and retrieving encrypted chunks.
@@ -69,4 +70,59 @@ type Encryptor interface {
 
 	// Decrypt decrypts and decompresses data for a tenant.
 	Decrypt(ctx context.Context, tenantID string, ciphertext []byte) ([]byte, error)
+}
+
+// GarbageCollector defines operations for cleaning up orphaned chunks.
+type GarbageCollector interface {
+	// Mark identifies unreferenced chunks and marks them for deletion.
+	// Returns the number of chunks marked.
+	Mark(ctx context.Context, tenantID string) (int, error)
+
+	// Sweep permanently deletes chunks that have been marked for deletion
+	// and have passed the grace period.
+	// Returns the number of chunks deleted and total bytes freed.
+	Sweep(ctx context.Context, tenantID string) (chunksDeleted int, bytesFreed int64, err error)
+
+	// Resurrect clears the deletion mark on a chunk that has been re-referenced.
+	// This prevents deletion of chunks that were marked but are now in use.
+	Resurrect(ctx context.Context, tenantID, hash string) error
+
+	// RunGC performs a full garbage collection cycle (mark + sweep).
+	// Returns statistics about the GC run.
+	RunGC(ctx context.Context, tenantID string) (*GCResult, error)
+}
+
+// GCResult contains statistics from a garbage collection run.
+type GCResult struct {
+	// ChunksMarked is the number of chunks marked for deletion in the mark phase.
+	ChunksMarked int
+
+	// ChunksDeleted is the number of chunks physically deleted in the sweep phase.
+	ChunksDeleted int
+
+	// ChunksResurrected is the number of chunks that were unmarked due to being re-referenced.
+	ChunksResurrected int
+
+	// BytesFreed is the total storage bytes freed by deletion.
+	BytesFreed int64
+
+	// Duration is how long the GC cycle took.
+	Duration time.Duration
+
+	// Errors contains any non-fatal errors encountered during GC.
+	Errors []error
+}
+
+// GCConfig contains configuration for the garbage collector.
+type GCConfig struct {
+	// GracePeriod is how long to wait after marking before sweeping.
+	// Default: 7 days
+	GracePeriod time.Duration
+
+	// BatchSize is the maximum number of chunks to process per batch.
+	// Default: 1000
+	BatchSize int
+
+	// DryRun if true, reports what would be deleted without actually deleting.
+	DryRun bool
 }
