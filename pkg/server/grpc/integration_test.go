@@ -393,6 +393,14 @@ func (s *integrationTestStore) IncrementChunkRefCount(_ context.Context, _, _ st
 func (s *integrationTestStore) DecrementChunkRefCount(_ context.Context, _, _ string) error {
 	return nil
 }
+func (s *integrationTestStore) ListUnreferencedChunks(_ context.Context, _ string, _ int) ([]*store.Chunk, error) {
+	return nil, nil
+}
+func (s *integrationTestStore) ListSoftDeletedChunks(_ context.Context, _ string, _ time.Time, _ int) ([]*store.Chunk, error) {
+	return nil, nil
+}
+func (s *integrationTestStore) MarkChunkDeleted(_ context.Context, _, _ string) error  { return nil }
+func (s *integrationTestStore) ClearChunkDeleted(_ context.Context, _, _ string) error { return nil }
 
 func (s *integrationTestStore) CreateManifest(_ context.Context, _ *store.Manifest) error {
 	return nil

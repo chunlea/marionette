@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/server/core"
@@ -921,6 +922,14 @@ func (m *mockStoreForRouter) DecrementChunkRefCount(_ context.Context, _, _ stri
 	return nil
 }
 func (m *mockStoreForRouter) DeleteChunk(_ context.Context, _, _ string) error { return nil }
+func (m *mockStoreForRouter) ListUnreferencedChunks(_ context.Context, _ string, _ int) ([]*store.Chunk, error) {
+	return nil, nil
+}
+func (m *mockStoreForRouter) ListSoftDeletedChunks(_ context.Context, _ string, _ time.Time, _ int) ([]*store.Chunk, error) {
+	return nil, nil
+}
+func (m *mockStoreForRouter) MarkChunkDeleted(_ context.Context, _, _ string) error  { return nil }
+func (m *mockStoreForRouter) ClearChunkDeleted(_ context.Context, _, _ string) error { return nil }
 func (m *mockStoreForRouter) CreateManifest(_ context.Context, _ *store.Manifest) error {
 	return nil
 }

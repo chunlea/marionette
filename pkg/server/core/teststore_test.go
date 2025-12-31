@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/chunlea/marionette/pkg/store"
 )
@@ -537,7 +538,15 @@ func (s *testStore) UpdateChunk(_ context.Context, _, _ string, _ store.ChunkUpd
 }
 func (s *testStore) IncrementChunkRefCount(_ context.Context, _, _ string) error { return nil }
 func (s *testStore) DecrementChunkRefCount(_ context.Context, _, _ string) error { return nil }
-func (s *testStore) DeleteChunk(_ context.Context, _, _ string) error            { return nil }
+func (s *testStore) DeleteChunk(_ context.Context, _, _ string) error { return nil }
+func (s *testStore) ListUnreferencedChunks(_ context.Context, _ string, _ int) ([]*store.Chunk, error) {
+	return nil, nil
+}
+func (s *testStore) ListSoftDeletedChunks(_ context.Context, _ string, _ time.Time, _ int) ([]*store.Chunk, error) {
+	return nil, nil
+}
+func (s *testStore) MarkChunkDeleted(_ context.Context, _, _ string) error  { return nil }
+func (s *testStore) ClearChunkDeleted(_ context.Context, _, _ string) error { return nil }
 
 func (s *testStore) CreateManifest(_ context.Context, _ *store.Manifest) error { return nil }
 func (s *testStore) GetManifest(_ context.Context, _ string) (*store.Manifest, error) {
