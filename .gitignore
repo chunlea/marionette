@@ -34,6 +34,9 @@ vendor/
 .air/
 tmp/
 
+# Claude Code temporary files
+.claude/tmp/
+
 # macOS
 .DS_Store
 
