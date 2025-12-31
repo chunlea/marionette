@@ -633,3 +633,143 @@ All environment variables are prefixed with `MARIONETTE_` for consistency.
 4. Define clear error types in `store/errors.go`
 5. Handle SIGTERM properly for graceful shutdown
 6. Use AES-GCM for credential encryption at rest
+
+## Testing
+
+### Coverage Requirements
+
+- Minimum test coverage: **90%** for new code
+- Run coverage report: `make test-coverage` (runs in Docker)
+- Coverage report output: `coverage.html`
+
+### Test Environments
+
+| Environment | Use Case | Command |
+|-------------|----------|---------|
+| Docker (Linux) | Server, Linux agent, integration tests, coverage | `make test-linux` |
+| Docker (root) | Tests requiring root privileges | `make test-linux-root` |
+| Docker (coverage) | Coverage report generation | `make test-coverage` |
+| Local (macOS) | macOS agent testing only | `make test` |
+
+**Why Docker for most tests:**
+- Consistent Linux environment matching production
+- Test Linux-specific features (sandbox, cgroups, etc.)
+- Avoid macOS/Linux behavioral differences
+- Coverage reports reflect production environment
+
+**macOS native tests:**
+- macOS agent-specific functionality only
+
+### Temporary Files Directory
+
+Use `.claude/tmp/` for temporary test files and scripts:
+
+```
+.claude/
+└── tmp/           # Temporary files (gitignored)
+```
+
+**Why `.claude/tmp/`:**
+- Writable under Claude Code's sandbox mode (within project root)
+- Automatically gitignored (won't be committed)
+- Easy to clean up (just delete the directory)
+- Avoids cluttering system `/tmp`
+
+### Running Tests
+
+```bash
+# Full test suite in Docker (recommended)
+make test-linux
+
+# Coverage report in Docker
+make test-coverage
+
+# macOS agent tests only
+make test
+
+# Specific package (local, for quick iteration)
+go test -v ./pkg/store/...
+
+# Specific test
+go test -v ./pkg/store -run TestSessionCreate
+```
+
+## Git Workflow
+
+### Branch Naming Convention
+
+Format: `{developer}/{phase}-{feature}`
+
+Examples:
+- `alice/g1-grpc-server`
+- `bob/g2-control-runner`
+- `carol/g3-http-public`
+
+### Creating Pull Requests
+
+Use `gh` CLI to create pull requests with proper formatting:
+
+```bash
+# Create PR with multiline body using HEREDOC
+# Use single-quoted 'EOF' to prevent variable expansion issues
+gh pr create --title "feat: add new feature" --body "$(cat <<'EOF'
+## Summary
+- Brief description of changes
+
+## Test Plan
+- [ ] Unit tests added
+- [ ] Manual testing done
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+
+# For complex descriptions, use --body-file
+mkdir -p .claude/tmp
+cat > .claude/tmp/pr-body.md <<'EOF'
+## Summary
+...
+EOF
+gh pr create --title "feat: add new feature" --body-file .claude/tmp/pr-body.md
+```
+
+**Important:** Always use single-quoted `'EOF'` (not `EOF`) to prevent shell variable expansion issues in the PR body.
+
+### Merge Workflow (Stacked PRs)
+
+We use **squash merge** via `gh` CLI. When working with stacked PRs, follow this sequence to prevent dependent PRs from being auto-closed:
+
+```bash
+# 1. Squash merge the PR (do NOT delete remote branch yet)
+gh pr merge <PR_NUMBER> --squash
+
+# 2. Update dependent PRs to point to main
+gh pr edit <DEPENDENT_PR_NUMBER> --base main
+
+# 3. Delete the remote branch (after dependent PRs are rebased)
+git push origin --delete <branch-name>
+
+# 4. Delete local branch (use -D since squash merge is not detected)
+git branch -D <branch-name>
+
+# 5. Rebase dependent branches onto main
+git checkout <dependent-branch>
+git fetch origin main
+git rebase origin/main
+git push --force-with-lease
+```
+
+### Cleaning Up Merged Branches
+
+After PRs are merged, remote branches may still exist. To clean up:
+
+```bash
+# Prune remote tracking branches
+git fetch --prune
+
+# Find local branches with deleted remotes (shows "[gone]")
+git branch -vv | grep ': gone]'
+
+# Delete local branches (use -D for squash-merged branches)
+git branch -D <branch-name>
+```

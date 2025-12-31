@@ -1,0 +1,46 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go mod:*)",
+      "Bash(go vet:*)",
+      "Bash(go install:*)",
+      "Bash(make:*)",
+      "Bash(pnpm install)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm test:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh issue:*)",
+      "Bash(grpcurl:*)",
+      "Bash(golangci-lint run:*)",
+      "Bash(./bin/mctl:*)",
+      "Bash(./bin/server:*)",
+      "Bash(./bin/agent:*)",
+      "Bash(docker build:*)",
+      "Bash(docker run:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker start:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker restart:*)",
+      "Bash(docker images:*)",
+      "Bash(docker pull:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker exec:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "excludedCommands": [
+      "docker"
+    ]
+  }
+}

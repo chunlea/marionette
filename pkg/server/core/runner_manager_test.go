@@ -387,6 +387,14 @@ func (w *testStoreWrapper) IncrementChunkRefCount(_ context.Context, _, _ string
 func (w *testStoreWrapper) DecrementChunkRefCount(_ context.Context, _, _ string) error {
 	return nil
 }
+func (w *testStoreWrapper) ListUnreferencedChunks(_ context.Context, _ string, _ int) ([]*store.Chunk, error) {
+	return nil, nil
+}
+func (w *testStoreWrapper) ListSoftDeletedChunks(_ context.Context, _ string, _ time.Time, _ int) ([]*store.Chunk, error) {
+	return nil, nil
+}
+func (w *testStoreWrapper) MarkChunkDeleted(_ context.Context, _, _ string) error  { return nil }
+func (w *testStoreWrapper) ClearChunkDeleted(_ context.Context, _, _ string) error { return nil }
 
 func (w *testStoreWrapper) CreateManifest(_ context.Context, _ *store.Manifest) error { return nil }
 func (w *testStoreWrapper) GetManifest(_ context.Context, _ string) (*store.Manifest, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/store"
@@ -342,6 +343,14 @@ func (m *mockRunnerStore) IncrementChunkRefCount(_ context.Context, _, _ string)
 func (m *mockRunnerStore) DecrementChunkRefCount(_ context.Context, _, _ string) error {
 	return nil
 }
+func (m *mockRunnerStore) ListUnreferencedChunks(_ context.Context, _ string, _ int) ([]*store.Chunk, error) {
+	return nil, nil
+}
+func (m *mockRunnerStore) ListSoftDeletedChunks(_ context.Context, _ string, _ time.Time, _ int) ([]*store.Chunk, error) {
+	return nil, nil
+}
+func (m *mockRunnerStore) MarkChunkDeleted(_ context.Context, _, _ string) error  { return nil }
+func (m *mockRunnerStore) ClearChunkDeleted(_ context.Context, _, _ string) error { return nil }
 
 func (m *mockRunnerStore) CreateManifest(_ context.Context, _ *store.Manifest) error { return nil }
 func (m *mockRunnerStore) GetManifest(_ context.Context, _ string) (*store.Manifest, error) {
