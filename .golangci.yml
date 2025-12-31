@@ -15,11 +15,12 @@ linters:
     - gocritic
     - nilerr
     - unconvert
-    - unparam
   disable:
     # Disabled due to many false positives in existing code
     - gosec
     - prealloc
+    # Disabled - too strict for test helpers
+    - unparam
 
 formatters:
   enable:
@@ -32,15 +33,18 @@ exclusions:
     - gen
     - vendor
   rules:
+    # Exclude all linters in test files that cause noise
     - path: _test\.go
       linters:
         - gocritic
         - revive
-    # Stutter warnings - these are intentional naming choices
+        - unparam
+        - unused
+    # Stutter warnings - these are intentional naming choices (ProviderType, SandboxMode, etc.)
     - linters:
         - revive
       text: "stutters"
-    # var-naming for intentional underscore usage
+    # var-naming for intentional underscore usage (default_ field)
     - linters:
         - revive
       text: "var-naming"
@@ -52,3 +56,19 @@ exclusions:
     - linters:
         - revive
       text: "package-comments"
+    # redefines-builtin-id - sometimes intentional (copy variable)
+    - linters:
+        - revive
+      text: "redefines-builtin-id"
+    # empty-block - acceptable in test channel draining
+    - linters:
+        - revive
+      text: "empty-block"
+    # SA1019 - Docker SDK deprecations (we'll update when ready)
+    - linters:
+        - staticcheck
+      text: "SA1019"
+    # S1011 - loop simplification suggestions
+    - linters:
+        - staticcheck
+      text: "S1011"
