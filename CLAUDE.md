@@ -705,6 +705,33 @@ Examples:
 - `bob/g2-control-runner`
 - `carol/g3-http-public`
 
+### Creating Pull Requests
+
+Use `gh` CLI to create pull requests with proper formatting:
+
+```bash
+# Create PR with multiline body using HEREDOC
+# Use single-quoted 'EOF' to prevent variable expansion issues
+gh pr create --title "feat: add new feature" --body "$(cat <<'EOF'
+## Summary
+- Brief description of changes
+
+## Test Plan
+- [ ] Unit tests added
+- [ ] Manual testing done
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+
+# For complex descriptions, use --body-file
+echo "## Summary
+..." > /tmp/pr-body.md
+gh pr create --title "feat: add new feature" --body-file /tmp/pr-body.md
+```
+
+**Important:** Always use single-quoted `'EOF'` (not `EOF`) to prevent shell variable expansion issues in the PR body.
+
 ### Merge Workflow (Stacked PRs)
 
 We use **squash merge** via `gh` CLI. When working with stacked PRs, follow this sequence to prevent dependent PRs from being auto-closed:
