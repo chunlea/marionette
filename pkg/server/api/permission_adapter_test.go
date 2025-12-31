@@ -86,11 +86,6 @@ func (m *mockPermissionManager) Respond(ctx context.Context, permID string, appr
 	return nil
 }
 
-// permissionManagerAdapter wraps mockPermissionManager to satisfy PermissionAdapter's requirements.
-type permissionManagerAdapter struct {
-	mock *mockPermissionManager
-}
-
 func TestNewPermissionAdapter(t *testing.T) {
 	adapter := NewPermissionAdapter(nil)
 	if adapter == nil {

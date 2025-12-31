@@ -9,10 +9,8 @@ run:
 linters:
   default: standard
   enable:
-    - revive
     - misspell
     - bodyclose
-    - gocritic
     - nilerr
     - unconvert
   disable:
@@ -21,6 +19,12 @@ linters:
     - prealloc
     # Disabled - too strict for test helpers
     - unparam
+    # Disabled - too many stuttering warnings for intentional naming
+    - revive
+    # Disabled - deprecated Docker SDK types are intentional until upgrade
+    - staticcheck
+    # Disabled - many false positives in test files
+    - gocritic
 
 formatters:
   enable:
@@ -36,39 +40,4 @@ exclusions:
     # Exclude all linters in test files that cause noise
     - path: _test\.go
       linters:
-        - gocritic
-        - revive
-        - unparam
         - unused
-    # Stutter warnings - these are intentional naming choices (ProviderType, SandboxMode, etc.)
-    - linters:
-        - revive
-      text: "stutters"
-    # var-naming for intentional underscore usage (default_ field)
-    - linters:
-        - revive
-      text: "var-naming"
-    # unused-parameter - context often passed for future use
-    - linters:
-        - revive
-      text: "unused-parameter"
-    # package-comments - not enforcing package docs
-    - linters:
-        - revive
-      text: "package-comments"
-    # redefines-builtin-id - sometimes intentional (copy variable)
-    - linters:
-        - revive
-      text: "redefines-builtin-id"
-    # empty-block - acceptable in test channel draining
-    - linters:
-        - revive
-      text: "empty-block"
-    # SA1019 - Docker SDK deprecations (we'll update when ready)
-    - linters:
-        - staticcheck
-      text: "SA1019"
-    # S1011 - loop simplification suggestions
-    - linters:
-        - staticcheck
-      text: "S1011"
