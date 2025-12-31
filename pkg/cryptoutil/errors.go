@@ -1,8 +1,8 @@
-package crypto
+package cryptoutil
 
 import "errors"
 
-// Error definitions for the crypto package.
+// Error definitions for the cryptoutil package.
 var (
 	// ErrInvalidKEK indicates the Key Encryption Key is invalid.
 	ErrInvalidKEK = errors.New("invalid key encryption key")

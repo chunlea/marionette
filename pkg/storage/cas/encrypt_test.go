@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/chunlea/marionette/pkg/crypto"
+	"github.com/chunlea/marionette/pkg/cryptoutil"
 	"github.com/chunlea/marionette/pkg/id"
 )
 
@@ -124,31 +124,31 @@ func TestNoOpEncryptor_InvalidInput(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// mockDEKStore implements crypto.DEKStore for testing.
+// mockDEKStore implements cryptoutil.DEKStore for testing.
 type mockDEKStore struct {
-	deks map[string]*crypto.DataKey
+	deks map[string]*cryptoutil.DataKey
 }
 
 func newMockDEKStore() *mockDEKStore {
-	return &mockDEKStore{deks: make(map[string]*crypto.DataKey)}
+	return &mockDEKStore{deks: make(map[string]*cryptoutil.DataKey)}
 }
 
-func (m *mockDEKStore) GetDEK(_ context.Context, resourceType, resourceID string) (*crypto.DataKey, error) {
+func (m *mockDEKStore) GetDEK(_ context.Context, resourceType, resourceID string) (*cryptoutil.DataKey, error) {
 	key := resourceType + ":" + resourceID
 	dk, ok := m.deks[key]
 	if !ok {
-		return nil, crypto.ErrDEKNotFound
+		return nil, cryptoutil.ErrDEKNotFound
 	}
 	return dk, nil
 }
 
-func (m *mockDEKStore) CreateDEK(_ context.Context, dk *crypto.DataKey) error {
+func (m *mockDEKStore) CreateDEK(_ context.Context, dk *cryptoutil.DataKey) error {
 	key := dk.ResourceType + ":" + dk.ResourceID
 	m.deks[key] = dk
 	return nil
 }
 
-func (m *mockDEKStore) UpdateDEK(_ context.Context, dk *crypto.DataKey) error {
+func (m *mockDEKStore) UpdateDEK(_ context.Context, dk *cryptoutil.DataKey) error {
 	key := dk.ResourceType + ":" + dk.ResourceID
 	m.deks[key] = dk
 	return nil
@@ -164,7 +164,7 @@ func TestTenantEncryptor_EncryptDecrypt(t *testing.T) {
 	kekHex := hex.EncodeToString(kekBytes)
 
 	store := newMockDEKStore()
-	cryptoSvc, err := crypto.NewService(kekHex, store, id.DataKey)
+	cryptoSvc, err := cryptoutil.NewService(kekHex, store, id.DataKey)
 	require.NoError(t, err)
 
 	encryptor := NewTenantEncryptor(cryptoSvc)
@@ -191,7 +191,7 @@ func TestTenantEncryptor_TenantIsolation(t *testing.T) {
 	kekHex := hex.EncodeToString(kekBytes)
 
 	store := newMockDEKStore()
-	cryptoSvc, _ := crypto.NewService(kekHex, store, id.DataKey)
+	cryptoSvc, _ := cryptoutil.NewService(kekHex, store, id.DataKey)
 
 	encryptor := NewTenantEncryptor(cryptoSvc)
 
@@ -226,7 +226,7 @@ func TestTenantEncryptorWithLevel(t *testing.T) {
 	kekHex := hex.EncodeToString(kekBytes)
 
 	store := newMockDEKStore()
-	cryptoSvc, _ := crypto.NewService(kekHex, store, id.DataKey)
+	cryptoSvc, _ := cryptoutil.NewService(kekHex, store, id.DataKey)
 
 	// Test different compression levels
 	testCases := []struct {
@@ -261,7 +261,7 @@ func TestTenantEncryptor_LargeData(t *testing.T) {
 	kekHex := hex.EncodeToString(kekBytes)
 
 	store := newMockDEKStore()
-	cryptoSvc, _ := crypto.NewService(kekHex, store, id.DataKey)
+	cryptoSvc, _ := cryptoutil.NewService(kekHex, store, id.DataKey)
 
 	encryptor := NewTenantEncryptor(cryptoSvc)
 
@@ -290,7 +290,7 @@ func TestTenantEncryptor_DecryptInvalidData(t *testing.T) {
 	kekHex := hex.EncodeToString(kekBytes)
 
 	store := newMockDEKStore()
-	cryptoSvc, _ := crypto.NewService(kekHex, store, id.DataKey)
+	cryptoSvc, _ := cryptoutil.NewService(kekHex, store, id.DataKey)
 
 	encryptor := NewTenantEncryptor(cryptoSvc)
 

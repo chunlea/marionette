@@ -1,8 +1,8 @@
-// Package crypto provides cryptographic utilities for Marionette.
+// Package cryptoutil provides cryptographic utilities for Marionette.
 //
 // This includes token generation with SHA-256 hashing for authentication,
 // and envelope encryption (KEK/DEK) for protecting sensitive data at rest.
-package crypto
+package cryptoutil
 
 import (
 	"crypto/hmac"

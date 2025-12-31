@@ -6,18 +6,18 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
-	"github.com/chunlea/marionette/pkg/crypto"
+	"github.com/chunlea/marionette/pkg/cryptoutil"
 )
 
 // TenantEncryptor provides tenant-scoped encryption for CAS data.
 // It uses zstd compression followed by AES-256-GCM encryption.
 type TenantEncryptor struct {
-	crypto        *crypto.Service
+	crypto        *cryptoutil.Service
 	compressLevel zstd.EncoderLevel
 }
 
 // NewTenantEncryptor creates a new encryptor with default compression level.
-func NewTenantEncryptor(cryptoSvc *crypto.Service) *TenantEncryptor {
+func NewTenantEncryptor(cryptoSvc *cryptoutil.Service) *TenantEncryptor {
 	return &TenantEncryptor{
 		crypto:        cryptoSvc,
 		compressLevel: zstd.SpeedDefault,
@@ -25,7 +25,7 @@ func NewTenantEncryptor(cryptoSvc *crypto.Service) *TenantEncryptor {
 }
 
 // NewTenantEncryptorWithLevel creates a new encryptor with specified compression level.
-func NewTenantEncryptorWithLevel(cryptoSvc *crypto.Service, level int) *TenantEncryptor {
+func NewTenantEncryptorWithLevel(cryptoSvc *cryptoutil.Service, level int) *TenantEncryptor {
 	// Map int level to zstd.EncoderLevel
 	var zstdLevel zstd.EncoderLevel
 	switch {
@@ -61,7 +61,7 @@ func (e *TenantEncryptor) Encrypt(ctx context.Context, tenantID string, data []b
 
 	// 2. Encrypt with tenant DEK
 	// Uses resourceType="tenant" and resourceID=tenantID
-	ciphertext, err := e.crypto.Encrypt(ctx, "tenant", tenantID, compressed)
+	ciphertext, err := e.cryptoutil.Encrypt(ctx, "tenant", tenantID, compressed)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt data: %w", err)
 	}
@@ -73,7 +73,7 @@ func (e *TenantEncryptor) Encrypt(ctx context.Context, tenantID string, data []b
 // Pipeline: ciphertext -> AES-256-GCM decrypt -> zstd decompress
 func (e *TenantEncryptor) Decrypt(ctx context.Context, tenantID string, ciphertext []byte) ([]byte, error) {
 	// 1. Decrypt with tenant DEK
-	compressed, err := e.crypto.Decrypt(ctx, "tenant", tenantID, ciphertext)
+	compressed, err := e.cryptoutil.Decrypt(ctx, "tenant", tenantID, ciphertext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data: %w", err)
 	}
