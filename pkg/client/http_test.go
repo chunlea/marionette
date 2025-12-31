@@ -422,7 +422,7 @@ func TestHTTPClient_GetTaskLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	// Read first log
 	log1, err := iter.Next()

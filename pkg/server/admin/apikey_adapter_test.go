@@ -199,8 +199,8 @@ func TestAPIKeyAdapter_List(t *testing.T) {
 	ctx := context.Background()
 
 	// Create some keys
-	adapter.Create(ctx, CreateAPIKeyOptions{Name: "key-1"})
-	adapter.Create(ctx, CreateAPIKeyOptions{Name: "key-2"})
+	_, _ = adapter.Create(ctx, CreateAPIKeyOptions{Name: "key-1"})
+	_, _ = adapter.Create(ctx, CreateAPIKeyOptions{Name: "key-2"})
 
 	// List keys
 	result, err := adapter.List(ctx, ListAPIKeysOptions{Limit: 10})
