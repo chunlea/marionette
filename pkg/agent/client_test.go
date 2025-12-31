@@ -97,8 +97,9 @@ func TestClient_Connect_Rejected(t *testing.T) {
 	require.Error(t, err)
 
 	var rejErr *ErrRegistrationRejected
-	assert.ErrorAs(t, err, &rejErr)
-	assert.Contains(t, rejErr.Message, "invalid token")
+	if assert.ErrorAs(t, err, &rejErr) {
+		assert.Contains(t, rejErr.Message, "invalid token")
+	}
 	assert.Equal(t, StateDisconnected, client.State())
 }
 

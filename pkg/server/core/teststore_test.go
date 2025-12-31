@@ -538,7 +538,7 @@ func (s *testStore) UpdateChunk(_ context.Context, _, _ string, _ store.ChunkUpd
 }
 func (s *testStore) IncrementChunkRefCount(_ context.Context, _, _ string) error { return nil }
 func (s *testStore) DecrementChunkRefCount(_ context.Context, _, _ string) error { return nil }
-func (s *testStore) DeleteChunk(_ context.Context, _, _ string) error { return nil }
+func (s *testStore) DeleteChunk(_ context.Context, _, _ string) error            { return nil }
 func (s *testStore) ListUnreferencedChunks(_ context.Context, _ string, _ int) ([]*store.Chunk, error) {
 	return nil, nil
 }

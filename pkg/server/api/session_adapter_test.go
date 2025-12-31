@@ -7,16 +7,6 @@ import (
 	"github.com/chunlea/marionette/pkg/store"
 )
 
-// mockSessionManager implements a minimal interface for testing SessionAdapter.
-type mockSessionManager struct {
-	createFunc    func(ctx context.Context, opts interface{}) (*store.Session, error)
-	getFunc       func(ctx context.Context, id string) (*store.Session, error)
-	listFunc      func(ctx context.Context, opts interface{}) (*store.ListResult[store.Session], error)
-	suspendFunc   func(ctx context.Context, id, strategy string) error
-	resumeFunc    func(ctx context.Context, id string) error
-	terminateFunc func(ctx context.Context, id string) error
-}
-
 // mockWorkspaceStore implements workspace creation for testing.
 type mockWorkspaceStore struct {
 	workspaces map[string]*store.Workspace

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chunlea/marionette/pkg/crypto"
+	"github.com/chunlea/marionette/pkg/cryptoutil"
 	"github.com/chunlea/marionette/pkg/store"
 )
 
@@ -66,7 +66,7 @@ func (s *RunnerTokenService) Create(ctx context.Context, opts CreateRunnerTokenO
 	}
 
 	// Generate token
-	token, displayPrefix, hash, version, err := crypto.GenerateRunnerToken()
+	token, displayPrefix, hash, version, err := cryptoutil.GenerateRunnerToken()
 	if err != nil {
 		return nil, "", err
 	}
@@ -112,22 +112,22 @@ func (s *RunnerTokenService) Create(ctx context.Context, opts CreateRunnerTokenO
 // Supports both current and previous hash during rotation window.
 func (s *RunnerTokenService) Validate(ctx context.Context, token string) (*store.RunnerToken, error) {
 	// First check prefix to provide specific error for wrong token type
-	prefix := crypto.ExtractPrefix(token)
-	if prefix != crypto.PrefixRunnerToken {
+	prefix := cryptoutil.ExtractPrefix(token)
+	if prefix != cryptoutil.PrefixRunnerToken {
 		// Check if it's a valid prefix but wrong type
-		if prefix == crypto.PrefixAPIKey || prefix == crypto.PrefixTunnelToken {
+		if prefix == cryptoutil.PrefixAPIKey || prefix == cryptoutil.PrefixTunnelToken {
 			return nil, ErrInvalidPrefix
 		}
 		return nil, ErrInvalidToken
 	}
 
 	// Validate token format (length, characters)
-	if !crypto.ValidateTokenFormat(token, crypto.PrefixRunnerToken) {
+	if !cryptoutil.ValidateTokenFormat(token, cryptoutil.PrefixRunnerToken) {
 		return nil, ErrInvalidToken
 	}
 
 	// Hash the token
-	hash := crypto.HashToken(token)
+	hash := cryptoutil.HashToken(token)
 
 	// Look up by hash (store handles both current and previous hash)
 	rt, err := s.store.GetRunnerTokenByHash(ctx, hash)
@@ -179,7 +179,7 @@ func (s *RunnerTokenService) Rotate(ctx context.Context, id string) (string, err
 	}
 
 	// Generate new token
-	newToken, newDisplayPrefix, newHash, _, err := crypto.GenerateRunnerToken()
+	newToken, newDisplayPrefix, newHash, _, err := cryptoutil.GenerateRunnerToken()
 	if err != nil {
 		return "", err
 	}

@@ -4,19 +4,19 @@ import (
 	"context"
 	"sync"
 
-	"github.com/chunlea/marionette/pkg/crypto"
+	"github.com/chunlea/marionette/pkg/cryptoutil"
 )
 
-// DEKStore is an in-memory mock implementation of crypto.DEKStore.
+// DEKStore is an in-memory mock implementation of cryptoutil.DEKStore.
 type DEKStore struct {
-	keys map[string]*crypto.DataKey // keyed by "resourceType:resourceID"
+	keys map[string]*cryptoutil.DataKey // keyed by "resourceType:resourceID"
 	mu   sync.RWMutex
 }
 
 // NewDEKStore creates a new mock DEK store.
 func NewDEKStore() *DEKStore {
 	return &DEKStore{
-		keys: make(map[string]*crypto.DataKey),
+		keys: make(map[string]*cryptoutil.DataKey),
 	}
 }
 
@@ -26,20 +26,20 @@ func makeKey(resourceType, resourceID string) string {
 }
 
 // GetDEK retrieves a DEK by resource type and ID.
-func (s *DEKStore) GetDEK(ctx context.Context, resourceType, resourceID string) (*crypto.DataKey, error) {
+func (s *DEKStore) GetDEK(ctx context.Context, resourceType, resourceID string) (*cryptoutil.DataKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	key := makeKey(resourceType, resourceID)
 	dk, ok := s.keys[key]
 	if !ok {
-		return nil, crypto.ErrDEKNotFound
+		return nil, cryptoutil.ErrDEKNotFound
 	}
 	return dk, nil
 }
 
 // CreateDEK stores a new encrypted DEK.
-func (s *DEKStore) CreateDEK(ctx context.Context, dk *crypto.DataKey) error {
+func (s *DEKStore) CreateDEK(ctx context.Context, dk *cryptoutil.DataKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -52,13 +52,13 @@ func (s *DEKStore) CreateDEK(ctx context.Context, dk *crypto.DataKey) error {
 }
 
 // UpdateDEK updates an existing DEK (for rotation).
-func (s *DEKStore) UpdateDEK(ctx context.Context, dk *crypto.DataKey) error {
+func (s *DEKStore) UpdateDEK(ctx context.Context, dk *cryptoutil.DataKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	key := makeKey(dk.ResourceType, dk.ResourceID)
 	if _, exists := s.keys[key]; !exists {
-		return crypto.ErrDEKNotFound
+		return cryptoutil.ErrDEKNotFound
 	}
 
 	// Make a copy
@@ -67,5 +67,5 @@ func (s *DEKStore) UpdateDEK(ctx context.Context, dk *crypto.DataKey) error {
 	return nil
 }
 
-// Ensure DEKStore implements crypto.DEKStore.
-var _ crypto.DEKStore = (*DEKStore)(nil)
+// Ensure DEKStore implements cryptoutil.DEKStore.
+var _ cryptoutil.DEKStore = (*DEKStore)(nil)

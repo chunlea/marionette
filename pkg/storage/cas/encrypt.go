@@ -6,18 +6,18 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
-	"github.com/chunlea/marionette/pkg/crypto"
+	"github.com/chunlea/marionette/pkg/cryptoutil"
 )
 
 // TenantEncryptor provides tenant-scoped encryption for CAS data.
 // It uses zstd compression followed by AES-256-GCM encryption.
 type TenantEncryptor struct {
-	crypto        *crypto.Service
+	crypto        *cryptoutil.Service
 	compressLevel zstd.EncoderLevel
 }
 
 // NewTenantEncryptor creates a new encryptor with default compression level.
-func NewTenantEncryptor(cryptoSvc *crypto.Service) *TenantEncryptor {
+func NewTenantEncryptor(cryptoSvc *cryptoutil.Service) *TenantEncryptor {
 	return &TenantEncryptor{
 		crypto:        cryptoSvc,
 		compressLevel: zstd.SpeedDefault,
@@ -25,7 +25,7 @@ func NewTenantEncryptor(cryptoSvc *crypto.Service) *TenantEncryptor {
 }
 
 // NewTenantEncryptorWithLevel creates a new encryptor with specified compression level.
-func NewTenantEncryptorWithLevel(cryptoSvc *crypto.Service, level int) *TenantEncryptor {
+func NewTenantEncryptorWithLevel(cryptoSvc *cryptoutil.Service, level int) *TenantEncryptor {
 	// Map int level to zstd.EncoderLevel
 	var zstdLevel zstd.EncoderLevel
 	switch {

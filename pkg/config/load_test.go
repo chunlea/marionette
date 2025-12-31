@@ -148,4 +148,3 @@ func TestLoadWithDefaults(t *testing.T) {
 		t.Errorf("Logging format = %s, want json (default)", cfg.Logging.Format)
 	}
 }
-

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chunlea/marionette/pkg/crypto"
+	"github.com/chunlea/marionette/pkg/cryptoutil"
 	"github.com/chunlea/marionette/pkg/store"
 )
 
@@ -49,7 +49,7 @@ func (s *APIKeyService) Create(ctx context.Context, opts CreateAPIKeyOptions) (*
 	}
 
 	// Generate token
-	token, displayPrefix, hash, version, err := crypto.GenerateAPIKey()
+	token, displayPrefix, hash, version, err := cryptoutil.GenerateAPIKey()
 	if err != nil {
 		return nil, "", err
 	}
@@ -105,22 +105,22 @@ func (s *APIKeyService) Create(ctx context.Context, opts CreateAPIKeyOptions) (*
 // Validate checks a token and returns the API key info if valid.
 func (s *APIKeyService) Validate(ctx context.Context, token string) (*store.APIKey, error) {
 	// First check prefix to provide specific error for wrong token type
-	prefix := crypto.ExtractPrefix(token)
-	if prefix != crypto.PrefixAPIKey {
+	prefix := cryptoutil.ExtractPrefix(token)
+	if prefix != cryptoutil.PrefixAPIKey {
 		// Check if it's a valid prefix but wrong type
-		if prefix == crypto.PrefixRunnerToken || prefix == crypto.PrefixTunnelToken {
+		if prefix == cryptoutil.PrefixRunnerToken || prefix == cryptoutil.PrefixTunnelToken {
 			return nil, ErrInvalidPrefix
 		}
 		return nil, ErrInvalidToken
 	}
 
 	// Validate token format (length, characters)
-	if !crypto.ValidateTokenFormat(token, crypto.PrefixAPIKey) {
+	if !cryptoutil.ValidateTokenFormat(token, cryptoutil.PrefixAPIKey) {
 		return nil, ErrInvalidToken
 	}
 
 	// Hash the token
-	hash := crypto.HashToken(token)
+	hash := cryptoutil.HashToken(token)
 
 	// Look up by hash
 	key, err := s.store.GetAPIKeyByHash(ctx, hash)
