@@ -55,6 +55,14 @@ func TestDetector_Detect_NonLinux(t *testing.T) {
 }
 
 func TestDetector_Detect_WithMockFilesystem(t *testing.T) {
+	// Skip if running inside a container, as we can't mock /.dockerenv
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		t.Skip("Skipping test inside Docker container")
+	}
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		t.Skip("Skipping test inside Podman container")
+	}
+
 	// Create mock filesystem
 	tmpDir := t.TempDir()
 	procDir := filepath.Join(tmpDir, "proc")

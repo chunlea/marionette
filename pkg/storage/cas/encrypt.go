@@ -61,7 +61,7 @@ func (e *TenantEncryptor) Encrypt(ctx context.Context, tenantID string, data []b
 
 	// 2. Encrypt with tenant DEK
 	// Uses resourceType="tenant" and resourceID=tenantID
-	ciphertext, err := e.cryptoutil.Encrypt(ctx, "tenant", tenantID, compressed)
+	ciphertext, err := e.crypto.Encrypt(ctx, "tenant", tenantID, compressed)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt data: %w", err)
 	}
@@ -73,7 +73,7 @@ func (e *TenantEncryptor) Encrypt(ctx context.Context, tenantID string, data []b
 // Pipeline: ciphertext -> AES-256-GCM decrypt -> zstd decompress
 func (e *TenantEncryptor) Decrypt(ctx context.Context, tenantID string, ciphertext []byte) ([]byte, error) {
 	// 1. Decrypt with tenant DEK
-	compressed, err := e.cryptoutil.Decrypt(ctx, "tenant", tenantID, ciphertext)
+	compressed, err := e.crypto.Decrypt(ctx, "tenant", tenantID, ciphertext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data: %w", err)
 	}
