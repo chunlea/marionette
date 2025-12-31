@@ -18,8 +18,8 @@ type mockProvider struct {
 	closed bool
 }
 
-func (p *mockProvider) Name() string                    { return p.name }
-func (p *mockProvider) Type() ProviderType              { return ProviderTypeManaged }
+func (p *mockProvider) Name() string                       { return p.name }
+func (p *mockProvider) Type() ProviderType                 { return ProviderTypeManaged }
 func (p *mockProvider) Capabilities() ProviderCapabilities { return ProviderCapabilities{} }
 func (p *mockProvider) Spawn(ctx context.Context, opts SpawnOptions) (*RunnerInstance, error) {
 	return nil, nil

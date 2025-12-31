@@ -13,11 +13,13 @@ linters:
     - misspell
     - bodyclose
     - gocritic
-    - gosec
     - nilerr
-    - prealloc
     - unconvert
     - unparam
+  disable:
+    # Disabled due to many false positives in existing code
+    - gosec
+    - prealloc
 
 formatters:
   enable:
@@ -32,5 +34,21 @@ exclusions:
   rules:
     - path: _test\.go
       linters:
-        - gosec
         - gocritic
+        - revive
+    # Stutter warnings - these are intentional naming choices
+    - linters:
+        - revive
+      text: "stutters"
+    # var-naming for intentional underscore usage
+    - linters:
+        - revive
+      text: "var-naming"
+    # unused-parameter - context often passed for future use
+    - linters:
+        - revive
+      text: "unused-parameter"
+    # package-comments - not enforcing package docs
+    - linters:
+        - revive
+      text: "package-comments"

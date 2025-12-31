@@ -25,12 +25,12 @@ const (
 
 // DataKey represents an encrypted DEK stored in the database.
 type DataKey struct {
-	ID           string     `json:"id"`             // dek_xxx
-	ResourceType string     `json:"resource_type"`  // "tenant", "agent_config", etc.
-	ResourceID   string     `json:"resource_id"`    // The resource this DEK encrypts
-	DEKEncrypted string     `json:"dek_encrypted"`  // DEK encrypted with KEK (base64)
-	Algorithm    string     `json:"algorithm"`      // "AES-256-GCM"
-	KEKID        string     `json:"kek_id"`         // Optional: KEK identifier for rotation
+	ID           string     `json:"id"`            // dek_xxx
+	ResourceType string     `json:"resource_type"` // "tenant", "agent_config", etc.
+	ResourceID   string     `json:"resource_id"`   // The resource this DEK encrypts
+	DEKEncrypted string     `json:"dek_encrypted"` // DEK encrypted with KEK (base64)
+	Algorithm    string     `json:"algorithm"`     // "AES-256-GCM"
+	KEKID        string     `json:"kek_id"`        // Optional: KEK identifier for rotation
 	CreatedAt    time.Time  `json:"created_at"`
 	RotatedAt    *time.Time `json:"rotated_at,omitempty"`
 }
@@ -53,11 +53,11 @@ type DEKStore interface {
 // Each resource (e.g., tenant, agent config) has its own DEK, which is stored
 // encrypted by the KEK in the database.
 type Service struct {
-	kek      []byte            // Key Encryption Key (from environment)
-	kekID    string            // Optional KEK identifier
-	store    DEKStore          // For persisting encrypted DEKs
-	idGen    func() string     // ID generator for new DEKs
-	dekCache sync.Map          // Cache of decrypted DEKs: "resourceType:resourceID" -> []byte
+	kek      []byte        // Key Encryption Key (from environment)
+	kekID    string        // Optional KEK identifier
+	store    DEKStore      // For persisting encrypted DEKs
+	idGen    func() string // ID generator for new DEKs
+	dekCache sync.Map      // Cache of decrypted DEKs: "resourceType:resourceID" -> []byte
 }
 
 // NewService creates a new encryption service.
