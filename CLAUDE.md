@@ -725,9 +725,12 @@ EOF
 )"
 
 # For complex descriptions, use --body-file
-echo "## Summary
-..." > /tmp/pr-body.md
-gh pr create --title "feat: add new feature" --body-file /tmp/pr-body.md
+mkdir -p .claude/tmp
+cat > .claude/tmp/pr-body.md <<'EOF'
+## Summary
+...
+EOF
+gh pr create --title "feat: add new feature" --body-file .claude/tmp/pr-body.md
 ```
 
 **Important:** Always use single-quoted `'EOF'` (not `EOF`) to prevent shell variable expansion issues in the PR body.
