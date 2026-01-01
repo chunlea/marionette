@@ -17,6 +17,16 @@ func TestEventTypes(t *testing.T) {
 	assert.Equal(t, EventType("usage"), EventUsage)
 }
 
+func TestEventType_String(t *testing.T) {
+	assert.Equal(t, "text", EventText.String())
+	assert.Equal(t, "thinking", EventThinking.String())
+	assert.Equal(t, "tool_use", EventToolUse.String())
+	assert.Equal(t, "tool_result", EventToolResult.String())
+	assert.Equal(t, "error", EventError.String())
+	assert.Equal(t, "system", EventSystem.String())
+	assert.Equal(t, "usage", EventUsage.String())
+}
+
 func TestNewTextEvent(t *testing.T) {
 	before := time.Now()
 	event := NewTextEvent("Hello, world!")

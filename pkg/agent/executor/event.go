@@ -30,6 +30,11 @@ const (
 	EventUsage EventType = "usage"
 )
 
+// String returns the string representation of the event type.
+func (e EventType) String() string {
+	return string(e)
+}
+
 // AgentEvent represents a structured event from an agent.
 // Events are parsed from raw agent output and provide a unified format
 // for all agent types.

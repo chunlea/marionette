@@ -18,11 +18,11 @@ type Task struct {
 	Timeout        time.Duration
 	WorkingDir     string // Working directory (may be worktree path)
 
-	// Context for resume - contains previous conversation state
+	// ContextSnapshot contains serialized state for session resume.
 	// The executor interprets this based on agent type:
 	// - Claude: extracts session_id and uses --resume
 	// - Other agents: may parse as conversation history
-	Context []byte
+	ContextSnapshot []byte
 }
 
 // AgentConfig holds the configuration for running an agent.
@@ -37,14 +37,14 @@ type AgentConfig struct {
 
 // Result contains the outcome of task execution.
 type Result struct {
-	Success      bool
-	ExitCode     int
-	Error        string
-	TokensInput  int64
-	TokensOutput int64
-	AgentSession string // Agent's internal session ID (for resume)
-	Context      []byte // Context snapshot for session restore
-	CompletedAt  time.Time
+	Success         bool
+	ExitCode        int
+	Error           string
+	TokensInput     int64
+	TokensOutput    int64
+	AgentSession    string // Agent's internal session ID (for resume)
+	ContextSnapshot []byte // Serialized context for session restore
+	CompletedAt     time.Time
 }
 
 // OutputHandler receives output from the executor.
@@ -59,13 +59,32 @@ type OutputHandler interface {
 	HandlePermissionRequest(ctx context.Context, req *PermissionRequest) (approved bool, err error)
 }
 
+// RiskLevel represents the risk level of a permission request.
+type RiskLevel string
+
+const (
+	// RiskLow indicates a low-risk action.
+	RiskLow RiskLevel = "low"
+	// RiskMedium indicates a medium-risk action.
+	RiskMedium RiskLevel = "medium"
+	// RiskHigh indicates a high-risk action.
+	RiskHigh RiskLevel = "high"
+	// RiskCritical indicates a critical-risk action.
+	RiskCritical RiskLevel = "critical"
+)
+
+// String returns the string representation of the risk level.
+func (r RiskLevel) String() string {
+	return string(r)
+}
+
 // PermissionRequest represents a permission request from the agent.
 type PermissionRequest struct {
 	ID        string
-	Tool      string // "bash", "edit", "browser", etc.
-	Action    string // Command or description
-	Context   string // Additional context
-	RiskLevel string // "low", "medium", "high", "critical"
+	Tool      string    // "bash", "edit", "browser", etc.
+	Action    string    // Command or description
+	Context   string    // Additional context
+	RiskLevel RiskLevel // Risk level of the action
 }
 
 // Executor defines the interface for running AI agents.

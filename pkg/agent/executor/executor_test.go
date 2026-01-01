@@ -10,12 +10,13 @@ import (
 
 func TestTask(t *testing.T) {
 	task := &Task{
-		ID:        "task_123",
-		RunID:     "trun_123",
-		SessionID: "sess_123",
-		Attempt:   1,
-		Prompt:    "Test prompt",
-		Timeout:   time.Hour,
+		ID:              "task_123",
+		RunID:           "trun_123",
+		SessionID:       "sess_123",
+		Attempt:         1,
+		Prompt:          "Test prompt",
+		Timeout:         time.Hour,
+		ContextSnapshot: []byte(`{"session_id":"abc123"}`),
 	}
 
 	assert.Equal(t, "task_123", task.ID)
@@ -24,6 +25,7 @@ func TestTask(t *testing.T) {
 	assert.Equal(t, int32(1), task.Attempt)
 	assert.Equal(t, "Test prompt", task.Prompt)
 	assert.Equal(t, time.Hour, task.Timeout)
+	assert.Equal(t, []byte(`{"session_id":"abc123"}`), task.ContextSnapshot)
 }
 
 func TestAgentConfig(t *testing.T) {
@@ -48,13 +50,13 @@ func TestAgentConfig(t *testing.T) {
 
 func TestResult(t *testing.T) {
 	result := &Result{
-		Success:      true,
-		ExitCode:     0,
-		Error:        "",
-		TokensInput:  100,
-		TokensOutput: 200,
-		Context:      []byte(`{"state":"test"}`),
-		CompletedAt:  time.Now(),
+		Success:         true,
+		ExitCode:        0,
+		Error:           "",
+		TokensInput:     100,
+		TokensOutput:    200,
+		ContextSnapshot: []byte(`{"state":"test"}`),
+		CompletedAt:     time.Now(),
 	}
 
 	assert.True(t, result.Success)
@@ -62,6 +64,7 @@ func TestResult(t *testing.T) {
 	assert.Empty(t, result.Error)
 	assert.Equal(t, int64(100), result.TokensInput)
 	assert.Equal(t, int64(200), result.TokensOutput)
+	assert.Equal(t, []byte(`{"state":"test"}`), result.ContextSnapshot)
 }
 
 func TestPermissionRequest(t *testing.T) {
@@ -70,14 +73,30 @@ func TestPermissionRequest(t *testing.T) {
 		Tool:      "bash",
 		Action:    "rm -rf /tmp/test",
 		Context:   "Deleting temporary files",
-		RiskLevel: "medium",
+		RiskLevel: RiskMedium,
 	}
 
 	assert.Equal(t, "perm_123", req.ID)
 	assert.Equal(t, "bash", req.Tool)
 	assert.Equal(t, "rm -rf /tmp/test", req.Action)
 	assert.Equal(t, "Deleting temporary files", req.Context)
-	assert.Equal(t, "medium", req.RiskLevel)
+	assert.Equal(t, RiskMedium, req.RiskLevel)
+}
+
+func TestRiskLevel(t *testing.T) {
+	t.Run("constants", func(t *testing.T) {
+		assert.Equal(t, RiskLevel("low"), RiskLow)
+		assert.Equal(t, RiskLevel("medium"), RiskMedium)
+		assert.Equal(t, RiskLevel("high"), RiskHigh)
+		assert.Equal(t, RiskLevel("critical"), RiskCritical)
+	})
+
+	t.Run("string", func(t *testing.T) {
+		assert.Equal(t, "low", RiskLow.String())
+		assert.Equal(t, "medium", RiskMedium.String())
+		assert.Equal(t, "high", RiskHigh.String())
+		assert.Equal(t, "critical", RiskCritical.String())
+	})
 }
 
 // MockOutputHandler is a test helper for capturing output.
