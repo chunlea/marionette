@@ -132,7 +132,7 @@ func TestDetector_DetectsPermissionRequest(t *testing.T) {
 	require.NotNil(t, req)
 	assert.Equal(t, "bash", req.Tool)
 	assert.Equal(t, "rm -rf /tmp/test", req.Action)
-	assert.Equal(t, "high", req.RiskLevel)
+	assert.Equal(t, executor.RiskHigh, req.RiskLevel)
 }
 
 func TestDetector_IgnoresStderr(t *testing.T) {

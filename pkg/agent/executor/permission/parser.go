@@ -201,34 +201,34 @@ func normalizeToolName(tool string) string {
 }
 
 // determineRiskLevel determines the risk level based on tool and action.
-func determineRiskLevel(tool, action string) string {
+func determineRiskLevel(tool, action string) executor.RiskLevel {
 	actionLower := strings.ToLower(action)
 
 	// Check high risk patterns
 	for _, keyword := range highRiskKeywords {
 		if strings.Contains(actionLower, strings.ToLower(keyword)) {
-			return "high"
+			return executor.RiskHigh
 		}
 	}
 
 	// Check medium risk patterns
 	for _, keyword := range mediumRiskKeywords {
 		if strings.Contains(actionLower, strings.ToLower(keyword)) {
-			return "medium"
+			return executor.RiskMedium
 		}
 	}
 
 	// Tool-based default risk levels
 	switch tool {
 	case "bash":
-		return "medium"
+		return executor.RiskMedium
 	case "edit", "write":
-		return "medium"
+		return executor.RiskMedium
 	case "browser":
-		return "low"
+		return executor.RiskLow
 	case "read":
-		return "low"
+		return executor.RiskLow
 	default:
-		return "medium"
+		return executor.RiskMedium
 	}
 }

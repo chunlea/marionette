@@ -55,7 +55,7 @@ func (d *Detector) HandleOutput(stream string, data []byte) {
 				zap.String("request_id", req.ID),
 				zap.String("tool", req.Tool),
 				zap.String("action", req.Action),
-				zap.String("risk_level", req.RiskLevel),
+				zap.String("risk_level", req.RiskLevel.String()),
 			)
 		}
 	}

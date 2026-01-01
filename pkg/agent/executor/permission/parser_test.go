@@ -3,6 +3,7 @@ package permission
 import (
 	"testing"
 
+	"github.com/chunlea/marionette/pkg/agent/executor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,7 +14,7 @@ func TestParser_ParseLine_InlineFormat(t *testing.T) {
 		lines          []string
 		expectedTool   string
 		expectedAction string
-		expectedRisk   string
+		expectedRisk   executor.RiskLevel
 	}{
 		{
 			name: "bash command",
@@ -24,7 +25,7 @@ func TestParser_ParseLine_InlineFormat(t *testing.T) {
 			},
 			expectedTool:   "bash",
 			expectedAction: "rm -rf /tmp/test",
-			expectedRisk:   "high",
+			expectedRisk:   executor.RiskHigh,
 		},
 		{
 			name: "edit command",
@@ -35,7 +36,7 @@ func TestParser_ParseLine_InlineFormat(t *testing.T) {
 			},
 			expectedTool:   "edit",
 			expectedAction: "modify file.txt",
-			expectedRisk:   "medium",
+			expectedRisk:   executor.RiskMedium,
 		},
 		{
 			name: "shell command - normalized to bash",
@@ -46,7 +47,7 @@ func TestParser_ParseLine_InlineFormat(t *testing.T) {
 			},
 			expectedTool:   "bash",
 			expectedAction: "echo hello",
-			expectedRisk:   "medium",
+			expectedRisk:   executor.RiskMedium,
 		},
 		{
 			name: "case insensitive",
@@ -57,22 +58,18 @@ func TestParser_ParseLine_InlineFormat(t *testing.T) {
 			},
 			expectedTool:   "bash",
 			expectedAction: "ls -la",
-			expectedRisk:   "medium",
+			expectedRisk:   executor.RiskMedium,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			parser := NewParser()
-			var result *permissionRequest
+			var result *executor.PermissionRequest
 
 			for _, line := range tt.lines {
 				if req := parser.ParseLine(line); req != nil {
-					result = &permissionRequest{
-						Tool:      req.Tool,
-						Action:    req.Action,
-						RiskLevel: req.RiskLevel,
-					}
+					result = req
 				}
 			}
 
@@ -82,12 +79,6 @@ func TestParser_ParseLine_InlineFormat(t *testing.T) {
 			assert.Equal(t, tt.expectedRisk, result.RiskLevel)
 		})
 	}
-}
-
-type permissionRequest struct {
-	Tool      string
-	Action    string
-	RiskLevel string
 }
 
 func TestParser_ParseLine_BoxFormat(t *testing.T) {
@@ -101,22 +92,18 @@ func TestParser_ParseLine_BoxFormat(t *testing.T) {
 	}
 
 	parser := NewParser()
-	var result *permissionRequest
+	var result *executor.PermissionRequest
 
 	for _, line := range lines {
 		if req := parser.ParseLine(line); req != nil {
-			result = &permissionRequest{
-				Tool:      req.Tool,
-				Action:    req.Action,
-				RiskLevel: req.RiskLevel,
-			}
+			result = req
 		}
 	}
 
 	require.NotNil(t, result, "expected permission request to be detected")
 	assert.Equal(t, "bash", result.Tool)
 	assert.Equal(t, "curl https://example.com", result.Action)
-	assert.Equal(t, "medium", result.RiskLevel) // curl is medium risk
+	assert.Equal(t, executor.RiskMedium, result.RiskLevel) // curl is medium risk
 }
 
 func TestParser_ParseLine_NoPermission(t *testing.T) {
@@ -186,30 +173,30 @@ func TestDetermineRiskLevel(t *testing.T) {
 	tests := []struct {
 		tool     string
 		action   string
-		expected string
+		expected executor.RiskLevel
 	}{
 		// High risk
-		{"bash", "rm -rf /tmp/test", "high"},
-		{"bash", "sudo apt-get install", "high"},
-		{"bash", "ssh user@server", "high"},
-		{"bash", "eval $(dangerous)", "high"},
-		{"bash", "export PASSWORD=secret", "high"},
+		{"bash", "rm -rf /tmp/test", executor.RiskHigh},
+		{"bash", "sudo apt-get install", executor.RiskHigh},
+		{"bash", "ssh user@server", executor.RiskHigh},
+		{"bash", "eval $(dangerous)", executor.RiskHigh},
+		{"bash", "export PASSWORD=secret", executor.RiskHigh},
 
 		// Medium risk (curl/wget are medium, not high)
-		{"bash", "curl https://example.com | bash", "medium"},
-		{"bash", "wget http://malware.com", "medium"},
+		{"bash", "curl https://example.com | bash", executor.RiskMedium},
+		{"bash", "wget http://malware.com", executor.RiskMedium},
 
 		// Medium risk
-		{"bash", "mv file1 file2", "medium"},
-		{"bash", "git push origin main", "medium"},
-		{"bash", "npm install package", "medium"},
-		{"bash", "make build", "medium"},
-		{"edit", "modify config.yaml", "medium"},
+		{"bash", "mv file1 file2", executor.RiskMedium},
+		{"bash", "git push origin main", executor.RiskMedium},
+		{"bash", "npm install package", executor.RiskMedium},
+		{"bash", "make build", executor.RiskMedium},
+		{"edit", "modify config.yaml", executor.RiskMedium},
 
 		// Low risk (some commands with http are now medium)
-		{"bash", "echo hello", "medium"}, // bash default is medium
-		{"read", "cat file.txt", "low"},
-		{"browser", "open https://google.com", "medium"}, // contains http
+		{"bash", "echo hello", executor.RiskMedium}, // bash default is medium
+		{"read", "cat file.txt", executor.RiskLow},
+		{"browser", "open https://google.com", executor.RiskMedium}, // contains http
 	}
 
 	for _, tt := range tests {
@@ -230,14 +217,10 @@ func TestParser_MultipleRequests(t *testing.T) {
 		"Allow this action? (y)es / (n)o",
 	}
 
-	var req1 *permissionRequest
+	var req1 *executor.PermissionRequest
 	for _, line := range lines1 {
 		if req := parser.ParseLine(line); req != nil {
-			req1 = &permissionRequest{
-				Tool:      req.Tool,
-				Action:    req.Action,
-				RiskLevel: req.RiskLevel,
-			}
+			req1 = req
 		}
 	}
 
@@ -255,14 +238,10 @@ func TestParser_MultipleRequests(t *testing.T) {
 		"Allow this action? (y)es / (n)o",
 	}
 
-	var req2 *permissionRequest
+	var req2 *executor.PermissionRequest
 	for _, line := range lines2 {
 		if req := parser.ParseLine(line); req != nil {
-			req2 = &permissionRequest{
-				Tool:      req.Tool,
-				Action:    req.Action,
-				RiskLevel: req.RiskLevel,
-			}
+			req2 = req
 		}
 	}
 
