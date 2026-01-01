@@ -148,7 +148,7 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	e.cmd = cmd
 	e.stdin = stdin
 	// Enable stream mode if resuming
-	e.streamMode = task.Context != nil && len(task.Context) > 0
+	e.streamMode = task.ContextSnapshot != nil && len(task.ContextSnapshot) > 0
 	e.mu.Unlock()
 
 	// Start command
@@ -226,12 +226,12 @@ func (e *Executor) buildArgs(task *executor.Task, config *executor.AgentConfig) 
 	}
 
 	// Check for resume mode
-	if task.Context != nil && len(task.Context) > 0 {
+	if task.ContextSnapshot != nil && len(task.ContextSnapshot) > 0 {
 		// Try to extract session_id from context
 		var ctxData struct {
 			SessionID string `json:"session_id"`
 		}
-		if err := json.Unmarshal(task.Context, &ctxData); err == nil && ctxData.SessionID != "" {
+		if err := json.Unmarshal(task.ContextSnapshot, &ctxData); err == nil && ctxData.SessionID != "" {
 			args = append(args, "--resume", ctxData.SessionID)
 		}
 	}
@@ -309,7 +309,7 @@ func (e *Executor) processOutput(ctx context.Context, r io.Reader, stream string
 						ID:        event.ToolUse.ID,
 						Tool:      event.ToolUse.Name,
 						Action:    event.ToolUse.Input,
-						RiskLevel: "medium",
+						RiskLevel: executor.RiskMedium,
 					}
 					// Note: In a full implementation, we would block here
 					// waiting for permission. For now, we just log it.

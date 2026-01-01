@@ -85,8 +85,8 @@ func TestExecutor_buildArgs_WithResume(t *testing.T) {
 	e := New()
 
 	task := &executor.Task{
-		Prompt:  "Continue",
-		Context: []byte(`{"session_id":"sess_abc123"}`),
+		Prompt:          "Continue",
+		ContextSnapshot: []byte(`{"session_id":"sess_abc123"}`),
 	}
 
 	args := e.buildArgs(task, nil)
