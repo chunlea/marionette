@@ -489,31 +489,31 @@
   - [x] Create new task_run with incremented attempt
   - [ ] Exponential backoff between retries (deferred)
 
-### 3.5 Agent Execution
+### 3.5 Agent Execution ✓
 
-- [ ] Agent interface (`pkg/agent/executor/executor.go`):
-  ```go
-  type Executor interface {
-      Execute(ctx, task *Task, config *AgentConfig) (*Result, error)
-      Kill() error
-  }
-  ```
-- [ ] Claude Code executor (`pkg/agent/executor/claude/`):
-  - [ ] Spawn Claude Code process via PTY
-  - [ ] Pass API key as environment variable
-  - [ ] Send prompt to stdin
-  - [ ] Stream stdout/stderr
-  - [ ] Handle permission requests
-  - [ ] Capture exit code
-- [ ] Environment setup:
-  - [ ] Set `ANTHROPIC_API_KEY`
-  - [ ] Set working directory to workspace
-  - [ ] Set any extra environment from config
-- [ ] Process management:
-  - [ ] PTY-based process spawning
-  - [ ] Signal handling (SIGTERM, SIGKILL)
-  - [ ] Graceful termination
-  - [ ] Resource cleanup
+- [x] Agent interface (`pkg/agent/executor/executor.go`):
+  - [x] `Executor` interface with `Execute`, `Kill`, `Name` methods
+  - [x] `StreamExecutor` interface for bidirectional communication
+  - [x] `OutputHandler` interface for output capture
+  - [x] `OutputWriter` adapter implementing `io.Writer`
+- [x] Data types (`pkg/agent/executor/executor.go`):
+  - [x] `Task` struct with ID, SessionID, RunID, Prompt, etc.
+  - [x] `AgentConfig` struct with Agent, APIKey, Model, etc.
+  - [x] `Result` struct with Success, ExitCode, Error, TokensIn/Out
+  - [x] `PermissionRequest` struct with Tool, Action, Context, RiskLevel
+- [x] Event system (`pkg/agent/executor/event.go`):
+  - [x] `AgentEvent` struct with unified event format
+  - [x] Event types: text, thinking, tool_use, tool_result, error, system, usage
+  - [x] Event constructors: `NewTextEvent`, `NewThinkingEvent`, etc.
+  - [x] `ToolUseEvent`, `ToolResultEvent`, `UsageEvent` sub-types
+- [x] Parser system (`pkg/agent/executor/parser.go`):
+  - [x] `AgentEventParser` interface for parsing agent output
+  - [x] `ParserFactory` function type
+  - [x] `ParserRegistry` for agent-specific parser registration
+  - [x] Default global registry with thread-safe access
+- [ ] Claude Code executor (`pkg/agent/executor/claude/`) - Phase 3.6A
+- [ ] Environment setup - Phase 3.6A
+- [ ] Process management - Phase 3.6A
 
 ### 3.6 Log Streaming (Server) ✓
 
