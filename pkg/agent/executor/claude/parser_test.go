@@ -240,3 +240,117 @@ func TestParser_Registration(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, parser)
 }
+
+func TestParser_ParseLine_AssistantMessage_NilMessage(t *testing.T) {
+	parser := NewParser()
+
+	// Assistant message without the message field
+	line := []byte(`{"type":"assistant"}`)
+	events, err := parser.ParseLine(line)
+
+	assert.NoError(t, err)
+	assert.Nil(t, events) // Should return nil for nil message
+}
+
+func TestParser_ParseLine_AssistantMessage_EmptyContent(t *testing.T) {
+	parser := NewParser()
+
+	// Assistant message with empty content array
+	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[]}}`)
+	events, err := parser.ParseLine(line)
+
+	assert.NoError(t, err)
+	assert.Empty(t, events) // Should return empty events for empty content
+}
+
+func TestParser_ParseLine_AssistantMessage_UnknownContentType(t *testing.T) {
+	parser := NewParser()
+
+	// Assistant message with unknown content type
+	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"unknown_type","data":"something"}]}}`)
+	events, err := parser.ParseLine(line)
+
+	assert.NoError(t, err)
+	// Unknown content types should be skipped
+	assert.Empty(t, events)
+}
+
+func TestParser_ParseLine_ResultMessage_NoResult(t *testing.T) {
+	parser := NewParser()
+
+	// Result message without the result field
+	line := []byte(`{"type":"result"}`)
+	events, err := parser.ParseLine(line)
+
+	assert.NoError(t, err)
+	assert.Nil(t, events) // Should return nil for nil result
+}
+
+func TestParser_ParseLine_ResultMessage_WithError(t *testing.T) {
+	parser := NewParser()
+
+	// Result message with error
+	line := []byte(`{"type":"result","result":{"success":false,"exit_code":1,"error":"Something went wrong"}}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	require.Len(t, events, 2) // Error event + system event
+
+	assert.Equal(t, executor.EventError, events[0].Type)
+	assert.Equal(t, "Something went wrong", events[0].Text)
+	assert.Equal(t, executor.EventSystem, events[1].Type)
+	assert.Equal(t, "Task failed", events[1].Text)
+}
+
+func TestParser_ParseLine_ResultMessage_WithSubtype(t *testing.T) {
+	parser := NewParser()
+
+	// Result message with subtype (error reporting)
+	line := []byte(`{"type":"result","subtype":"error","result":{"success":false}}`)
+	events, err := parser.ParseLine(line)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, events)
+}
+
+func TestParser_ParseLine_SystemMessage_WithSessionID(t *testing.T) {
+	parser := NewParser().(*Parser)
+
+	// System message with session_id at root level
+	line := []byte(`{"type":"system","subtype":"session","session_id":"sess_test123","data":"Session started"}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, executor.EventSystem, events[0].Type)
+	assert.Equal(t, "sess_test123", parser.SessionID())
+}
+
+func TestParser_ParseLine_ToolResult_WithError(t *testing.T) {
+	parser := NewParser()
+
+	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_result","tool_use_id":"tool_456","content":"command not found","is_error":true}]}}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, executor.EventToolResult, events[0].Type)
+	require.NotNil(t, events[0].ToolResult)
+	assert.True(t, events[0].ToolResult.IsError)
+	assert.Equal(t, "command not found", events[0].ToolResult.Output)
+}
+
+func TestParser_ParseLine_ToolUse_WithComplexInput(t *testing.T) {
+	parser := NewParser()
+
+	// Tool use with complex nested input
+	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool_789","name":"Edit","input":{"file_path":"/test.txt","old_string":"foo","new_string":"bar"}}]}}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, executor.EventToolUse, events[0].Type)
+	require.NotNil(t, events[0].ToolUse)
+	assert.Equal(t, "Edit", events[0].ToolUse.Name)
+	assert.Contains(t, events[0].ToolUse.Input, "file_path")
+}

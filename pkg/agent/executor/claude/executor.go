@@ -156,6 +156,11 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 		return nil, fmt.Errorf("failed to start claude: %w", err)
 	}
 
+	// Close stdin if not in stream mode to signal no more input
+	if !e.streamMode {
+		stdin.Close()
+	}
+
 	// Emit system event for start
 	handler.HandleOutput("system", []byte("Claude Code started"))
 
@@ -188,22 +193,32 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	}
 
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			result.ExitCode = exitErr.ExitCode()
-			result.Success = false
-			result.Error = fmt.Sprintf("exit code %d", result.ExitCode)
-		} else if ctx.Err() != nil {
-			result.Success = false
-			result.Error = ctx.Err().Error()
+		result.Success = false
+
+		// Check context error first - when context is cancelled/timed out,
+		// the process is killed and returns ExitError, but we want to report
+		// the context error, not the exit code.
+		if ctx.Err() != nil {
 			if ctx.Err() == context.DeadlineExceeded {
 				result.Error = "timeout"
 			} else if ctx.Err() == context.Canceled {
 				result.Error = "canceled"
+			} else {
+				result.Error = ctx.Err().Error()
+			}
+			// Still capture exit code if available
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				result.ExitCode = exitErr.ExitCode()
 			}
 		} else {
-			result.Success = false
-			result.Error = err.Error()
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				result.ExitCode = exitErr.ExitCode()
+				result.Error = fmt.Sprintf("exit code %d", result.ExitCode)
+			} else {
+				result.Error = err.Error()
+			}
 		}
 	} else {
 		result.Success = true
@@ -355,18 +370,14 @@ func (e *Executor) Kill() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if !e.running || e.cmd == nil {
+	if !e.running {
 		return nil // Not an error to kill non-running executor
 	}
 
-	// Cancel context first
+	// Cancel context to trigger process termination.
+	// exec.CommandContext will send SIGKILL when context is cancelled.
 	if e.cancelFunc != nil {
 		e.cancelFunc()
-	}
-
-	// Then kill process
-	if e.cmd.Process != nil {
-		return e.cmd.Process.Kill()
 	}
 
 	return nil

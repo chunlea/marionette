@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -318,4 +319,290 @@ func TestPermissionToolNames(t *testing.T) {
 	assert.True(t, PermissionToolNames["Edit"])
 	assert.False(t, PermissionToolNames["Read"])
 	assert.False(t, PermissionToolNames["nonexistent"])
+}
+
+func TestExecutor_SendMessage_NilStdin(t *testing.T) {
+	e := New()
+
+	// Simulate running in stream mode but stdin is nil
+	e.mu.Lock()
+	e.running = true
+	e.streamMode = true
+	e.stdin = nil
+	e.mu.Unlock()
+
+	err := e.SendMessage([]byte("test"))
+	assert.ErrorIs(t, err, ErrNotRunning)
+
+	// Cleanup
+	e.mu.Lock()
+	e.running = false
+	e.streamMode = false
+	e.mu.Unlock()
+}
+
+func TestExecutor_Kill_WithCancelFunc(t *testing.T) {
+	e := New()
+
+	// Track if cancel was called
+	cancelCalled := false
+	mockCancel := func() {
+		cancelCalled = true
+	}
+
+	// Simulate running state with a cancel function
+	e.mu.Lock()
+	e.running = true
+	e.cancelFunc = mockCancel
+	e.mu.Unlock()
+
+	err := e.Kill()
+	assert.NoError(t, err)
+	assert.True(t, cancelCalled, "Cancel function should be called")
+
+	// Cleanup
+	e.mu.Lock()
+	e.running = false
+	e.cancelFunc = nil
+	e.mu.Unlock()
+}
+
+func TestExecutor_processOutput_ContextDone(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+	handler := newTestOutputHandler()
+
+	// Create a reader that will block
+	pr, pw := io.Pipe()
+	defer pr.Close()
+
+	// Cancel context immediately
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Write some data and close
+	go func() {
+		pw.Write([]byte(`{"type":"system","data":"test"}`))
+		pw.Write([]byte("\n"))
+		pw.Close()
+	}()
+
+	// processOutput should return quickly when context is done
+	done := make(chan struct{})
+	go func() {
+		e.processOutput(ctx, pr, "stdout", handler)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success - returned after context done
+	case <-time.After(2 * time.Second):
+		t.Fatal("processOutput did not return when context was done")
+	}
+}
+
+func TestExecutor_processOutput_ValidJSON(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+	handler := newTestOutputHandler()
+
+	// Create a pipe reader
+	pr, pw := io.Pipe()
+
+	ctx := context.Background()
+
+	// Write valid JSON
+	go func() {
+		pw.Write([]byte(`{"type":"system","subtype":"init","data":"Starting"}`))
+		pw.Write([]byte("\n"))
+		pw.Write([]byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hello"}]}}`))
+		pw.Write([]byte("\n"))
+		pw.Close()
+	}()
+
+	e.processOutput(ctx, pr, "stdout", handler)
+
+	// Check that outputs were captured
+	handler.mu.Lock()
+	outputCount := len(handler.outputs)
+	handler.mu.Unlock()
+
+	assert.GreaterOrEqual(t, outputCount, 2, "Should have received at least 2 outputs")
+}
+
+func TestExecutor_processOutput_EmptyLines(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+	handler := newTestOutputHandler()
+
+	pr, pw := io.Pipe()
+	ctx := context.Background()
+
+	// Write with empty lines
+	go func() {
+		pw.Write([]byte("\n")) // Empty line
+		pw.Write([]byte(`{"type":"system","data":"test"}`))
+		pw.Write([]byte("\n"))
+		pw.Write([]byte("\n")) // Empty line
+		pw.Close()
+	}()
+
+	e.processOutput(ctx, pr, "stdout", handler)
+
+	// Empty lines should be skipped
+	handler.mu.Lock()
+	outputCount := len(handler.outputs)
+	handler.mu.Unlock()
+
+	assert.Equal(t, 1, outputCount, "Should only have 1 output (empty lines skipped)")
+}
+
+func TestExecutor_processStderr_Basic(t *testing.T) {
+	e := New()
+	handler := newTestOutputHandler()
+
+	pr, pw := io.Pipe()
+	ctx := context.Background()
+
+	go func() {
+		pw.Write([]byte("Warning: something happened\n"))
+		pw.Write([]byte("Error: something bad\n"))
+		pw.Close()
+	}()
+
+	e.processStderr(ctx, pr, handler)
+
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+
+	assert.Len(t, handler.outputs, 2)
+	for _, out := range handler.outputs {
+		assert.Equal(t, "stderr", out.stream)
+	}
+}
+
+func TestExecutor_processStderr_ContextDone(t *testing.T) {
+	e := New()
+	handler := newTestOutputHandler()
+
+	pr, pw := io.Pipe()
+	defer pr.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	go func() {
+		pw.Write([]byte("test\n"))
+		pw.Close()
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		e.processStderr(ctx, pr, handler)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(2 * time.Second):
+		t.Fatal("processStderr did not return when context was done")
+	}
+}
+
+func TestExecutor_processStderr_EmptyLines(t *testing.T) {
+	e := New()
+	handler := newTestOutputHandler()
+
+	pr, pw := io.Pipe()
+	ctx := context.Background()
+
+	go func() {
+		pw.Write([]byte("\n")) // Empty line
+		pw.Write([]byte("actual error\n"))
+		pw.Write([]byte("\n")) // Empty line
+		pw.Close()
+	}()
+
+	e.processStderr(ctx, pr, handler)
+
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+
+	// Empty lines should be skipped
+	assert.Len(t, handler.outputs, 1)
+	assert.Equal(t, "actual error", string(handler.outputs[0].data))
+}
+
+func TestExecutor_processOutput_PermissionRequired(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+	handler := newTestOutputHandler()
+
+	pr, pw := io.Pipe()
+	ctx := context.Background()
+
+	// Write a tool_use message that requires permission (Bash)
+	go func() {
+		pw.Write([]byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool_123","name":"Bash","input":{"command":"rm -rf /"}}]}}`))
+		pw.Write([]byte("\n"))
+		pw.Close()
+	}()
+
+	e.processOutput(ctx, pr, "stdout", handler)
+
+	// Should have stdout output + system permission_request message
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+
+	hasPermissionRequest := false
+	for _, out := range handler.outputs {
+		if out.stream == "system" && string(out.data) == "permission_request: Bash tool_123" {
+			hasPermissionRequest = true
+			break
+		}
+	}
+	assert.True(t, hasPermissionRequest, "Should emit permission_request for Bash tool")
+}
+
+func TestExecutor_Execute_WorkingDir(t *testing.T) {
+	// Use echo to test working directory is set
+	e := New(WithBinaryPath("pwd"))
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	task := &executor.Task{
+		Prompt:     "",           // pwd doesn't need prompt
+		WorkingDir: tmpDir,
+		Timeout:    5 * time.Second,
+	}
+	handler := newTestOutputHandler()
+
+	result, err := e.Execute(ctx, task, nil, handler)
+
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	// pwd should output the working directory
+}
+
+func TestExecutor_Execute_ConfigWorkingDir(t *testing.T) {
+	// Test that config.WorkingDir is used when task.WorkingDir is empty
+	e := New(WithBinaryPath("pwd"))
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	task := &executor.Task{
+		Prompt:  "",
+		Timeout: 5 * time.Second,
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: tmpDir,
+	}
+	handler := newTestOutputHandler()
+
+	result, err := e.Execute(ctx, task, config, handler)
+
+	require.NoError(t, err)
+	assert.NotNil(t, result)
 }

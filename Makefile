@@ -1,5 +1,6 @@
 .PHONY: deps build test lint proto migrate dev clean help \
-	test-docker test-docker-v test-docker-pkg test-docker-root test-docker-coverage
+	test-docker test-docker-v test-docker-pkg test-docker-root test-docker-coverage \
+	test-integration
 
 # Go parameters
 GOCMD=go
@@ -164,6 +165,13 @@ test-docker-coverage:
 	docker run --rm -v "$(PWD)":/app marionette/test:latest go test -race -coverprofile=coverage.out ./pkg/agent/...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
+
+## test-integration: Run integration tests (requires CLAUDE_CODE_OAUTH_TOKEN)
+test-integration:
+	@if [ -z "$(CLAUDE_CODE_OAUTH_TOKEN)" ]; then \
+		echo "Warning: CLAUDE_CODE_OAUTH_TOKEN not set, tests will be skipped"; \
+	fi
+	$(GOTEST) -tags=integration -race -v -timeout=15m ./pkg/agent/executor/claude/...
 
 ## docker-build: Build Docker images
 docker-build:

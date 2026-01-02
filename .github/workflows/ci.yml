@@ -121,3 +121,44 @@ jobs:
           ./bin/server --help || true
           ./bin/agent --help || true
           ./bin/mctl --help || true
+
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    # Only run if CLAUDE_CODE_OAUTH_TOKEN secret is available
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    container:
+      image: golang:1.25-bookworm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install dependencies
+        run: |
+          apt-get update && apt-get install -y curl
+          # Install buf
+          curl -sSL https://github.com/bufbuild/buf/releases/latest/download/buf-Linux-x86_64 -o /usr/local/bin/buf
+          chmod +x /usr/local/bin/buf
+
+      - name: Install protoc plugins
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+      - name: Generate protobuf
+        run: buf generate
+
+      - name: Install Claude CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.claude/bin" >> $GITHUB_PATH
+
+      - name: Run integration tests
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          export PATH="$HOME/.claude/bin:$PATH"
+          go test -tags=integration -race -v -timeout=15m ./pkg/agent/executor/claude/...
