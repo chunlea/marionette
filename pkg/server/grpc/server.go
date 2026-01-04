@@ -43,6 +43,7 @@ type ServerOption func(*serverOptions)
 type serverOptions struct {
 	permissionManager core.PermissionManagerInterface
 	sessionManager    core.SessionManagerInterface
+	taskManager       core.TaskManagerInterface
 	connManager       *ConnectionManager
 }
 
@@ -57,6 +58,13 @@ func WithPermissionManager(pm core.PermissionManagerInterface) ServerOption {
 func WithSessionManager(sm core.SessionManagerInterface) ServerOption {
 	return func(o *serverOptions) {
 		o.sessionManager = sm
+	}
+}
+
+// WithTaskManager sets the task manager for handling task lifecycle events from runners.
+func WithTaskManager(tm core.TaskManagerInterface) ServerOption {
+	return func(o *serverOptions) {
+		o.taskManager = tm
 	}
 }
 
@@ -132,12 +140,24 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 		registry := core.NewRunnerRegistry(cfg.Store, tokenSvc, logger)
 
 		// Create runner manager for lifecycle management
-		runnerManager := core.NewRunnerManager(cfg.Store, connManager, logger)
+		runnerMgrOpts := []core.RunnerManagerOption{}
+		if srvOpts.taskManager != nil {
+			runnerMgrOpts = append(runnerMgrOpts, core.WithTaskManager(srvOpts.taskManager))
+		}
+		if srvOpts.sessionManager != nil {
+			runnerMgrOpts = append(runnerMgrOpts, core.WithSessionManager(srvOpts.sessionManager))
+		}
+		runnerManager := core.NewRunnerManager(cfg.Store, connManager, logger, runnerMgrOpts...)
 
 		// Create message router with optional managers
-		routerOpts := []MessageRouterOption{}
+		routerOpts := []MessageRouterOption{
+			WithMRStore(cfg.Store), // Store is always available in this block
+		}
 		if srvOpts.permissionManager != nil {
 			routerOpts = append(routerOpts, WithMRPermissionManager(srvOpts.permissionManager))
+		}
+		if srvOpts.taskManager != nil {
+			routerOpts = append(routerOpts, WithMRTaskManager(srvOpts.taskManager))
 		}
 		router := NewMessageRouter(logger, runnerManager, routerOpts...)
 
@@ -220,8 +240,26 @@ func (s *Server) Start() error {
 }
 
 // Shutdown gracefully shuts down the server.
-func (s *Server) Shutdown(_ context.Context) error {
+// If context expires before graceful shutdown completes, forces immediate stop.
+func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down gRPC server")
-	s.server.GracefulStop()
+
+	// GracefulStop waits for all active streams to complete.
+	// If there are long-running streams (like runner connections),
+	// it could wait indefinitely. Use a goroutine with context timeout.
+	done := make(chan struct{})
+	go func() {
+		s.server.GracefulStop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		s.logger.Info("gRPC server shutdown gracefully")
+	case <-ctx.Done():
+		s.logger.Warn("graceful shutdown timeout, forcing stop")
+		s.server.Stop()
+	}
+
 	return nil
 }
