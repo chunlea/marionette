@@ -218,6 +218,17 @@ func (e *Executor) buildArgs(task *executor.Task, config *executor.AgentConfig) 
 	args := []string{
 		"--output-format", "stream-json",
 		"--verbose",
+		"--permission-mode", "acceptEdits",
+	}
+
+	// Add working directory to allowed directories for write access
+	// This is required for Claude's sandbox to allow file writes
+	workDir := task.WorkingDir
+	if workDir == "" && config != nil {
+		workDir = config.WorkingDir
+	}
+	if workDir != "" {
+		args = append(args, "--add-dir", workDir)
 	}
 
 	// Add model if specified

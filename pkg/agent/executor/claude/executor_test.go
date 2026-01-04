@@ -61,8 +61,74 @@ func TestExecutor_buildArgs_Basic(t *testing.T) {
 	assert.Contains(t, args, "--output-format")
 	assert.Contains(t, args, "stream-json")
 	assert.Contains(t, args, "--verbose")
+	assert.Contains(t, args, "--permission-mode")
+	assert.Contains(t, args, "acceptEdits")
 	assert.Contains(t, args, "--print")
 	assert.Contains(t, args, "Hello, Claude!")
+}
+
+func TestExecutor_buildArgs_WithWorkingDir(t *testing.T) {
+	e := New()
+
+	task := &executor.Task{
+		Prompt:     "Test",
+		WorkingDir: "/workspace/project",
+	}
+
+	args := e.buildArgs(task, nil)
+
+	assert.Contains(t, args, "--add-dir")
+	assert.Contains(t, args, "/workspace/project")
+}
+
+func TestExecutor_buildArgs_WithWorkingDirFromConfig(t *testing.T) {
+	e := New()
+
+	task := &executor.Task{
+		Prompt: "Test",
+		// No WorkingDir in task
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: "/config/workspace",
+	}
+
+	args := e.buildArgs(task, config)
+
+	assert.Contains(t, args, "--add-dir")
+	assert.Contains(t, args, "/config/workspace")
+}
+
+func TestExecutor_buildArgs_TaskWorkingDirOverridesConfig(t *testing.T) {
+	e := New()
+
+	task := &executor.Task{
+		Prompt:     "Test",
+		WorkingDir: "/task/workspace",
+	}
+	config := &executor.AgentConfig{
+		WorkingDir: "/config/workspace",
+	}
+
+	args := e.buildArgs(task, config)
+
+	// Task WorkingDir should take precedence
+	assert.Contains(t, args, "--add-dir")
+	assert.Contains(t, args, "/task/workspace")
+	assert.NotContains(t, args, "/config/workspace")
+}
+
+func TestExecutor_buildArgs_NoWorkingDir(t *testing.T) {
+	e := New()
+
+	task := &executor.Task{
+		Prompt: "Test",
+		// No WorkingDir
+	}
+
+	args := e.buildArgs(task, nil)
+
+	// Should not contain --add-dir if no working dir
+	assert.NotContains(t, args, "--add-dir")
 }
 
 func TestExecutor_buildArgs_WithModel(t *testing.T) {
