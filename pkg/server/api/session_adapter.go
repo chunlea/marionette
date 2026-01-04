@@ -7,14 +7,24 @@ import (
 	"github.com/chunlea/marionette/pkg/store"
 )
 
+// SessionManagerInterface defines the methods needed from core.SessionManager.
+type SessionManagerInterface interface {
+	Create(ctx context.Context, opts core.CreateSessionOptions) (*store.Session, error)
+	Get(ctx context.Context, sessionID string) (*store.Session, error)
+	List(ctx context.Context, opts store.ListSessionsOptions) (*store.ListResult[store.Session], error)
+	Suspend(ctx context.Context, sessionID string, strategy string) error
+	Resume(ctx context.Context, sessionID string) error
+	Terminate(ctx context.Context, sessionID string) error
+}
+
 // SessionAdapter adapts core.SessionManager to api.SessionService.
 type SessionAdapter struct {
-	manager          *core.SessionManager
+	manager          SessionManagerInterface
 	workspaceManager core.WorkspaceManagerInterface
 }
 
 // NewSessionAdapter creates a new SessionAdapter.
-func NewSessionAdapter(manager *core.SessionManager, workspaceManager core.WorkspaceManagerInterface) *SessionAdapter {
+func NewSessionAdapter(manager SessionManagerInterface, workspaceManager core.WorkspaceManagerInterface) *SessionAdapter {
 	return &SessionAdapter{
 		manager:          manager,
 		workspaceManager: workspaceManager,

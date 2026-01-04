@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -96,10 +98,148 @@ func (m *mockWorkspaceManager) IsInUse(_ context.Context, _ string) (bool, error
 	return false, nil
 }
 
+// mockSessionManager implements SessionManagerInterface for testing.
+type mockSessionManager struct {
+	sessions       map[string]*store.Session
+	createErr      error
+	getErr         error
+	listErr        error
+	suspendErr     error
+	resumeErr      error
+	terminateErr   error
+	lastCreateOpts *core.CreateSessionOptions
+	lastListOpts   *store.ListSessionsOptions
+	lastSuspendStrategy string
+}
+
+func newMockSessionManager() *mockSessionManager {
+	return &mockSessionManager{
+		sessions: make(map[string]*store.Session),
+	}
+}
+
+func (m *mockSessionManager) Create(_ context.Context, opts core.CreateSessionOptions) (*store.Session, error) {
+	m.lastCreateOpts = &opts
+	if m.createErr != nil {
+		return nil, m.createErr
+	}
+	sessID := id.Session()
+
+	// Convert labels map to json.RawMessage
+	var labelsJSON json.RawMessage
+	if opts.Labels != nil {
+		labelsJSON, _ = json.Marshal(opts.Labels)
+	} else {
+		labelsJSON = json.RawMessage("{}")
+	}
+
+	sess := &store.Session{
+		ID:            sessID,
+		Agent:         opts.Agent,
+		Status:        "pending",
+		WorkspaceID:   opts.WorkspaceID,
+		LifecycleMode: opts.LifecycleMode,
+		NetworkPolicy: opts.NetworkPolicy,
+		AllowedHosts:  opts.AllowedHosts,
+		Labels:        labelsJSON,
+		IsBYOK:        opts.IsBYOK,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	if opts.Name != nil {
+		sess.Name = opts.Name
+	}
+	m.sessions[sessID] = sess
+	return sess, nil
+}
+
+func (m *mockSessionManager) Get(_ context.Context, sessionID string) (*store.Session, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return sess, nil
+}
+
+func (m *mockSessionManager) List(_ context.Context, opts store.ListSessionsOptions) (*store.ListResult[store.Session], error) {
+	m.lastListOpts = &opts
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var items []*store.Session
+	for _, sess := range m.sessions {
+		if len(opts.Status) > 0 {
+			found := false
+			for _, s := range opts.Status {
+				if sess.Status == s {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		items = append(items, sess)
+	}
+	return &store.ListResult[store.Session]{Items: items, TotalCount: int64(len(items))}, nil
+}
+
+func (m *mockSessionManager) Suspend(_ context.Context, sessionID string, strategy string) error {
+	m.lastSuspendStrategy = strategy
+	if m.suspendErr != nil {
+		return m.suspendErr
+	}
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	sess.Status = "suspended"
+	return nil
+}
+
+func (m *mockSessionManager) Resume(_ context.Context, sessionID string) error {
+	if m.resumeErr != nil {
+		return m.resumeErr
+	}
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	sess.Status = "resuming"
+	return nil
+}
+
+func (m *mockSessionManager) Terminate(_ context.Context, sessionID string) error {
+	if m.terminateErr != nil {
+		return m.terminateErr
+	}
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	sess.Status = "terminated"
+	return nil
+}
+
+// Verify mockSessionManager implements SessionManagerInterface.
+var _ SessionManagerInterface = (*mockSessionManager)(nil)
+
 func TestNewSessionAdapter(t *testing.T) {
-	adapter := NewSessionAdapter(nil, nil)
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
 	if adapter == nil {
 		t.Fatal("expected non-nil adapter")
+	}
+	if adapter.manager != sessMgr {
+		t.Error("expected session manager to be set")
+	}
+	if adapter.workspaceManager != wsMgr {
+		t.Error("expected workspace manager to be set")
 	}
 }
 
@@ -214,5 +354,345 @@ func TestSessionAdapter_ensureWorkspace_NonExistingWorkspace(t *testing.T) {
 	}
 }
 
-// Verify SessionAdapter implements SessionService interface
+func TestSessionAdapter_Create(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	opts := CreateSessionOptions{
+		Name:               "test-session",
+		Agent:              "claude",
+		LifecycleMode:      "on_demand",
+		IdleTimeoutSeconds: 3600,
+		NetworkPolicy:      "allow_list",
+		AllowedHosts:       []string{"github.com"},
+		Labels:             map[string]string{"env": "test"},
+	}
+
+	sess, err := adapter.Create(ctx, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sess == nil {
+		t.Fatal("expected non-nil session")
+	}
+	if sess.Agent != "claude" {
+		t.Errorf("expected agent 'claude', got %q", sess.Agent)
+	}
+
+	// Verify core options were set correctly
+	if sessMgr.lastCreateOpts == nil {
+		t.Fatal("expected lastCreateOpts to be set")
+	}
+	if sessMgr.lastCreateOpts.Name == nil || *sessMgr.lastCreateOpts.Name != "test-session" {
+		t.Error("expected Name to be set")
+	}
+	if sessMgr.lastCreateOpts.IdleTimeout == nil || *sessMgr.lastCreateOpts.IdleTimeout != 3600 {
+		t.Error("expected IdleTimeout to be set")
+	}
+}
+
+func TestSessionAdapter_Create_WithBYOK(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	opts := CreateSessionOptions{
+		Agent:  "claude",
+		APIKey: "sk-secret-key",
+	}
+
+	sess, err := adapter.Create(ctx, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !sess.IsBYOK {
+		t.Error("expected IsBYOK to be true")
+	}
+}
+
+func TestSessionAdapter_Create_WithAgentConfigID(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	opts := CreateSessionOptions{
+		Agent:         "claude",
+		AgentConfigID: "acfg_123",
+	}
+
+	_, err := adapter.Create(ctx, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if sessMgr.lastCreateOpts.AgentConfigID == nil || *sessMgr.lastCreateOpts.AgentConfigID != "acfg_123" {
+		t.Error("expected AgentConfigID to be set")
+	}
+}
+
+func TestSessionAdapter_Create_Error(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	sessMgr.createErr = errors.New("create error")
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	_, err := adapter.Create(ctx, CreateSessionOptions{Agent: "claude"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "create error" {
+		t.Errorf("expected 'create error', got %q", err.Error())
+	}
+}
+
+func TestSessionAdapter_Get(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	// Create a session first
+	sess, _ := adapter.Create(ctx, CreateSessionOptions{Agent: "claude", Name: "test"})
+
+	// Get it
+	got, err := adapter.Get(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != sess.ID {
+		t.Errorf("expected ID %q, got %q", sess.ID, got.ID)
+	}
+}
+
+func TestSessionAdapter_Get_NotFound(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	_, err := adapter.Get(ctx, "sess_nonexistent")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestSessionAdapter_Get_Error(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	sessMgr.getErr = errors.New("get error")
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	_, err := adapter.Get(ctx, "sess_123")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "get error" {
+		t.Errorf("expected 'get error', got %q", err.Error())
+	}
+}
+
+func TestSessionAdapter_List(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	// Create sessions
+	adapter.Create(ctx, CreateSessionOptions{Agent: "claude", Name: "session1"})
+	adapter.Create(ctx, CreateSessionOptions{Agent: "claude", Name: "session2"})
+
+	// List all
+	result, err := adapter.List(ctx, ListSessionsOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Items) != 2 {
+		t.Errorf("expected 2 sessions, got %d", len(result.Items))
+	}
+}
+
+func TestSessionAdapter_List_WithFilters(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	// List with filters
+	_, err := adapter.List(ctx, ListSessionsOptions{
+		Limit:  10,
+		Cursor: "cursor123",
+		Status: []string{"active"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify options were passed
+	if sessMgr.lastListOpts == nil {
+		t.Fatal("expected lastListOpts to be set")
+	}
+	if sessMgr.lastListOpts.Limit != 10 {
+		t.Errorf("expected Limit 10, got %d", sessMgr.lastListOpts.Limit)
+	}
+	if sessMgr.lastListOpts.Cursor != "cursor123" {
+		t.Errorf("expected Cursor 'cursor123', got %q", sessMgr.lastListOpts.Cursor)
+	}
+}
+
+func TestSessionAdapter_List_Error(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	sessMgr.listErr = errors.New("list error")
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	_, err := adapter.List(ctx, ListSessionsOptions{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "list error" {
+		t.Errorf("expected 'list error', got %q", err.Error())
+	}
+}
+
+func TestSessionAdapter_Suspend(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	// Create a session
+	sess, _ := adapter.Create(ctx, CreateSessionOptions{Agent: "claude"})
+
+	// Suspend it
+	err := adapter.Suspend(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify strategy was "terminate"
+	if sessMgr.lastSuspendStrategy != "terminate" {
+		t.Errorf("expected strategy 'terminate', got %q", sessMgr.lastSuspendStrategy)
+	}
+
+	// Verify status changed
+	if sessMgr.sessions[sess.ID].Status != "suspended" {
+		t.Errorf("expected status 'suspended', got %q", sessMgr.sessions[sess.ID].Status)
+	}
+}
+
+func TestSessionAdapter_Suspend_Error(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	sessMgr.suspendErr = errors.New("suspend error")
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	err := adapter.Suspend(ctx, "sess_123")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "suspend error" {
+		t.Errorf("expected 'suspend error', got %q", err.Error())
+	}
+}
+
+func TestSessionAdapter_Resume(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	// Create and suspend a session
+	sess, _ := adapter.Create(ctx, CreateSessionOptions{Agent: "claude"})
+	adapter.Suspend(ctx, sess.ID)
+
+	// Resume it
+	err := adapter.Resume(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify status changed
+	if sessMgr.sessions[sess.ID].Status != "resuming" {
+		t.Errorf("expected status 'resuming', got %q", sessMgr.sessions[sess.ID].Status)
+	}
+}
+
+func TestSessionAdapter_Resume_Error(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	sessMgr.resumeErr = errors.New("resume error")
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	err := adapter.Resume(ctx, "sess_123")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "resume error" {
+		t.Errorf("expected 'resume error', got %q", err.Error())
+	}
+}
+
+func TestSessionAdapter_Terminate(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	// Create a session
+	sess, _ := adapter.Create(ctx, CreateSessionOptions{Agent: "claude"})
+
+	// Terminate it
+	err := adapter.Terminate(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify status changed
+	if sessMgr.sessions[sess.ID].Status != "terminated" {
+		t.Errorf("expected status 'terminated', got %q", sessMgr.sessions[sess.ID].Status)
+	}
+}
+
+func TestSessionAdapter_Terminate_Error(t *testing.T) {
+	sessMgr := newMockSessionManager()
+	sessMgr.terminateErr = errors.New("terminate error")
+	wsMgr := newMockWorkspaceManager()
+	adapter := NewSessionAdapter(sessMgr, wsMgr)
+
+	ctx := context.Background()
+
+	err := adapter.Terminate(ctx, "sess_123")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "terminate error" {
+		t.Errorf("expected 'terminate error', got %q", err.Error())
+	}
+}
+
+// Verify SessionAdapter implements SessionService interface.
 var _ SessionService = (*SessionAdapter)(nil)

@@ -73,7 +73,7 @@ func TestTasksCreate(t *testing.T) {
 			} else {
 				SetClient(nil)
 			}
-			defer SetClient(nil)
+			defer ResetClient()
 
 			rootCmd.SetArgs(tt.args)
 			err := rootCmd.Execute()
@@ -135,7 +135,7 @@ func TestTasksList(t *testing.T) {
 			} else {
 				SetClient(nil)
 			}
-			defer SetClient(nil)
+			defer ResetClient()
 
 			rootCmd.SetArgs(tt.args)
 			err := rootCmd.Execute()
@@ -196,7 +196,7 @@ func TestTasksGet(t *testing.T) {
 			} else {
 				SetClient(nil)
 			}
-			defer SetClient(nil)
+			defer ResetClient()
 
 			rootCmd.SetArgs(tt.args)
 			err := rootCmd.Execute()
@@ -250,7 +250,7 @@ func TestTasksCancel(t *testing.T) {
 			} else {
 				SetClient(nil)
 			}
-			defer SetClient(nil)
+			defer ResetClient()
 
 			rootCmd.SetArgs(tt.args)
 			err := rootCmd.Execute()
@@ -276,7 +276,7 @@ func TestTasksLogs(t *testing.T) {
 		}, nil
 	}
 	SetClient(mock)
-	defer SetClient(nil)
+	defer ResetClient()
 
 	rootCmd.SetArgs([]string{"tasks", "logs", "task_test123"})
 	err := rootCmd.Execute()

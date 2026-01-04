@@ -3,17 +3,23 @@ package api
 import (
 	"context"
 
-	"github.com/chunlea/marionette/pkg/server/core"
 	"github.com/chunlea/marionette/pkg/store"
 )
 
+// PermissionManagerInterface defines the methods needed from core.PermissionManager.
+type PermissionManagerInterface interface {
+	Get(ctx context.Context, permID string) (*store.PermissionRequest, error)
+	List(ctx context.Context, opts store.ListPermissionRequestsOptions) (*store.ListResult[store.PermissionRequest], error)
+	Respond(ctx context.Context, permID string, approved bool, reason, respondedBy string) error
+}
+
 // PermissionAdapter adapts core.PermissionManager to api.PermissionService.
 type PermissionAdapter struct {
-	manager *core.PermissionManager
+	manager PermissionManagerInterface
 }
 
 // NewPermissionAdapter creates a new PermissionAdapter.
-func NewPermissionAdapter(manager *core.PermissionManager) *PermissionAdapter {
+func NewPermissionAdapter(manager PermissionManagerInterface) *PermissionAdapter {
 	return &PermissionAdapter{
 		manager: manager,
 	}

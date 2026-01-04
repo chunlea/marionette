@@ -30,9 +30,19 @@ var sessionsListFlags struct {
 // apiClient holds the client instance (set during command execution).
 var apiClient client.Client
 
+// clientWasSet tracks whether SetClient was called (for testing).
+var clientWasSet bool
+
 // SetClient sets the API client for commands (used in testing).
 func SetClient(c client.Client) {
 	apiClient = c
+	clientWasSet = true
+}
+
+// ResetClient resets the client state (used in testing).
+func ResetClient() {
+	apiClient = nil
+	clientWasSet = false
 }
 
 var sessionsCmd = &cobra.Command{

@@ -9,12 +9,15 @@ import (
 	"github.com/chunlea/marionette/pkg/store"
 )
 
-// mockPermissionManager implements a minimal interface for testing PermissionAdapter.
+// mockPermissionManager implements PermissionManagerInterface for testing.
 type mockPermissionManager struct {
 	permissions map[string]*store.PermissionRequest
 	getErr      error
 	listErr     error
 	respondErr  error
+
+	// Track calls for verification
+	lastListOpts *store.ListPermissionRequestsOptions
 }
 
 func newMockPermissionManager() *mockPermissionManager {
@@ -23,7 +26,7 @@ func newMockPermissionManager() *mockPermissionManager {
 	}
 }
 
-func (m *mockPermissionManager) Get(ctx context.Context, id string) (*store.PermissionRequest, error) {
+func (m *mockPermissionManager) Get(_ context.Context, id string) (*store.PermissionRequest, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
@@ -34,7 +37,9 @@ func (m *mockPermissionManager) Get(ctx context.Context, id string) (*store.Perm
 	return perm, nil
 }
 
-func (m *mockPermissionManager) List(ctx context.Context, opts store.ListPermissionRequestsOptions) (*store.ListResult[store.PermissionRequest], error) {
+func (m *mockPermissionManager) List(_ context.Context, opts store.ListPermissionRequestsOptions) (*store.ListResult[store.PermissionRequest], error) {
+	m.lastListOpts = &opts
+
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -64,7 +69,7 @@ func (m *mockPermissionManager) List(ctx context.Context, opts store.ListPermiss
 	return &store.ListResult[store.PermissionRequest]{Items: items}, nil
 }
 
-func (m *mockPermissionManager) Respond(ctx context.Context, permID string, approved bool, reason, respondedBy string) error {
+func (m *mockPermissionManager) Respond(_ context.Context, permID string, approved bool, reason, respondedBy string) error {
 	if m.respondErr != nil {
 		return m.respondErr
 	}
@@ -86,10 +91,17 @@ func (m *mockPermissionManager) Respond(ctx context.Context, permID string, appr
 	return nil
 }
 
+// Verify mockPermissionManager implements PermissionManagerInterface.
+var _ PermissionManagerInterface = (*mockPermissionManager)(nil)
+
 func TestNewPermissionAdapter(t *testing.T) {
-	adapter := NewPermissionAdapter(nil)
+	mock := newMockPermissionManager()
+	adapter := NewPermissionAdapter(mock)
 	if adapter == nil {
 		t.Fatal("expected non-nil adapter")
+	}
+	if adapter.manager != mock {
+		t.Error("expected manager to be set")
 	}
 }
 
@@ -104,8 +116,8 @@ func TestPermissionAdapter_Get(t *testing.T) {
 		Status:    "pending",
 	}
 
-	// Create adapter using a wrapper that implements the interface
-	adapter := &testPermissionAdapter{mock: mock}
+	// Use the actual PermissionAdapter
+	adapter := NewPermissionAdapter(mock)
 
 	ctx := context.Background()
 
@@ -124,7 +136,7 @@ func TestPermissionAdapter_Get(t *testing.T) {
 
 func TestPermissionAdapter_Get_NotFound(t *testing.T) {
 	mock := newMockPermissionManager()
-	adapter := &testPermissionAdapter{mock: mock}
+	adapter := NewPermissionAdapter(mock)
 
 	ctx := context.Background()
 
@@ -132,6 +144,22 @@ func TestPermissionAdapter_Get_NotFound(t *testing.T) {
 	_, err := adapter.Get(ctx, "perm_nonexistent")
 	if err == nil {
 		t.Fatal("expected error for non-existent permission")
+	}
+}
+
+func TestPermissionAdapter_Get_Error(t *testing.T) {
+	mock := newMockPermissionManager()
+	mock.getErr = errors.New("database error")
+	adapter := NewPermissionAdapter(mock)
+
+	ctx := context.Background()
+
+	_, err := adapter.Get(ctx, "perm_123")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "database error" {
+		t.Errorf("expected 'database error', got %q", err.Error())
 	}
 }
 
@@ -150,7 +178,7 @@ func TestPermissionAdapter_List(t *testing.T) {
 		Status:    "approved",
 	}
 
-	adapter := &testPermissionAdapter{mock: mock}
+	adapter := NewPermissionAdapter(mock)
 
 	ctx := context.Background()
 
@@ -173,6 +201,68 @@ func TestPermissionAdapter_List(t *testing.T) {
 	}
 }
 
+func TestPermissionAdapter_List_WithFilters(t *testing.T) {
+	mock := newMockPermissionManager()
+	mock.permissions["perm_1"] = &store.PermissionRequest{
+		ID:        "perm_1",
+		SessionID: "sess_456",
+		TaskID:    "task_789",
+		Status:    "pending",
+	}
+
+	adapter := NewPermissionAdapter(mock)
+
+	ctx := context.Background()
+
+	// Test List with SessionID and TaskID filters
+	_, err := adapter.List(ctx, ListPermissionsOptions{
+		SessionID: "sess_456",
+		TaskID:    "task_789",
+		Limit:     10,
+		Cursor:    "cursor123",
+		RiskLevel: []string{"high"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify options were passed correctly
+	if mock.lastListOpts == nil {
+		t.Fatal("expected lastListOpts to be set")
+	}
+	if mock.lastListOpts.SessionID == nil || *mock.lastListOpts.SessionID != "sess_456" {
+		t.Error("expected SessionID filter to be set")
+	}
+	if mock.lastListOpts.TaskID == nil || *mock.lastListOpts.TaskID != "task_789" {
+		t.Error("expected TaskID filter to be set")
+	}
+	if mock.lastListOpts.Limit != 10 {
+		t.Errorf("expected Limit 10, got %d", mock.lastListOpts.Limit)
+	}
+	if mock.lastListOpts.Cursor != "cursor123" {
+		t.Errorf("expected Cursor 'cursor123', got %q", mock.lastListOpts.Cursor)
+	}
+	if len(mock.lastListOpts.RiskLevel) != 1 || mock.lastListOpts.RiskLevel[0] != "high" {
+		t.Error("expected RiskLevel filter to be set")
+	}
+}
+
+func TestPermissionAdapter_List_Error(t *testing.T) {
+	mock := newMockPermissionManager()
+	mock.listErr = errors.New("database error")
+	adapter := NewPermissionAdapter(mock)
+
+	ctx := context.Background()
+
+	_, err := adapter.List(ctx, ListPermissionsOptions{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "database error" {
+		t.Errorf("expected 'database error', got %q", err.Error())
+	}
+}
+
 func TestPermissionAdapter_Approve(t *testing.T) {
 	mock := newMockPermissionManager()
 	mock.permissions["perm_123"] = &store.PermissionRequest{
@@ -182,7 +272,7 @@ func TestPermissionAdapter_Approve(t *testing.T) {
 		Status:    "pending",
 	}
 
-	adapter := &testPermissionAdapter{mock: mock}
+	adapter := NewPermissionAdapter(mock)
 
 	ctx := context.Background()
 
@@ -200,6 +290,25 @@ func TestPermissionAdapter_Approve(t *testing.T) {
 	if perm.ResponseReason == nil || *perm.ResponseReason != "Looks safe" {
 		t.Error("expected reason to be set")
 	}
+	if perm.RespondedBy == nil || *perm.RespondedBy != "api" {
+		t.Error("expected respondedBy to be 'api'")
+	}
+}
+
+func TestPermissionAdapter_Approve_Error(t *testing.T) {
+	mock := newMockPermissionManager()
+	mock.respondErr = errors.New("respond error")
+	adapter := NewPermissionAdapter(mock)
+
+	ctx := context.Background()
+
+	err := adapter.Approve(ctx, "perm_123", ApproveOptions{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "respond error" {
+		t.Errorf("expected 'respond error', got %q", err.Error())
+	}
 }
 
 func TestPermissionAdapter_Deny(t *testing.T) {
@@ -211,7 +320,7 @@ func TestPermissionAdapter_Deny(t *testing.T) {
 		Status:    "pending",
 	}
 
-	adapter := &testPermissionAdapter{mock: mock}
+	adapter := NewPermissionAdapter(mock)
 
 	ctx := context.Background()
 
@@ -229,45 +338,26 @@ func TestPermissionAdapter_Deny(t *testing.T) {
 	if perm.ResponseReason == nil || *perm.ResponseReason != "Too risky" {
 		t.Error("expected reason to be set")
 	}
-}
-
-// testPermissionAdapter is a test adapter that uses the mock directly.
-type testPermissionAdapter struct {
-	mock *mockPermissionManager
-}
-
-func (a *testPermissionAdapter) Get(ctx context.Context, id string) (*store.PermissionRequest, error) {
-	return a.mock.Get(ctx, id)
-}
-
-func (a *testPermissionAdapter) List(ctx context.Context, opts ListPermissionsOptions) (*store.ListResult[store.PermissionRequest], error) {
-	coreOpts := store.ListPermissionRequestsOptions{
-		BaseListOptions: store.BaseListOptions{
-			Limit:  opts.Limit,
-			Cursor: opts.Cursor,
-		},
-		Status:    opts.Status,
-		RiskLevel: opts.RiskLevel,
+	if perm.RespondedBy == nil || *perm.RespondedBy != "api" {
+		t.Error("expected respondedBy to be 'api'")
 	}
-	if opts.SessionID != "" {
-		coreOpts.SessionID = &opts.SessionID
+}
+
+func TestPermissionAdapter_Deny_Error(t *testing.T) {
+	mock := newMockPermissionManager()
+	mock.respondErr = errors.New("respond error")
+	adapter := NewPermissionAdapter(mock)
+
+	ctx := context.Background()
+
+	err := adapter.Deny(ctx, "perm_123", DenyOptions{})
+	if err == nil {
+		t.Fatal("expected error")
 	}
-	if opts.TaskID != "" {
-		coreOpts.TaskID = &opts.TaskID
+	if err.Error() != "respond error" {
+		t.Errorf("expected 'respond error', got %q", err.Error())
 	}
-	return a.mock.List(ctx, coreOpts)
 }
 
-func (a *testPermissionAdapter) Approve(ctx context.Context, id string, opts ApproveOptions) error {
-	return a.mock.Respond(ctx, id, true, opts.Reason, "api")
-}
-
-func (a *testPermissionAdapter) Deny(ctx context.Context, id string, opts DenyOptions) error {
-	return a.mock.Respond(ctx, id, false, opts.Reason, "api")
-}
-
-// Verify testPermissionAdapter implements PermissionService interface
-var _ PermissionService = (*testPermissionAdapter)(nil)
-
-// Verify PermissionAdapter implements PermissionService interface
+// Verify PermissionAdapter implements PermissionService interface.
 var _ PermissionService = (*PermissionAdapter)(nil)

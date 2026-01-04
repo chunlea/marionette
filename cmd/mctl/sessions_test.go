@@ -78,7 +78,7 @@ func TestSessionsCreate(t *testing.T) {
 			oldGetOutput := getOutput
 			defer func() {
 				// Reset global state
-				SetClient(nil)
+				ResetClient()
 				// Restore getOutput - can't easily do this, so we skip
 				_ = oldGetOutput
 			}()
@@ -150,7 +150,7 @@ func TestSessionsList(t *testing.T) {
 			} else {
 				SetClient(nil)
 			}
-			defer SetClient(nil)
+			defer ResetClient()
 
 			rootCmd.SetArgs(tt.args)
 			err := rootCmd.Execute()
@@ -212,7 +212,7 @@ func TestSessionsGet(t *testing.T) {
 			} else {
 				SetClient(nil)
 			}
-			defer SetClient(nil)
+			defer ResetClient()
 
 			rootCmd.SetArgs(tt.args)
 			err := rootCmd.Execute()
@@ -266,7 +266,7 @@ func TestSessionsSuspend(t *testing.T) {
 			} else {
 				SetClient(nil)
 			}
-			defer SetClient(nil)
+			defer ResetClient()
 
 			rootCmd.SetArgs(tt.args)
 			err := rootCmd.Execute()
@@ -287,7 +287,7 @@ func TestSessionsResume(t *testing.T) {
 		return nil
 	}
 	SetClient(mock)
-	defer SetClient(nil)
+	defer ResetClient()
 
 	rootCmd.SetArgs([]string{"sessions", "resume", "sess_test123"})
 	err := rootCmd.Execute()
@@ -301,7 +301,7 @@ func TestSessionsTerminate(t *testing.T) {
 		return nil
 	}
 	SetClient(mock)
-	defer SetClient(nil)
+	defer ResetClient()
 
 	rootCmd.SetArgs([]string{"sessions", "terminate", "sess_test123"})
 	err := rootCmd.Execute()
@@ -323,7 +323,7 @@ func TestSessionsOutputFormat(t *testing.T) {
 		return session, nil
 	}
 	SetClient(mock)
-	defer SetClient(nil)
+	defer ResetClient()
 
 	// Test JSON output
 	buf := &bytes.Buffer{}
