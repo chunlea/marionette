@@ -78,7 +78,7 @@ func TestNewTaskRunner(t *testing.T) {
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 	statusSetter := &mockStatusSetter{}
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, nil, logger)
 
 	assert.NotNil(t, runner)
 	assert.Equal(t, sender, runner.sender)
@@ -97,7 +97,7 @@ func TestTaskRunner_Execute_SessionNotAttached(t *testing.T) {
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 	statusSetter := &mockStatusSetter{}
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, nil, logger)
 
 	cmd := &pb.ExecuteTask{
 		TaskId:    "task_123",
@@ -143,7 +143,7 @@ func TestTaskRunner_Execute_Success(t *testing.T) {
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 	statusSetter := &mockStatusSetter{}
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, nil, logger)
 
 	// Attach session first
 	attachCmd := &pb.AttachSession{
@@ -204,7 +204,7 @@ func TestTaskRunner_Execute_ExecutorError(t *testing.T) {
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 	statusSetter := &mockStatusSetter{}
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, nil, logger)
 
 	// Attach session first
 	attachCmd := &pb.AttachSession{
@@ -241,7 +241,7 @@ func TestTaskRunner_Execute_NilStatusSetter(t *testing.T) {
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
 	// Create runner without status setter
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session first
 	attachCmd := &pb.AttachSession{
@@ -274,7 +274,7 @@ func TestTaskRunner_HandleOutput_NoActiveTask(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Should not panic when no active task
 	runner.HandleOutput("stdout", []byte("test data"))
@@ -294,7 +294,7 @@ func TestTaskRunner_HandleOutput_WithActiveTask(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -331,7 +331,7 @@ func TestTaskRunner_HandlePermissionRequest_NoActiveTask(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	req := &executor.PermissionRequest{
 		ID:        "perm_123",
@@ -374,7 +374,7 @@ func TestTaskRunner_HandlePermissionRequest_Approved(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -440,7 +440,7 @@ func TestTaskRunner_HandlePermissionRequest_Denied(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -506,7 +506,7 @@ func TestTaskRunner_HandlePermissionRequest_ContextCancelled(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -555,7 +555,7 @@ func TestTaskRunner_HandlePermissionResponse_UnknownRequest(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Handle response for unknown request - should not error
 	err := runner.HandlePermissionResponse(context.Background(), &pb.ApprovePermission{
@@ -593,7 +593,7 @@ func TestTaskRunner_HandlePermissionResponse_ChannelFull(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -662,7 +662,7 @@ func TestTaskRunner_HandlePermissionRequest_GeneratesID(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -731,7 +731,7 @@ func TestTaskRunner_Execute_WithAgentConfig(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session with agent config
 	attachCmd := &pb.AttachSession{

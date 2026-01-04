@@ -30,6 +30,7 @@ type TaskRunner struct {
 	workspaceMgr *WorkspaceManager
 	cmdHandler   *DefaultCommandHandler
 	statusSetter StatusSetter
+	logStreamer  LogStreamer
 	logger       *zap.Logger
 
 	// Permission response channels (per request)
@@ -48,6 +49,7 @@ func NewTaskRunner(
 	wsMgr *WorkspaceManager,
 	cmdHandler *DefaultCommandHandler,
 	statusSetter StatusSetter,
+	logStreamer LogStreamer,
 	logger *zap.Logger,
 ) *TaskRunner {
 	return &TaskRunner{
@@ -56,6 +58,7 @@ func NewTaskRunner(
 		workspaceMgr:  wsMgr,
 		cmdHandler:    cmdHandler,
 		statusSetter:  statusSetter,
+		logStreamer:   logStreamer,
 		logger:        logger.Named("task-runner"),
 		permResponses: make(map[string]chan *pb.ApprovePermission),
 	}
@@ -119,6 +122,30 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 		},
 	}
 	r.sender.Send(acceptedMsg)
+
+	// Start log streaming if available
+	if r.logStreamer != nil {
+		init := &pb.StreamLogsInit{
+			SessionId: cmd.SessionId,
+			TaskId:    cmd.TaskId,
+			RunId:     cmd.RunId,
+		}
+		if err := r.logStreamer.Start(ctx, init); err != nil {
+			r.logger.Warn("failed to start log stream", zap.Error(err))
+			// Continue without log streaming - not a fatal error
+		} else {
+			defer func() {
+				if resp, err := r.logStreamer.Close(); err != nil {
+					r.logger.Warn("failed to close log stream", zap.Error(err))
+				} else {
+					r.logger.Debug("log stream closed",
+						zap.Int64("logs_received", resp.LogsReceived),
+						zap.Int64("logs_stored", resp.LogsStored),
+					)
+				}
+			}()
+		}
+	}
 
 	// Get workspace path - resolve relative path to absolute
 	workspacePath := filepath.Join(r.workspaceMgr.BaseDir(), session.WorkspacePath)
@@ -190,8 +217,7 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 }
 
 // HandleOutput implements executor.OutputHandler.
-// For now, logs are handled locally. Log streaming via StreamLogs RPC
-// will be implemented in a follow-up.
+// Sends logs to the server via StreamLogs RPC if available.
 func (r *TaskRunner) HandleOutput(stream string, data []byte) {
 	r.mu.Lock()
 	task := r.currentTask
@@ -201,13 +227,42 @@ func (r *TaskRunner) HandleOutput(stream string, data []byte) {
 		return
 	}
 
-	// Log full stream-json output at debug level
-	// TODO: Implement log streaming via StreamLogs RPC
+	// Log at debug level locally
 	r.logger.Debug("executor output",
 		zap.String("task_id", task.TaskId),
 		zap.String("stream", stream),
 		zap.ByteString("data", data),
 	)
+
+	// Send to server if log streaming is active
+	if r.logStreamer != nil && r.logStreamer.IsActive() {
+		entry := &pb.LogEntry{
+			TaskId:    task.TaskId,
+			RunId:     task.RunId,
+			SessionId: task.SessionId,
+			Stream:    stream,
+			Level:     streamToLevel(stream),
+			Content:   string(data),
+		}
+		if err := r.logStreamer.Send(entry); err != nil {
+			r.logger.Warn("failed to send log entry",
+				zap.Error(err),
+				zap.String("stream", stream),
+			)
+		}
+	}
+}
+
+// streamToLevel converts a stream name to a log level.
+func streamToLevel(stream string) string {
+	switch stream {
+	case "stderr":
+		return "error"
+	case "system":
+		return "info"
+	default:
+		return "info"
+	}
 }
 
 // HandlePermissionRequest implements executor.OutputHandler.

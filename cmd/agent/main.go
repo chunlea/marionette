@@ -91,8 +91,11 @@ func main() {
 	// Start heartbeat loop (created early so TaskRunner can update status)
 	hbLoop := agent.NewHeartbeatLoop(client, cfg.Heartbeat, logger)
 
-	// Create task runner (uses controlChannel to send messages, hbLoop for status updates)
-	taskRunner := agent.NewTaskRunner(controlChannel, claudeExec, workspaceMgr, cmdHandler, hbLoop, logger)
+	// Create log streamer for sending logs to server
+	logStreamer := agent.NewGRPCLogStreamer(client.GRPCClient(), client.RunnerID(), logger)
+
+	// Create task runner (uses controlChannel to send messages, hbLoop for status updates, logStreamer for logs)
+	taskRunner := agent.NewTaskRunner(controlChannel, claudeExec, workspaceMgr, cmdHandler, hbLoop, logStreamer, logger)
 
 	// Wire up callbacks
 	cmdHandler.OnExecuteTask = taskRunner.Execute
