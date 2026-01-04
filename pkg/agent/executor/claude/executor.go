@@ -328,9 +328,21 @@ func (e *Executor) processOutput(ctx context.Context, r io.Reader, stream string
 						Action:    event.ToolUse.Input,
 						RiskLevel: executor.RiskMedium,
 					}
-					// Note: In a full implementation, we would block here
-					// waiting for permission. For now, we just log it.
-					handler.HandleOutput("system", []byte(fmt.Sprintf("permission_request: %s %s", req.Tool, req.ID)))
+
+					// Send permission request and block until approved/denied
+					approved, err := handler.HandlePermissionRequest(ctx, req)
+					if err != nil {
+						handler.HandleOutput("system", []byte(fmt.Sprintf("permission_request_error: %s %v", req.ID, err)))
+						return // Context cancelled or other error - stop processing
+					}
+					if !approved {
+						handler.HandleOutput("system", []byte(fmt.Sprintf("permission_denied: %s %s", req.Tool, req.ID)))
+						// Note: With --permission-mode acceptEdits, Claude has already executed the tool.
+						// Denial here is for audit/tracking purposes. Future: use a permission mode
+						// that actually pauses Claude until approval.
+					} else {
+						handler.HandleOutput("system", []byte(fmt.Sprintf("permission_approved: %s %s", req.Tool, req.ID)))
+					}
 				}
 			}
 		}
