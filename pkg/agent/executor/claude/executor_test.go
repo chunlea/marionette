@@ -2,6 +2,10 @@ package claude
 
 import (
 	"context"
+	"errors"
+	"io"
+	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +19,11 @@ import (
 type testOutputHandler struct {
 	mu      sync.Mutex
 	outputs []outputRecord
+
+	// Permission request tracking
+	permissionRequests []*executor.PermissionRequest
+	permissionApprove  bool
+	permissionErr      error
 }
 
 type outputRecord struct {
@@ -23,7 +32,9 @@ type outputRecord struct {
 }
 
 func newTestOutputHandler() *testOutputHandler {
-	return &testOutputHandler{}
+	return &testOutputHandler{
+		permissionApprove: true, // Default to auto-approve
+	}
 }
 
 func (h *testOutputHandler) HandleOutput(stream string, data []byte) {
@@ -32,8 +43,23 @@ func (h *testOutputHandler) HandleOutput(stream string, data []byte) {
 	h.outputs = append(h.outputs, outputRecord{stream: stream, data: append([]byte{}, data...)})
 }
 
-func (h *testOutputHandler) HandlePermissionRequest(_ context.Context, _ *executor.PermissionRequest) (bool, error) {
-	return true, nil // Auto-approve for tests
+func (h *testOutputHandler) HandlePermissionRequest(_ context.Context, req *executor.PermissionRequest) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.permissionRequests = append(h.permissionRequests, req)
+	return h.permissionApprove, h.permissionErr
+}
+
+func (h *testOutputHandler) GetPermissionRequests() []*executor.PermissionRequest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.permissionRequests
+}
+
+func (h *testOutputHandler) GetOutputs() []outputRecord {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.outputs
 }
 
 func TestExecutor_Name(t *testing.T) {
@@ -384,4 +410,408 @@ func TestPermissionToolNames(t *testing.T) {
 	assert.True(t, PermissionToolNames["Edit"])
 	assert.False(t, PermissionToolNames["Read"])
 	assert.False(t, PermissionToolNames["nonexistent"])
+}
+
+func TestExecutor_processOutput_PermissionRequest(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+
+	ctx := context.Background()
+	handler := newTestOutputHandler()
+
+	// Simulate Claude output with a tool_use event for Bash (permission required)
+	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"Bash","input":"{\"command\":\"ls -la\"}"}]}}`
+
+	reader := strings.NewReader(toolUseJSON + "\n")
+	e.processOutput(ctx, reader, "stdout", handler)
+
+	// Verify permission request was made
+	requests := handler.GetPermissionRequests()
+	require.Len(t, requests, 1)
+	assert.Equal(t, "toolu_123", requests[0].ID)
+	assert.Equal(t, "Bash", requests[0].Tool)
+	assert.Contains(t, requests[0].Action, "ls -la")
+	assert.Equal(t, executor.RiskMedium, requests[0].RiskLevel)
+}
+
+func TestExecutor_processOutput_PermissionApproved(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+
+	ctx := context.Background()
+	handler := newTestOutputHandler()
+	handler.permissionApprove = true
+
+	// Simulate Claude output with a tool_use event
+	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_456","name":"Write","input":"{\"file_path\":\"/tmp/test.txt\"}"}]}}`
+
+	reader := strings.NewReader(toolUseJSON + "\n")
+	e.processOutput(ctx, reader, "stdout", handler)
+
+	// Verify permission was approved
+	outputs := handler.GetOutputs()
+	found := false
+	for _, o := range outputs {
+		if strings.Contains(string(o.data), "permission_approved: Write toolu_456") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Should emit permission_approved system message")
+}
+
+func TestExecutor_processOutput_PermissionDenied(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+
+	ctx := context.Background()
+	handler := newTestOutputHandler()
+	handler.permissionApprove = false
+
+	// Simulate Claude output with a tool_use event
+	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_789","name":"Edit","input":"{\"file_path\":\"/etc/passwd\"}"}]}}`
+
+	reader := strings.NewReader(toolUseJSON + "\n")
+	e.processOutput(ctx, reader, "stdout", handler)
+
+	// Verify permission was denied
+	outputs := handler.GetOutputs()
+	found := false
+	for _, o := range outputs {
+		if strings.Contains(string(o.data), "permission_denied: Edit toolu_789") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Should emit permission_denied system message")
+}
+
+func TestExecutor_processOutput_PermissionError(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+
+	ctx := context.Background()
+	handler := newTestOutputHandler()
+	handler.permissionErr = errors.New("context canceled")
+
+	// Simulate Claude output with a tool_use event
+	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_err","name":"Bash","input":"{}"}]}}`
+
+	reader := strings.NewReader(toolUseJSON + "\n")
+	e.processOutput(ctx, reader, "stdout", handler)
+
+	// Verify error message was emitted
+	outputs := handler.GetOutputs()
+	found := false
+	for _, o := range outputs {
+		if strings.Contains(string(o.data), "permission_request_error") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Should emit permission_request_error system message")
+}
+
+func TestExecutor_processOutput_NoPermissionForReadTools(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+
+	ctx := context.Background()
+	handler := newTestOutputHandler()
+
+	// Simulate Claude output with a tool_use event for Read (no permission required)
+	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":"{\"file_path\":\"/tmp/test.txt\"}"}]}}`
+
+	reader := strings.NewReader(toolUseJSON + "\n")
+	e.processOutput(ctx, reader, "stdout", handler)
+
+	// Verify no permission request was made
+	requests := handler.GetPermissionRequests()
+	assert.Len(t, requests, 0, "Read tool should not require permission")
+}
+
+func TestExecutor_processOutput_MultipleToolUses(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+
+	ctx := context.Background()
+	handler := newTestOutputHandler()
+	handler.permissionApprove = true
+
+	// Simulate multiple tool uses - one requiring permission, one not
+	bashJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":"{}"}]}}`
+	readJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Read","input":"{}"}]}}`
+	writeJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_3","name":"Write","input":"{}"}]}}`
+
+	reader := strings.NewReader(bashJSON + "\n" + readJSON + "\n" + writeJSON + "\n")
+	e.processOutput(ctx, reader, "stdout", handler)
+
+	// Verify only Bash and Write triggered permission requests
+	requests := handler.GetPermissionRequests()
+	require.Len(t, requests, 2)
+	assert.Equal(t, "Bash", requests[0].Tool)
+	assert.Equal(t, "Write", requests[1].Tool)
+}
+
+func TestExecutor_processOutput_ContextCanceled(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	handler := newTestOutputHandler()
+
+	// Create a pipe - we'll close writer to trigger EOF
+	reader, writer := io.Pipe()
+
+	// This should return when we cancel context and close the writer
+	done := make(chan struct{})
+	go func() {
+		e.processOutput(ctx, reader, "stdout", handler)
+		close(done)
+	}()
+
+	// Give the goroutine time to start
+	time.Sleep(10 * time.Millisecond)
+
+	// Cancel context and close writer to unblock the scanner
+	cancel()
+	_ = writer.Close()
+
+	select {
+	case <-done:
+		// Good - processOutput returned
+		_ = reader.Close()
+	case <-time.After(1 * time.Second):
+		_ = reader.Close()
+		_ = writer.Close()
+		t.Fatal("processOutput did not return after context cancellation and pipe close")
+	}
+}
+
+func TestExecutor_processOutput_PermissionRequestStopsOnError(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+
+	// Use a cancelable context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	handler := newTestOutputHandler()
+	handler.permissionErr = context.Canceled
+
+	// Simulate two tool uses that require permission
+	// After the first error, processing should stop
+	bashJSON1 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":"{}"}]}}`
+	bashJSON2 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":"{}"}]}}`
+
+	reader := strings.NewReader(bashJSON1 + "\n" + bashJSON2 + "\n")
+	e.processOutput(ctx, reader, "stdout", handler)
+
+	// Should only have one permission request since processing stops on error
+	requests := handler.GetPermissionRequests()
+	assert.Len(t, requests, 1, "Processing should stop after permission error")
+}
+
+func TestExecutor_processStderr(t *testing.T) {
+	e := New()
+
+	ctx := context.Background()
+	handler := newTestOutputHandler()
+
+	// Simulate stderr output
+	stderrContent := "Error: something went wrong\nWarning: deprecated feature\n"
+	reader := strings.NewReader(stderrContent)
+
+	e.processStderr(ctx, reader, handler)
+
+	// Verify stderr outputs were captured
+	outputs := handler.GetOutputs()
+	require.Len(t, outputs, 2)
+	assert.Equal(t, "stderr", outputs[0].stream)
+	assert.Contains(t, string(outputs[0].data), "Error: something went wrong")
+	assert.Equal(t, "stderr", outputs[1].stream)
+	assert.Contains(t, string(outputs[1].data), "Warning: deprecated feature")
+}
+
+func TestExecutor_processStderr_EmptyLines(t *testing.T) {
+	e := New()
+
+	ctx := context.Background()
+	handler := newTestOutputHandler()
+
+	// Simulate stderr with empty lines
+	stderrContent := "Error message\n\n\nAnother error\n"
+	reader := strings.NewReader(stderrContent)
+
+	e.processStderr(ctx, reader, handler)
+
+	// Only non-empty lines should be captured
+	outputs := handler.GetOutputs()
+	require.Len(t, outputs, 2)
+	assert.Contains(t, string(outputs[0].data), "Error message")
+	assert.Contains(t, string(outputs[1].data), "Another error")
+}
+
+func TestExecutor_processStderr_ContextCanceled(t *testing.T) {
+	e := New()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	handler := newTestOutputHandler()
+
+	// Create a pipe
+	reader, writer := io.Pipe()
+
+	done := make(chan struct{})
+	go func() {
+		e.processStderr(ctx, reader, handler)
+		close(done)
+	}()
+
+	// Give the goroutine time to start
+	time.Sleep(10 * time.Millisecond)
+
+	// Cancel context and close writer
+	cancel()
+	_ = writer.Close()
+
+	select {
+	case <-done:
+		_ = reader.Close()
+	case <-time.After(1 * time.Second):
+		_ = reader.Close()
+		_ = writer.Close()
+		t.Fatal("processStderr did not return after context cancellation")
+	}
+}
+
+func TestExecutor_Kill_WhileRunning(t *testing.T) {
+	e := New()
+
+	// Simulate a running state with a real cancelFunc and a dummy cmd
+	// Note: Kill returns early if cmd is nil (see executor.go:387)
+	ctx, cancel := context.WithCancel(context.Background())
+	dummyCmd := exec.Command("echo", "test")
+
+	e.mu.Lock()
+	e.running = true
+	e.cancelFunc = cancel
+	e.cmd = dummyCmd
+	e.mu.Unlock()
+
+	// Kill should cancel the context
+	err := e.Kill()
+	// Kill on a non-started process returns an error, which is expected
+	// The important thing is that the context was canceled
+	_ = err
+
+	// Verify context was canceled
+	select {
+	case <-ctx.Done():
+		// Good - context was canceled
+	default:
+		t.Fatal("Kill did not cancel context")
+	}
+
+	// Cleanup
+	e.mu.Lock()
+	e.running = false
+	e.cancelFunc = nil
+	e.cmd = nil
+	e.mu.Unlock()
+}
+
+func TestExecutor_SendMessage_Success(t *testing.T) {
+	e := New()
+
+	// Create a pipe for stdin simulation
+	reader, writer := io.Pipe()
+
+	// Simulate running stream mode
+	e.mu.Lock()
+	e.running = true
+	e.streamMode = true
+	e.stdin = writer
+	e.mu.Unlock()
+
+	// Send message in goroutine
+	done := make(chan error)
+	go func() {
+		done <- e.SendMessage([]byte("test message"))
+	}()
+
+	// Read from the pipe
+	buf := make([]byte, 1024)
+	n, err := reader.Read(buf)
+	assert.NoError(t, err)
+	assert.Equal(t, "test message\n", string(buf[:n]))
+
+	// Check SendMessage returned without error
+	err = <-done
+	assert.NoError(t, err)
+
+	// Cleanup
+	_ = writer.Close()
+	_ = reader.Close()
+	e.mu.Lock()
+	e.running = false
+	e.streamMode = false
+	e.stdin = nil
+	e.mu.Unlock()
+}
+
+func TestExecutor_SendMessage_NilStdin(t *testing.T) {
+	e := New()
+
+	// Simulate running stream mode but nil stdin
+	e.mu.Lock()
+	e.running = true
+	e.streamMode = true
+	e.stdin = nil
+	e.mu.Unlock()
+
+	err := e.SendMessage([]byte("test"))
+	assert.ErrorIs(t, err, ErrNotRunning)
+
+	// Cleanup
+	e.mu.Lock()
+	e.running = false
+	e.streamMode = false
+	e.mu.Unlock()
+}
+
+func TestExecutor_processOutput_EmptyLines(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+
+	ctx := context.Background()
+	handler := newTestOutputHandler()
+
+	// Simulate output with empty lines
+	output := "\n\n{\"type\":\"system\",\"data\":\"Hello\"}\n\n"
+	reader := strings.NewReader(output)
+
+	e.processOutput(ctx, reader, "stdout", handler)
+
+	// Should skip empty lines
+	outputs := handler.GetOutputs()
+	assert.Len(t, outputs, 1)
+}
+
+func TestExecutor_processOutput_ParseError(t *testing.T) {
+	e := New()
+	e.parser = NewParser().(*Parser)
+
+	ctx := context.Background()
+	handler := newTestOutputHandler()
+
+	// Simulate output that's not valid JSON (but not empty)
+	output := "Invalid JSON here\n"
+	reader := strings.NewReader(output)
+
+	e.processOutput(ctx, reader, "stdout", handler)
+
+	// Parser handles invalid JSON gracefully (returns text event)
+	// The raw output should still be sent to handler
+	outputs := handler.GetOutputs()
+	assert.GreaterOrEqual(t, len(outputs), 1)
 }
