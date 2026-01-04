@@ -15,15 +15,15 @@ import (
 
 // testWorkspaceManager is a mock implementation of core.WorkspaceManagerInterface for adapter tests.
 type testWorkspaceManager struct {
-	CreateFunc             func(ctx context.Context, opts core.CreateWorkspaceOptions) (*store.Workspace, error)
-	GetFunc                func(ctx context.Context, workspaceID string) (*store.Workspace, error)
-	ListFunc               func(ctx context.Context, opts core.ListWorkspacesOptions) (*store.ListResult[store.Workspace], error)
-	UpdateFunc             func(ctx context.Context, workspaceID string, updates store.WorkspaceUpdates) (*store.Workspace, error)
-	DeleteFunc             func(ctx context.Context, workspaceID string) error
-	GetHostPathFunc        func(ctx context.Context, workspaceID string) (string, error)
-	EnsureHostDirectoryFunc func(ctx context.Context, workspaceID string) (string, error)
+	CreateFunc               func(ctx context.Context, opts core.CreateWorkspaceOptions) (*store.Workspace, error)
+	GetFunc                  func(ctx context.Context, workspaceID string) (*store.Workspace, error)
+	ListFunc                 func(ctx context.Context, opts core.ListWorkspacesOptions) (*store.ListResult[store.Workspace], error)
+	UpdateFunc               func(ctx context.Context, workspaceID string, updates store.WorkspaceUpdates) (*store.Workspace, error)
+	DeleteFunc               func(ctx context.Context, workspaceID string) error
+	GetHostPathFunc          func(ctx context.Context, workspaceID string) (string, error)
+	EnsureHostDirectoryFunc  func(ctx context.Context, workspaceID string) (string, error)
 	CleanupHostDirectoryFunc func(ctx context.Context, workspaceID string) error
-	IsInUseFunc            func(ctx context.Context, workspaceID string) (bool, error)
+	IsInUseFunc              func(ctx context.Context, workspaceID string) (bool, error)
 }
 
 func (m *testWorkspaceManager) Create(ctx context.Context, opts core.CreateWorkspaceOptions) (*store.Workspace, error) {

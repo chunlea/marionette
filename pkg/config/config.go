@@ -71,9 +71,9 @@ type DockerResourcesConfig struct {
 
 // StorageConfig holds storage backend configuration.
 type StorageConfig struct {
-	Provider  string              `mapstructure:"provider"`
-	Local     *LocalStorageConfig `mapstructure:"local"`
-	S3        *S3StorageConfig    `mapstructure:"s3"`
+	Provider  string                 `mapstructure:"provider"`
+	Local     *LocalStorageConfig    `mapstructure:"local"`
+	S3        *S3StorageConfig       `mapstructure:"s3"`
 	Workspace WorkspaceStorageConfig `mapstructure:"workspace"`
 }
 

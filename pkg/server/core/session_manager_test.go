@@ -1128,11 +1128,11 @@ func TestSessionManager_Activate_DetachesMultipleOldSessions(t *testing.T) {
 
 // mockWorkspaceManagerForSession implements WorkspaceManagerInterface for testing.
 type mockWorkspaceManagerForSession struct {
-	hostPath              string
-	ensureHostDirCalled   bool
-	cleanupHostDirCalled  bool
-	cleanupHostDirErr     error
-	ensureHostDirErr      error
+	hostPath             string
+	ensureHostDirCalled  bool
+	cleanupHostDirCalled bool
+	cleanupHostDirErr    error
+	ensureHostDirErr     error
 }
 
 func (m *mockWorkspaceManagerForSession) Create(_ context.Context, _ CreateWorkspaceOptions) (*store.Workspace, error) {

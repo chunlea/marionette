@@ -100,15 +100,15 @@ func (m *mockWorkspaceManager) IsInUse(_ context.Context, _ string) (bool, error
 
 // mockSessionManager implements SessionManagerInterface for testing.
 type mockSessionManager struct {
-	sessions       map[string]*store.Session
-	createErr      error
-	getErr         error
-	listErr        error
-	suspendErr     error
-	resumeErr      error
-	terminateErr   error
-	lastCreateOpts *core.CreateSessionOptions
-	lastListOpts   *store.ListSessionsOptions
+	sessions            map[string]*store.Session
+	createErr           error
+	getErr              error
+	listErr             error
+	suspendErr          error
+	resumeErr           error
+	terminateErr        error
+	lastCreateOpts      *core.CreateSessionOptions
+	lastListOpts        *store.ListSessionsOptions
 	lastSuspendStrategy string
 }
 
@@ -512,8 +512,8 @@ func TestSessionAdapter_List(t *testing.T) {
 	ctx := context.Background()
 
 	// Create sessions
-	adapter.Create(ctx, CreateSessionOptions{Agent: "claude", Name: "session1"})
-	adapter.Create(ctx, CreateSessionOptions{Agent: "claude", Name: "session2"})
+	_, _ = adapter.Create(ctx, CreateSessionOptions{Agent: "claude", Name: "session1"})
+	_, _ = adapter.Create(ctx, CreateSessionOptions{Agent: "claude", Name: "session2"})
 
 	// List all
 	result, err := adapter.List(ctx, ListSessionsOptions{})
@@ -624,7 +624,7 @@ func TestSessionAdapter_Resume(t *testing.T) {
 
 	// Create and suspend a session
 	sess, _ := adapter.Create(ctx, CreateSessionOptions{Agent: "claude"})
-	adapter.Suspend(ctx, sess.ID)
+	_ = adapter.Suspend(ctx, sess.ID)
 
 	// Resume it
 	err := adapter.Resume(ctx, sess.ID)
