@@ -66,12 +66,22 @@ func TestMain(m *testing.M) {
 }
 
 func runMigrations(ctx context.Context, s *pgstore.Store) error {
-	// Read and execute migration file
-	migration, err := os.ReadFile("../../../migrations/001_initial.up.sql")
-	if err != nil {
-		return err
+	// Read and execute all migration files in order
+	migrationFiles := []string{
+		"../../../migrations/001_initial.up.sql",
+		"../../../migrations/002_add_original_request_id.up.sql",
 	}
-	return s.ExecRaw(ctx, string(migration))
+
+	for _, file := range migrationFiles {
+		migration, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		if err := s.ExecRaw(ctx, string(migration)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // =============================================================================

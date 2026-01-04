@@ -13,7 +13,7 @@ import (
 )
 
 // PermissionRequest column list for SELECT queries.
-const permissionRequestColumns = `id, session_id, task_id, run_id, tool, action, context,
+const permissionRequestColumns = `id, original_request_id, session_id, task_id, run_id, tool, action, context,
 	risk_level, status, suspend_after_seconds, responded_by, response_reason, responded_at,
 	tenant_id, created_at, updated_at`
 
@@ -34,16 +34,16 @@ func createPermissionRequest(ctx context.Context, q querier, req *store.Permissi
 
 	query := `
 		INSERT INTO permission_requests (
-			id, session_id, task_id, run_id, tool, action, context,
+			id, original_request_id, session_id, task_id, run_id, tool, action, context,
 			risk_level, status, suspend_after_seconds, responded_by, response_reason, responded_at,
 			tenant_id, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW()
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW()
 		)
 		RETURNING created_at, updated_at`
 
 	err := q.QueryRow(ctx, query,
-		req.ID, req.SessionID, req.TaskID, req.RunID, req.Tool, req.Action, req.Context,
+		req.ID, req.OriginalRequestID, req.SessionID, req.TaskID, req.RunID, req.Tool, req.Action, req.Context,
 		req.RiskLevel, req.Status, req.SuspendAfterSeconds, req.RespondedBy, req.ResponseReason, req.RespondedAt,
 		req.TenantID,
 	).Scan(&req.CreatedAt, &req.UpdatedAt)
@@ -231,7 +231,7 @@ func updatePermissionRequest(ctx context.Context, q querier, reqID string, updat
 func scanPermissionRequest(row pgx.Row, identifier string) (*store.PermissionRequest, error) {
 	var p store.PermissionRequest
 	err := row.Scan(
-		&p.ID, &p.SessionID, &p.TaskID, &p.RunID, &p.Tool, &p.Action, &p.Context,
+		&p.ID, &p.OriginalRequestID, &p.SessionID, &p.TaskID, &p.RunID, &p.Tool, &p.Action, &p.Context,
 		&p.RiskLevel, &p.Status, &p.SuspendAfterSeconds, &p.RespondedBy, &p.ResponseReason, &p.RespondedAt,
 		&p.TenantID, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -247,7 +247,7 @@ func scanPermissionRequest(row pgx.Row, identifier string) (*store.PermissionReq
 func scanPermissionRequestFromRows(rows pgx.Rows) (*store.PermissionRequest, error) {
 	var p store.PermissionRequest
 	err := rows.Scan(
-		&p.ID, &p.SessionID, &p.TaskID, &p.RunID, &p.Tool, &p.Action, &p.Context,
+		&p.ID, &p.OriginalRequestID, &p.SessionID, &p.TaskID, &p.RunID, &p.Tool, &p.Action, &p.Context,
 		&p.RiskLevel, &p.Status, &p.SuspendAfterSeconds, &p.RespondedBy, &p.ResponseReason, &p.RespondedAt,
 		&p.TenantID, &p.CreatedAt, &p.UpdatedAt,
 	)

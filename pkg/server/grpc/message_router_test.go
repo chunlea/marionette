@@ -712,7 +712,12 @@ func (m *mockStoreForRouter) UpdateSession(_ context.Context, _ string, _ store.
 }
 func (m *mockStoreForRouter) DeleteSession(_ context.Context, _ string) error   { return nil }
 func (m *mockStoreForRouter) CreateTask(_ context.Context, _ *store.Task) error { return nil }
-func (m *mockStoreForRouter) GetTask(_ context.Context, _ string) (*store.Task, error) {
+func (m *mockStoreForRouter) GetTask(_ context.Context, id string) (*store.Task, error) {
+	for _, task := range m.tasks {
+		if task.ID == id {
+			return task, nil
+		}
+	}
 	return nil, store.ErrNotFound
 }
 func (m *mockStoreForRouter) UpdateTask(_ context.Context, _ string, _ store.TaskUpdates) error {
@@ -982,6 +987,8 @@ func TestMessageRouter_HandleMessage_PermissionRequest_WithManager(t *testing.T)
 		Payload: &pb.RunnerMessage_PermissionRequest{
 			PermissionRequest: &pb.PermissionRequest{
 				RequestId:           "perm_123",
+				TaskId:              "task_123",
+				RunId:               "trun_123",
 				Tool:                "bash",
 				Action:              "rm -rf /tmp/test",
 				RiskLevel:           "high",
@@ -1021,6 +1028,8 @@ func TestMessageRouter_HandleMessage_PermissionRequest_NoSession(t *testing.T) {
 		Payload: &pb.RunnerMessage_PermissionRequest{
 			PermissionRequest: &pb.PermissionRequest{
 				RequestId: "perm_123",
+				TaskId:    "task_123",
+				RunId:     "trun_123",
 				Tool:      "bash",
 				Action:    "echo hello",
 			},
@@ -1060,6 +1069,8 @@ func TestMessageRouter_HandleMessage_PermissionRequest_NoTask(t *testing.T) {
 		Payload: &pb.RunnerMessage_PermissionRequest{
 			PermissionRequest: &pb.PermissionRequest{
 				RequestId: "perm_123",
+				TaskId:    "task_nonexistent",
+				RunId:     "trun_123",
 				Tool:      "bash",
 				Action:    "echo hello",
 			},
@@ -1068,7 +1079,7 @@ func TestMessageRouter_HandleMessage_PermissionRequest_NoTask(t *testing.T) {
 
 	err := router.HandleMessage(context.Background(), runnerID, msg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no running task found")
+	assert.Contains(t, err.Error(), "not found")
 
 	// Permission manager should not have been called
 	assert.False(t, pm.createCalled)
@@ -1114,6 +1125,8 @@ func TestMessageRouter_HandleMessage_PermissionRequest_CreateError(t *testing.T)
 		Payload: &pb.RunnerMessage_PermissionRequest{
 			PermissionRequest: &pb.PermissionRequest{
 				RequestId: "perm_123",
+				TaskId:    "task_123",
+				RunId:     "trun_123",
 				Tool:      "bash",
 				Action:    "echo hello",
 			},
@@ -1123,4 +1136,91 @@ func TestMessageRouter_HandleMessage_PermissionRequest_CreateError(t *testing.T)
 	err := router.HandleMessage(context.Background(), runnerID, msg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "database error")
+}
+
+func TestMessageRouter_HandleMessage_PermissionRequest_TaskNotInSession(t *testing.T) {
+	logger := zap.NewNop()
+	pm := &mockPermissionManager{}
+	runnerID := "run_123"
+
+	// Task belongs to a different session
+	mockStore := &mockStoreForRouter{
+		sessions: []*store.Session{
+			{
+				ID:       "sess_123",
+				Status:   "active",
+				RunnerID: &runnerID,
+			},
+		},
+		tasks: []*store.Task{
+			{
+				ID:        "task_123",
+				SessionID: "sess_different", // Different session
+				Status:    "running",
+			},
+		},
+	}
+
+	router := NewMessageRouter(logger, nil,
+		WithMRPermissionManager(pm),
+		WithMRStore(mockStore),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_PermissionRequest{
+			PermissionRequest: &pb.PermissionRequest{
+				RequestId: "perm_123",
+				TaskId:    "task_123",
+				RunId:     "trun_123",
+				Tool:      "bash",
+				Action:    "echo hello",
+			},
+		},
+	}
+
+	err := router.HandleMessage(context.Background(), runnerID, msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not belong to session")
+
+	// Permission manager should not have been called
+	assert.False(t, pm.createCalled)
+}
+
+func TestMessageRouter_HandleMessage_PermissionRequest_MissingTaskOrRunID(t *testing.T) {
+	logger := zap.NewNop()
+	pm := &mockPermissionManager{}
+	runnerID := "run_123"
+
+	mockStore := &mockStoreForRouter{
+		sessions: []*store.Session{
+			{
+				ID:       "sess_123",
+				Status:   "active",
+				RunnerID: &runnerID,
+			},
+		},
+	}
+
+	router := NewMessageRouter(logger, nil,
+		WithMRPermissionManager(pm),
+		WithMRStore(mockStore),
+	)
+
+	// Missing both task_id and run_id
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_PermissionRequest{
+			PermissionRequest: &pb.PermissionRequest{
+				RequestId: "perm_123",
+				Tool:      "bash",
+				Action:    "echo hello",
+			},
+		},
+	}
+
+	err := router.HandleMessage(context.Background(), runnerID, msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing task_id or run_id")
+
+	// Permission manager should not have been called
+	assert.False(t, pm.createCalled)
 }

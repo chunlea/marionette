@@ -215,6 +215,8 @@ func (r *MessageRouter) handlePermissionRequest(ctx context.Context, runnerID st
 	r.logger.Info("permission request received",
 		zap.String("runner_id", runnerID),
 		zap.String("request_id", msg.GetRequestId()),
+		zap.String("task_id", msg.GetTaskId()),
+		zap.String("run_id", msg.GetRunId()),
 		zap.String("tool", msg.GetTool()),
 		zap.String("action", msg.GetAction()),
 		zap.String("risk_level", msg.GetRiskLevel()),
@@ -230,7 +232,7 @@ func (r *MessageRouter) handlePermissionRequest(ctx context.Context, runnerID st
 		return nil
 	}
 
-	// Get session for this runner
+	// Get session for this runner to verify the request is valid
 	session, err := r.getSessionForRunner(ctx, runnerID)
 	if err != nil {
 		r.logger.Error("failed to get session for runner",
@@ -240,14 +242,36 @@ func (r *MessageRouter) handlePermissionRequest(ctx context.Context, runnerID st
 		return err
 	}
 
-	// Get current running task run for this session
-	run, err := r.getCurrentRun(ctx, session.ID)
+	// Use task_id and run_id from the message directly
+	// The agent already has this information from the ExecuteTask command
+	taskID := msg.GetTaskId()
+	runID := msg.GetRunId()
+
+	if taskID == "" || runID == "" {
+		r.logger.Error("permission request missing task_id or run_id",
+			zap.String("task_id", taskID),
+			zap.String("run_id", runID),
+		)
+		return fmt.Errorf("permission request missing task_id or run_id")
+	}
+
+	// Verify the task belongs to this session
+	task, err := r.store.GetTask(ctx, taskID)
 	if err != nil {
-		r.logger.Error("failed to get current run for session",
-			zap.String("session_id", session.ID),
+		r.logger.Error("failed to get task for permission request",
+			zap.String("task_id", taskID),
 			zap.Error(err),
 		)
 		return err
+	}
+
+	if task.SessionID != session.ID {
+		r.logger.Error("task does not belong to session",
+			zap.String("task_id", taskID),
+			zap.String("task_session_id", task.SessionID),
+			zap.String("runner_session_id", session.ID),
+		)
+		return fmt.Errorf("task %s does not belong to session %s", taskID, session.ID)
 	}
 
 	// Create permission request
@@ -257,9 +281,10 @@ func (r *MessageRouter) handlePermissionRequest(ctx context.Context, runnerID st
 	}
 
 	_, err = r.permissionManager.Create(ctx, &core.CreatePermissionRequestInput{
+		OriginalRequestID:   msg.GetRequestId(),
 		SessionID:           session.ID,
-		TaskID:              run.TaskID,
-		RunID:               run.ID,
+		TaskID:              taskID,
+		RunID:               runID,
 		Tool:                msg.GetTool(),
 		Action:              msg.GetAction(),
 		Context:             msg.GetContext(),
@@ -295,40 +320,6 @@ func (r *MessageRouter) getSessionForRunner(ctx context.Context, runnerID string
 
 	// Return the first active session (there should only be one)
 	return sessions.Items[0], nil
-}
-
-// getCurrentRun finds the current running task run for a session.
-func (r *MessageRouter) getCurrentRun(ctx context.Context, sessionID string) (*store.TaskRun, error) {
-	// First get tasks for this session that are running
-	tasks, err := r.store.ListTasks(ctx, store.ListTasksOptions{
-		SessionID: &sessionID,
-		Status:    []string{"running"},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if len(tasks.Items) == 0 {
-		return nil, fmt.Errorf("no running task found for session %s", sessionID)
-	}
-
-	// Get the task ID
-	taskID := tasks.Items[0].ID
-
-	// Get running task runs for this task
-	runs, err := r.store.ListTaskRuns(ctx, store.ListTaskRunsOptions{
-		TaskID: &taskID,
-		Status: []string{"running"},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if len(runs.Items) == 0 {
-		return nil, fmt.Errorf("no running task run found for task %s", taskID)
-	}
-
-	return runs.Items[0], nil
 }
 
 // handleSessionAttached processes a session attached confirmation.

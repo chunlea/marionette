@@ -257,6 +257,7 @@ type ScheduledTaskUpdates struct {
 // PermissionRequest represents an async permission approval request.
 type PermissionRequest struct {
 	ID                  string     `json:"id"`
+	OriginalRequestID   string     `json:"original_request_id"` // Original request ID from agent (e.g., tool_use_id)
 	SessionID           string     `json:"session_id"`
 	TaskID              string     `json:"task_id"`
 	RunID               string     `json:"run_id"`

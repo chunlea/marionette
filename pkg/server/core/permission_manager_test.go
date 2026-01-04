@@ -173,13 +173,15 @@ func TestPermissionManager_Respond_Approve(t *testing.T) {
 		RunnerID: &runnerID,
 	}))
 
-	// Create permission
+	// Create permission with original request ID (simulating Claude's tool_use_id)
+	originalReqID := "toolu_test123"
 	perm, err := pm.Create(ctx, &CreatePermissionRequestInput{
-		SessionID: "sess_test",
-		TaskID:    "task_test",
-		RunID:     "trun_test",
-		Tool:      "bash",
-		Action:    "ls -la",
+		OriginalRequestID: originalReqID,
+		SessionID:         "sess_test",
+		TaskID:            "task_test",
+		RunID:             "trun_test",
+		Tool:              "bash",
+		Action:            "ls -la",
 	})
 	require.NoError(t, err)
 
@@ -195,12 +197,12 @@ func TestPermissionManager_Respond_Approve(t *testing.T) {
 	require.NotNil(t, updated.RespondedBy)
 	assert.Equal(t, "user123", *updated.RespondedBy)
 
-	// Verify command sent
+	// Verify command sent with original request ID (not perm.ID)
 	assert.Equal(t, runnerID, cmdSender.lastRunnerID)
 	assert.NotNil(t, cmdSender.lastCommand)
 	approveCmd := cmdSender.lastCommand.GetApprovePermission()
 	require.NotNil(t, approveCmd)
-	assert.Equal(t, perm.ID, approveCmd.RequestId)
+	assert.Equal(t, originalReqID, approveCmd.RequestId) // Uses original request ID from agent
 	assert.True(t, approveCmd.Approved)
 
 	// Session was active, so Resume should not be called

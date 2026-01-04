@@ -78,6 +78,7 @@ func (m *PermissionManager) Create(ctx context.Context, req *CreatePermissionReq
 	now := time.Now()
 	perm := &store.PermissionRequest{
 		ID:                  id.PermissionRequest(),
+		OriginalRequestID:   req.OriginalRequestID,
 		SessionID:           req.SessionID,
 		TaskID:              req.TaskID,
 		RunID:               req.RunID,
@@ -181,7 +182,7 @@ func (m *PermissionManager) Respond(ctx context.Context, permID string, approved
 		cmd := &pb.ServerCommand{
 			Payload: &pb.ServerCommand_ApprovePermission{
 				ApprovePermission: &pb.ApprovePermission{
-					RequestId: perm.ID,
+					RequestId: perm.OriginalRequestID, // Use original request ID from agent
 					Approved:  approved,
 					Reason:    reason,
 				},
