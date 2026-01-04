@@ -545,9 +545,6 @@
   - [x] `log_` prefixed IDs (`pkg/id/id.go`)
   - [x] `Log` model (`pkg/store/models.go`)
   - [x] Partition management functions
-- [ ] Raw log storage (future - for binary content preservation):
-  - [ ] `raw_logs` migration exists but not integrated
-  - [ ] Switch to BYTEA content when needed
 - [x] Log entry structure:
   - [x] task_id, run_id, session_id
   - [x] stream (stdout, stderr, system)
