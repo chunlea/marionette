@@ -1,5 +1,8 @@
 # Binaries
 /bin/
+/server
+/agent
+/mctl
 *.exe
 *.exe~
 *.dll
