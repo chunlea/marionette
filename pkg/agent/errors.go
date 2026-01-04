@@ -25,6 +25,12 @@ var (
 
 	// ErrNoActiveTask indicates no task is currently being executed.
 	ErrNoActiveTask = errors.New("no active task")
+
+	// ErrStreamAlreadyActive indicates a log stream is already active.
+	ErrStreamAlreadyActive = errors.New("log stream already active")
+
+	// ErrStreamNotActive indicates no log stream is active.
+	ErrStreamNotActive = errors.New("log stream not active")
 )
 
 // ErrRegistrationRejected indicates the server rejected runner registration.

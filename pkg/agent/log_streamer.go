@@ -6,250 +6,162 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/chunlea/marionette/pkg/id"
-	"github.com/chunlea/marionette/pkg/store"
+	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
-// LogStreamer buffers and streams raw log entries from agent execution.
-// It provides thread-safe buffering with configurable flush intervals.
-type LogStreamer struct {
-	mu sync.Mutex
+// LogStreamer abstracts log streaming to the server.
+// It handles the gRPC client streaming for logs.
+type LogStreamer interface {
+	// Start initializes a new log stream with the server.
+	// Must be called before Send.
+	Start(ctx context.Context, init *pb.StreamLogsInit) error
 
-	// Identification
-	sessionID string
-	taskID    string
-	runID     string
-	runnerID  string
-	tenantID  *string
+	// Send sends a log entry to the server.
+	// Returns an error if the stream is not active.
+	Send(entry *pb.LogEntry) error
 
-	// Buffering
-	buffer    []*store.RawLog
-	bufferCap int
+	// Close closes the stream and returns the server's response.
+	Close() (*pb.StreamLogsResponse, error)
 
-	// Sequence tracking (atomic for thread safety)
+	// IsActive returns true if the stream is currently active.
+	IsActive() bool
+}
+
+// GRPCLogStreamer implements LogStreamer using gRPC client streaming.
+type GRPCLogStreamer struct {
+	client   pb.RunnerServiceClient
+	runnerID string
+	logger   *zap.Logger
+
+	mu       sync.Mutex
+	stream   pb.RunnerService_StreamLogsClient
+	active   atomic.Bool
 	sequence atomic.Int64
-
-	// Flush configuration
-	flushInterval time.Duration
-	flushTimer    *time.Timer
-
-	// Output handler
-	handler LogHandler
-
-	// State
-	closed bool
 }
 
-// LogHandler receives flushed log entries.
-type LogHandler interface {
-	// HandleLogs is called when logs are flushed.
-	// Implementations should handle persistence or streaming.
-	HandleLogs(ctx context.Context, logs []*store.RawLog) error
-}
-
-// LogHandlerFunc is an adapter to allow the use of ordinary functions as LogHandler.
-type LogHandlerFunc func(ctx context.Context, logs []*store.RawLog) error
-
-// HandleLogs calls f(ctx, logs).
-func (f LogHandlerFunc) HandleLogs(ctx context.Context, logs []*store.RawLog) error {
-	return f(ctx, logs)
-}
-
-// LogStreamerOption configures a LogStreamer.
-type LogStreamerOption func(*LogStreamer)
-
-// WithBufferCapacity sets the buffer capacity before auto-flush.
-func WithBufferCapacity(cap int) LogStreamerOption {
-	return func(s *LogStreamer) {
-		s.bufferCap = cap
+// NewGRPCLogStreamer creates a new GRPCLogStreamer.
+func NewGRPCLogStreamer(client pb.RunnerServiceClient, runnerID string, logger *zap.Logger) *GRPCLogStreamer {
+	return &GRPCLogStreamer{
+		client:   client,
+		runnerID: runnerID,
+		logger:   logger.Named("log-streamer"),
 	}
 }
 
-// WithFlushInterval sets the time-based flush interval.
-func WithFlushInterval(d time.Duration) LogStreamerOption {
-	return func(s *LogStreamer) {
-		s.flushInterval = d
-	}
-}
-
-// WithTenantID sets the tenant ID for log entries.
-func WithTenantID(tenantID string) LogStreamerOption {
-	return func(s *LogStreamer) {
-		s.tenantID = &tenantID
-	}
-}
-
-// NewLogStreamer creates a new LogStreamer.
-func NewLogStreamer(
-	sessionID, taskID, runID, runnerID string,
-	handler LogHandler,
-	opts ...LogStreamerOption,
-) *LogStreamer {
-	s := &LogStreamer{
-		sessionID:     sessionID,
-		taskID:        taskID,
-		runID:         runID,
-		runnerID:      runnerID,
-		handler:       handler,
-		bufferCap:     100,             // Default: flush after 100 entries
-		flushInterval: 1 * time.Second, // Default: flush every second
-	}
-
-	for _, opt := range opts {
-		opt(s)
-	}
-
-	// Start flush timer
-	s.flushTimer = time.AfterFunc(s.flushInterval, s.timerFlush)
-
-	return s
-}
-
-// Write writes raw bytes to the log stream.
-// This is the main method called from executor output handlers.
-func (s *LogStreamer) Write(stream string, data []byte) error {
+// Start initializes a new log stream with the server.
+func (s *GRPCLogStreamer) Start(ctx context.Context, init *pb.StreamLogsInit) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.closed {
-		return ErrStreamerClosed
+	if s.active.Load() {
+		return ErrStreamAlreadyActive
 	}
 
-	// Create log entry
-	log := &store.RawLog{
-		ID:        id.RawLog(),
-		SessionID: s.sessionID,
-		TaskID:    s.taskID,
-		RunID:     s.runID,
-		RunnerID:  s.runnerID,
-		Stream:    stream,
-		Content:   append([]byte{}, data...), // Copy data
-		Sequence:  s.sequence.Add(1),
-		TenantID:  s.tenantID,
-		CreatedAt: time.Now(),
+	// Create the stream with metadata
+	stream, err := s.client.StreamLogs(ctx, grpc.WaitForReady(true))
+	if err != nil {
+		return err
 	}
 
-	s.buffer = append(s.buffer, log)
-
-	// Check if buffer is full
-	if len(s.buffer) >= s.bufferCap {
-		return s.flushLocked(context.Background())
+	// Copy init message to avoid modifying caller's data
+	initCopy := &pb.StreamLogsInit{
+		SessionId: init.SessionId,
+		TaskId:    init.TaskId,
+		RunId:     init.RunId,
+		RunnerId:  s.runnerID,
 	}
+
+	// Send init message first
+	initMsg := &pb.StreamLogsMessage{
+		Payload: &pb.StreamLogsMessage_Init{
+			Init: initCopy,
+		},
+	}
+	if err := stream.Send(initMsg); err != nil {
+		return err
+	}
+
+	s.stream = stream
+	s.active.Store(true)
+	s.sequence.Store(0)
+
+	s.logger.Debug("log stream started",
+		zap.String("session_id", init.SessionId),
+		zap.String("task_id", init.TaskId),
+		zap.String("run_id", init.RunId),
+	)
 
 	return nil
 }
 
-// WriteString is a convenience method for writing string content.
-func (s *LogStreamer) WriteString(stream, content string) error {
-	return s.Write(stream, []byte(content))
-}
-
-// Flush forces a flush of buffered logs.
-func (s *LogStreamer) Flush(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.flushLocked(ctx)
-}
-
-// flushLocked flushes the buffer while holding the lock.
-func (s *LogStreamer) flushLocked(ctx context.Context) error {
-	if len(s.buffer) == 0 {
-		return nil
+// Send sends a log entry to the server.
+func (s *GRPCLogStreamer) Send(entry *pb.LogEntry) error {
+	// Quick check without lock for fast path
+	if !s.active.Load() {
+		return ErrStreamNotActive
 	}
 
-	// Get logs to flush
-	logs := s.buffer
-	s.buffer = nil
-
-	// Reset timer
-	s.resetTimerLocked()
-
-	// Call handler (outside lock would be better but we need to preserve order)
-	if s.handler != nil {
-		if err := s.handler.HandleLogs(ctx, logs); err != nil {
-			// On error, put logs back in buffer (best effort)
-			s.buffer = append(logs, s.buffer...)
-			return err
-		}
-	}
-
-	return nil
-}
-
-// timerFlush is called by the flush timer.
-func (s *LogStreamer) timerFlush() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.closed {
-		return
+	// Re-check under lock to avoid race with Close()
+	if !s.active.Load() || s.stream == nil {
+		return ErrStreamNotActive
 	}
 
-	_ = s.flushLocked(context.Background())
-}
+	// Set sequence and timestamp
+	entry.Sequence = s.sequence.Add(1)
+	entry.TimestampUnixMs = time.Now().UnixMilli()
+	entry.RunnerId = s.runnerID
 
-// resetTimerLocked resets the flush timer while holding the lock.
-func (s *LogStreamer) resetTimerLocked() {
-	if s.flushTimer != nil {
-		s.flushTimer.Stop()
-		s.flushTimer = time.AfterFunc(s.flushInterval, s.timerFlush)
+	msg := &pb.StreamLogsMessage{
+		Payload: &pb.StreamLogsMessage_LogEntry{
+			LogEntry: entry,
+		},
 	}
+
+	return s.stream.Send(msg)
 }
 
-// Close flushes remaining logs and stops the streamer.
-func (s *LogStreamer) Close(ctx context.Context) error {
+// Close closes the stream and returns the server's response.
+func (s *GRPCLogStreamer) Close() (*pb.StreamLogsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.closed {
-		return nil
+	if !s.active.Load() {
+		return &pb.StreamLogsResponse{}, nil
 	}
 
-	s.closed = true
+	s.active.Store(false)
 
-	// Stop timer
-	if s.flushTimer != nil {
-		s.flushTimer.Stop()
-		s.flushTimer = nil
+	if s.stream == nil {
+		return &pb.StreamLogsResponse{}, nil
 	}
 
-	// Final flush
-	return s.flushLocked(ctx)
-}
+	// Close send direction and receive response
+	resp, err := s.stream.CloseAndRecv()
+	s.stream = nil
 
-// Stats returns current streamer statistics.
-func (s *LogStreamer) Stats() LogStreamerStats {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return LogStreamerStats{
-		BufferedCount: len(s.buffer),
-		TotalSequence: s.sequence.Load(),
-		SessionID:     s.sessionID,
-		TaskID:        s.taskID,
-		RunID:         s.runID,
+	if err != nil {
+		s.logger.Warn("error closing log stream", zap.Error(err))
+		return nil, err
 	}
+
+	s.logger.Debug("log stream closed",
+		zap.Int64("logs_received", resp.LogsReceived),
+		zap.Int64("logs_stored", resp.LogsStored),
+		zap.Int64("logs_dropped", resp.LogsDropped),
+	)
+
+	return resp, nil
 }
 
-// LogStreamerStats contains streamer statistics.
-type LogStreamerStats struct {
-	BufferedCount int
-	TotalSequence int64
-	SessionID     string
-	TaskID        string
-	RunID         string
+// IsActive returns true if the stream is currently active.
+func (s *GRPCLogStreamer) IsActive() bool {
+	return s.active.Load()
 }
 
-// Errors
-var (
-	ErrStreamerClosed = &StreamerError{msg: "log streamer is closed"}
-)
-
-// StreamerError represents a log streamer error.
-type StreamerError struct {
-	msg string
-}
-
-func (e *StreamerError) Error() string {
-	return e.msg
-}
+// Verify GRPCLogStreamer implements LogStreamer.
+var _ LogStreamer = (*GRPCLogStreamer)(nil)

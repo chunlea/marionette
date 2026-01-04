@@ -78,7 +78,7 @@ func TestNewTaskRunner(t *testing.T) {
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 	statusSetter := &mockStatusSetter{}
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, nil, logger)
 
 	assert.NotNil(t, runner)
 	assert.Equal(t, sender, runner.sender)
@@ -97,7 +97,7 @@ func TestTaskRunner_Execute_SessionNotAttached(t *testing.T) {
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 	statusSetter := &mockStatusSetter{}
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, nil, logger)
 
 	cmd := &pb.ExecuteTask{
 		TaskId:    "task_123",
@@ -143,7 +143,7 @@ func TestTaskRunner_Execute_Success(t *testing.T) {
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 	statusSetter := &mockStatusSetter{}
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, nil, logger)
 
 	// Attach session first
 	attachCmd := &pb.AttachSession{
@@ -204,7 +204,7 @@ func TestTaskRunner_Execute_ExecutorError(t *testing.T) {
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 	statusSetter := &mockStatusSetter{}
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, statusSetter, nil, logger)
 
 	// Attach session first
 	attachCmd := &pb.AttachSession{
@@ -241,7 +241,7 @@ func TestTaskRunner_Execute_NilStatusSetter(t *testing.T) {
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
 	// Create runner without status setter
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session first
 	attachCmd := &pb.AttachSession{
@@ -274,7 +274,7 @@ func TestTaskRunner_HandleOutput_NoActiveTask(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Should not panic when no active task
 	runner.HandleOutput("stdout", []byte("test data"))
@@ -294,7 +294,7 @@ func TestTaskRunner_HandleOutput_WithActiveTask(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -331,7 +331,7 @@ func TestTaskRunner_HandlePermissionRequest_NoActiveTask(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	req := &executor.PermissionRequest{
 		ID:        "perm_123",
@@ -374,7 +374,7 @@ func TestTaskRunner_HandlePermissionRequest_Approved(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -440,7 +440,7 @@ func TestTaskRunner_HandlePermissionRequest_Denied(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -506,7 +506,7 @@ func TestTaskRunner_HandlePermissionRequest_ContextCancelled(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -555,7 +555,7 @@ func TestTaskRunner_HandlePermissionResponse_UnknownRequest(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Handle response for unknown request - should not error
 	err := runner.HandlePermissionResponse(context.Background(), &pb.ApprovePermission{
@@ -593,7 +593,7 @@ func TestTaskRunner_HandlePermissionResponse_ChannelFull(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -662,7 +662,7 @@ func TestTaskRunner_HandlePermissionRequest_GeneratesID(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session
 	attachCmd := &pb.AttachSession{
@@ -731,7 +731,7 @@ func TestTaskRunner_Execute_WithAgentConfig(t *testing.T) {
 	wsMgr := NewWorkspaceManager("/tmp", logger)
 	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
 
-	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logger)
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
 
 	// Attach session with agent config
 	attachCmd := &pb.AttachSession{
@@ -765,4 +765,235 @@ func TestTaskRunner_Execute_WithAgentConfig(t *testing.T) {
 	assert.Equal(t, "test-api-key", capturedConfig.APIKey)
 	assert.Equal(t, "https://api.anthropic.com", capturedConfig.BaseURL)
 	assert.Equal(t, "/tmp/ws_test", capturedConfig.WorkingDir)
+}
+
+func TestStreamToLevel(t *testing.T) {
+	tests := []struct {
+		stream   string
+		expected string
+	}{
+		{"stderr", "error"},
+		{"system", "info"},
+		{"stdout", "info"},
+		{"unknown", "info"},
+		{"", "info"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.stream, func(t *testing.T) {
+			result := streamToLevel(tt.stream)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// mockLogStreamer implements LogStreamer for testing.
+type mockLogStreamer struct {
+	mu       sync.Mutex
+	started  bool
+	closed   bool
+	entries  []*pb.LogEntry
+	startErr error
+	sendErr  error
+	closeErr error
+	response *pb.StreamLogsResponse
+}
+
+func (m *mockLogStreamer) Start(ctx context.Context, init *pb.StreamLogsInit) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.startErr != nil {
+		return m.startErr
+	}
+	m.started = true
+	return nil
+}
+
+func (m *mockLogStreamer) Send(entry *pb.LogEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	m.entries = append(m.entries, entry)
+	return nil
+}
+
+func (m *mockLogStreamer) Close() (*pb.StreamLogsResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closed = true
+	if m.closeErr != nil {
+		return nil, m.closeErr
+	}
+	if m.response == nil {
+		m.response = &pb.StreamLogsResponse{}
+	}
+	return m.response, nil
+}
+
+func (m *mockLogStreamer) IsActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.started && !m.closed
+}
+
+func (m *mockLogStreamer) Entries() []*pb.LogEntry {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.entries
+}
+
+func TestTaskRunner_HandleOutput_WithLogStreamer(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	logStreamer := &mockLogStreamer{
+		response: &pb.StreamLogsResponse{
+			LogsReceived: 3,
+			LogsStored:   3,
+		},
+	}
+
+	var outputHandled sync.WaitGroup
+	outputHandled.Add(3)
+
+	exec := &mockExecutor{
+		executeFunc: func(ctx context.Context, task *executor.Task, config *executor.AgentConfig, handler executor.OutputHandler) (*executor.Result, error) {
+			// Simulate multiple outputs
+			handler.HandleOutput("stdout", []byte("stdout message"))
+			outputHandled.Done()
+			handler.HandleOutput("stderr", []byte("stderr message"))
+			outputHandled.Done()
+			handler.HandleOutput("system", []byte("system message"))
+			outputHandled.Done()
+			return &executor.Result{Success: true}, nil
+		},
+	}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logStreamer, logger)
+
+	// Attach session
+	attachCmd := &pb.AttachSession{
+		SessionId:     "sess_123",
+		WorkspacePath: "ws_test",
+	}
+	_, err := cmdHandler.HandleAttachSession(context.Background(), attachCmd)
+	require.NoError(t, err)
+
+	cmd := &pb.ExecuteTask{
+		TaskId:    "task_123",
+		RunId:     "trun_456",
+		SessionId: "sess_123",
+		Attempt:   1,
+		Prompt:    "test prompt",
+	}
+
+	result, err := runner.Execute(context.Background(), cmd)
+	require.NoError(t, err)
+	assert.True(t, result.GetTaskCompleted().Success)
+
+	// Wait for outputs
+	outputHandled.Wait()
+
+	// Verify log streamer received entries
+	entries := logStreamer.Entries()
+	require.Len(t, entries, 3)
+
+	// Verify entry contents
+	assert.Equal(t, "stdout message", entries[0].Content)
+	assert.Equal(t, "stdout", entries[0].Stream)
+	assert.Equal(t, "info", entries[0].Level)
+
+	assert.Equal(t, "stderr message", entries[1].Content)
+	assert.Equal(t, "stderr", entries[1].Stream)
+	assert.Equal(t, "error", entries[1].Level)
+
+	assert.Equal(t, "system message", entries[2].Content)
+	assert.Equal(t, "system", entries[2].Stream)
+	assert.Equal(t, "info", entries[2].Level)
+
+	// Verify stream was started and closed
+	assert.True(t, logStreamer.closed)
+}
+
+func TestTaskRunner_HandleOutput_LogStreamerSendError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	logStreamer := &mockLogStreamer{
+		sendErr: errors.New("send failed"),
+	}
+
+	exec := &mockExecutor{
+		executeFunc: func(ctx context.Context, task *executor.Task, config *executor.AgentConfig, handler executor.OutputHandler) (*executor.Result, error) {
+			// This should not panic even if send fails
+			handler.HandleOutput("stdout", []byte("test message"))
+			return &executor.Result{Success: true}, nil
+		},
+	}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logStreamer, logger)
+
+	// Attach session
+	attachCmd := &pb.AttachSession{
+		SessionId:     "sess_123",
+		WorkspacePath: "ws_test",
+	}
+	_, err := cmdHandler.HandleAttachSession(context.Background(), attachCmd)
+	require.NoError(t, err)
+
+	cmd := &pb.ExecuteTask{
+		TaskId:    "task_123",
+		RunId:     "trun_456",
+		SessionId: "sess_123",
+		Attempt:   1,
+		Prompt:    "test prompt",
+	}
+
+	// Should complete without error even if log streaming fails
+	result, err := runner.Execute(context.Background(), cmd)
+	require.NoError(t, err)
+	assert.True(t, result.GetTaskCompleted().Success)
+}
+
+func TestTaskRunner_Execute_LogStreamerStartError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	logStreamer := &mockLogStreamer{
+		startErr: errors.New("start failed"),
+	}
+
+	exec := &mockExecutor{
+		executeFunc: func(ctx context.Context, task *executor.Task, config *executor.AgentConfig, handler executor.OutputHandler) (*executor.Result, error) {
+			return &executor.Result{Success: true}, nil
+		},
+	}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, logStreamer, logger)
+
+	// Attach session
+	attachCmd := &pb.AttachSession{
+		SessionId:     "sess_123",
+		WorkspacePath: "ws_test",
+	}
+	_, err := cmdHandler.HandleAttachSession(context.Background(), attachCmd)
+	require.NoError(t, err)
+
+	cmd := &pb.ExecuteTask{
+		TaskId:    "task_123",
+		RunId:     "trun_456",
+		SessionId: "sess_123",
+		Attempt:   1,
+		Prompt:    "test prompt",
+	}
+
+	// Should complete successfully even if log streaming fails to start
+	result, err := runner.Execute(context.Background(), cmd)
+	require.NoError(t, err)
+	assert.True(t, result.GetTaskCompleted().Success)
 }

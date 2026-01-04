@@ -523,23 +523,6 @@ type Log struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
-// RawLog represents a raw log entry with binary content preservation.
-// Unlike Log which stores string content, RawLog preserves exact bytes
-// from agent output, making it suitable for streaming and archiving.
-type RawLog struct {
-	ID             string    `json:"id"`              // rlog_xxx
-	SessionID      string    `json:"session_id"`      // Session this log belongs to
-	ConversationID *string   `json:"conversation_id"` // Phase 4: conversation context
-	TaskID         string    `json:"task_id"`         // Task that produced this log
-	RunID          string    `json:"run_id"`          // Specific run attempt
-	RunnerID       string    `json:"runner_id"`       // Runner that produced this log
-	Stream         string    `json:"stream"`          // stdout, stderr, json
-	Content        []byte    `json:"content"`         // Raw bytes (not string)
-	Sequence       int64     `json:"sequence"`        // Ordering within run
-	TenantID       *string   `json:"tenant_id,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-}
-
 // LogArchive represents an archived log storage record.
 type LogArchive struct {
 	ID               string     `json:"id"`
