@@ -119,9 +119,10 @@ func TestTaskRunner_Execute_SessionNotAttached(t *testing.T) {
 	assert.False(t, completed.Success)
 	assert.Equal(t, "session not attached", completed.Error)
 
-	// Status should have been set to busy and back to idle
+	// Status should NOT be changed when session is not attached
+	// (we return early before reaching the executor)
 	statuses := statusSetter.Statuses()
-	assert.Equal(t, []string{"busy", "idle"}, statuses)
+	assert.Empty(t, statuses, "status should not be changed when session is not attached")
 }
 
 func TestTaskRunner_Execute_Success(t *testing.T) {

@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/agent/executor"
+	"github.com/chunlea/marionette/pkg/agent/executor/claude"
 	"github.com/chunlea/marionette/pkg/id"
 	"go.uber.org/zap"
 )
@@ -67,19 +69,25 @@ func NewTaskRunner(
 // Execute runs a task and returns the result message.
 // This implements the OnExecuteTask callback signature.
 func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.RunnerMessage, error) {
+	r.logger.Info("executing task",
+		zap.String("task_id", cmd.TaskId),
+		zap.String("run_id", cmd.RunId),
+		zap.String("session_id", cmd.SessionId),
+	)
+
+	// Track whether we actually started executing (for proper status cleanup)
+	executorStarted := false
+
 	r.mu.Lock()
 	r.currentTask = cmd
 	r.currentCtx = ctx
 	r.mu.Unlock()
 
-	// Set status to busy
-	if r.statusSetter != nil {
-		r.statusSetter.SetStatus("busy")
-	}
-
 	defer func() {
-		// Set status back to idle
-		if r.statusSetter != nil {
+		// Only set status back to idle if we actually started executing
+		// If the executor was already running (from another task), we shouldn't
+		// change the status - the other task will reset it when done
+		if executorStarted && r.statusSetter != nil {
 			r.statusSetter.SetStatus("idle")
 		}
 		r.mu.Lock()
@@ -87,12 +95,6 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 		r.currentCtx = nil
 		r.mu.Unlock()
 	}()
-
-	r.logger.Info("executing task",
-		zap.String("task_id", cmd.TaskId),
-		zap.String("run_id", cmd.RunId),
-		zap.String("session_id", cmd.SessionId),
-	)
 
 	// Get session state
 	session, exists := r.cmdHandler.GetSession(cmd.SessionId)
@@ -177,10 +179,21 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 		}
 	}
 
+	// Set status to busy before executing
+	// We'll track if execution actually started to properly handle cleanup
+	if r.statusSetter != nil {
+		r.statusSetter.SetStatus("busy")
+	}
+	executorStarted = true
+
 	// Execute the task
 	result, err := r.executor.Execute(ctx, task, agentConfig, r)
 	if err != nil {
 		r.logger.Error("executor error", zap.Error(err))
+		// If executor was already running, don't reset status - the other task will do it
+		if errors.Is(err, claude.ErrAlreadyRunning) {
+			executorStarted = false
+		}
 		return &pb.RunnerMessage{
 			Payload: &pb.RunnerMessage_TaskCompleted{
 				TaskCompleted: &pb.TaskCompleted{
