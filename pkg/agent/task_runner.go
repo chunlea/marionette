@@ -17,6 +17,11 @@ type MessageSender interface {
 	Send(msg *pb.RunnerMessage)
 }
 
+// StatusSetter is an interface for setting runner status.
+type StatusSetter interface {
+	SetStatus(status string)
+}
+
 // TaskRunner executes tasks using the Claude executor and handles
 // output/permission communication with the server.
 type TaskRunner struct {
@@ -24,6 +29,7 @@ type TaskRunner struct {
 	executor     executor.Executor
 	workspaceMgr *WorkspaceManager
 	cmdHandler   *DefaultCommandHandler
+	statusSetter StatusSetter
 	logger       *zap.Logger
 
 	// Permission response channels (per request)
@@ -41,6 +47,7 @@ func NewTaskRunner(
 	exec executor.Executor,
 	wsMgr *WorkspaceManager,
 	cmdHandler *DefaultCommandHandler,
+	statusSetter StatusSetter,
 	logger *zap.Logger,
 ) *TaskRunner {
 	return &TaskRunner{
@@ -48,6 +55,7 @@ func NewTaskRunner(
 		executor:      exec,
 		workspaceMgr:  wsMgr,
 		cmdHandler:    cmdHandler,
+		statusSetter:  statusSetter,
 		logger:        logger.Named("task-runner"),
 		permResponses: make(map[string]chan *pb.ApprovePermission),
 	}
@@ -61,7 +69,16 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 	r.currentCtx = ctx
 	r.mu.Unlock()
 
+	// Set status to busy
+	if r.statusSetter != nil {
+		r.statusSetter.SetStatus("busy")
+	}
+
 	defer func() {
+		// Set status back to idle
+		if r.statusSetter != nil {
+			r.statusSetter.SetStatus("idle")
+		}
 		r.mu.Lock()
 		r.currentTask = nil
 		r.currentCtx = nil

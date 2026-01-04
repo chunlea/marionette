@@ -88,8 +88,11 @@ func main() {
 	// Create Claude executor
 	claudeExec := claude.New()
 
-	// Create task runner (uses controlChannel to send messages)
-	taskRunner := agent.NewTaskRunner(controlChannel, claudeExec, workspaceMgr, cmdHandler, logger)
+	// Start heartbeat loop (created early so TaskRunner can update status)
+	hbLoop := agent.NewHeartbeatLoop(client, cfg.Heartbeat, logger)
+
+	// Create task runner (uses controlChannel to send messages, hbLoop for status updates)
+	taskRunner := agent.NewTaskRunner(controlChannel, claudeExec, workspaceMgr, cmdHandler, hbLoop, logger)
 
 	// Wire up callbacks
 	cmdHandler.OnExecuteTask = taskRunner.Execute
@@ -104,7 +107,6 @@ func main() {
 	logger.Info("control channel started")
 
 	// Start heartbeat loop
-	hbLoop := agent.NewHeartbeatLoop(client, cfg.Heartbeat, logger)
 	hbLoop.Start(ctx)
 
 	// Wait for shutdown signal
