@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -814,4 +815,221 @@ func TestExecutor_processOutput_ParseError(t *testing.T) {
 	// The raw output should still be sent to handler
 	outputs := handler.GetOutputs()
 	assert.GreaterOrEqual(t, len(outputs), 1)
+}
+
+func TestExecutor_Execute_WithMockScript(t *testing.T) {
+	// Create a temp script that simulates Claude output
+	scriptContent := `#!/bin/bash
+echo '{"type":"system","data":"Claude Code started"}'
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Hello!"}]}}'
+echo '{"type":"result","result":{"success":true,"session_id":"sess_test123"}}'
+`
+	scriptPath := "/tmp/claude/mock_claude.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath))
+
+	ctx := context.Background()
+	task := &executor.Task{
+		Prompt:  "test prompt",
+		Timeout: 10 * time.Second,
+	}
+	handler := newTestOutputHandler()
+
+	result, err := e.Execute(ctx, task, nil, handler)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Success)
+	assert.Equal(t, 0, result.ExitCode)
+	assert.Equal(t, "sess_test123", result.AgentSession)
+
+	// Verify outputs were captured
+	outputs := handler.GetOutputs()
+	assert.Greater(t, len(outputs), 0)
+}
+
+func TestExecutor_Execute_WithWorkingDir(t *testing.T) {
+	// Create a script that prints working directory
+	scriptContent := `#!/bin/bash
+echo '{"type":"system","data":"Started in '"$PWD"'"}'
+echo '{"type":"result","result":{"success":true}}'
+`
+	scriptPath := "/tmp/claude/mock_claude_wd.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath))
+
+	ctx := context.Background()
+	task := &executor.Task{
+		Prompt:     "test",
+		WorkingDir: "/tmp",
+		Timeout:    10 * time.Second,
+	}
+	handler := newTestOutputHandler()
+
+	result, err := e.Execute(ctx, task, nil, handler)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Success)
+}
+
+func TestExecutor_Execute_WithTimeout(t *testing.T) {
+	// Create a script that sleeps forever
+	scriptContent := `#!/bin/bash
+sleep 100
+`
+	scriptPath := "/tmp/claude/mock_claude_slow.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath))
+
+	ctx := context.Background()
+	task := &executor.Task{
+		Prompt:  "test",
+		Timeout: 100 * time.Millisecond,
+	}
+	handler := newTestOutputHandler()
+
+	result, err := e.Execute(ctx, task, nil, handler)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	// When timeout kills the process, it may exit with -1 (signal)
+	// or the error might be "timeout" depending on timing
+	assert.NotEmpty(t, result.Error)
+}
+
+func TestExecutor_Execute_NonZeroExit(t *testing.T) {
+	// Create a script that exits with error
+	scriptContent := `#!/bin/bash
+echo '{"type":"system","data":"Starting"}'
+exit 42
+`
+	scriptPath := "/tmp/claude/mock_claude_fail.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath))
+
+	ctx := context.Background()
+	task := &executor.Task{
+		Prompt:  "test",
+		Timeout: 10 * time.Second,
+	}
+	handler := newTestOutputHandler()
+
+	result, err := e.Execute(ctx, task, nil, handler)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.Equal(t, 42, result.ExitCode)
+}
+
+func TestExecutor_Execute_WithStderr(t *testing.T) {
+	// Create a script that outputs to stderr
+	scriptContent := `#!/bin/bash
+echo '{"type":"system","data":"Started"}' >&1
+echo "Warning: something" >&2
+echo '{"type":"result","result":{"success":true}}' >&1
+`
+	scriptPath := "/tmp/claude/mock_claude_stderr.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath))
+
+	ctx := context.Background()
+	task := &executor.Task{
+		Prompt:  "test",
+		Timeout: 10 * time.Second,
+	}
+	handler := newTestOutputHandler()
+
+	result, err := e.Execute(ctx, task, nil, handler)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Success)
+
+	// Verify stderr was captured
+	outputs := handler.GetOutputs()
+	hasStderr := false
+	for _, o := range outputs {
+		if o.stream == "stderr" && strings.Contains(string(o.data), "Warning") {
+			hasStderr = true
+			break
+		}
+	}
+	assert.True(t, hasStderr, "Should capture stderr output")
+}
+
+func TestExecutor_Execute_WithConfig(t *testing.T) {
+	// Create a script that prints environment variables
+	scriptContent := `#!/bin/bash
+echo '{"type":"system","data":"API_KEY='"${ANTHROPIC_API_KEY}"'"}'
+echo '{"type":"result","result":{"success":true}}'
+`
+	scriptPath := "/tmp/claude/mock_claude_env.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath))
+
+	ctx := context.Background()
+	task := &executor.Task{
+		Prompt:  "test",
+		Timeout: 10 * time.Second,
+	}
+	config := &executor.AgentConfig{
+		APIKey:  "test-key-123",
+		BaseURL: "https://api.example.com",
+	}
+	handler := newTestOutputHandler()
+
+	result, err := e.Execute(ctx, task, config, handler)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Success)
+}
+
+func TestExecutor_Execute_StreamMode(t *testing.T) {
+	// Create a script that just outputs
+	scriptContent := `#!/bin/bash
+echo '{"type":"system","data":"Started"}'
+echo '{"type":"result","result":{"success":true,"session_id":"sess_stream"}}'
+`
+	scriptPath := "/tmp/claude/mock_claude_stream.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath))
+
+	ctx := context.Background()
+	// Set ContextSnapshot to enable stream mode
+	task := &executor.Task{
+		Prompt:          "continue",
+		ContextSnapshot: []byte(`{"session_id":"sess_stream"}`),
+		Timeout:         10 * time.Second,
+	}
+	handler := newTestOutputHandler()
+
+	result, err := e.Execute(ctx, task, nil, handler)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
 }
