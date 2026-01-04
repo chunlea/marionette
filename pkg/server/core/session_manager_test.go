@@ -1032,3 +1032,92 @@ func TestSessionManager_Activate_SendCommandError(t *testing.T) {
 	session := s.sessions["sess_123"]
 	assert.Equal(t, SessionStatusActive, session.Status)
 }
+
+func TestSessionManager_Activate_DetachesOldSession(t *testing.T) {
+	manager, s := setupSessionManagerTest()
+
+	runnerID := "run_123"
+	s.workspaces["ws_old"] = &store.Workspace{ID: "ws_old", Name: "/workspace/old"}
+	s.workspaces["ws_new"] = &store.Workspace{ID: "ws_new", Name: "/workspace/new"}
+
+	// Existing active session attached to the runner
+	s.sessions["sess_old"] = &store.Session{
+		ID:          "sess_old",
+		Status:      SessionStatusActive,
+		WorkspaceID: "ws_old",
+		Agent:       "claude",
+		RunnerID:    &runnerID,
+	}
+
+	// New session to be activated
+	s.sessions["sess_new"] = &store.Session{
+		ID:          "sess_new",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_new",
+		Agent:       "claude",
+	}
+
+	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+
+	// Activate new session on the same runner
+	err := manager.Activate(context.Background(), "sess_new", "run_123")
+	require.NoError(t, err)
+
+	// New session should be active
+	newSession := s.sessions["sess_new"]
+	assert.Equal(t, SessionStatusActive, newSession.Status)
+	require.NotNil(t, newSession.RunnerID)
+	assert.Equal(t, runnerID, *newSession.RunnerID)
+
+	// Old session should be suspended
+	oldSession := s.sessions["sess_old"]
+	assert.Equal(t, SessionStatusSuspended, oldSession.Status)
+	assert.Nil(t, oldSession.RunnerID)
+}
+
+func TestSessionManager_Activate_DetachesMultipleOldSessions(t *testing.T) {
+	manager, s := setupSessionManagerTest()
+
+	runnerID := "run_123"
+	s.workspaces["ws_1"] = &store.Workspace{ID: "ws_1", Name: "/workspace/1"}
+	s.workspaces["ws_2"] = &store.Workspace{ID: "ws_2", Name: "/workspace/2"}
+	s.workspaces["ws_new"] = &store.Workspace{ID: "ws_new", Name: "/workspace/new"}
+
+	// Multiple active sessions attached to the runner (shouldn't happen normally, but test the cleanup)
+	s.sessions["sess_1"] = &store.Session{
+		ID:          "sess_1",
+		Status:      SessionStatusActive,
+		WorkspaceID: "ws_1",
+		Agent:       "claude",
+		RunnerID:    &runnerID,
+	}
+	s.sessions["sess_2"] = &store.Session{
+		ID:          "sess_2",
+		Status:      SessionStatusActive,
+		WorkspaceID: "ws_2",
+		Agent:       "claude",
+		RunnerID:    &runnerID,
+	}
+
+	// New session to be activated
+	s.sessions["sess_new"] = &store.Session{
+		ID:          "sess_new",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_new",
+		Agent:       "claude",
+	}
+
+	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+
+	// Activate new session on the same runner
+	err := manager.Activate(context.Background(), "sess_new", "run_123")
+	require.NoError(t, err)
+
+	// New session should be active
+	newSession := s.sessions["sess_new"]
+	assert.Equal(t, SessionStatusActive, newSession.Status)
+
+	// Both old sessions should be suspended
+	assert.Equal(t, SessionStatusSuspended, s.sessions["sess_1"].Status)
+	assert.Equal(t, SessionStatusSuspended, s.sessions["sess_2"].Status)
+}
