@@ -94,5 +94,10 @@ func (a *TaskAdapter) StreamLogs(ctx context.Context, taskID string, opts Stream
 	return nil, errors.New("log streaming not yet implemented")
 }
 
+// Execute starts execution of a pending task.
+func (a *TaskAdapter) Execute(ctx context.Context, id string) error {
+	return a.manager.Execute(ctx, id)
+}
+
 // Ensure TaskAdapter implements TaskService.
 var _ TaskService = (*TaskAdapter)(nil)

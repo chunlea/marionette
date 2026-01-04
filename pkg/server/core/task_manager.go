@@ -298,6 +298,12 @@ func (m *TaskManager) Execute(ctx context.Context, taskID string) error {
 		return ErrNoRunnerAttached
 	}
 
+	// Get workspace for work_dir
+	workspace, err := m.store.GetWorkspace(ctx, session.WorkspaceID)
+	if err != nil {
+		return err
+	}
+
 	// Create a new task run
 	run, err := m.CreateRun(ctx, taskID)
 	if err != nil {
@@ -321,6 +327,7 @@ func (m *TaskManager) Execute(ctx context.Context, taskID string) error {
 				Attempt:   int32(run.Attempt), //nolint:gosec // Attempt is bounded by MaxRetries
 				SessionId: session.ID,
 				Prompt:    task.Prompt,
+				WorkDir:   workspace.Name,
 				Sandbox: &pb.SandboxConfig{
 					TimeoutSeconds: int64(task.TimeoutSeconds),
 				},

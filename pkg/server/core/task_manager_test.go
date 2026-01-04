@@ -492,10 +492,15 @@ func TestTaskManager_Execute(t *testing.T) {
 	manager, s, cmdSender := setupTaskManagerTest()
 
 	runnerID := "run_123"
+	s.workspaces["ws_123"] = &store.Workspace{
+		ID:   "ws_123",
+		Name: "workspace-ws_123",
+	}
 	s.sessions["sess_123"] = &store.Session{
-		ID:       "sess_123",
-		Status:   SessionStatusActive,
-		RunnerID: &runnerID,
+		ID:          "sess_123",
+		Status:      SessionStatusActive,
+		RunnerID:    &runnerID,
+		WorkspaceID: "ws_123",
 	}
 	s.tasks["task_123"] = &store.Task{
 		ID:             "task_123",
@@ -862,10 +867,15 @@ func TestTaskManager_Retry(t *testing.T) {
 	manager, s, cmdSender := setupTaskManagerTest()
 
 	runnerID := "run_123"
+	s.workspaces["ws_123"] = &store.Workspace{
+		ID:   "ws_123",
+		Name: "workspace-ws_123",
+	}
 	s.sessions["sess_123"] = &store.Session{
-		ID:       "sess_123",
-		Status:   SessionStatusActive,
-		RunnerID: &runnerID,
+		ID:          "sess_123",
+		Status:      SessionStatusActive,
+		RunnerID:    &runnerID,
+		WorkspaceID: "ws_123",
 	}
 	s.tasks["task_123"] = &store.Task{
 		ID:             "task_123",
@@ -1465,12 +1475,19 @@ func TestTaskManager_OnTaskCompleted_FailedWithRetry(t *testing.T) {
 		TimeoutSeconds: 3600,
 	})
 
+	// Create workspace
+	s.workspaces["ws_1"] = &store.Workspace{
+		ID:   "ws_1",
+		Name: "workspace-ws_1",
+	}
+
 	// Create active session with a runner attached
 	runnerID := "run_1"
 	s.sessions["sess_1"] = &store.Session{
-		ID:       "sess_1",
-		Status:   SessionStatusActive,
-		RunnerID: &runnerID,
+		ID:          "sess_1",
+		Status:      SessionStatusActive,
+		RunnerID:    &runnerID,
+		WorkspaceID: "ws_1",
 	}
 
 	// Create running task run

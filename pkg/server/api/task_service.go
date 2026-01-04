@@ -24,6 +24,9 @@ type TaskService interface {
 	// Retry retries a failed task.
 	Retry(ctx context.Context, id string) error
 
+	// Execute starts execution of a pending task.
+	Execute(ctx context.Context, id string) error
+
 	// GetLogs returns logs for a task.
 	GetLogs(ctx context.Context, taskID string, opts GetLogsOptions) (*store.ListResult[store.Log], error)
 
