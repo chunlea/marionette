@@ -16,10 +16,18 @@ const envPrefix = "MARIONETTE"
 type Config struct {
 	Server    ServerConfig    `mapstructure:"server"`
 	Runner    RunnerConfig    `mapstructure:"runner"`
+	Workspace WorkspaceConfig `mapstructure:"workspace"`
 	Heartbeat HeartbeatConfig `mapstructure:"heartbeat"`
 	Sandbox   SandboxConfig   `mapstructure:"sandbox"`
 	TLS       TLSConfig       `mapstructure:"tls"`
 	Logging   LoggingConfig   `mapstructure:"logging"`
+}
+
+// WorkspaceConfig contains workspace settings.
+type WorkspaceConfig struct {
+	// BasePath is the base directory for workspaces.
+	// Default: /workspace
+	BasePath string `mapstructure:"base_path"`
 }
 
 // ServerConfig contains gRPC server connection settings.
@@ -100,6 +108,7 @@ func BindFlags(flags *pflag.FlagSet) {
 	flags.String("token", "", "Runner authentication token (or set MARIONETTE_RUNNER_TOKEN)")
 	flags.String("name", "", "Runner name (defaults to hostname)")
 	flags.String("pool", "", "Pool name for pool runners")
+	flags.String("workspace", "/workspace", "Base path for workspaces")
 	flags.String("sandbox-mode", "runner-is-sandbox", "Sandbox mode: runner-is-sandbox or runner-creates-sandbox")
 	flags.String("log-level", "info", "Log level: debug, info, warn, error")
 	flags.String("log-format", "json", "Log format: json or console")
@@ -116,6 +125,7 @@ func bindPFlags(v *viper.Viper, flags *pflag.FlagSet) {
 	_ = v.BindPFlag("runner.token", flags.Lookup("token"))
 	_ = v.BindPFlag("runner.name", flags.Lookup("name"))
 	_ = v.BindPFlag("runner.pool_name", flags.Lookup("pool"))
+	_ = v.BindPFlag("workspace.base_path", flags.Lookup("workspace"))
 	_ = v.BindPFlag("sandbox.mode", flags.Lookup("sandbox-mode"))
 	_ = v.BindPFlag("logging.level", flags.Lookup("log-level"))
 	_ = v.BindPFlag("logging.format", flags.Lookup("log-format"))
@@ -190,6 +200,9 @@ func setDefaults(v *viper.Viper) {
 	// Server defaults
 	v.SetDefault("server.address", "localhost:9090")
 
+	// Workspace defaults
+	v.SetDefault("workspace.base_path", "/workspace")
+
 	// Heartbeat defaults
 	v.SetDefault("heartbeat.interval", "30s")
 	v.SetDefault("heartbeat.timeout", "10s")
@@ -217,6 +230,9 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("runner.token")
 	_ = v.BindEnv("runner.name")
 	_ = v.BindEnv("runner.pool_name")
+
+	// Workspace
+	_ = v.BindEnv("workspace.base_path")
 
 	// Heartbeat
 	_ = v.BindEnv("heartbeat.interval")

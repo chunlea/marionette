@@ -21,6 +21,7 @@ type MockTaskService struct {
 	CreateFunc     func(ctx context.Context, opts CreateTaskOptions) (*store.Task, error)
 	GetFunc        func(ctx context.Context, id string) (*store.Task, error)
 	ListFunc       func(ctx context.Context, opts ListTasksOptions) (*store.ListResult[store.Task], error)
+	ExecuteFunc    func(ctx context.Context, id string) error
 	CancelFunc     func(ctx context.Context, id string) error
 	RetryFunc      func(ctx context.Context, id string) error
 	GetLogsFunc    func(ctx context.Context, taskID string, opts GetLogsOptions) (*store.ListResult[store.Log], error)
@@ -117,6 +118,34 @@ func (m *MockTaskService) List(ctx context.Context, opts ListTasksOptions) (*sto
 		TotalCount: int64(len(items)),
 		HasMore:    false,
 	}, nil
+}
+
+// Execute starts execution of a pending task.
+func (m *MockTaskService) Execute(ctx context.Context, taskID string) error {
+	if m.ExecuteFunc != nil {
+		return m.ExecuteFunc(ctx, taskID)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return store.ErrNotFound
+	}
+
+	if task.Status != "pending" {
+		return &InvalidStateError{
+			Resource: "task",
+			ID:       taskID,
+			Current:  task.Status,
+			Expected: "pending",
+		}
+	}
+
+	task.Status = "running"
+	task.UpdatedAt = time.Now()
+	return nil
 }
 
 // Cancel cancels a pending or running task.

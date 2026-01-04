@@ -9,7 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/agent"
+	"github.com/chunlea/marionette/pkg/agent/executor/claude"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -44,6 +46,7 @@ func main() {
 	logger.Info("marionette agent starting",
 		zap.String("server", cfg.Server.Address),
 		zap.String("name", cfg.Runner.Name),
+		zap.String("workspace", cfg.Workspace.BasePath),
 		zap.String("sandbox_mode", cfg.Sandbox.Mode),
 	)
 
@@ -76,13 +79,26 @@ func main() {
 	)
 
 	// Create workspace manager and command handler
-	// TODO: Add workspace configuration to Config struct
-	workspaceBasePath := "/workspace"
-	workspaceMgr := agent.NewWorkspaceManager(workspaceBasePath, logger)
+	workspaceMgr := agent.NewWorkspaceManager(cfg.Workspace.BasePath, logger)
 	cmdHandler := agent.NewDefaultCommandHandler(workspaceMgr, logger)
 
-	// Create control channel
+	// Create control channel first (needed for TaskRunner to send messages)
 	controlChannel := agent.NewControlChannel(client, cmdHandler, logger)
+
+	// Create Claude executor
+	claudeExec := claude.New()
+
+	// Start heartbeat loop (created early so TaskRunner can update status)
+	hbLoop := agent.NewHeartbeatLoop(client, cfg.Heartbeat, logger)
+
+	// Create task runner (uses controlChannel to send messages, hbLoop for status updates)
+	taskRunner := agent.NewTaskRunner(controlChannel, claudeExec, workspaceMgr, cmdHandler, hbLoop, logger)
+
+	// Wire up callbacks
+	cmdHandler.OnExecuteTask = taskRunner.Execute
+	cmdHandler.OnApprovePermission = func(ctx context.Context, cmd *pb.ApprovePermission) error {
+		return taskRunner.HandlePermissionResponse(ctx, cmd)
+	}
 
 	// Start control channel
 	if err := controlChannel.Start(ctx); err != nil {
@@ -91,7 +107,6 @@ func main() {
 	logger.Info("control channel started")
 
 	// Start heartbeat loop
-	hbLoop := agent.NewHeartbeatLoop(client, cfg.Heartbeat, logger)
 	hbLoop.Start(ctx)
 
 	// Wait for shutdown signal
