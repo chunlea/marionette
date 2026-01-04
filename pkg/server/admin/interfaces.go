@@ -154,6 +154,8 @@ type SpawnRunnerOptions struct {
 	Provider         string            `json:"provider,omitempty"`
 	ProfileID        string            `json:"profile_id,omitempty"`
 	Labels           map[string]string `json:"labels,omitempty"`
+	WorkspaceID      string            `json:"workspace_id,omitempty"`    // Optional workspace ID for mount
+	WorkspaceMount   string            `json:"workspace_mount,omitempty"` // Host path to mount as workspace
 }
 
 // ListRunnersOptions defines options for listing runners.

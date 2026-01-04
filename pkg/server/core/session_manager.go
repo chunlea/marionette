@@ -67,10 +67,20 @@ type SessionManagerInterface interface {
 
 // SessionManager handles session lifecycle and state transitions.
 type SessionManager struct {
-	store       store.Store
-	connManager ConnectionManagerInterface
-	cmdSender   CommandSender
-	logger      *zap.Logger
+	store            store.Store
+	connManager      ConnectionManagerInterface
+	cmdSender        CommandSender
+	workspaceManager WorkspaceManagerInterface
+	logger           *zap.Logger
+}
+
+// SessionManagerConfig holds configuration for SessionManager.
+type SessionManagerConfig struct {
+	Store            store.Store
+	ConnManager      ConnectionManagerInterface
+	CmdSender        CommandSender
+	WorkspaceManager WorkspaceManagerInterface
+	Logger           *zap.Logger
 }
 
 // NewSessionManager creates a new SessionManager.
@@ -81,6 +91,22 @@ func NewSessionManager(store store.Store, connManager ConnectionManagerInterface
 		cmdSender:   cmdSender,
 		logger:      logger,
 	}
+}
+
+// NewSessionManagerWithConfig creates a new SessionManager with full configuration.
+func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
+	return &SessionManager{
+		store:            cfg.Store,
+		connManager:      cfg.ConnManager,
+		cmdSender:        cfg.CmdSender,
+		workspaceManager: cfg.WorkspaceManager,
+		logger:           cfg.Logger,
+	}
+}
+
+// SetWorkspaceManager sets the workspace manager. This allows optional injection.
+func (m *SessionManager) SetWorkspaceManager(wm WorkspaceManagerInterface) {
+	m.workspaceManager = wm
 }
 
 // CreateSessionOptions contains options for creating a new session.
@@ -551,6 +577,21 @@ func (m *SessionManager) Terminate(ctx context.Context, sessionID string) error 
 		zap.Stringp("previous_runner_id", previousRunnerID),
 	)
 
+	// Optionally cleanup workspace host directory
+	// Note: The workspace database record is NOT deleted here - only the host directory
+	// This is controlled by the WorkspaceManager's CleanupOnTerminate configuration
+	if m.workspaceManager != nil {
+		// Cleanup is handled by WorkspaceManager based on its configuration
+		// We just log if cleanup fails, don't fail the termination
+		if err := m.workspaceManager.CleanupHostDirectory(ctx, session.WorkspaceID); err != nil {
+			m.logger.Warn("failed to cleanup workspace host directory on termination",
+				zap.String("session_id", sessionID),
+				zap.String("workspace_id", session.WorkspaceID),
+				zap.Error(err),
+			)
+		}
+	}
+
 	return nil
 }
 
@@ -584,8 +625,38 @@ func (m *SessionManager) AttachRunner(ctx context.Context, sessionID, runnerID s
 		return ErrRunnerNotIdle
 	}
 
+	// Ensure workspace host directory exists
+	if m.workspaceManager != nil {
+		if _, err := m.workspaceManager.EnsureHostDirectory(ctx, session.WorkspaceID); err != nil {
+			m.logger.Error("failed to ensure workspace host directory",
+				zap.String("session_id", sessionID),
+				zap.String("workspace_id", session.WorkspaceID),
+				zap.Error(err),
+			)
+			return err
+		}
+	}
+
 	// Activate the session (which also attaches the runner)
 	return m.Activate(ctx, sessionID, runnerID)
+}
+
+// GetWorkspaceHostPath returns the host filesystem path for a session's workspace.
+// This path is used for mounting the workspace into containers.
+func (m *SessionManager) GetWorkspaceHostPath(ctx context.Context, sessionID string) (string, error) {
+	session, err := m.store.GetSession(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return "", ErrSessionNotFound
+		}
+		return "", err
+	}
+
+	if m.workspaceManager == nil {
+		return "", nil
+	}
+
+	return m.workspaceManager.GetHostPath(ctx, session.WorkspaceID)
 }
 
 // DetachRunner detaches the runner from a session without changing status.
@@ -678,10 +749,37 @@ func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.S
 		return nil
 	}
 
+	// Get runner info to determine sandbox mode
+	runner, err := m.store.GetRunner(ctx, runnerID)
+	if err != nil {
+		m.logger.Warn("failed to get runner info, using default workspace path",
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+	}
+
 	// Get workspace info
 	workspace, err := m.store.GetWorkspace(ctx, session.WorkspaceID)
 	if err != nil {
 		return err
+	}
+
+	// Determine workspace path to send to agent
+	// If workspaceManager is configured, use host path; otherwise fall back to workspace name
+	workspacePath := workspace.Name
+	if m.workspaceManager != nil {
+		if hostPath, err := m.workspaceManager.GetHostPath(ctx, session.WorkspaceID); err == nil && hostPath != "" {
+			// Check runner's sandbox mode to determine path
+			// For Docker containers: workspace is mounted at /workspace
+			// For local/native runners: use the actual host path
+			if runner != nil && runner.SandboxMode == "runner-is-sandbox" {
+				// Docker/container mode - workspace is mounted at /workspace
+				workspacePath = "/workspace"
+			} else {
+				// Local/native mode - use actual host path
+				workspacePath = hostPath
+			}
+		}
 	}
 
 	// Build agent config (for non-BYOK sessions)
@@ -747,7 +845,7 @@ func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.S
 		Payload: &pb.ServerCommand_AttachSession{
 			AttachSession: &pb.AttachSession{
 				SessionId:          session.ID,
-				WorkspacePath:      workspace.Name, // Use workspace name as path
+				WorkspacePath:      workspacePath,
 				ContextSnapshot:    session.ContextSnapshot,
 				AgentConfig:        agentConfig,
 				PendingPermissions: pendingPerms,

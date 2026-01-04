@@ -3,27 +3,21 @@ package api
 import (
 	"context"
 
-	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/server/core"
 	"github.com/chunlea/marionette/pkg/store"
 )
 
-// workspaceCreator is the interface needed by SessionAdapter for workspace operations.
-type workspaceCreator interface {
-	CreateWorkspace(ctx context.Context, ws *store.Workspace) error
-}
-
 // SessionAdapter adapts core.SessionManager to api.SessionService.
 type SessionAdapter struct {
-	manager *core.SessionManager
-	store   workspaceCreator
+	manager          *core.SessionManager
+	workspaceManager core.WorkspaceManagerInterface
 }
 
 // NewSessionAdapter creates a new SessionAdapter.
-func NewSessionAdapter(manager *core.SessionManager, store store.Store) *SessionAdapter {
+func NewSessionAdapter(manager *core.SessionManager, workspaceManager core.WorkspaceManagerInterface) *SessionAdapter {
 	return &SessionAdapter{
-		manager: manager,
-		store:   store,
+		manager:          manager,
+		workspaceManager: workspaceManager,
 	}
 }
 
@@ -55,8 +49,7 @@ func (a *SessionAdapter) Create(ctx context.Context, opts CreateSessionOptions) 
 	}
 
 	// Create or get workspace
-	// For now, create a new workspace for each session
-	wsID, err := a.ensureWorkspace(ctx, opts.Name)
+	wsID, err := a.ensureWorkspace(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -66,25 +59,28 @@ func (a *SessionAdapter) Create(ctx context.Context, opts CreateSessionOptions) 
 }
 
 // ensureWorkspace creates or retrieves a workspace for the session.
-func (a *SessionAdapter) ensureWorkspace(ctx context.Context, name string) (string, error) {
-	wsID := id.Workspace()
-	wsName := name
-	if wsName == "" {
-		wsName = "workspace-" + wsID
+func (a *SessionAdapter) ensureWorkspace(ctx context.Context, opts CreateSessionOptions) (string, error) {
+	// If an existing workspace ID is provided, use it
+	if opts.WorkspaceID != "" {
+		// Verify the workspace exists
+		ws, err := a.workspaceManager.Get(ctx, opts.WorkspaceID)
+		if err != nil {
+			return "", err
+		}
+		return ws.ID, nil
 	}
 
-	ws := &store.Workspace{
-		ID:          wsID,
-		Name:        wsName,
-		Persist:     true,
-		StorageType: "volume",
-		Mobility:    "local",
+	// Create a new workspace
+	wsOpts := core.CreateWorkspaceOptions{
+		Name: opts.Name,
 	}
 
-	if err := a.store.CreateWorkspace(ctx, ws); err != nil {
+	ws, err := a.workspaceManager.Create(ctx, wsOpts)
+	if err != nil {
 		return "", err
 	}
-	return wsID, nil
+
+	return ws.ID, nil
 }
 
 // Get retrieves a session by ID.

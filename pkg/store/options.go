@@ -61,6 +61,7 @@ type ListScheduledTasksOptions struct {
 // ListWorkspacesOptions for filtering workspaces.
 type ListWorkspacesOptions struct {
 	BaseListOptions
+	TenantID       *string           // Filter by tenant
 	IncludeDeleted bool              // Include soft-deleted workspaces
 	Labels         map[string]string // Filter by labels
 }

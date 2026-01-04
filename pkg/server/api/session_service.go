@@ -35,7 +35,8 @@ type CreateSessionOptions struct {
 	Name               string            `json:"name,omitempty"`
 	Agent              string            `json:"agent"`
 	AgentConfigID      string            `json:"agent_config_id,omitempty"`
-	APIKey             string            `json:"api_key,omitempty"` // For BYOK mode
+	APIKey             string            `json:"api_key,omitempty"`      // For BYOK mode
+	WorkspaceID        string            `json:"workspace_id,omitempty"` // Existing workspace to use
 	LifecycleMode      string            `json:"lifecycle_mode,omitempty"`
 	IdleTimeoutSeconds int               `json:"idle_timeout_seconds,omitempty"`
 	NetworkPolicy      string            `json:"network_policy,omitempty"`

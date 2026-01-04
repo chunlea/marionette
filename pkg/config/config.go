@@ -71,9 +71,26 @@ type DockerResourcesConfig struct {
 
 // StorageConfig holds storage backend configuration.
 type StorageConfig struct {
-	Provider string              `mapstructure:"provider"`
-	Local    *LocalStorageConfig `mapstructure:"local"`
-	S3       *S3StorageConfig    `mapstructure:"s3"`
+	Provider  string              `mapstructure:"provider"`
+	Local     *LocalStorageConfig `mapstructure:"local"`
+	S3        *S3StorageConfig    `mapstructure:"s3"`
+	Workspace WorkspaceStorageConfig `mapstructure:"workspace"`
+}
+
+// WorkspaceStorageConfig holds workspace storage settings.
+type WorkspaceStorageConfig struct {
+	// BaseDir is the base directory for workspace storage on the host.
+	// Each workspace will be created as a subdirectory under this path.
+	// Defaults to /var/marionette/workspaces
+	BaseDir string `mapstructure:"base_dir"`
+
+	// DefaultQuotaMB is the default disk quota for workspaces in megabytes.
+	// Set to 0 for unlimited.
+	DefaultQuotaMB int `mapstructure:"default_quota_mb"`
+
+	// CleanupOnTerminate controls whether workspaces are deleted when sessions terminate.
+	// Defaults to false (workspaces are retained).
+	CleanupOnTerminate bool `mapstructure:"cleanup_on_terminate"`
 }
 
 // LocalStorageConfig holds local filesystem storage settings.

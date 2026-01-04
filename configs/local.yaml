@@ -28,6 +28,8 @@ storage:
   provider: local
   local:
     path: "./data/storage"
+  workspace:
+    base_dir: "./data/workspaces"
 
 # Logging configuration
 logging:

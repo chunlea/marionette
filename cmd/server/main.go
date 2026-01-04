@@ -94,8 +94,12 @@ func main() {
 		// Create connection manager first (needed by PermissionManager)
 		connManager = grpcserver.NewConnectionManager(logger)
 
+		// Create workspace manager
+		workspaceMgr := core.NewWorkspaceManager(dbStore, cfg.Storage.Workspace, logger)
+
 		// Create core managers
 		sessionMgr = core.NewSessionManager(dbStore, connManager, connManager, logger)
+		sessionMgr.SetWorkspaceManager(workspaceMgr)
 		taskMgr = core.NewTaskManager(dbStore, connManager, sessionMgr, logger)
 
 		// Create permission manager with connection manager as command sender
@@ -105,14 +109,16 @@ func main() {
 		permEnforcer = core.NewPermissionTimeoutEnforcer(dbStore, sessionMgr, logger)
 
 		// Create adapters and add to API options
-		sessionAdapter := api.NewSessionAdapter(sessionMgr, dbStore)
+		sessionAdapter := api.NewSessionAdapter(sessionMgr, workspaceMgr)
 		taskAdapter := api.NewTaskAdapter(taskMgr, dbStore)
 		permAdapter := api.NewPermissionAdapter(permMgr)
+		workspaceAdapter := api.NewWorkspaceAdapter(workspaceMgr)
 
 		apiOpts = append(apiOpts,
 			api.WithSessionService(sessionAdapter),
 			api.WithTaskService(taskAdapter),
 			api.WithPermissionService(permAdapter),
+			api.WithWorkspaceService(workspaceAdapter),
 			api.WithAPIKeyService(apiKeySvc),
 		)
 
