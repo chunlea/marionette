@@ -22,6 +22,9 @@ var (
 
 	// ErrMaxRetriesExceeded indicates maximum retry attempts were exceeded.
 	ErrMaxRetriesExceeded = errors.New("maximum retries exceeded")
+
+	// ErrNoActiveTask indicates no task is currently being executed.
+	ErrNoActiveTask = errors.New("no active task")
 )
 
 // ErrRegistrationRejected indicates the server rejected runner registration.
