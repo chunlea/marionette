@@ -44,6 +44,7 @@ func main() {
 	logger.Info("marionette agent starting",
 		zap.String("server", cfg.Server.Address),
 		zap.String("name", cfg.Runner.Name),
+		zap.String("workspace", cfg.Workspace.BasePath),
 		zap.String("sandbox_mode", cfg.Sandbox.Mode),
 	)
 
@@ -76,9 +77,7 @@ func main() {
 	)
 
 	// Create workspace manager and command handler
-	// TODO: Add workspace configuration to Config struct
-	workspaceBasePath := "/workspace"
-	workspaceMgr := agent.NewWorkspaceManager(workspaceBasePath, logger)
+	workspaceMgr := agent.NewWorkspaceManager(cfg.Workspace.BasePath, logger)
 	cmdHandler := agent.NewDefaultCommandHandler(workspaceMgr, logger)
 
 	// Create control channel
