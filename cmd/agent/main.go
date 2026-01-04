@@ -9,7 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/agent"
+	"github.com/chunlea/marionette/pkg/agent/executor/claude"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -19,6 +21,7 @@ func main() {
 	// Parse command-line flags
 	flags := pflag.NewFlagSet("agent", pflag.ExitOnError)
 	configPath := flags.String("config", "", "path to config file")
+	workspaceDir := flags.String("workspace", "/workspace", "Base directory for workspaces")
 	agent.BindFlags(flags)
 
 	if err := flags.Parse(os.Args[1:]); err != nil {
@@ -76,13 +79,29 @@ func main() {
 	)
 
 	// Create workspace manager and command handler
-	// TODO: Add workspace configuration to Config struct
-	workspaceBasePath := "/workspace"
-	workspaceMgr := agent.NewWorkspaceManager(workspaceBasePath, logger)
+	workspaceMgr := agent.NewWorkspaceManager(*workspaceDir, logger)
 	cmdHandler := agent.NewDefaultCommandHandler(workspaceMgr, logger)
 
 	// Create control channel
 	controlChannel := agent.NewControlChannel(client, cmdHandler, logger)
+
+	// Create Claude executor
+	claudeExec := claude.New()
+
+	// Create task runner with control channel as sender
+	taskRunner := agent.NewTaskRunner(claudeExec, controlChannel, workspaceMgr, logger)
+
+	// Wire up task execution callback
+	cmdHandler.OnExecuteTask = taskRunner.Execute
+
+	// Wire up permission response callback
+	cmdHandler.OnApprovePermission = func(ctx context.Context, cmd *pb.ApprovePermission) error {
+		return taskRunner.HandlePermissionResponse(ctx, cmd)
+	}
+
+	logger.Info("task runner initialized",
+		zap.String("executor", claudeExec.Name()),
+	)
 
 	// Start control channel
 	if err := controlChannel.Start(ctx); err != nil {
