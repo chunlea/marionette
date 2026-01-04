@@ -434,6 +434,7 @@
   - [x] Include workspace path
   - [x] Include agent config (API key, model)
   - [x] Include pending permission responses (if resuming)
+  - [x] Auto-detach existing sessions from runner before attach (PR #39)
 - [x] Detach runner from session:
   - [x] Send `DetachSession` command (G2 - PR #13)
   - [ ] Save context snapshot (G5)
@@ -568,12 +569,13 @@
   - [x] `TaskRunner` log streaming integration tests
   - [x] Error handling tests (start error, send error)
 
-### 3.7 Permission Handling (Server) ✓
+### 3.7 Permission Handling ✓
 
-- [ ] Permission request detection (Agent-side, deferred):
-  - [ ] Parse Claude Code output for permission patterns
-  - [ ] Extract tool name, action, context
-  - [ ] Determine risk level
+- [x] Permission request detection (Agent-side):
+  - [x] Parse Claude Code output for tool_use events
+  - [x] Check `IsPermissionRequired()` for tool name
+  - [x] Extract tool name, action from event
+  - [x] Call `handler.HandlePermissionRequest()` and block
 - [x] Permission request flow:
   - [x] Agent sends `PermissionRequest` message
   - [x] Server creates permission_request record (PermissionManager)
@@ -581,17 +583,17 @@
   - [ ] Server notifies subscribers (WebSocket, webhook) - Phase 4
 - [x] Permission response flow:
   - [x] User approves/denies via API (PermissionManager.Respond)
-  - [x] Server sends `ApprovePermission` command
+  - [x] Server sends `ApprovePermission` command with original request ID (PR #39)
   - [x] Session resumed if suspended
-  - [ ] Agent receives and unblocks executor - Agent-side
+  - [x] Agent receives and unblocks executor (`TaskRunner.HandlePermissionResponse`)
 - [x] Timeout handling:
   - [x] `suspend_after_seconds`: auto-suspend session (PermissionTimeoutEnforcer)
   - [x] Permission stays pending (no auto-deny)
-  - [ ] On resume: deliver cached response to agent - Agent-side
+  - [x] On resume: deliver cached response to agent via `pending_permissions`
 - [x] Permission caching:
   - [x] Store response in database
   - [x] Include `responded_by`, `response_reason`, `responded_at`
-  - [ ] Deliver on session resume via `pending_permissions` - Agent-side
+  - [x] Deliver on session resume via `pending_permissions` in `AttachSession`
 
 ---
 

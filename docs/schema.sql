@@ -465,6 +465,7 @@ CREATE INDEX idx_scheduled_tasks_tenant ON scheduled_tasks(tenant_id);
 -- permission_requests: async permission approval with suspend/resume support
 CREATE TABLE permission_requests (
     id TEXT PRIMARY KEY,  -- perm_xxx
+    original_request_id TEXT NOT NULL,  -- Original request ID from agent (e.g., tool_use_id)
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     run_id TEXT NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,
@@ -504,6 +505,7 @@ CREATE INDEX idx_permission_requests_task ON permission_requests(task_id);
 CREATE INDEX idx_permission_requests_pending ON permission_requests(session_id, status)
     WHERE status = 'pending';
 CREATE INDEX idx_permission_requests_tenant ON permission_requests(tenant_id);
+CREATE INDEX idx_permission_requests_original_id ON permission_requests(original_request_id);
 
 --------------------------------------------------------------------------------
 -- CAS Storage (Content-Addressable Storage)

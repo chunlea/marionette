@@ -240,3 +240,127 @@ func TestParser_Registration(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, parser)
 }
+
+func TestParser_ParseLine_AssistantMessage_NilMessage(t *testing.T) {
+	parser := NewParser()
+
+	// Assistant message with nil message field
+	line := []byte(`{"type":"assistant"}`)
+	events, err := parser.ParseLine(line)
+
+	assert.NoError(t, err)
+	assert.Nil(t, events)
+}
+
+func TestParser_ParseLine_AssistantMessage_InvalidMessage(t *testing.T) {
+	parser := NewParser()
+
+	// Assistant message with invalid nested JSON
+	line := []byte(`{"type":"assistant","message":"not an object"}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	// Invalid message should be returned as system event
+	assert.Equal(t, executor.EventSystem, events[0].Type)
+}
+
+func TestParser_ParseLine_ContentBlock_UnknownType(t *testing.T) {
+	parser := NewParser()
+
+	// Content block with unknown type
+	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"unknown_block_type","data":"test"}]}}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	// Unknown block types are silently skipped
+	assert.Len(t, events, 0)
+}
+
+func TestParser_ParseLine_ResultMessage_NilResult(t *testing.T) {
+	parser := NewParser()
+
+	// Result message with nil result field
+	line := []byte(`{"type":"result"}`)
+	events, err := parser.ParseLine(line)
+
+	assert.NoError(t, err)
+	assert.Nil(t, events)
+}
+
+func TestParser_ParseLine_ResultMessage_NoUsage(t *testing.T) {
+	parser := NewParser()
+
+	// Result message without usage
+	line := []byte(`{"type":"result","result":{"success":true,"session_id":"sess_789"}}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	// Only system event, no usage event
+	assert.Equal(t, executor.EventSystem, events[0].Type)
+	assert.Equal(t, "Task completed", events[0].Text)
+}
+
+func TestParser_ParseLine_SystemMessage_SubtypeOnly(t *testing.T) {
+	parser := NewParser()
+
+	// System message with only subtype, no data
+	line := []byte(`{"type":"system","subtype":"shutdown"}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, executor.EventSystem, events[0].Type)
+	assert.Equal(t, "shutdown", events[0].Text)
+}
+
+func TestParser_ParseLine_ToolUse_NilInput(t *testing.T) {
+	parser := NewParser()
+
+	// Tool use with nil input
+	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool_456","name":"Read"}]}}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, executor.EventToolUse, events[0].Type)
+	require.NotNil(t, events[0].ToolUse)
+	assert.Equal(t, "tool_456", events[0].ToolUse.ID)
+	assert.Equal(t, "Read", events[0].ToolUse.Name)
+	assert.Equal(t, "", events[0].ToolUse.Input)
+}
+
+func TestParser_ParseLine_ToolResult_WithError(t *testing.T) {
+	parser := NewParser()
+
+	// Tool result with error
+	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_result","tool_use_id":"tool_789","content":"Command failed: permission denied","is_error":true}]}}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, executor.EventToolResult, events[0].Type)
+	require.NotNil(t, events[0].ToolResult)
+	assert.True(t, events[0].ToolResult.IsError)
+	assert.Equal(t, "Command failed: permission denied", events[0].ToolResult.Output)
+}
+
+func TestParser_ParseLine_Usage_WithCache(t *testing.T) {
+	parser := NewParser()
+
+	// Usage with cache tokens
+	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi"}],"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":30,"cache_creation_input_tokens":10}}}`)
+	events, err := parser.ParseLine(line)
+
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+
+	// Usage event
+	assert.Equal(t, executor.EventUsage, events[1].Type)
+	require.NotNil(t, events[1].Usage)
+	assert.Equal(t, int64(100), events[1].Usage.InputTokens)
+	assert.Equal(t, int64(50), events[1].Usage.OutputTokens)
+	assert.Equal(t, int64(30), events[1].Usage.CacheRead)
+	assert.Equal(t, int64(10), events[1].Usage.CacheWrite)
+}

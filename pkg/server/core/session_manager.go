@@ -238,6 +238,16 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 		return ErrRunnerNotIdle
 	}
 
+	// Detach any existing sessions from this runner
+	// This ensures only one session is attached to a runner at a time
+	if err := m.detachSessionsFromRunner(ctx, runnerID, sessionID); err != nil {
+		m.logger.Error("failed to detach existing sessions from runner",
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+		// Continue with activation - don't fail because of cleanup issues
+	}
+
 	// Update session
 	now := time.Now()
 	updates := store.SessionUpdates{
@@ -815,5 +825,48 @@ func (m *SessionManager) sendDetachSession(ctx context.Context, session *store.S
 		zap.String("strategy", opts.Strategy),
 	)
 
+	return nil
+}
+
+// detachSessionsFromRunner detaches any active sessions from the specified runner.
+// This is called before attaching a new session to ensure only one session per runner.
+// The exceptSessionID is excluded from detachment (this is the session being activated).
+func (m *SessionManager) detachSessionsFromRunner(ctx context.Context, runnerID, exceptSessionID string) error {
+	// Find all active sessions attached to this runner
+	sessions, err := m.store.ListSessions(ctx, store.ListSessionsOptions{
+		RunnerID: &runnerID,
+		Status:   []string{SessionStatusActive},
+	})
+	if err != nil {
+		return err
+	}
+
+	var detachErrors []error
+	for _, session := range sessions.Items {
+		// Skip the session being activated
+		if session.ID == exceptSessionID {
+			continue
+		}
+
+		m.logger.Info("detaching session from runner due to new activation",
+			zap.String("session_id", session.ID),
+			zap.String("runner_id", runnerID),
+			zap.String("new_session_id", exceptSessionID),
+		)
+
+		// Suspend the old session (this will clear runner_id and set status to suspended)
+		if err := m.Suspend(ctx, session.ID, "release_to_pool"); err != nil {
+			m.logger.Warn("failed to suspend old session during runner reattachment",
+				zap.String("session_id", session.ID),
+				zap.String("runner_id", runnerID),
+				zap.Error(err),
+			)
+			detachErrors = append(detachErrors, err)
+		}
+	}
+
+	if len(detachErrors) > 0 {
+		return detachErrors[0]
+	}
 	return nil
 }

@@ -133,10 +133,53 @@ fmt:
 	gofmt -s -w .
 	goimports -w .
 
+## test-pkg: Run tests for a specific package (usage: make test-pkg PKG=./pkg/agent/...)
+test-pkg:
+	@if [ -z "$(PKG)" ]; then \
+		echo "Error: PKG is required. Usage: make test-pkg PKG=./pkg/agent/..."; \
+		exit 1; \
+	fi
+	$(GOTEST) -race -v $(PKG)
+
+## test-coverage-pkg: Run tests with coverage for a specific package
+test-coverage-pkg:
+	@if [ -z "$(PKG)" ]; then \
+		echo "Error: PKG is required. Usage: make test-coverage-pkg PKG=./pkg/agent/..."; \
+		exit 1; \
+	fi
+	$(GOTEST) -race -coverprofile=coverage.out $(PKG)
+	$(GOCMD) tool cover -func=coverage.out
+	$(GOCMD) tool cover -html=coverage.out -o coverage.html
+	@echo ""
+	@echo "Coverage report: coverage.html"
+
+## test-executor: Run tests for the Claude executor package
+test-executor:
+	@mkdir -p /tmp/claude
+	$(GOTEST) -race -v ./pkg/agent/executor/claude/...
+
+## test-executor-coverage: Run tests with coverage for Claude executor
+test-executor-coverage:
+	@mkdir -p /tmp/claude
+	$(GOTEST) -race -coverprofile=coverage.out ./pkg/agent/executor/claude/...
+	$(GOCMD) tool cover -func=coverage.out
+	$(GOCMD) tool cover -html=coverage.out -o coverage.html
+	@echo ""
+	@echo "Coverage report: coverage.html"
+
 ## test-linux: Run tests in Linux Docker container (for Linux-specific code)
 test-linux:
 	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
 	docker run --rm marionette/test:latest
+
+## test-linux-pkg: Run tests for a specific package in Docker
+test-linux-pkg:
+	@if [ -z "$(PKG)" ]; then \
+		echo "Error: PKG is required. Usage: make test-linux-pkg PKG=./pkg/agent/..."; \
+		exit 1; \
+	fi
+	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
+	docker run --rm marionette/test:latest go test -race -v $(PKG)
 
 ## test-linux-root: Run tests as root in Linux Docker container (for namespace detection)
 test-linux-root:

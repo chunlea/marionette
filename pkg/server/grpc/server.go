@@ -143,7 +143,9 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 		runnerManager := core.NewRunnerManager(cfg.Store, connManager, logger)
 
 		// Create message router with optional managers
-		routerOpts := []MessageRouterOption{}
+		routerOpts := []MessageRouterOption{
+			WithMRStore(cfg.Store), // Required for permission request handling
+		}
 		if srvOpts.permissionManager != nil {
 			routerOpts = append(routerOpts, WithMRPermissionManager(srvOpts.permissionManager))
 		}
