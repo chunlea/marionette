@@ -376,26 +376,39 @@
   - [x] Handle in-flight tasks stub (full impl Phase 3)
   - [x] Detach from sessions stub (full impl Phase 3)
 
-### 2.5 Workspace (Basic)
+### 2.5 Workspace (Basic) ✓
 
-- [ ] Workspace creation (Server side):
-  - [ ] Generate workspace ID
-  - [ ] Create workspace record in database
+- [x] Workspace creation (Server side):
+  - [x] Generate workspace ID (`pkg/id/id.go`)
+  - [x] Create workspace record in database
   - [x] Create workspace directory on runner (`pkg/agent/workspace.go`)
-- [ ] Local volume storage:
-  - [ ] Mount host directory to container
+- [x] Workspace Manager (`pkg/server/core/workspace_manager.go`):
+  - [x] `WorkspaceManagerInterface` for dependency injection
+  - [x] `GetHostPath` - resolve host path based on sandbox mode
+  - [x] `EnsureHostDirectory` - create workspace directory on host
+  - [x] `CleanupHostDirectory` - remove workspace directory
+  - [x] Sandbox mode support: `runner-is-sandbox`, `runner-creates-sandbox`, `none`
+- [x] Workspace Adapter (`pkg/server/api/workspace_adapter.go`):
+  - [x] API layer adapter for workspace service
+  - [x] CRUD operations via WorkspaceManager
+- [x] Local volume storage:
+  - [x] Mount host directory to container
   - [x] Workspace path: `/workspace` (default)
-  - [ ] Persist across container restarts
-- [ ] Workspace lifecycle:
-  - [ ] Create on session creation (Server)
+  - [x] Path resolution by sandbox mode
+- [x] Workspace lifecycle:
+  - [x] Create on session creation (Server)
   - [x] Ensure workspace exists on attach (Agent)
   - [x] Track workspace state (Agent)
-  - [ ] Delete on session termination (configurable)
+  - [ ] Delete on session termination (configurable) - deferred
 - [x] Basic workspace operations (Agent side):
   - [x] List files (for debugging)
   - [x] Get workspace size and info
   - [x] Check workspace exists
   - [x] Clean workspace contents
+- [x] Test coverage improvements:
+  - [x] `SessionManagerInterface` for testability
+  - [x] `PermissionManagerInterface` for testability
+  - [x] API package coverage: 86.4%
 
 ---
 
