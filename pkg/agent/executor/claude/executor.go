@@ -162,7 +162,7 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	// Close stdin to signal no input is coming (for --print mode)
 	// Claude Code waits for stdin EOF before producing output
 	if !e.streamMode {
-		stdin.Close()
+		_ = stdin.Close()
 	}
 
 	// Process output in goroutines
