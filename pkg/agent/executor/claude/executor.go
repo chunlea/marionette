@@ -159,6 +159,12 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	// Emit system event for start
 	handler.HandleOutput("system", []byte("Claude Code started"))
 
+	// Close stdin to signal no input is coming (for --print mode)
+	// Claude Code waits for stdin EOF before producing output
+	if !e.streamMode {
+		stdin.Close()
+	}
+
 	// Process output in goroutines
 	var wg sync.WaitGroup
 	wg.Add(2)

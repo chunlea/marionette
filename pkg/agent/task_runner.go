@@ -184,25 +184,13 @@ func (r *TaskRunner) HandleOutput(stream string, data []byte) {
 		return
 	}
 
-	// Log locally for now
+	// Log full stream-json output at debug level
 	// TODO: Implement log streaming via StreamLogs RPC
-	switch stream {
-	case "stderr":
-		r.logger.Debug("executor stderr",
-			zap.String("task_id", task.TaskId),
-			zap.String("content", string(data)),
-		)
-	case "system":
-		r.logger.Debug("executor system",
-			zap.String("task_id", task.TaskId),
-			zap.String("content", string(data)),
-		)
-	default:
-		r.logger.Debug("executor stdout",
-			zap.String("task_id", task.TaskId),
-			zap.String("content", string(data)),
-		)
-	}
+	r.logger.Debug("executor output",
+		zap.String("task_id", task.TaskId),
+		zap.String("stream", stream),
+		zap.ByteString("data", data),
+	)
 }
 
 // HandlePermissionRequest implements executor.OutputHandler.
