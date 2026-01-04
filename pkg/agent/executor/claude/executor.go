@@ -233,6 +233,12 @@ func (e *Executor) buildArgs(task *executor.Task, config *executor.AgentConfig) 
 	args := []string{
 		"--output-format", "stream-json",
 		"--verbose",
+		"--permission-mode", "acceptEdits",
+	}
+
+	// Add working directory to allowed directories for write access
+	if task.WorkingDir != "" {
+		args = append(args, "--add-dir", task.WorkingDir)
 	}
 
 	// Add model if specified
