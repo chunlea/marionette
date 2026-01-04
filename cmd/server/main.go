@@ -96,7 +96,7 @@ func main() {
 
 		// Create core managers
 		sessionMgr = core.NewSessionManager(dbStore, connManager, connManager, logger)
-		taskMgr = core.NewTaskManager(dbStore, nil, nil, logger)
+		taskMgr = core.NewTaskManager(dbStore, connManager, sessionMgr, logger)
 
 		// Create permission manager with connection manager as command sender
 		permMgr = core.NewPermissionManager(dbStore, connManager, sessionMgr, logger)
