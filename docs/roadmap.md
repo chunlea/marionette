@@ -530,17 +530,24 @@
 ### 3.6 Log Streaming ✓
 
 - [x] Log stream implementation (Agent-side):
-  - [x] `LogStreamer` for buffered log capture (`pkg/agent/log_streamer.go`)
-  - [x] `LogHandler` interface for pluggable persistence
-  - [x] Thread-safe concurrent writes with atomic sequence
-  - [x] Configurable buffer capacity and flush interval
-  - [x] Time-based auto-flush
-  - [x] Graceful shutdown with final flush
-- [x] Raw log storage (`migrations/002_raw_logs.up.sql`):
-  - [x] `raw_logs` partitioned table with BYTEA content
-  - [x] `rlog_` prefixed IDs (`pkg/id/id.go`)
-  - [x] `RawLog` model with binary content (`pkg/store/models.go`)
+  - [x] `LogStreamer` interface for log streaming abstraction (`pkg/agent/log_streamer.go`)
+  - [x] `GRPCLogStreamer` implementing gRPC client streaming
+  - [x] Thread-safe with `sync.Mutex` and atomic operations
+  - [x] Automatic sequence numbering and timestamps
+  - [x] Graceful handling of stream lifecycle (Start/Send/Close)
+- [x] TaskRunner integration:
+  - [x] Stream logs in real-time during task execution via `HandleOutput`
+  - [x] Graceful degradation - log streaming failures don't block task execution
+  - [x] Proper cleanup with deferred `Close()`
+  - [x] Log level mapping (stdout→info, stderr→error, system→info)
+- [x] Log storage (`migrations/001_initial.up.sql`):
+  - [x] `logs` partitioned table with TEXT content
+  - [x] `log_` prefixed IDs (`pkg/id/id.go`)
+  - [x] `Log` model (`pkg/store/models.go`)
   - [x] Partition management functions
+- [ ] Raw log storage (future - for binary content preservation):
+  - [ ] `raw_logs` migration exists but not integrated
+  - [ ] Switch to BYTEA content when needed
 - [x] Log entry structure:
   - [x] task_id, run_id, session_id
   - [x] stream (stdout, stderr, system)
@@ -552,13 +559,17 @@
   - [x] Persist logs to database (never drop)
   - [x] Forward to real-time subscribers (stub - can drop under pressure)
 - [x] Batching:
-  - [ ] Buffer logs on agent side (100ms or 100 entries) - Agent-side
+  - [ ] Buffer logs on agent side (100ms or 100 entries) - deferred
   - [x] Batch insert on server (100 entries)
   - [x] Flush on stream close
 - [x] Sequence tracking:
   - [x] Monotonic sequence per run
   - [x] Detect gaps for debugging (in log entry metadata)
   - [x] Store sequence in database
+- [x] Tests:
+  - [x] `GRPCLogStreamer` lifecycle tests (Start, Send, Close)
+  - [x] `TaskRunner` log streaming integration tests
+  - [x] Error handling tests (start error, send error)
 
 ### 3.7 Permission Handling (Server) ✓
 

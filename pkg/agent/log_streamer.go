@@ -65,13 +65,18 @@ func (s *GRPCLogStreamer) Start(ctx context.Context, init *pb.StreamLogsInit) er
 		return err
 	}
 
-	// Set runner_id in init message
-	init.RunnerId = s.runnerID
+	// Copy init message to avoid modifying caller's data
+	initCopy := &pb.StreamLogsInit{
+		SessionId: init.SessionId,
+		TaskId:    init.TaskId,
+		RunId:     init.RunId,
+		RunnerId:  s.runnerID,
+	}
 
 	// Send init message first
 	initMsg := &pb.StreamLogsMessage{
 		Payload: &pb.StreamLogsMessage_Init{
-			Init: init,
+			Init: initCopy,
 		},
 	}
 	if err := stream.Send(initMsg); err != nil {
@@ -93,15 +98,16 @@ func (s *GRPCLogStreamer) Start(ctx context.Context, init *pb.StreamLogsInit) er
 
 // Send sends a log entry to the server.
 func (s *GRPCLogStreamer) Send(entry *pb.LogEntry) error {
+	// Quick check without lock for fast path
 	if !s.active.Load() {
 		return ErrStreamNotActive
 	}
 
 	s.mu.Lock()
-	stream := s.stream
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	if stream == nil {
+	// Re-check under lock to avoid race with Close()
+	if !s.active.Load() || s.stream == nil {
 		return ErrStreamNotActive
 	}
 
@@ -116,7 +122,7 @@ func (s *GRPCLogStreamer) Send(entry *pb.LogEntry) error {
 		},
 	}
 
-	return stream.Send(msg)
+	return s.stream.Send(msg)
 }
 
 // Close closes the stream and returns the server's response.
