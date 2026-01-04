@@ -87,6 +87,9 @@ func DataKey() string { return New("dek") }
 // Log generates a log entry ID (prefix: log_).
 func Log() string { return New("log") }
 
+// RawLog generates a raw log entry ID (prefix: rlog_).
+func RawLog() string { return New("rlog") }
+
 // LogArchive generates a log archive ID (prefix: arch_).
 func LogArchive() string { return New("arch") }
 

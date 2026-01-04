@@ -527,12 +527,20 @@
   - [x] Graceful termination with timeout
   - [x] Resource cleanup on context cancel
 
-### 3.6 Log Streaming (Server) ✓
+### 3.6 Log Streaming ✓
 
-- [ ] Log stream implementation (Agent-side, deferred):
-  - [ ] Agent captures stdout/stderr from executor
-  - [ ] Wrap in `LogEntry` protobuf messages
-  - [ ] Send via `StreamLogs` RPC
+- [x] Log stream implementation (Agent-side):
+  - [x] `LogStreamer` for buffered log capture (`pkg/agent/log_streamer.go`)
+  - [x] `LogHandler` interface for pluggable persistence
+  - [x] Thread-safe concurrent writes with atomic sequence
+  - [x] Configurable buffer capacity and flush interval
+  - [x] Time-based auto-flush
+  - [x] Graceful shutdown with final flush
+- [x] Raw log storage (`migrations/002_raw_logs.up.sql`):
+  - [x] `raw_logs` partitioned table with BYTEA content
+  - [x] `rlog_` prefixed IDs (`pkg/id/id.go`)
+  - [x] `RawLog` model with binary content (`pkg/store/models.go`)
+  - [x] Partition management functions
 - [x] Log entry structure:
   - [x] task_id, run_id, session_id
   - [x] stream (stdout, stderr, system)
