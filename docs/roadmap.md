@@ -511,9 +511,21 @@
   - [x] `ParserFactory` function type
   - [x] `ParserRegistry` for agent-specific parser registration
   - [x] Default global registry with thread-safe access
-- [ ] Claude Code executor (`pkg/agent/executor/claude/`) - Phase 3.6A
-- [ ] Environment setup - Phase 3.6A
-- [ ] Process management - Phase 3.6A
+- [x] Claude Code executor (`pkg/agent/executor/claude/`) ✓
+  - [x] `ClaudeExecutor` implementing `Executor` and `StreamExecutor`
+  - [x] Stream-JSON message types (`messages.go`)
+  - [x] Output parser for Claude stream-json format (`parser.go`)
+  - [x] Session ID tracking for resume support
+  - [x] Parser registered with default registry
+- [x] Environment setup:
+  - [x] Set `ANTHROPIC_API_KEY` from AgentConfig
+  - [x] Set working directory to workspace
+  - [x] Set extra environment from config
+- [x] Process management:
+  - [x] Process spawning with `exec.Command`
+  - [x] Signal handling (SIGTERM, SIGKILL)
+  - [x] Graceful termination with timeout
+  - [x] Resource cleanup on context cancel
 
 ### 3.6 Log Streaming (Server) ✓
 
