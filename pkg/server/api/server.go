@@ -153,6 +153,7 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.With(RequireScope("tasks:write")).Post("/", srv.handleCreateTask)
 			r.With(RequireScope("tasks:read")).Get("/", srv.handleListTasks)
 			r.With(RequireScope("tasks:read")).Get("/{taskID}", srv.handleGetTask)
+			r.With(RequireScope("tasks:write")).Post("/{taskID}/execute", srv.handleExecuteTask)
 			r.With(RequireScope("tasks:write")).Post("/{taskID}/cancel", srv.handleCancelTask)
 			r.With(RequireScope("tasks:write")).Post("/{taskID}/retry", srv.handleRetryTask)
 			r.With(RequireScope("tasks:read")).Get("/{taskID}/logs", srv.handleGetTaskLogs)

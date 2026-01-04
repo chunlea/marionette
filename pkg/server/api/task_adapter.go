@@ -72,6 +72,11 @@ func (a *TaskAdapter) Retry(ctx context.Context, id string) error {
 	return err
 }
 
+// Execute starts execution of a pending task.
+func (a *TaskAdapter) Execute(ctx context.Context, id string) error {
+	return a.manager.Execute(ctx, id)
+}
+
 // GetLogs returns logs for a task.
 func (a *TaskAdapter) GetLogs(ctx context.Context, taskID string, opts GetLogsOptions) (*store.ListResult[store.Log], error) {
 	// Query logs directly from store
