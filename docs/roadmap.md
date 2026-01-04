@@ -434,6 +434,7 @@
   - [x] Include workspace path
   - [x] Include agent config (API key, model)
   - [x] Include pending permission responses (if resuming)
+  - [x] Auto-detach existing sessions from runner before attach (PR #39)
 - [x] Detach runner from session:
   - [x] Send `DetachSession` command (G2 - PR #13)
   - [ ] Save context snapshot (G5)
@@ -582,7 +583,7 @@
   - [ ] Server notifies subscribers (WebSocket, webhook) - Phase 4
 - [x] Permission response flow:
   - [x] User approves/denies via API (PermissionManager.Respond)
-  - [x] Server sends `ApprovePermission` command
+  - [x] Server sends `ApprovePermission` command with original request ID (PR #39)
   - [x] Session resumed if suspended
   - [x] Agent receives and unblocks executor (`TaskRunner.HandlePermissionResponse`)
 - [x] Timeout handling:
