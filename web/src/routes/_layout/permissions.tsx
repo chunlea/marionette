@@ -219,10 +219,10 @@ function PermissionCard({ permission, onApprove, onDeny }: PermissionCardProps) 
             <Badge variant="info">{permission.tool}</Badge>
             <RiskBadge level={permission.risk_level} />
           </div>
-          <div className="bg-gray-900 rounded-lg p-3 mb-2">
-            <code className="text-sm text-green-400 whitespace-pre-wrap break-all">
-              {permission.action}
-            </code>
+          <div className="bg-gray-900 rounded-lg p-3 mb-2 max-h-64 overflow-auto">
+            <pre className="text-sm text-green-400 whitespace-pre-wrap break-all">
+              {formatAction(permission.action)}
+            </pre>
           </div>
           {permission.context && (
             <p className="text-sm text-gray-600 mb-2">{permission.context}</p>
@@ -326,10 +326,10 @@ function PermissionActionDialog({
                 <Badge variant="info">{permission.tool}</Badge>
                 <RiskBadge level={permission.risk_level} />
               </div>
-              <div className="bg-gray-900 rounded p-2">
-                <code className="text-xs text-green-400 whitespace-pre-wrap break-all">
-                  {permission.action}
-                </code>
+              <div className="bg-gray-900 rounded p-2 max-h-48 overflow-auto">
+                <pre className="text-xs text-green-400 whitespace-pre-wrap break-all">
+                  {formatAction(permission.action)}
+                </pre>
               </div>
             </div>
 
@@ -389,6 +389,15 @@ function RiskBadge({ level }: { level: string }) {
       )
     default:
       return <Badge>{level}</Badge>
+  }
+}
+
+function formatAction(action: string): string {
+  try {
+    const parsed = JSON.parse(action)
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return action
   }
 }
 
