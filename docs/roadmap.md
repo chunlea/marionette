@@ -1153,29 +1153,37 @@
 
 ## Phase 8: Production Ready
 
-### 8.1 Docker & Deployment
+### 8.1 Docker & Deployment ✓
 
-- [ ] Server Dockerfile:
-  - [ ] Multi-stage build
-  - [ ] Minimal runtime image (distroless/alpine)
-  - [ ] Non-root user
-  - [ ] Health check
-- [ ] Agent Dockerfile:
-  - [ ] Include Claude Code CLI
-  - [ ] Include common tools (git, etc.)
-  - [ ] Non-root user
-- [ ] docker-compose.yaml:
-  - [ ] Server + PostgreSQL + Agent
-  - [ ] Volume mounts for persistence
-  - [ ] Network configuration
-  - [ ] Environment variables
-- [ ] Kubernetes manifests:
-  - [ ] Deployment for server
-  - [ ] StatefulSet for runners (optional)
-  - [ ] Service and Ingress
-  - [ ] ConfigMap and Secrets
-  - [ ] PersistentVolumeClaim for workspaces
-  - [ ] NetworkPolicy
+- [x] Server Dockerfile (`deploy/docker/Dockerfile.server`):
+  - [x] Multi-stage build (golang:1.25-bookworm → distroless)
+  - [x] Minimal runtime image (gcr.io/distroless/static-debian12:nonroot)
+  - [x] Non-root user
+  - [x] Protobuf generation in build
+- [x] Agent Dockerfile (`deploy/docker/Dockerfile.agent`):
+  - [x] Include common tools (git, curl, jq, openssh-client)
+  - [x] Non-root user (UID 1000)
+  - [x] Workspace directory setup
+- [x] CLI Dockerfile (`deploy/docker/Dockerfile.mctl`):
+  - [x] Minimal distroless image
+- [x] docker-compose.yaml (`deploy/docker/`):
+  - [x] Server + PostgreSQL + Agent (agent via profile)
+  - [x] Volume mounts for persistence
+  - [x] Auto-initialize database schema
+  - [x] Environment variables
+  - [x] Health checks
+- [x] Kubernetes manifests (`deploy/kubernetes/`):
+  - [x] Kustomize base + overlays (dev/prod)
+  - [x] Deployment for server and agent
+  - [x] Service and Ingress
+  - [x] ConfigMap and Secrets
+  - [x] PersistentVolumeClaim for workspaces
+  - [x] NetworkPolicy
+  - [x] HorizontalPodAutoscaler
+- [x] Helm chart (`deploy/helm/marionette/`):
+  - [x] Chart with PostgreSQL subchart dependency
+  - [x] Configurable values.yaml
+  - [x] All templates (deployments, services, ingress, etc.)
 
 ### 8.2 Documentation
 

@@ -1,0 +1,37 @@
+# Development overrides for docker-compose
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  server:
+    # Use pre-built image in dev to speed up iteration
+    image: marionette/server:latest
+    build: {}  # Disable build in dev mode
+    environment:
+      # Enable development mode
+      MARIONETTE_DEV_MODE: "true"
+      MARIONETTE_DEV_SKIP_TLS: "true"
+      # Debug logging
+      MARIONETTE_LOG_LEVEL: debug
+      MARIONETTE_LOG_FORMAT: console
+
+  agent:
+    # Use pre-built image in dev
+    image: marionette/agent:latest
+    build: {}  # Disable build in dev mode
+    environment:
+      # Debug logging
+      MARIONETTE_LOG_LEVEL: debug
+
+  # Optional: Add pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@marionette.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    profiles:
+      - tools

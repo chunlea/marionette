@@ -125,7 +125,7 @@ CREATE TABLE agent_configs (
     labels JSONB NOT NULL DEFAULT '{}',
     annotations JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     -- Note: Use index with COALESCE instead of constraint for NULL handling
 );
 
@@ -152,7 +152,7 @@ CREATE TABLE profiles (
     annotations JSONB NOT NULL DEFAULT '{}',
     is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     -- Note: Use index with COALESCE instead of constraint for NULL handling
 );
 

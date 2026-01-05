@@ -1,0 +1,70 @@
+# Marionette Docker Compose Configuration
+# For local development and testing
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: marionette
+      POSTGRES_PASSWORD: marionette
+      POSTGRES_DB: marionette
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Auto-run schema.sql on first startup
+      - ../../docs/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    # Port not exposed to host - services connect via internal network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marionette"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MARIONETTE_DATABASE_URL: postgres://marionette:marionette@postgres:5432/marionette?sslmode=disable
+      MARIONETTE_MASTER_KEY: ${MARIONETTE_MASTER_KEY:-dev-master-key-change-in-production}
+      MARIONETTE_ENCRYPTION_KEY: ${MARIONETTE_ENCRYPTION_KEY:-dev-encryption-key-32bytes!!}
+      MARIONETTE_UI_USERNAME: ${MARIONETTE_UI_USERNAME:-admin}
+      MARIONETTE_UI_PASSWORD: ${MARIONETTE_UI_PASSWORD:-admin}
+    ports:
+      - "8080:8080"   # Public API
+      - "8081:8081"   # Admin API
+      - "9090:9090"   # gRPC
+    volumes:
+      - ./config.yaml:/etc/marionette/config.yaml:ro
+      - storage_data:/var/marionette/storage
+      - workspace_data:/var/marionette/workspaces
+
+  # Agent requires a runner token - create one first via Admin API:
+  #   curl -X POST http://localhost:8081/api/runner-tokens \
+  #     -H 'Content-Type: application/json' \
+  #     -d '{"pool_name": "docker-pool"}'
+  # Then start agent with: docker compose --profile agent up -d
+  agent:
+    profiles:
+      - agent
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.agent
+    depends_on:
+      - server
+    environment:
+      MARIONETTE_SERVER_ADDRESS: server:9090
+      MARIONETTE_RUNNER_TOKEN: ${MARIONETTE_RUNNER_TOKEN}
+      MARIONETTE_SANDBOX_MODE: runner-is-sandbox
+      MARIONETTE_POOL_NAME: docker-pool
+    volumes:
+      - agent_workspace:/workspace
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  storage_data:
+  workspace_data:
+  agent_workspace:
