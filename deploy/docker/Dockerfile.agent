@@ -1,0 +1,63 @@
+# Marionette Agent Dockerfile
+# Multi-stage build with runtime tools for AI agent execution
+
+# =============================================================================
+# Build stage
+# =============================================================================
+FROM golang:1.25-bookworm AS builder
+
+# Install buf and protobuf plugins for code generation
+RUN go install github.com/bufbuild/buf/cmd/buf@latest && \
+    go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+WORKDIR /app
+
+# Copy go mod files first for dependency caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Generate protobuf code
+RUN buf generate
+
+# Build the agent binary
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w" \
+    -o /agent ./cmd/agent
+
+# =============================================================================
+# Runtime stage
+# =============================================================================
+FROM debian:bookworm-slim
+
+# Install runtime dependencies commonly needed by AI agents
+# - ca-certificates: HTTPS connections
+# - git: Version control operations
+# - curl: HTTP requests
+# - jq: JSON processing
+# - openssh-client: Git SSH operations
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git \
+    curl \
+    jq \
+    openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create workspace directory with proper permissions
+RUN mkdir -p /workspace && chown 1000:1000 /workspace
+
+# Copy the binary from builder
+COPY --from=builder /agent /usr/local/bin/agent
+
+# Run as non-root user (UID 1000)
+USER 1000:1000
+
+# Set working directory
+WORKDIR /workspace
+
+# Entry point
+ENTRYPOINT ["agent"]
