@@ -220,9 +220,7 @@ function PermissionCard({ permission, onApprove, onDeny }: PermissionCardProps) 
             <RiskBadge level={permission.risk_level} />
           </div>
           <div className="bg-gray-900 rounded-lg p-3 mb-2 max-h-64 overflow-auto">
-            <pre className="text-sm text-green-400 whitespace-pre-wrap break-all">
-              {formatAction(permission.action)}
-            </pre>
+            <pre className="text-sm text-green-400 whitespace-pre-wrap break-words m-0">{formatAction(permission.action)}</pre>
           </div>
           {permission.context && (
             <p className="text-sm text-gray-600 mb-2">{permission.context}</p>
@@ -327,9 +325,7 @@ function PermissionActionDialog({
                 <RiskBadge level={permission.risk_level} />
               </div>
               <div className="bg-gray-900 rounded p-2 max-h-48 overflow-auto">
-                <pre className="text-xs text-green-400 whitespace-pre-wrap break-all">
-                  {formatAction(permission.action)}
-                </pre>
+                <pre className="text-xs text-green-400 whitespace-pre-wrap break-words m-0">{formatAction(permission.action)}</pre>
               </div>
             </div>
 
