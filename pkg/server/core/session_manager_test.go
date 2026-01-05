@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 // testSessionStore extends testStoreWrapper with session-specific functionality.
 type testSessionStore struct {
 	*testStoreWrapper
+	mu                 sync.RWMutex
 	sessions           map[string]*store.Session
 	workspaces         map[string]*store.Workspace
 	runners            map[string]*store.Runner
@@ -38,19 +40,27 @@ func newTestSessionStore() *testSessionStore {
 }
 
 func (s *testSessionStore) CreateSession(_ context.Context, session *store.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.sessions[session.ID] = session
 	return nil
 }
 
 func (s *testSessionStore) GetSession(_ context.Context, id string) (*store.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	session, ok := s.sessions[id]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return session, nil
+	// Return a copy to avoid race conditions with concurrent reads/writes
+	copy := *session
+	return &copy, nil
 }
 
 func (s *testSessionStore) ListSessions(_ context.Context, opts store.ListSessionsOptions) (*store.ListResult[store.Session], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	items := make([]*store.Session, 0, len(s.sessions))
 	for _, sess := range s.sessions {
 		// Filter by status
@@ -72,12 +82,16 @@ func (s *testSessionStore) ListSessions(_ context.Context, opts store.ListSessio
 				continue
 			}
 		}
-		items = append(items, sess)
+		// Return copies to avoid race conditions
+		copy := *sess
+		items = append(items, &copy)
 	}
 	return &store.ListResult[store.Session]{Items: items}, nil
 }
 
 func (s *testSessionStore) UpdateSession(_ context.Context, id string, updates store.SessionUpdates) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	session, ok := s.sessions[id]
 	if !ok {
 		return store.ErrNotFound
@@ -115,32 +129,46 @@ func (s *testSessionStore) UpdateSession(_ context.Context, id string, updates s
 }
 
 func (s *testSessionStore) DeleteSession(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.sessions, id)
 	return nil
 }
 
 func (s *testSessionStore) CreateWorkspace(_ context.Context, workspace *store.Workspace) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.workspaces[workspace.ID] = workspace
 	return nil
 }
 
 func (s *testSessionStore) GetWorkspace(_ context.Context, id string) (*store.Workspace, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	workspace, ok := s.workspaces[id]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return workspace, nil
+	// Return a copy to avoid race conditions
+	copy := *workspace
+	return &copy, nil
 }
 
 func (s *testSessionStore) GetRunner(_ context.Context, id string) (*store.Runner, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	runner, ok := s.runners[id]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return runner, nil
+	// Return a copy to avoid race conditions
+	copy := *runner
+	return &copy, nil
 }
 
 func (s *testSessionStore) UpdateRunner(_ context.Context, id string, updates store.RunnerUpdates) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	runner, ok := s.runners[id]
 	if !ok {
 		return store.ErrNotFound
@@ -155,14 +183,20 @@ func (s *testSessionStore) UpdateRunner(_ context.Context, id string, updates st
 }
 
 func (s *testSessionStore) GetAgentConfig(_ context.Context, id string) (*store.AgentConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	cfg, ok := s.agentConfigs[id]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return cfg, nil
+	// Return a copy to avoid race conditions
+	copy := *cfg
+	return &copy, nil
 }
 
 func (s *testSessionStore) ListPermissionRequests(_ context.Context, opts store.ListPermissionRequestsOptions) (*store.ListResult[store.PermissionRequest], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	items := make([]*store.PermissionRequest, 0)
 	for _, req := range s.permissionRequests {
 		// Filter by session ID
@@ -182,12 +216,16 @@ func (s *testSessionStore) ListPermissionRequests(_ context.Context, opts store.
 				continue
 			}
 		}
-		items = append(items, req)
+		// Return copies to avoid race conditions
+		copy := *req
+		items = append(items, &copy)
 	}
 	return &store.ListResult[store.PermissionRequest]{Items: items}, nil
 }
 
 func (s *testSessionStore) ListTasks(_ context.Context, opts store.ListTasksOptions) (*store.ListResult[store.Task], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	items := make([]*store.Task, 0)
 	for _, task := range s.tasks {
 		// Filter by session ID
@@ -207,9 +245,67 @@ func (s *testSessionStore) ListTasks(_ context.Context, opts store.ListTasksOpti
 				continue
 			}
 		}
-		items = append(items, task)
+		// Return copies to avoid race conditions
+		copy := *task
+		items = append(items, &copy)
 	}
 	return &store.ListResult[store.Task]{Items: items}, nil
+}
+
+// Thread-safe helper methods for test setup
+func (s *testSessionStore) SetSession(session *store.Session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[session.ID] = session
+}
+
+func (s *testSessionStore) SetRunner(runner *store.Runner) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runners[runner.ID] = runner
+}
+
+func (s *testSessionStore) SetWorkspace(workspace *store.Workspace) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.workspaces[workspace.ID] = workspace
+}
+
+func (s *testSessionStore) SetAgentConfig(cfg *store.AgentConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.agentConfigs[cfg.ID] = cfg
+}
+
+func (s *testSessionStore) SetTask(task *store.Task) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tasks[task.ID] = task
+}
+
+func (s *testSessionStore) SetPermissionRequest(req *store.PermissionRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.permissionRequests[req.ID] = req
+}
+
+// Thread-safe getter methods for test verification
+func (s *testSessionStore) GetSessionDirect(id string) *store.Session {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sessions[id]
+}
+
+func (s *testSessionStore) GetRunnerDirect(id string) *store.Runner {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.runners[id]
+}
+
+func (s *testSessionStore) GetWorkspaceDirect(id string) *store.Workspace {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.workspaces[id]
 }
 
 // mockConnManagerForSession implements ConnectionManagerInterface for testing.
@@ -268,10 +364,10 @@ func TestSessionManager_Create(t *testing.T) {
 	manager, s := setupSessionManagerTest()
 
 	// Create a workspace first
-	s.workspaces["ws_123"] = &store.Workspace{
+	s.SetWorkspace(&store.Workspace{
 		ID:   "ws_123",
 		Name: "test-workspace",
-	}
+	})
 
 	opts := CreateSessionOptions{
 		WorkspaceID: "ws_123",
@@ -292,7 +388,7 @@ func TestSessionManager_Create(t *testing.T) {
 
 func TestSessionManager_Create_WithName(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
 
 	name := "my-session"
 	opts := CreateSessionOptions{
@@ -309,7 +405,7 @@ func TestSessionManager_Create_WithName(t *testing.T) {
 
 func TestSessionManager_Create_WithLifecycleMode(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
 
 	opts := CreateSessionOptions{
 		WorkspaceID:   "ws_123",
@@ -324,7 +420,7 @@ func TestSessionManager_Create_WithLifecycleMode(t *testing.T) {
 
 func TestSessionManager_Create_ScheduledWithoutCron(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
 
 	opts := CreateSessionOptions{
 		WorkspaceID:   "ws_123",
@@ -339,7 +435,7 @@ func TestSessionManager_Create_ScheduledWithoutCron(t *testing.T) {
 
 func TestSessionManager_Create_ScheduledWithCron(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
 
 	cron := "0 9 * * 1-5"
 	opts := CreateSessionOptions{
@@ -370,7 +466,7 @@ func TestSessionManager_Create_WorkspaceRequired(t *testing.T) {
 
 func TestSessionManager_Create_AgentRequired(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
 
 	opts := CreateSessionOptions{
 		WorkspaceID: "ws_123",
@@ -396,11 +492,11 @@ func TestSessionManager_Create_WorkspaceNotFound(t *testing.T) {
 
 func TestSessionManager_Get(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusActive,
 		Agent:  "claude",
-	}
+	})
 
 	session, err := manager.Get(context.Background(), "sess_123")
 	require.NoError(t, err)
@@ -417,9 +513,9 @@ func TestSessionManager_Get_NotFound(t *testing.T) {
 
 func TestSessionManager_List(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_1"] = &store.Session{ID: "sess_1", Status: SessionStatusActive}
-	s.sessions["sess_2"] = &store.Session{ID: "sess_2", Status: SessionStatusSuspended}
-	s.sessions["sess_3"] = &store.Session{ID: "sess_3", Status: SessionStatusActive}
+	s.SetSession(&store.Session{ID: "sess_1", Status: SessionStatusActive})
+	s.SetSession(&store.Session{ID: "sess_2", Status: SessionStatusSuspended})
+	s.SetSession(&store.Session{ID: "sess_3", Status: SessionStatusActive})
 
 	result, err := manager.List(context.Background(), ListSessionsOptions{})
 	require.NoError(t, err)
@@ -428,9 +524,9 @@ func TestSessionManager_List(t *testing.T) {
 
 func TestSessionManager_List_FilterByStatus(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_1"] = &store.Session{ID: "sess_1", Status: SessionStatusActive}
-	s.sessions["sess_2"] = &store.Session{ID: "sess_2", Status: SessionStatusSuspended}
-	s.sessions["sess_3"] = &store.Session{ID: "sess_3", Status: SessionStatusActive}
+	s.SetSession(&store.Session{ID: "sess_1", Status: SessionStatusActive})
+	s.SetSession(&store.Session{ID: "sess_2", Status: SessionStatusSuspended})
+	s.SetSession(&store.Session{ID: "sess_3", Status: SessionStatusActive})
 
 	result, err := manager.List(context.Background(), ListSessionsOptions{
 		Status: []string{SessionStatusActive},
@@ -441,19 +537,19 @@ func TestSessionManager_List_FilterByStatus(t *testing.T) {
 
 func TestSessionManager_Activate(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusPending,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:     "run_123",
 		Status: StatusIdle,
-	}
+	})
 
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusActive, session.Status)
 	require.NotNil(t, session.RunnerID)
 	assert.Equal(t, "run_123", *session.RunnerID)
@@ -461,19 +557,19 @@ func TestSessionManager_Activate(t *testing.T) {
 
 func TestSessionManager_Activate_FromResuming(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusResuming,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:     "run_123",
 		Status: StatusIdle,
-	}
+	})
 
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusActive, session.Status)
 	assert.NotNil(t, session.ResumedAt)
 }
@@ -487,14 +583,14 @@ func TestSessionManager_Activate_SessionNotFound(t *testing.T) {
 
 func TestSessionManager_Activate_InvalidTransition(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusSuspended, // Can't go directly to active
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:     "run_123",
 		Status: StatusIdle,
-	}
+	})
 
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
 	assert.ErrorIs(t, err, ErrInvalidSessionTransition)
@@ -502,14 +598,14 @@ func TestSessionManager_Activate_InvalidTransition(t *testing.T) {
 
 func TestSessionManager_Activate_RunnerNotIdle(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusPending,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:     "run_123",
 		Status: StatusBusy, // Not idle
-	}
+	})
 
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
 	assert.ErrorIs(t, err, ErrRunnerNotIdle)
@@ -518,16 +614,16 @@ func TestSessionManager_Activate_RunnerNotIdle(t *testing.T) {
 func TestSessionManager_Suspend(t *testing.T) {
 	manager, s := setupSessionManagerTest()
 	runnerID := "run_123"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:       "sess_123",
 		Status:   SessionStatusActive,
 		RunnerID: &runnerID,
-	}
+	})
 
 	err := manager.Suspend(context.Background(), "sess_123", "terminate")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusSuspended, session.Status)
 	assert.Nil(t, session.RunnerID)
 	assert.NotNil(t, session.SuspendedAt)
@@ -546,10 +642,10 @@ func TestSessionManager_Suspend_SessionNotFound(t *testing.T) {
 
 func TestSessionManager_Suspend_InvalidTransition(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusPending, // Can't suspend a pending session
-	}
+	})
 
 	err := manager.Suspend(context.Background(), "sess_123", "terminate")
 	assert.ErrorIs(t, err, ErrInvalidSessionTransition)
@@ -567,27 +663,27 @@ func TestSessionManager_Suspend_ClearsContextSnapshotWithRunningTask(t *testing.
 	snapshotJSON, _ := snapshot.ToJSON()
 
 	runnerID := "run_123"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:              "sess_123",
 		Status:          SessionStatusActive,
 		RunnerID:        &runnerID,
 		WorkspaceID:     "ws_123",
 		Agent:           "claude",
 		ContextSnapshot: snapshotJSON, // Has conversation_id
-	}
+	})
 
 	// Create a running task - this simulates suspension during task execution
-	s.tasks["task_123"] = &store.Task{
+	s.SetTask(&store.Task{
 		ID:        "task_123",
 		SessionID: "sess_123",
 		Status:    TaskStatusRunning,
 		Prompt:    "test prompt",
-	}
+	})
 
 	err := manager.Suspend(context.Background(), "sess_123", "permission_timeout")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusSuspended, session.Status)
 
 	// Context snapshot should be cleared (new empty snapshot) because there was a running task.
@@ -612,22 +708,22 @@ func TestSessionManager_Suspend_PreservesContextSnapshotWithoutRunningTask(t *te
 	snapshotJSON, _ := snapshot.ToJSON()
 
 	runnerID := "run_123"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:              "sess_123",
 		Status:          SessionStatusActive,
 		RunnerID:        &runnerID,
 		WorkspaceID:     "ws_123",
 		Agent:           "claude",
 		ContextSnapshot: snapshotJSON,
-	}
+	})
 
 	// No running tasks - all completed
-	s.tasks["task_123"] = &store.Task{
+	s.SetTask(&store.Task{
 		ID:        "task_123",
 		SessionID: "sess_123",
 		Status:    TaskStatusCompleted, // Not running
 		Prompt:    "test prompt",
-	}
+	})
 
 	// Suspend with context snapshot option (simulating normal suspend)
 	err := manager.SuspendWithOptions(context.Background(), "sess_123", SuspendOptions{
@@ -636,7 +732,7 @@ func TestSessionManager_Suspend_PreservesContextSnapshotWithoutRunningTask(t *te
 	})
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusSuspended, session.Status)
 
 	// Context snapshot should be preserved since there's no running task
@@ -650,15 +746,15 @@ func TestSessionManager_Suspend_PreservesContextSnapshotWithoutRunningTask(t *te
 
 func TestSessionManager_Resume(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusSuspended,
-	}
+	})
 
 	err := manager.Resume(context.Background(), "sess_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusResuming, session.Status)
 }
 
@@ -671,10 +767,10 @@ func TestSessionManager_Resume_SessionNotFound(t *testing.T) {
 
 func TestSessionManager_Resume_InvalidTransition(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusActive, // Can't resume an active session
-	}
+	})
 
 	err := manager.Resume(context.Background(), "sess_123")
 	assert.ErrorIs(t, err, ErrInvalidSessionTransition)
@@ -683,16 +779,16 @@ func TestSessionManager_Resume_InvalidTransition(t *testing.T) {
 func TestSessionManager_Terminate(t *testing.T) {
 	manager, s := setupSessionManagerTest()
 	runnerID := "run_123"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:       "sess_123",
 		Status:   SessionStatusActive,
 		RunnerID: &runnerID,
-	}
+	})
 
 	err := manager.Terminate(context.Background(), "sess_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusTerminated, session.Status)
 	assert.Nil(t, session.RunnerID)
 	require.NotNil(t, session.PreviousRunnerID)
@@ -701,38 +797,38 @@ func TestSessionManager_Terminate(t *testing.T) {
 
 func TestSessionManager_Terminate_FromSuspended(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusSuspended,
-	}
+	})
 
 	err := manager.Terminate(context.Background(), "sess_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusTerminated, session.Status)
 }
 
 func TestSessionManager_Terminate_FromPending(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusPending,
-	}
+	})
 
 	err := manager.Terminate(context.Background(), "sess_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusTerminated, session.Status)
 }
 
 func TestSessionManager_Terminate_AlreadyTerminated(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusTerminated,
-	}
+	})
 
 	err := manager.Terminate(context.Background(), "sess_123")
 	assert.ErrorIs(t, err, ErrSessionAlreadyTerminated)
@@ -747,19 +843,19 @@ func TestSessionManager_Terminate_SessionNotFound(t *testing.T) {
 
 func TestSessionManager_AttachRunner(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusPending,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:     "run_123",
 		Status: StatusIdle,
-	}
+	})
 
 	err := manager.AttachRunner(context.Background(), "sess_123", "run_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusActive, session.Status)
 	require.NotNil(t, session.RunnerID)
 	assert.Equal(t, "run_123", *session.RunnerID)
@@ -767,19 +863,19 @@ func TestSessionManager_AttachRunner(t *testing.T) {
 
 func TestSessionManager_AttachRunner_Resuming(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusResuming,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:     "run_123",
 		Status: StatusIdle,
-	}
+	})
 
 	err := manager.AttachRunner(context.Background(), "sess_123", "run_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusActive, session.Status)
 }
 
@@ -795,20 +891,20 @@ func TestSessionManager_AttachRunner_ResumeWithBusyPreviousRunner(t *testing.T) 
 	manager, s := setupSessionManagerTest()
 
 	previousRunnerID := "run_123"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:               "sess_123",
 		Status:           SessionStatusResuming,
 		PreviousRunnerID: &previousRunnerID,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:     "run_123",
 		Status: StatusBusy, // Runner is busy - should still allow for resume
-	}
+	})
 
 	err := manager.AttachRunner(context.Background(), "sess_123", "run_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusActive, session.Status)
 	require.NotNil(t, session.RunnerID)
 	assert.Equal(t, "run_123", *session.RunnerID)
@@ -819,15 +915,15 @@ func TestSessionManager_AttachRunner_ResumeWithBusyDifferentRunner(t *testing.T)
 	manager, s := setupSessionManagerTest()
 
 	previousRunnerID := "run_original"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:               "sess_123",
 		Status:           SessionStatusResuming,
 		PreviousRunnerID: &previousRunnerID,
-	}
-	s.runners["run_different"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:     "run_different",
 		Status: StatusBusy, // Runner is busy and not the previous runner
-	}
+	})
 
 	err := manager.AttachRunner(context.Background(), "sess_123", "run_different")
 	assert.ErrorIs(t, err, ErrRunnerNotIdle)
@@ -836,15 +932,15 @@ func TestSessionManager_AttachRunner_ResumeWithBusyDifferentRunner(t *testing.T)
 func TestSessionManager_AttachRunner_AlreadyHasRunner(t *testing.T) {
 	manager, s := setupSessionManagerTest()
 	runnerID := "run_existing"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:       "sess_123",
 		Status:   SessionStatusActive,
 		RunnerID: &runnerID,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:     "run_123",
 		Status: StatusIdle,
-	}
+	})
 
 	err := manager.AttachRunner(context.Background(), "sess_123", "run_123")
 	assert.ErrorIs(t, err, ErrSessionAlreadyHasRunner)
@@ -852,14 +948,14 @@ func TestSessionManager_AttachRunner_AlreadyHasRunner(t *testing.T) {
 
 func TestSessionManager_AttachRunner_InvalidStatus(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:     "sess_123",
 		Status: SessionStatusSuspended, // Can't attach to suspended session directly
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:     "run_123",
 		Status: StatusIdle,
-	}
+	})
 
 	err := manager.AttachRunner(context.Background(), "sess_123", "run_123")
 	assert.ErrorIs(t, err, ErrInvalidSessionTransition)
@@ -868,16 +964,16 @@ func TestSessionManager_AttachRunner_InvalidStatus(t *testing.T) {
 func TestSessionManager_DetachRunner(t *testing.T) {
 	manager, s := setupSessionManagerTest()
 	runnerID := "run_123"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:       "sess_123",
 		Status:   SessionStatusActive,
 		RunnerID: &runnerID,
-	}
+	})
 
 	err := manager.DetachRunner(context.Background(), "sess_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Nil(t, session.RunnerID)
 	require.NotNil(t, session.PreviousRunnerID)
 	assert.Equal(t, "run_123", *session.PreviousRunnerID)
@@ -892,11 +988,11 @@ func TestSessionManager_DetachRunner_SessionNotFound(t *testing.T) {
 
 func TestSessionManager_DetachRunner_NoRunner(t *testing.T) {
 	manager, s := setupSessionManagerTest()
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:       "sess_123",
 		Status:   SessionStatusPending,
 		RunnerID: nil,
-	}
+	})
 
 	err := manager.DetachRunner(context.Background(), "sess_123")
 	assert.ErrorIs(t, err, ErrSessionNoRunner)
@@ -966,9 +1062,9 @@ func TestIsValidSessionTransition(t *testing.T) {
 func TestSessionManager_FullLifecycle(t *testing.T) {
 	manager, s := setupSessionManagerTest()
 
-	// Setup workspace and runner
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	// Setup workspace and runner (use thread-safe methods)
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
 
 	// 1. Create session
 	session, err := manager.Create(context.Background(), CreateSessionOptions{
@@ -1003,7 +1099,7 @@ func TestSessionManager_FullLifecycle(t *testing.T) {
 	assert.Equal(t, SessionStatusResuming, session.Status)
 
 	// 5. Attach new runner (completes resume)
-	s.runners["run_456"] = &store.Runner{ID: "run_456", Status: StatusIdle}
+	s.SetRunner(&store.Runner{ID: "run_456", Status: StatusIdle})
 	err = manager.Activate(context.Background(), session.ID, "run_456")
 	require.NoError(t, err)
 
@@ -1029,16 +1125,16 @@ func TestSessionManager_Activate_SendsAttachSession(t *testing.T) {
 	cmdSender := &mockCommandSenderForSession{}
 	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
 
-	// Setup
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
-	s.sessions["sess_123"] = &store.Session{
+	// Setup (use thread-safe methods)
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "/workspace/test"})
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
 		IsBYOK:      true,
-	}
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
 
 	// Activate
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
@@ -1064,22 +1160,22 @@ func TestSessionManager_Activate_WithAgentConfig(t *testing.T) {
 	agentConfigID := "acfg_123"
 	model := "claude-3-opus"
 	baseURL := "https://api.anthropic.com"
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
-	s.agentConfigs["acfg_123"] = &store.AgentConfig{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "/workspace/test"})
+	s.SetAgentConfig(&store.AgentConfig{
 		ID:      "acfg_123",
 		Agent:   "claude",
 		Model:   &model,
 		BaseURL: &baseURL,
-	}
-	s.sessions["sess_123"] = &store.Session{
+	})
+	s.SetSession(&store.Session{
 		ID:            "sess_123",
 		Status:        SessionStatusPending,
 		WorkspaceID:   "ws_123",
 		Agent:         "claude",
 		IsBYOK:        false,
 		AgentConfigID: &agentConfigID,
-	}
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
 
 	// Activate
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
@@ -1099,16 +1195,16 @@ func TestSessionManager_Activate_WithContextSnapshot(t *testing.T) {
 	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
 
 	// Setup with context snapshot
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
-	s.sessions["sess_123"] = &store.Session{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "/workspace/test"})
+	s.SetSession(&store.Session{
 		ID:              "sess_123",
 		Status:          SessionStatusPending,
 		WorkspaceID:     "ws_123",
 		Agent:           "claude",
 		IsBYOK:          true,
 		ContextSnapshot: []byte(`{"working_dir": "/workspace/test/src"}`),
-	}
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
 
 	// Activate
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
@@ -1130,24 +1226,24 @@ func TestSessionManager_Activate_ResumingWithPendingPermissions(t *testing.T) {
 	respondedBy := "user@example.com"
 	reason := "approved for testing"
 
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
-	s.sessions["sess_123"] = &store.Session{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "/workspace/test"})
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusResuming,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
 		IsBYOK:      true,
 		SuspendedAt: &suspendedAt,
-	}
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
-	s.permissionRequests["perm_123"] = &store.PermissionRequest{
+	})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
+	s.SetPermissionRequest(&store.PermissionRequest{
 		ID:             "perm_123",
 		SessionID:      "sess_123",
 		Status:         "approved",
 		RespondedAt:    &respondedAt,
 		RespondedBy:    &respondedBy,
 		ResponseReason: &reason,
-	}
+	})
 
 	// Activate
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
@@ -1167,21 +1263,21 @@ func TestSessionManager_Activate_NoCmdSender(t *testing.T) {
 	// When cmdSender is nil, activation should still succeed
 	manager, s := setupSessionManagerTest() // No cmdSender
 
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
-	s.sessions["sess_123"] = &store.Session{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "/workspace/test"})
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
 		IsBYOK:      true,
-	}
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
 
 	// Activate should succeed even without cmdSender
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusActive, session.Status)
 }
 
@@ -1191,22 +1287,22 @@ func TestSessionManager_Activate_SendCommandError(t *testing.T) {
 	}
 	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
 
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "/workspace/test"}
-	s.sessions["sess_123"] = &store.Session{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "/workspace/test"})
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
 		IsBYOK:      true,
-	}
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
 
 	// Activate should succeed even if SendCommand fails
 	// (session is already activated in DB, command failure is logged but not fatal)
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
 	require.NoError(t, err)
 
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusActive, session.Status)
 }
 
@@ -1214,40 +1310,40 @@ func TestSessionManager_Activate_DetachesOldSession(t *testing.T) {
 	manager, s := setupSessionManagerTest()
 
 	runnerID := "run_123"
-	s.workspaces["ws_old"] = &store.Workspace{ID: "ws_old", Name: "/workspace/old"}
-	s.workspaces["ws_new"] = &store.Workspace{ID: "ws_new", Name: "/workspace/new"}
+	s.SetWorkspace(&store.Workspace{ID: "ws_old", Name: "/workspace/old"})
+	s.SetWorkspace(&store.Workspace{ID: "ws_new", Name: "/workspace/new"})
 
 	// Existing active session attached to the runner
-	s.sessions["sess_old"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:          "sess_old",
 		Status:      SessionStatusActive,
 		WorkspaceID: "ws_old",
 		Agent:       "claude",
 		RunnerID:    &runnerID,
-	}
+	})
 
 	// New session to be activated
-	s.sessions["sess_new"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:          "sess_new",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_new",
 		Agent:       "claude",
-	}
+	})
 
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
 
 	// Activate new session on the same runner
 	err := manager.Activate(context.Background(), "sess_new", "run_123")
 	require.NoError(t, err)
 
 	// New session should be active
-	newSession := s.sessions["sess_new"]
+	newSession := s.GetSessionDirect("sess_new")
 	assert.Equal(t, SessionStatusActive, newSession.Status)
 	require.NotNil(t, newSession.RunnerID)
 	assert.Equal(t, runnerID, *newSession.RunnerID)
 
 	// Old session should be suspended
-	oldSession := s.sessions["sess_old"]
+	oldSession := s.GetSessionDirect("sess_old")
 	assert.Equal(t, SessionStatusSuspended, oldSession.Status)
 	assert.Nil(t, oldSession.RunnerID)
 }
@@ -1256,47 +1352,47 @@ func TestSessionManager_Activate_DetachesMultipleOldSessions(t *testing.T) {
 	manager, s := setupSessionManagerTest()
 
 	runnerID := "run_123"
-	s.workspaces["ws_1"] = &store.Workspace{ID: "ws_1", Name: "/workspace/1"}
-	s.workspaces["ws_2"] = &store.Workspace{ID: "ws_2", Name: "/workspace/2"}
-	s.workspaces["ws_new"] = &store.Workspace{ID: "ws_new", Name: "/workspace/new"}
+	s.SetWorkspace(&store.Workspace{ID: "ws_1", Name: "/workspace/1"})
+	s.SetWorkspace(&store.Workspace{ID: "ws_2", Name: "/workspace/2"})
+	s.SetWorkspace(&store.Workspace{ID: "ws_new", Name: "/workspace/new"})
 
 	// Multiple active sessions attached to the runner (shouldn't happen normally, but test the cleanup)
-	s.sessions["sess_1"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:          "sess_1",
 		Status:      SessionStatusActive,
 		WorkspaceID: "ws_1",
 		Agent:       "claude",
 		RunnerID:    &runnerID,
-	}
-	s.sessions["sess_2"] = &store.Session{
+	})
+	s.SetSession(&store.Session{
 		ID:          "sess_2",
 		Status:      SessionStatusActive,
 		WorkspaceID: "ws_2",
 		Agent:       "claude",
 		RunnerID:    &runnerID,
-	}
+	})
 
 	// New session to be activated
-	s.sessions["sess_new"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:          "sess_new",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_new",
 		Agent:       "claude",
-	}
+	})
 
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
 
 	// Activate new session on the same runner
 	err := manager.Activate(context.Background(), "sess_new", "run_123")
 	require.NoError(t, err)
 
 	// New session should be active
-	newSession := s.sessions["sess_new"]
+	newSession := s.GetSessionDirect("sess_new")
 	assert.Equal(t, SessionStatusActive, newSession.Status)
 
 	// Both old sessions should be suspended
-	assert.Equal(t, SessionStatusSuspended, s.sessions["sess_1"].Status)
-	assert.Equal(t, SessionStatusSuspended, s.sessions["sess_2"].Status)
+	assert.Equal(t, SessionStatusSuspended, s.GetSessionDirect("sess_1").Status)
+	assert.Equal(t, SessionStatusSuspended, s.GetSessionDirect("sess_2").Status)
 }
 
 // =============================================================================
@@ -1373,11 +1469,11 @@ func TestSessionManager_GetWorkspaceHostPath(t *testing.T) {
 		mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
 		manager.SetWorkspaceManager(mockWM)
 
-		s.sessions["sess_123"] = &store.Session{
+		s.SetSession(&store.Session{
 			ID:          "sess_123",
 			Status:      SessionStatusActive,
 			WorkspaceID: "ws_123",
-		}
+		})
 
 		path, err := manager.GetWorkspaceHostPath(context.Background(), "sess_123")
 		require.NoError(t, err)
@@ -1397,11 +1493,11 @@ func TestSessionManager_GetWorkspaceHostPath(t *testing.T) {
 		manager, s := setupSessionManagerTest()
 		// No workspace manager set
 
-		s.sessions["sess_123"] = &store.Session{
+		s.SetSession(&store.Session{
 			ID:          "sess_123",
 			Status:      SessionStatusActive,
 			WorkspaceID: "ws_123",
-		}
+		})
 
 		path, err := manager.GetWorkspaceHostPath(context.Background(), "sess_123")
 		require.NoError(t, err)
@@ -1416,19 +1512,19 @@ func TestSessionManager_Activate_WorkspacePathForDockerRunner(t *testing.T) {
 	manager.SetWorkspaceManager(mockWM)
 
 	// Setup with Docker runner (runner-is-sandbox mode)
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
-	s.sessions["sess_123"] = &store.Session{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
 		IsBYOK:      true,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:          "run_123",
 		Status:      StatusIdle,
 		SandboxMode: "runner-is-sandbox", // Docker mode
-	}
+	})
 
 	// Activate
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
@@ -1447,19 +1543,19 @@ func TestSessionManager_Activate_WorkspacePathForLocalRunner(t *testing.T) {
 	manager.SetWorkspaceManager(mockWM)
 
 	// Setup with local runner (no sandbox mode or "none")
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
-	s.sessions["sess_123"] = &store.Session{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
 		IsBYOK:      true,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:          "run_123",
 		Status:      StatusIdle,
 		SandboxMode: "none", // Local mode
-	}
+	})
 
 	// Activate
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
@@ -1478,19 +1574,19 @@ func TestSessionManager_Activate_WorkspacePathForRunnerCreatesSandbox(t *testing
 	manager.SetWorkspaceManager(mockWM)
 
 	// Setup with runner-creates-sandbox mode
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
-	s.sessions["sess_123"] = &store.Session{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
 		IsBYOK:      true,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:          "run_123",
 		Status:      StatusIdle,
 		SandboxMode: "runner-creates-sandbox", // macOS/GPU pool mode
-	}
+	})
 
 	// Activate
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
@@ -1507,19 +1603,19 @@ func TestSessionManager_Activate_WorkspacePathWithoutWorkspaceManager(t *testing
 	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
 	// No workspace manager set
 
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
-	s.sessions["sess_123"] = &store.Session{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
 		IsBYOK:      true,
-	}
-	s.runners["run_123"] = &store.Runner{
+	})
+	s.SetRunner(&store.Runner{
 		ID:          "run_123",
 		Status:      StatusIdle,
 		SandboxMode: "runner-is-sandbox",
-	}
+	})
 
 	// Activate
 	err := manager.Activate(context.Background(), "sess_123", "run_123")
@@ -1536,14 +1632,14 @@ func TestSessionManager_AttachRunner_EnsuresHostDirectory(t *testing.T) {
 	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
 	manager.SetWorkspaceManager(mockWM)
 
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
-	s.sessions["sess_123"] = &store.Session{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
-	}
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
 
 	// Attach runner
 	err := manager.AttachRunner(context.Background(), "sess_123", "run_123")
@@ -1561,21 +1657,21 @@ func TestSessionManager_AttachRunner_EnsureHostDirectoryError(t *testing.T) {
 	}
 	manager.SetWorkspaceManager(mockWM)
 
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
-	s.sessions["sess_123"] = &store.Session{
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusPending,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
-	}
-	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+	})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
 
 	// Attach runner - should fail if EnsureHostDirectory fails
 	err := manager.AttachRunner(context.Background(), "sess_123", "run_123")
 	require.Error(t, err)
 
 	// Session should still be in pending status (not activated)
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusPending, session.Status)
 }
 
@@ -1595,31 +1691,31 @@ func TestSessionManager_RequestRunnerForResume_ExternalRunnerConnected(t *testin
 	}
 
 	// Create workspace
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
 
 	// Create external runner (no ProviderConfigID)
-	s.runners["run_external"] = &store.Runner{
+	s.SetRunner(&store.Runner{
 		ID:               "run_external",
 		Status:           StatusIdle,
 		ProviderConfigID: nil, // External runner
-	}
+	})
 
 	// Create resuming session with previous runner
 	prevRunnerID := "run_external"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:               "sess_123",
 		Status:           SessionStatusResuming,
 		WorkspaceID:      "ws_123",
 		Agent:            "claude",
 		PreviousRunnerID: &prevRunnerID,
-	}
+	})
 
 	// Call requestRunnerForResume
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	manager.requestRunnerForResume(context.Background(), session)
 
 	// Verify session was attached to the runner
-	updatedSession := s.sessions["sess_123"]
+	updatedSession := s.GetSessionDirect("sess_123")
 	require.NotNil(t, updatedSession.RunnerID)
 	assert.Equal(t, "run_external", *updatedSession.RunnerID)
 	assert.Equal(t, SessionStatusActive, updatedSession.Status)
@@ -1637,31 +1733,31 @@ func TestSessionManager_RequestRunnerForResume_ExternalRunnerNotConnected(t *tes
 	}
 
 	// Create workspace
-	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
 
 	// Create external runner (no ProviderConfigID)
-	s.runners["run_external"] = &store.Runner{
+	s.SetRunner(&store.Runner{
 		ID:               "run_external",
 		Status:           StatusOffline,
 		ProviderConfigID: nil, // External runner
-	}
+	})
 
 	// Create resuming session with previous runner
 	prevRunnerID := "run_external"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:               "sess_123",
 		Status:           SessionStatusResuming,
 		WorkspaceID:      "ws_123",
 		Agent:            "claude",
 		PreviousRunnerID: &prevRunnerID,
-	}
+	})
 
 	// Call requestRunnerForResume
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	manager.requestRunnerForResume(context.Background(), session)
 
 	// Verify session was NOT attached (still resuming, waiting for reconnect)
-	updatedSession := s.sessions["sess_123"]
+	updatedSession := s.GetSessionDirect("sess_123")
 	assert.Nil(t, updatedSession.RunnerID)
 	assert.Equal(t, SessionStatusResuming, updatedSession.Status)
 }
@@ -1671,20 +1767,20 @@ func TestSessionManager_RequestRunnerForResume_NoPreviousRunner(t *testing.T) {
 	manager, s, _ := setupSessionManagerTestFull(cmdSender)
 
 	// Create resuming session WITHOUT previous runner
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:               "sess_123",
 		Status:           SessionStatusResuming,
 		WorkspaceID:      "ws_123",
 		Agent:            "claude",
 		PreviousRunnerID: nil, // No previous runner
-	}
+	})
 
 	// Call requestRunnerForResume - should return early without error
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	manager.requestRunnerForResume(context.Background(), session)
 
 	// Verify session status unchanged
-	updatedSession := s.sessions["sess_123"]
+	updatedSession := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusResuming, updatedSession.Status)
 }
 
@@ -1694,20 +1790,20 @@ func TestSessionManager_RequestRunnerForResume_PreviousRunnerNotFound(t *testing
 
 	// Create resuming session with non-existent previous runner
 	prevRunnerID := "run_nonexistent"
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:               "sess_123",
 		Status:           SessionStatusResuming,
 		WorkspaceID:      "ws_123",
 		Agent:            "claude",
 		PreviousRunnerID: &prevRunnerID,
-	}
+	})
 
 	// Call requestRunnerForResume - should return early without error
-	session := s.sessions["sess_123"]
+	session := s.GetSessionDirect("sess_123")
 	manager.requestRunnerForResume(context.Background(), session)
 
 	// Verify session status unchanged
-	updatedSession := s.sessions["sess_123"]
+	updatedSession := s.GetSessionDirect("sess_123")
 	assert.Equal(t, SessionStatusResuming, updatedSession.Status)
 }
 
@@ -1767,12 +1863,12 @@ func TestSessionManager_ReExecuteRunningTasks_WithRunningTask(t *testing.T) {
 	manager.SetTaskManager(mockTM)
 
 	// Create a running task
-	s.tasks["task_123"] = &store.Task{
+	s.SetTask(&store.Task{
 		ID:        "task_123",
 		SessionID: "sess_123",
 		Status:    TaskStatusRunning,
 		Prompt:    "test prompt",
-	}
+	})
 
 	// Call reExecuteRunningTasks
 	manager.reExecuteRunningTasks(context.Background(), "sess_123", "run_123")
@@ -1790,12 +1886,12 @@ func TestSessionManager_ReExecuteRunningTasks_NoRunningTasks(t *testing.T) {
 	manager.SetTaskManager(mockTM)
 
 	// Create a completed task (not running)
-	s.tasks["task_123"] = &store.Task{
+	s.SetTask(&store.Task{
 		ID:        "task_123",
 		SessionID: "sess_123",
 		Status:    TaskStatusCompleted,
 		Prompt:    "test prompt",
-	}
+	})
 
 	// Call reExecuteRunningTasks
 	manager.reExecuteRunningTasks(context.Background(), "sess_123", "run_123")
@@ -1810,12 +1906,12 @@ func TestSessionManager_ReExecuteRunningTasks_NoTaskManager(t *testing.T) {
 	// Don't set task manager
 
 	// Create a running task
-	s.tasks["task_123"] = &store.Task{
+	s.SetTask(&store.Task{
 		ID:        "task_123",
 		SessionID: "sess_123",
 		Status:    TaskStatusRunning,
 		Prompt:    "test prompt",
-	}
+	})
 
 	// Call reExecuteRunningTasks - should not panic
 	manager.reExecuteRunningTasks(context.Background(), "sess_123", "run_123")
@@ -1839,13 +1935,13 @@ func TestSessionManager_GetContextSnapshot_Success(t *testing.T) {
 	}
 	snapshotJSON, _ := snapshot.ToJSON()
 
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:              "sess_123",
 		Status:          SessionStatusActive,
 		WorkspaceID:     "ws_123",
 		Agent:           "claude",
 		ContextSnapshot: snapshotJSON,
-	}
+	})
 
 	result, err := manager.GetContextSnapshot(context.Background(), "sess_123")
 	require.NoError(t, err)
@@ -1868,13 +1964,13 @@ func TestSessionManager_GetContextSnapshot_EmptySnapshot(t *testing.T) {
 	manager, s, _ := setupSessionManagerTestFull(cmdSender)
 
 	// Create session without context snapshot
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:              "sess_123",
 		Status:          SessionStatusActive,
 		WorkspaceID:     "ws_123",
 		Agent:           "claude",
 		ContextSnapshot: nil, // No snapshot
-	}
+	})
 
 	result, err := manager.GetContextSnapshot(context.Background(), "sess_123")
 	require.NoError(t, err)
@@ -1890,12 +1986,12 @@ func TestSessionManager_UpdateContextSnapshot_Success(t *testing.T) {
 	manager, s, _ := setupSessionManagerTestFull(cmdSender)
 
 	// Create session
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusActive,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
-	}
+	})
 
 	snapshot := &ContextSnapshot{
 		WorkingDirectory: "/home/user/project",
@@ -1906,7 +2002,7 @@ func TestSessionManager_UpdateContextSnapshot_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify session was updated
-	updatedSession := s.sessions["sess_123"]
+	updatedSession := s.GetSessionDirect("sess_123")
 	require.NotNil(t, updatedSession.ContextSnapshot)
 
 	// Parse and verify
@@ -1921,18 +2017,18 @@ func TestSessionManager_UpdateContextSnapshot_NilSnapshot(t *testing.T) {
 	manager, s, _ := setupSessionManagerTestFull(cmdSender)
 
 	// Create session
-	s.sessions["sess_123"] = &store.Session{
+	s.SetSession(&store.Session{
 		ID:          "sess_123",
 		Status:      SessionStatusActive,
 		WorkspaceID: "ws_123",
 		Agent:       "claude",
-	}
+	})
 
 	// Update with nil snapshot should do nothing
 	err := manager.UpdateContextSnapshot(context.Background(), "sess_123", nil)
 	require.NoError(t, err)
 
 	// Verify session was NOT updated
-	updatedSession := s.sessions["sess_123"]
+	updatedSession := s.GetSessionDirect("sess_123")
 	assert.Nil(t, updatedSession.ContextSnapshot)
 }
