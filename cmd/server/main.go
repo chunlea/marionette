@@ -106,6 +106,8 @@ func main() {
 		sessionMgr = core.NewSessionManager(dbStore, connManager, connManager, logger)
 		sessionMgr.SetWorkspaceManager(workspaceMgr)
 		taskMgr = core.NewTaskManager(dbStore, connManager, sessionMgr, auditLog, logger)
+		sessionMgr.SetProviderRegistry(providerRegistry)
+		sessionMgr.SetTaskManager(taskMgr)
 
 		// Create permission manager with connection manager as command sender
 		permMgr = core.NewPermissionManager(dbStore, connManager, sessionMgr, auditLog, logger)
@@ -132,6 +134,7 @@ func main() {
 			grpcserver.WithConnManager(connManager),
 			grpcserver.WithPermissionManager(permMgr),
 			grpcserver.WithTaskManager(taskMgr),
+			grpcserver.WithSessionManager(sessionMgr),
 		)
 
 		logger.Info("core services initialized and wired to API")

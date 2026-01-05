@@ -20,6 +20,7 @@ type testSessionStore struct {
 	runners            map[string]*store.Runner
 	agentConfigs       map[string]*store.AgentConfig
 	permissionRequests map[string]*store.PermissionRequest
+	tasks              map[string]*store.Task
 }
 
 func newTestSessionStore() *testSessionStore {
@@ -32,6 +33,7 @@ func newTestSessionStore() *testSessionStore {
 		runners:            make(map[string]*store.Runner),
 		agentConfigs:       make(map[string]*store.AgentConfig),
 		permissionRequests: make(map[string]*store.PermissionRequest),
+		tasks:              make(map[string]*store.Task),
 	}
 }
 
@@ -104,6 +106,9 @@ func (s *testSessionStore) UpdateSession(_ context.Context, id string, updates s
 	}
 	if updates.LastActivityAt != nil {
 		session.LastActivityAt = updates.LastActivityAt
+	}
+	if updates.ContextSnapshot != nil {
+		session.ContextSnapshot = updates.ContextSnapshot
 	}
 	session.UpdatedAt = time.Now()
 	return nil
@@ -182,10 +187,40 @@ func (s *testSessionStore) ListPermissionRequests(_ context.Context, opts store.
 	return &store.ListResult[store.PermissionRequest]{Items: items}, nil
 }
 
-// mockConnManagerForSession implements ConnectionManagerInterface for testing.
-type mockConnManagerForSession struct{}
+func (s *testSessionStore) ListTasks(_ context.Context, opts store.ListTasksOptions) (*store.ListResult[store.Task], error) {
+	items := make([]*store.Task, 0)
+	for _, task := range s.tasks {
+		// Filter by session ID
+		if opts.SessionID != nil && task.SessionID != *opts.SessionID {
+			continue
+		}
+		// Filter by status
+		if len(opts.Status) > 0 {
+			matched := false
+			for _, st := range opts.Status {
+				if task.Status == st {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		items = append(items, task)
+	}
+	return &store.ListResult[store.Task]{Items: items}, nil
+}
 
-func (m *mockConnManagerForSession) IsConnected(_ string) bool {
+// mockConnManagerForSession implements ConnectionManagerInterface for testing.
+type mockConnManagerForSession struct {
+	connectedRunners map[string]bool
+}
+
+func (m *mockConnManagerForSession) IsConnected(runnerID string) bool {
+	if m.connectedRunners != nil {
+		return m.connectedRunners[runnerID]
+	}
 	return true
 }
 
@@ -208,15 +243,21 @@ func (m *mockCommandSenderForSession) SendCommand(runnerID string, cmd *pb.Serve
 
 // Helper to create test setup
 func setupSessionManagerTest() (*SessionManager, *testSessionStore) {
-	return setupSessionManagerTestWithCmdSender(nil)
+	manager, s, _ := setupSessionManagerTestFull(nil)
+	return manager, s
 }
 
 func setupSessionManagerTestWithCmdSender(cmdSender CommandSender) (*SessionManager, *testSessionStore) {
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+	return manager, s
+}
+
+func setupSessionManagerTestFull(cmdSender CommandSender) (*SessionManager, *testSessionStore, *mockConnManagerForSession) {
 	s := newTestSessionStore()
 	connMgr := &mockConnManagerForSession{}
 	logger := zap.NewNop()
 	manager := NewSessionManager(s, connMgr, cmdSender, logger)
-	return manager, s
+	return manager, s, connMgr
 }
 
 // =============================================================================
@@ -514,6 +555,99 @@ func TestSessionManager_Suspend_InvalidTransition(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidSessionTransition)
 }
 
+func TestSessionManager_Suspend_ClearsContextSnapshotWithRunningTask(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+
+	// Create session with context snapshot (simulating a conversation in progress)
+	snapshot := &ContextSnapshot{
+		WorkingDirectory: "/home/user/project",
+		ConversationID:   "conv_123", // This would cause --resume to be used
+	}
+	snapshotJSON, _ := snapshot.ToJSON()
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:              "sess_123",
+		Status:          SessionStatusActive,
+		RunnerID:        &runnerID,
+		WorkspaceID:     "ws_123",
+		Agent:           "claude",
+		ContextSnapshot: snapshotJSON, // Has conversation_id
+	}
+
+	// Create a running task - this simulates suspension during task execution
+	s.tasks["task_123"] = &store.Task{
+		ID:        "task_123",
+		SessionID: "sess_123",
+		Status:    TaskStatusRunning,
+		Prompt:    "test prompt",
+	}
+
+	err := manager.Suspend(context.Background(), "sess_123", "permission_timeout")
+	require.NoError(t, err)
+
+	session := s.sessions["sess_123"]
+	assert.Equal(t, SessionStatusSuspended, session.Status)
+
+	// Context snapshot should be cleared (new empty snapshot) because there was a running task.
+	// This prevents Claude Code from trying to --resume a killed mid-task conversation.
+	if len(session.ContextSnapshot) > 0 {
+		parsed, err := ParseContextSnapshot(session.ContextSnapshot)
+		require.NoError(t, err)
+		// ConversationID should be empty (not the old one)
+		assert.Empty(t, parsed.ConversationID, "ConversationID should be cleared when suspending with running task")
+	}
+}
+
+func TestSessionManager_Suspend_PreservesContextSnapshotWithoutRunningTask(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+
+	// Create session with context snapshot
+	snapshot := &ContextSnapshot{
+		WorkingDirectory: "/home/user/project",
+		ConversationID:   "conv_123",
+	}
+	snapshotJSON, _ := snapshot.ToJSON()
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:              "sess_123",
+		Status:          SessionStatusActive,
+		RunnerID:        &runnerID,
+		WorkspaceID:     "ws_123",
+		Agent:           "claude",
+		ContextSnapshot: snapshotJSON,
+	}
+
+	// No running tasks - all completed
+	s.tasks["task_123"] = &store.Task{
+		ID:        "task_123",
+		SessionID: "sess_123",
+		Status:    TaskStatusCompleted, // Not running
+		Prompt:    "test prompt",
+	}
+
+	// Suspend with context snapshot option (simulating normal suspend)
+	err := manager.SuspendWithOptions(context.Background(), "sess_123", SuspendOptions{
+		Strategy:        "idle_timeout",
+		ContextSnapshot: snapshot,
+	})
+	require.NoError(t, err)
+
+	session := s.sessions["sess_123"]
+	assert.Equal(t, SessionStatusSuspended, session.Status)
+
+	// Context snapshot should be preserved since there's no running task
+	if len(session.ContextSnapshot) > 0 {
+		parsed, err := ParseContextSnapshot(session.ContextSnapshot)
+		require.NoError(t, err)
+		// ConversationID should be preserved
+		assert.Equal(t, "conv_123", parsed.ConversationID, "ConversationID should be preserved when suspending without running task")
+	}
+}
+
 func TestSessionManager_Resume(t *testing.T) {
 	manager, s := setupSessionManagerTest()
 	s.sessions["sess_123"] = &store.Session{
@@ -654,6 +788,49 @@ func TestSessionManager_AttachRunner_SessionNotFound(t *testing.T) {
 
 	err := manager.AttachRunner(context.Background(), "sess_nonexistent", "run_123")
 	assert.ErrorIs(t, err, ErrSessionNotFound)
+}
+
+func TestSessionManager_AttachRunner_ResumeWithBusyPreviousRunner(t *testing.T) {
+	// Test that we can attach to a busy runner if it was the previous runner for a resuming session
+	manager, s := setupSessionManagerTest()
+
+	previousRunnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:               "sess_123",
+		Status:           SessionStatusResuming,
+		PreviousRunnerID: &previousRunnerID,
+	}
+	s.runners["run_123"] = &store.Runner{
+		ID:     "run_123",
+		Status: StatusBusy, // Runner is busy - should still allow for resume
+	}
+
+	err := manager.AttachRunner(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	session := s.sessions["sess_123"]
+	assert.Equal(t, SessionStatusActive, session.Status)
+	require.NotNil(t, session.RunnerID)
+	assert.Equal(t, "run_123", *session.RunnerID)
+}
+
+func TestSessionManager_AttachRunner_ResumeWithBusyDifferentRunner(t *testing.T) {
+	// Test that we cannot attach to a busy runner if it was NOT the previous runner
+	manager, s := setupSessionManagerTest()
+
+	previousRunnerID := "run_original"
+	s.sessions["sess_123"] = &store.Session{
+		ID:               "sess_123",
+		Status:           SessionStatusResuming,
+		PreviousRunnerID: &previousRunnerID,
+	}
+	s.runners["run_different"] = &store.Runner{
+		ID:     "run_different",
+		Status: StatusBusy, // Runner is busy and not the previous runner
+	}
+
+	err := manager.AttachRunner(context.Background(), "sess_123", "run_different")
+	assert.ErrorIs(t, err, ErrRunnerNotIdle)
 }
 
 func TestSessionManager_AttachRunner_AlreadyHasRunner(t *testing.T) {
@@ -1400,4 +1577,362 @@ func TestSessionManager_AttachRunner_EnsureHostDirectoryError(t *testing.T) {
 	// Session should still be in pending status (not activated)
 	session := s.sessions["sess_123"]
 	assert.Equal(t, SessionStatusPending, session.Status)
+}
+
+// =============================================================================
+// requestRunnerForResume Tests
+// =============================================================================
+
+func TestSessionManager_RequestRunnerForResume_ExternalRunnerConnected(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, connMgr := setupSessionManagerTestFull(cmdSender)
+	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
+	manager.SetWorkspaceManager(mockWM)
+
+	// Configure connection manager to show runner as connected
+	connMgr.connectedRunners = map[string]bool{
+		"run_external": true,
+	}
+
+	// Create workspace
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+
+	// Create external runner (no ProviderConfigID)
+	s.runners["run_external"] = &store.Runner{
+		ID:               "run_external",
+		Status:           StatusIdle,
+		ProviderConfigID: nil, // External runner
+	}
+
+	// Create resuming session with previous runner
+	prevRunnerID := "run_external"
+	s.sessions["sess_123"] = &store.Session{
+		ID:               "sess_123",
+		Status:           SessionStatusResuming,
+		WorkspaceID:      "ws_123",
+		Agent:            "claude",
+		PreviousRunnerID: &prevRunnerID,
+	}
+
+	// Call requestRunnerForResume
+	session := s.sessions["sess_123"]
+	manager.requestRunnerForResume(context.Background(), session)
+
+	// Verify session was attached to the runner
+	updatedSession := s.sessions["sess_123"]
+	require.NotNil(t, updatedSession.RunnerID)
+	assert.Equal(t, "run_external", *updatedSession.RunnerID)
+	assert.Equal(t, SessionStatusActive, updatedSession.Status)
+}
+
+func TestSessionManager_RequestRunnerForResume_ExternalRunnerNotConnected(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, connMgr := setupSessionManagerTestFull(cmdSender)
+	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
+	manager.SetWorkspaceManager(mockWM)
+
+	// Configure connection manager to show runner as NOT connected
+	connMgr.connectedRunners = map[string]bool{
+		"run_external": false,
+	}
+
+	// Create workspace
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+
+	// Create external runner (no ProviderConfigID)
+	s.runners["run_external"] = &store.Runner{
+		ID:               "run_external",
+		Status:           StatusOffline,
+		ProviderConfigID: nil, // External runner
+	}
+
+	// Create resuming session with previous runner
+	prevRunnerID := "run_external"
+	s.sessions["sess_123"] = &store.Session{
+		ID:               "sess_123",
+		Status:           SessionStatusResuming,
+		WorkspaceID:      "ws_123",
+		Agent:            "claude",
+		PreviousRunnerID: &prevRunnerID,
+	}
+
+	// Call requestRunnerForResume
+	session := s.sessions["sess_123"]
+	manager.requestRunnerForResume(context.Background(), session)
+
+	// Verify session was NOT attached (still resuming, waiting for reconnect)
+	updatedSession := s.sessions["sess_123"]
+	assert.Nil(t, updatedSession.RunnerID)
+	assert.Equal(t, SessionStatusResuming, updatedSession.Status)
+}
+
+func TestSessionManager_RequestRunnerForResume_NoPreviousRunner(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+
+	// Create resuming session WITHOUT previous runner
+	s.sessions["sess_123"] = &store.Session{
+		ID:               "sess_123",
+		Status:           SessionStatusResuming,
+		WorkspaceID:      "ws_123",
+		Agent:            "claude",
+		PreviousRunnerID: nil, // No previous runner
+	}
+
+	// Call requestRunnerForResume - should return early without error
+	session := s.sessions["sess_123"]
+	manager.requestRunnerForResume(context.Background(), session)
+
+	// Verify session status unchanged
+	updatedSession := s.sessions["sess_123"]
+	assert.Equal(t, SessionStatusResuming, updatedSession.Status)
+}
+
+func TestSessionManager_RequestRunnerForResume_PreviousRunnerNotFound(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+
+	// Create resuming session with non-existent previous runner
+	prevRunnerID := "run_nonexistent"
+	s.sessions["sess_123"] = &store.Session{
+		ID:               "sess_123",
+		Status:           SessionStatusResuming,
+		WorkspaceID:      "ws_123",
+		Agent:            "claude",
+		PreviousRunnerID: &prevRunnerID,
+	}
+
+	// Call requestRunnerForResume - should return early without error
+	session := s.sessions["sess_123"]
+	manager.requestRunnerForResume(context.Background(), session)
+
+	// Verify session status unchanged
+	updatedSession := s.sessions["sess_123"]
+	assert.Equal(t, SessionStatusResuming, updatedSession.Status)
+}
+
+// =============================================================================
+// reExecuteRunningTasks Tests
+// =============================================================================
+
+// mockTaskManagerForSession implements TaskManagerInterface for testing.
+type mockTaskManagerForSession struct {
+	executedTasks   []string
+	reExecutedTasks []string
+	executeErr      error
+	reExecuteErr    error
+}
+
+func (m *mockTaskManagerForSession) Create(_ context.Context, _ CreateTaskOptions) (*store.Task, error) {
+	return nil, nil
+}
+func (m *mockTaskManagerForSession) Get(_ context.Context, _ string) (*store.Task, error) {
+	return nil, nil
+}
+func (m *mockTaskManagerForSession) List(_ context.Context, _ ListTasksOptions) (*store.ListResult[store.Task], error) {
+	return nil, nil
+}
+func (m *mockTaskManagerForSession) Cancel(_ context.Context, _ string) error { return nil }
+func (m *mockTaskManagerForSession) Execute(_ context.Context, taskID string) error {
+	m.executedTasks = append(m.executedTasks, taskID)
+	return m.executeErr
+}
+func (m *mockTaskManagerForSession) ReExecute(_ context.Context, taskID string) error {
+	m.reExecutedTasks = append(m.reExecutedTasks, taskID)
+	return m.reExecuteErr
+}
+func (m *mockTaskManagerForSession) CreateRun(_ context.Context, _ string) (*store.TaskRun, error) {
+	return nil, nil
+}
+func (m *mockTaskManagerForSession) OnTaskAccepted(_ context.Context, _ string) error { return nil }
+func (m *mockTaskManagerForSession) OnTaskStarted(_ context.Context, _ string) error  { return nil }
+func (m *mockTaskManagerForSession) OnTaskProgress(_ context.Context, _ string, _ int) error {
+	return nil
+}
+func (m *mockTaskManagerForSession) OnTaskCompleted(_ context.Context, _ *TaskCompletedResult) error {
+	return nil
+}
+func (m *mockTaskManagerForSession) FailRun(_ context.Context, _, _ string) error { return nil }
+func (m *mockTaskManagerForSession) ShouldRetry(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+func (m *mockTaskManagerForSession) Retry(_ context.Context, _ string) (*store.TaskRun, error) {
+	return nil, nil
+}
+
+func TestSessionManager_ReExecuteRunningTasks_WithRunningTask(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+	mockTM := &mockTaskManagerForSession{}
+	manager.SetTaskManager(mockTM)
+
+	// Create a running task
+	s.tasks["task_123"] = &store.Task{
+		ID:        "task_123",
+		SessionID: "sess_123",
+		Status:    TaskStatusRunning,
+		Prompt:    "test prompt",
+	}
+
+	// Call reExecuteRunningTasks
+	manager.reExecuteRunningTasks(context.Background(), "sess_123", "run_123")
+
+	// Verify task was re-executed using ReExecute (not Execute)
+	assert.Len(t, mockTM.reExecutedTasks, 1)
+	assert.Equal(t, "task_123", mockTM.reExecutedTasks[0])
+	assert.Empty(t, mockTM.executedTasks) // Execute should not be called
+}
+
+func TestSessionManager_ReExecuteRunningTasks_NoRunningTasks(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+	mockTM := &mockTaskManagerForSession{}
+	manager.SetTaskManager(mockTM)
+
+	// Create a completed task (not running)
+	s.tasks["task_123"] = &store.Task{
+		ID:        "task_123",
+		SessionID: "sess_123",
+		Status:    TaskStatusCompleted,
+		Prompt:    "test prompt",
+	}
+
+	// Call reExecuteRunningTasks
+	manager.reExecuteRunningTasks(context.Background(), "sess_123", "run_123")
+
+	// Verify no tasks were re-executed
+	assert.Empty(t, mockTM.reExecutedTasks)
+}
+
+func TestSessionManager_ReExecuteRunningTasks_NoTaskManager(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+	// Don't set task manager
+
+	// Create a running task
+	s.tasks["task_123"] = &store.Task{
+		ID:        "task_123",
+		SessionID: "sess_123",
+		Status:    TaskStatusRunning,
+		Prompt:    "test prompt",
+	}
+
+	// Call reExecuteRunningTasks - should not panic
+	manager.reExecuteRunningTasks(context.Background(), "sess_123", "run_123")
+}
+
+// =============================================================================
+// GetContextSnapshot Tests
+// =============================================================================
+
+func TestSessionManager_GetContextSnapshot_Success(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+
+	// Create session with context snapshot
+	snapshot := &ContextSnapshot{
+		WorkingDirectory: "/home/user/project",
+		ConversationID:   "conv_123",
+		Environment: map[string]string{
+			"PATH": "/usr/bin",
+		},
+	}
+	snapshotJSON, _ := snapshot.ToJSON()
+
+	s.sessions["sess_123"] = &store.Session{
+		ID:              "sess_123",
+		Status:          SessionStatusActive,
+		WorkspaceID:     "ws_123",
+		Agent:           "claude",
+		ContextSnapshot: snapshotJSON,
+	}
+
+	result, err := manager.GetContextSnapshot(context.Background(), "sess_123")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "/home/user/project", result.WorkingDirectory)
+	assert.Equal(t, "conv_123", result.ConversationID)
+	assert.Equal(t, "/usr/bin", result.Environment["PATH"])
+}
+
+func TestSessionManager_GetContextSnapshot_NotFound(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, _, _ := setupSessionManagerTestFull(cmdSender)
+
+	_, err := manager.GetContextSnapshot(context.Background(), "nonexistent")
+	assert.Equal(t, ErrSessionNotFound, err)
+}
+
+func TestSessionManager_GetContextSnapshot_EmptySnapshot(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+
+	// Create session without context snapshot
+	s.sessions["sess_123"] = &store.Session{
+		ID:              "sess_123",
+		Status:          SessionStatusActive,
+		WorkspaceID:     "ws_123",
+		Agent:           "claude",
+		ContextSnapshot: nil, // No snapshot
+	}
+
+	result, err := manager.GetContextSnapshot(context.Background(), "sess_123")
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+// =============================================================================
+// UpdateContextSnapshot Tests
+// =============================================================================
+
+func TestSessionManager_UpdateContextSnapshot_Success(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+
+	// Create session
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusActive,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+	}
+
+	snapshot := &ContextSnapshot{
+		WorkingDirectory: "/home/user/project",
+		ConversationID:   "conv_456",
+	}
+
+	err := manager.UpdateContextSnapshot(context.Background(), "sess_123", snapshot)
+	require.NoError(t, err)
+
+	// Verify session was updated
+	updatedSession := s.sessions["sess_123"]
+	require.NotNil(t, updatedSession.ContextSnapshot)
+
+	// Parse and verify
+	result, err := ParseContextSnapshot(updatedSession.ContextSnapshot)
+	require.NoError(t, err)
+	assert.Equal(t, "/home/user/project", result.WorkingDirectory)
+	assert.Equal(t, "conv_456", result.ConversationID)
+}
+
+func TestSessionManager_UpdateContextSnapshot_NilSnapshot(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+
+	// Create session
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusActive,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+	}
+
+	// Update with nil snapshot should do nothing
+	err := manager.UpdateContextSnapshot(context.Background(), "sess_123", nil)
+	require.NoError(t, err)
+
+	// Verify session was NOT updated
+	updatedSession := s.sessions["sess_123"]
+	assert.Nil(t, updatedSession.ContextSnapshot)
 }

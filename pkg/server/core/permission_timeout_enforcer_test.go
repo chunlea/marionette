@@ -56,6 +56,10 @@ func (m *mockSessionMgrForTimeout) DetachRunner(_ context.Context, _ string) err
 	return nil
 }
 
+func (m *mockSessionMgrForTimeout) UpdateContextSnapshot(_ context.Context, _ string, _ *ContextSnapshot) error {
+	return nil
+}
+
 func setupPermissionTimeoutTest(t *testing.T) (store.Store, *mockSessionMgrForTimeout, *PermissionTimeoutEnforcer) {
 	t.Helper()
 	logger := zaptest.NewLogger(t)
@@ -119,7 +123,7 @@ func TestPermissionTimeoutEnforcer_CheckTimeouts_SuspendSession(t *testing.T) {
 	// Verify session was suspended
 	assert.Len(t, sessionMgr.suspendCalls, 1)
 	assert.Equal(t, sess.ID, sessionMgr.suspendCalls[0])
-	assert.Equal(t, "permission_timeout", sessionMgr.suspendReason)
+	assert.Equal(t, "terminate_preserve_storage", sessionMgr.suspendReason)
 }
 
 func TestPermissionTimeoutEnforcer_CheckTimeouts_NoSuspendIfNotExpired(t *testing.T) {

@@ -306,6 +306,9 @@ func (m *mockSessionMgrForTask) Resume(_ context.Context, _ string) error       
 func (m *mockSessionMgrForTask) Terminate(_ context.Context, _ string) error       { return nil }
 func (m *mockSessionMgrForTask) AttachRunner(_ context.Context, _, _ string) error { return nil }
 func (m *mockSessionMgrForTask) DetachRunner(_ context.Context, _ string) error    { return nil }
+func (m *mockSessionMgrForTask) UpdateContextSnapshot(_ context.Context, _ string, _ *ContextSnapshot) error {
+	return nil
+}
 
 // Helper to create test setup
 func setupTaskManagerTest() (*TaskManager, *testTaskStore, *mockCommandSender) {
@@ -543,6 +546,91 @@ func TestTaskManager_Execute_TaskNotFound(t *testing.T) {
 	manager, _, _ := setupTaskManagerTest()
 
 	err := manager.Execute(context.Background(), "task_nonexistent")
+	assert.ErrorIs(t, err, ErrTaskNotFound)
+}
+
+func TestTaskManager_ReExecute(t *testing.T) {
+	manager, s, cmdSender := setupTaskManagerTest()
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	}
+	s.tasks["task_123"] = &store.Task{
+		ID:             "task_123",
+		SessionID:      "sess_123",
+		Prompt:         "Build a REST API",
+		Status:         TaskStatusRunning, // Already running
+		TimeoutSeconds: 3600,
+	}
+	s.taskRuns["trun_456"] = &store.TaskRun{
+		ID:      "trun_456",
+		TaskID:  "task_123",
+		Attempt: 1,
+		Status:  TaskRunStatusRunning,
+	}
+
+	err := manager.ReExecute(context.Background(), "task_123")
+	require.NoError(t, err)
+
+	// Check command was sent with existing run ID
+	assert.Len(t, cmdSender.sentCommands, 1)
+	cmd := cmdSender.sentCommands[0]
+	executeTask := cmd.GetExecuteTask()
+	require.NotNil(t, executeTask)
+	assert.Equal(t, "task_123", executeTask.GetTaskId())
+	assert.Equal(t, "trun_456", executeTask.GetRunId())
+	assert.Equal(t, int32(1), executeTask.GetAttempt())
+	assert.Equal(t, "Build a REST API", executeTask.GetPrompt())
+}
+
+func TestTaskManager_ReExecute_TaskNotRunning(t *testing.T) {
+	manager, s, _ := setupTaskManagerTest()
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	}
+	s.tasks["task_123"] = &store.Task{
+		ID:        "task_123",
+		SessionID: "sess_123",
+		Status:    TaskStatusPending, // Not running
+	}
+
+	err := manager.ReExecute(context.Background(), "task_123")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "task is not running")
+}
+
+func TestTaskManager_ReExecute_NoRunningTaskRun(t *testing.T) {
+	manager, s, _ := setupTaskManagerTest()
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	}
+	s.tasks["task_123"] = &store.Task{
+		ID:        "task_123",
+		SessionID: "sess_123",
+		Status:    TaskStatusRunning,
+	}
+	// No running task_run exists
+
+	err := manager.ReExecute(context.Background(), "task_123")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no running task_run found")
+}
+
+func TestTaskManager_ReExecute_TaskNotFound(t *testing.T) {
+	manager, _, _ := setupTaskManagerTest()
+
+	err := manager.ReExecute(context.Background(), "task_nonexistent")
 	assert.ErrorIs(t, err, ErrTaskNotFound)
 }
 

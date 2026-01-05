@@ -78,6 +78,7 @@ func NewRunnerManager(store store.Store, connManager ConnectionManagerInterface,
 
 // OnConnect is called when a runner connects to the server.
 // Transitions the runner from offline to idle.
+// Also checks for resuming sessions that need a runner and auto-attaches.
 func (m *RunnerManager) OnConnect(ctx context.Context, runnerID string) error {
 	m.logger.Info("runner connecting",
 		zap.String("runner_id", runnerID),
@@ -119,7 +120,73 @@ func (m *RunnerManager) OnConnect(ctx context.Context, runnerID string) error {
 		zap.String("status", StatusIdle),
 	)
 
+	// Try to attach to a resuming session
+	go m.tryAttachToResumingSession(ctx, runnerID)
+
 	return nil
+}
+
+// tryAttachToResumingSession checks for sessions in "resuming" status and attaches the runner.
+// This is called asynchronously after a runner connects.
+func (m *RunnerManager) tryAttachToResumingSession(ctx context.Context, runnerID string) {
+	if m.sessionMgr == nil {
+		m.logger.Debug("skipping resuming session check: no session manager configured",
+			zap.String("runner_id", runnerID),
+		)
+		return
+	}
+
+	// Look for sessions in "resuming" status that need a runner
+	sessions, err := m.store.ListSessions(ctx, store.ListSessionsOptions{
+		Status: []string{SessionStatusResuming},
+	})
+	if err != nil {
+		m.logger.Warn("failed to list resuming sessions",
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	if len(sessions.Items) == 0 {
+		m.logger.Debug("no resuming sessions to attach",
+			zap.String("runner_id", runnerID),
+		)
+		return
+	}
+
+	// Find first session without a runner that we can attach to
+	for _, sess := range sessions.Items {
+		// Skip sessions that already have a runner attached
+		if sess.RunnerID != nil && *sess.RunnerID != "" {
+			continue
+		}
+
+		// Try to attach this runner to the session
+		m.logger.Info("attaching runner to resuming session",
+			zap.String("runner_id", runnerID),
+			zap.String("session_id", sess.ID),
+		)
+
+		if err := m.sessionMgr.AttachRunner(ctx, sess.ID, runnerID); err != nil {
+			m.logger.Warn("failed to attach runner to resuming session",
+				zap.String("runner_id", runnerID),
+				zap.String("session_id", sess.ID),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		m.logger.Info("runner attached to resuming session",
+			zap.String("runner_id", runnerID),
+			zap.String("session_id", sess.ID),
+		)
+		return
+	}
+
+	m.logger.Debug("no suitable resuming session found for runner",
+		zap.String("runner_id", runnerID),
+	)
 }
 
 // OnDisconnect is called when a runner disconnects from the server.

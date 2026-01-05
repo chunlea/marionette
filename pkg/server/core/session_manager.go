@@ -9,6 +9,7 @@ import (
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/audit"
 	"github.com/chunlea/marionette/pkg/id"
+	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
 )
@@ -64,6 +65,15 @@ type SessionManagerInterface interface {
 	Terminate(ctx context.Context, sessionID string) error
 	AttachRunner(ctx context.Context, sessionID, runnerID string) error
 	DetachRunner(ctx context.Context, sessionID string) error
+	UpdateContextSnapshot(ctx context.Context, sessionID string, snapshot *ContextSnapshot) error
+}
+
+// ProviderRegistryInterface defines the interface for provider operations needed by SessionManager.
+type ProviderRegistryInterface interface {
+	// GetDefault returns the default provider.
+	GetDefault(ctx context.Context) (provider.Provider, error)
+	// Get returns a provider by name.
+	Get(ctx context.Context, name string) (provider.Provider, error)
 }
 
 // SessionManager handles session lifecycle and state transitions.
@@ -73,6 +83,8 @@ type SessionManager struct {
 	cmdSender        CommandSender
 	workspaceManager WorkspaceManagerInterface
 	auditLog         audit.Logger
+	providerRegistry ProviderRegistryInterface
+	taskManager      TaskManagerInterface
 	logger           *zap.Logger
 }
 
@@ -83,6 +95,7 @@ type SessionManagerConfig struct {
 	CmdSender        CommandSender
 	WorkspaceManager WorkspaceManagerInterface
 	AuditLog         audit.Logger
+	ProviderRegistry ProviderRegistryInterface
 	Logger           *zap.Logger
 }
 
@@ -104,6 +117,7 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 		cmdSender:        cfg.CmdSender,
 		workspaceManager: cfg.WorkspaceManager,
 		auditLog:         cfg.AuditLog,
+		providerRegistry: cfg.ProviderRegistry,
 		logger:           cfg.Logger,
 	}
 }
@@ -111,6 +125,16 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 // SetWorkspaceManager sets the workspace manager. This allows optional injection.
 func (m *SessionManager) SetWorkspaceManager(wm WorkspaceManagerInterface) {
 	m.workspaceManager = wm
+}
+
+// SetProviderRegistry sets the provider registry. This allows optional injection.
+func (m *SessionManager) SetProviderRegistry(pr ProviderRegistryInterface) {
+	m.providerRegistry = pr
+}
+
+// SetTaskManager sets the task manager. This allows optional injection.
+func (m *SessionManager) SetTaskManager(tm TaskManagerInterface) {
+	m.taskManager = tm
 }
 
 // CreateSessionOptions contains options for creating a new session.
@@ -280,7 +304,15 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 	if err != nil {
 		return err
 	}
-	if runner.Status != StatusIdle {
+
+	// Skip idle check for resume scenarios where we're re-attaching to the previous runner.
+	// This is necessary because the runner might still be "busy" processing the detach command
+	// when we try to resume. The runner will become idle shortly after.
+	isResumeToSameRunner := session.Status == SessionStatusResuming &&
+		session.PreviousRunnerID != nil &&
+		*session.PreviousRunnerID == runnerID
+
+	if runner.Status != StatusIdle && !isResumeToSameRunner {
 		return ErrRunnerNotIdle
 	}
 
@@ -328,7 +360,79 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 		// The agent can request session info on next heartbeat
 	}
 
+	// If this was a resume operation, re-execute any running tasks
+	// This ensures tasks continue after session suspend/resume
+	m.logger.Info("checking if we need to re-execute tasks",
+		zap.String("session_id", sessionID),
+		zap.String("session_status", session.Status),
+		zap.Bool("was_resuming", session.Status == SessionStatusResuming),
+	)
+	if session.Status == SessionStatusResuming {
+		go m.reExecuteRunningTasks(ctx, sessionID, runnerID)
+	}
+
 	return nil
+}
+
+// reExecuteRunningTasks finds and re-executes any running tasks for a resumed session.
+// This is called asynchronously after session activation to not block the activation.
+func (m *SessionManager) reExecuteRunningTasks(ctx context.Context, sessionID, runnerID string) {
+	m.logger.Info("reExecuteRunningTasks called",
+		zap.String("session_id", sessionID),
+		zap.String("runner_id", runnerID),
+		zap.Bool("has_task_manager", m.taskManager != nil),
+	)
+
+	if m.taskManager == nil {
+		m.logger.Debug("task manager not set, skipping task re-execution",
+			zap.String("session_id", sessionID),
+		)
+		return
+	}
+
+	// Find running tasks for this session
+	tasks, err := m.store.ListTasks(ctx, store.ListTasksOptions{
+		SessionID: &sessionID,
+		Status:    []string{TaskStatusRunning},
+	})
+	if err != nil {
+		m.logger.Error("failed to list running tasks for session",
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	if len(tasks.Items) == 0 {
+		m.logger.Debug("no running tasks to re-execute after resume",
+			zap.String("session_id", sessionID),
+		)
+		return
+	}
+
+	m.logger.Info("re-executing running tasks after session resume",
+		zap.String("session_id", sessionID),
+		zap.Int("task_count", len(tasks.Items)),
+	)
+
+	// Re-execute each running task
+	// Use a fresh context since the original request context may be canceled
+	execCtx := context.Background()
+	for _, task := range tasks.Items {
+		m.logger.Info("re-executing task after resume",
+			zap.String("session_id", sessionID),
+			zap.String("task_id", task.ID),
+		)
+
+		// Use ReExecute to reuse the existing task_run instead of creating a new one
+		if err := m.taskManager.ReExecute(execCtx, task.ID); err != nil {
+			m.logger.Error("failed to re-execute task after resume",
+				zap.String("session_id", sessionID),
+				zap.String("task_id", task.ID),
+				zap.Error(err),
+			)
+		}
+	}
 }
 
 // SuspendOptions contains options for suspending a session.
@@ -385,9 +489,37 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 	// Store previous runner ID before detaching
 	previousRunnerID := session.RunnerID
 
+	// Check if there are running tasks for this session.
+	// If so, we should NOT preserve the context snapshot because:
+	// 1. The task was killed mid-execution (waiting for tool result)
+	// 2. Claude Code's conversation cannot be properly resumed from mid-tool state
+	// 3. Trying to --resume with the old conversation_id will hang
+	// The task will be re-executed from scratch with the original prompt after resume.
+	hasRunningTask := false
+	tasks, err := m.store.ListTasks(ctx, store.ListTasksOptions{
+		SessionID: &sessionID,
+		Status:    []string{TaskStatusRunning},
+	})
+	if err != nil {
+		m.logger.Warn("failed to check for running tasks during suspend",
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+	} else if len(tasks.Items) > 0 {
+		hasRunningTask = true
+		m.logger.Info("clearing context snapshot due to running task during suspend",
+			zap.String("session_id", sessionID),
+			zap.Int("running_task_count", len(tasks.Items)),
+		)
+	}
+
 	// Prepare context snapshot
 	var snapshotJSON json.RawMessage
-	if opts.ContextSnapshot != nil {
+	if hasRunningTask {
+		// Don't save context snapshot - task will re-execute from scratch
+		snapshot := NewContextSnapshot()
+		snapshotJSON, _ = snapshot.ToJSON()
+	} else if opts.ContextSnapshot != nil {
 		snapshotJSON, err = opts.ContextSnapshot.ToJSON()
 		if err != nil {
 			m.logger.Warn("failed to serialize context snapshot",
@@ -554,7 +686,141 @@ func (m *SessionManager) ResumeWithResult(ctx context.Context, sessionID string)
 		result.WorkspaceSynced = *session.SuspendWorkspaceSynced
 	}
 
+	// Request a runner for the resumed session.
+	// For provider-managed runners: spawn a new one
+	// For external runners: re-attach if still connected
+	// Use context.Background() since this runs asynchronously after the HTTP request completes.
+	if session.PreviousRunnerID != nil && *session.PreviousRunnerID != "" {
+		go m.requestRunnerForResume(context.Background(), session)
+	}
+
 	return result, nil
+}
+
+// requestRunnerForResume requests a new runner from the provider for a resuming session.
+// This is called asynchronously to not block the resume operation.
+// Only spawns a new runner if the previous runner was managed by a provider.
+// For external/manually started runners, we wait for them to reconnect on their own.
+func (m *SessionManager) requestRunnerForResume(ctx context.Context, session *store.Session) {
+	// Check if previous runner was managed by a provider
+	var prov provider.Provider
+
+	if session.PreviousRunnerID != nil && *session.PreviousRunnerID != "" {
+		prevRunner, err := m.store.GetRunner(ctx, *session.PreviousRunnerID)
+		if err != nil {
+			m.logger.Debug("previous runner not found, skipping provider spawn",
+				zap.String("session_id", session.ID),
+				zap.Stringp("previous_runner_id", session.PreviousRunnerID),
+			)
+			return
+		}
+
+		// If runner has no provider config, it's an external/manual runner
+		// Check if it's still connected and re-attach if so
+		if prevRunner.ProviderConfigID == nil {
+			if m.connManager != nil && m.connManager.IsConnected(prevRunner.ID) {
+				m.logger.Info("previous external runner still connected, re-attaching",
+					zap.String("session_id", session.ID),
+					zap.String("runner_id", prevRunner.ID),
+				)
+				if err := m.AttachRunner(ctx, session.ID, prevRunner.ID); err != nil {
+					m.logger.Error("failed to re-attach external runner",
+						zap.String("session_id", session.ID),
+						zap.String("runner_id", prevRunner.ID),
+						zap.Error(err),
+					)
+				}
+			} else {
+				m.logger.Debug("previous runner is external (no provider config), waiting for reconnect",
+					zap.String("session_id", session.ID),
+					zap.String("runner_id", prevRunner.ID),
+				)
+			}
+			return
+		}
+
+		// Get provider from runner's config
+		provConfig, err := m.store.GetProviderConfig(ctx, *prevRunner.ProviderConfigID)
+		if err != nil {
+			m.logger.Warn("failed to get provider config for runner",
+				zap.String("session_id", session.ID),
+				zap.Stringp("provider_config_id", prevRunner.ProviderConfigID),
+				zap.Error(err),
+			)
+			return
+		}
+
+		prov, err = m.providerRegistry.Get(ctx, provConfig.Name)
+		if err != nil {
+			m.logger.Warn("failed to get provider for session resume",
+				zap.String("session_id", session.ID),
+				zap.String("provider_name", provConfig.Name),
+				zap.Error(err),
+			)
+			return
+		}
+	} else {
+		// No previous runner - this shouldn't happen for resume, but handle gracefully
+		m.logger.Warn("no previous runner for session resume, skipping provider spawn",
+			zap.String("session_id", session.ID),
+		)
+		return
+	}
+
+	// Check if provider supports suspend/resume
+	suspendProv, ok := prov.(provider.SuspendableProvider)
+	if !ok {
+		m.logger.Debug("provider does not support suspend/resume, skipping runner request",
+			zap.String("session_id", session.ID),
+			zap.String("provider", prov.Name()),
+		)
+		return
+	}
+
+	// Get workspace path for spawning new runner
+	var workspacePath string
+	if m.workspaceManager != nil {
+		workspacePath, _ = m.workspaceManager.GetHostPath(ctx, session.WorkspaceID)
+	}
+
+	// Build resume options
+	resumeOpts := provider.ResumeOptions{
+		SpawnOpts: &provider.SpawnOptions{
+			RunnerID:       id.Runner(),
+			Name:           "runner-" + session.ID,
+			WorkspaceMount: workspacePath,
+			SandboxMode:    "runner-is-sandbox",
+			// TODO: Get server URL and token from config
+		},
+	}
+
+	if session.PreviousRunnerID != nil {
+		resumeOpts.RunnerID = *session.PreviousRunnerID
+	}
+
+	m.logger.Info("requesting runner from provider for resume",
+		zap.String("session_id", session.ID),
+		zap.String("provider", prov.Name()),
+	)
+
+	// Call provider to spawn/resume runner
+	instance, err := suspendProv.Resume(ctx, session.ID, resumeOpts)
+	if err != nil {
+		m.logger.Error("failed to resume runner from provider",
+			zap.String("session_id", session.ID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	m.logger.Info("runner requested for resume",
+		zap.String("session_id", session.ID),
+		zap.String("runner_id", instance.ID),
+		zap.String("status", string(instance.Status)),
+	)
+
+	// The runner will connect via gRPC and be assigned to the session
+	// via the normal AttachRunner flow
 }
 
 // GetContextSnapshot retrieves the context snapshot for a session.
@@ -691,7 +957,15 @@ func (m *SessionManager) AttachRunner(ctx context.Context, sessionID, runnerID s
 	if err != nil {
 		return err
 	}
-	if runner.Status != StatusIdle {
+
+	// Skip idle check for resume scenarios where we're re-attaching to the previous runner.
+	// This is necessary because the runner might still be "busy" processing the detach command
+	// when we try to resume. The runner will become idle shortly after.
+	isResumeToSameRunner := session.Status == SessionStatusResuming &&
+		session.PreviousRunnerID != nil &&
+		*session.PreviousRunnerID == runnerID
+
+	if runner.Status != StatusIdle && !isResumeToSameRunner {
 		return ErrRunnerNotIdle
 	}
 
@@ -904,6 +1178,9 @@ func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.S
 						Reason:            stringValue(p.ResponseReason),
 						RespondedBy:       stringValue(p.RespondedBy),
 						RespondedAtUnixMs: p.RespondedAt.UnixMilli(),
+						Tool:              p.Tool,
+						Action:            p.Action,
+						TaskId:            p.TaskID,
 					})
 				}
 			}

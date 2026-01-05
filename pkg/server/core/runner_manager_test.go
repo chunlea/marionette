@@ -1215,6 +1215,10 @@ func (m *mockTaskMgrForRunner) Execute(_ context.Context, _ string) error {
 	return nil
 }
 
+func (m *mockTaskMgrForRunner) ReExecute(_ context.Context, _ string) error {
+	return nil
+}
+
 func (m *mockTaskMgrForRunner) CreateRun(_ context.Context, _ string) (*store.TaskRun, error) {
 	return nil, nil
 }
@@ -1311,6 +1315,10 @@ func (m *mockSessionMgrForRunner) Suspend(_ context.Context, sessionID, strategy
 	m.suspendSessionID = sessionID
 	m.suspendStrategy = strategy
 	return m.suspendErr
+}
+
+func (m *mockSessionMgrForRunner) UpdateContextSnapshot(_ context.Context, _ string, _ *ContextSnapshot) error {
+	return nil
 }
 
 func TestWithTaskManager(t *testing.T) {
