@@ -1,4 +1,4 @@
-.PHONY: deps build test lint proto migrate dev clean help
+.PHONY: deps build test lint proto migrate dev clean help certs certs-clean certs-verify
 
 # Go parameters
 GOCMD=go
@@ -198,3 +198,15 @@ docker-up:
 ## docker-down: Stop services with docker-compose
 docker-down:
 	docker-compose -f deploy/docker/docker-compose.yml down
+
+## certs: Generate TLS certificates for mTLS
+certs:
+	@$(MAKE) -C scripts/certs all
+
+## certs-clean: Remove generated TLS certificates
+certs-clean:
+	@$(MAKE) -C scripts/certs clean
+
+## certs-verify: Verify generated TLS certificates
+certs-verify:
+	@$(MAKE) -C scripts/certs verify
