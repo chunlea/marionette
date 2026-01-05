@@ -941,16 +941,16 @@
 
 ### 6.1 mTLS Implementation
 
-- [ ] Upgrade from TLS to mTLS:
-  - [ ] Server presents certificate
-  - [ ] Server verifies client certificate
-  - [ ] Client presents certificate (marionette-agent)
-- [ ] Certificate management:
-  - [ ] CA certificate generation script
-  - [ ] Server certificate generation
-  - [ ] Agent certificate generation
-  - [ ] Certificate signing workflow
-- [ ] Certificate configuration:
+- [x] Upgrade from TLS to mTLS:
+  - [x] Server presents certificate (existing)
+  - [x] Server verifies client certificate (existing)
+  - [x] Client presents certificate (existing)
+- [x] Certificate management:
+  - [x] CA certificate generation script (`scripts/certs/generate-ca.sh`)
+  - [x] Server certificate generation (`scripts/certs/generate-server.sh`)
+  - [x] Agent certificate generation (`scripts/certs/generate-client.sh`)
+  - [x] Unified Makefile (`scripts/certs/Makefile`, `make certs`)
+- [x] Certificate configuration:
   ```yaml
   tls:
     ca_cert: /etc/marionette/ca.crt
@@ -960,10 +960,16 @@
     client_key: /etc/marionette/client.key
     verify_client: true  # Require client cert
   ```
-- [ ] Certificate rotation:
+- [ ] Certificate hot-reload (`pkg/crypto/certreloader/`):
   - [ ] Reload certificates without restart
-  - [ ] File watcher for cert changes
-  - [ ] Graceful connection migration
+  - [ ] File watcher for cert changes (fsnotify)
+  - [ ] Atomic pointer for lock-free access
+  - [ ] Graceful degradation on reload failure
+- [x] mTLS integration tests (`pkg/server/grpc/mtls_integration_test.go`):
+  - [x] Successful mTLS connection
+  - [x] Rejection without client certificate
+  - [x] Rejection with wrong CA
+  - [x] Rejection with expired certificate
 
 ### 6.2 Sandbox Verification ✓
 
