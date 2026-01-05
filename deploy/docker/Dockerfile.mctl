@@ -1,0 +1,48 @@
+# Marionette CLI (mctl) Dockerfile
+# Multi-stage build for minimal CLI image
+
+# =============================================================================
+# Build stage
+# =============================================================================
+FROM golang:1.25-bookworm AS builder
+
+# Install buf and protobuf plugins for code generation
+RUN go install github.com/bufbuild/buf/cmd/buf@latest && \
+    go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+WORKDIR /app
+
+# Copy go mod files first for dependency caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Generate protobuf code
+RUN buf generate
+
+# Build arguments for version injection
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+# Build the mctl binary with version info
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+    -o /mctl ./cmd/mctl
+
+# =============================================================================
+# Runtime stage
+# =============================================================================
+FROM gcr.io/distroless/static-debian12:nonroot
+
+# Copy the binary from builder
+COPY --from=builder /mctl /mctl
+
+# Run as non-root user
+USER nonroot:nonroot
+
+# Entry point
+ENTRYPOINT ["/mctl"]

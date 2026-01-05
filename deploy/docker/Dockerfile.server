@@ -1,0 +1,51 @@
+# Marionette Server Dockerfile
+# Multi-stage build for minimal production image
+
+# =============================================================================
+# Build stage
+# =============================================================================
+FROM golang:1.25-bookworm AS builder
+
+# Install buf and protobuf plugins for code generation
+RUN go install github.com/bufbuild/buf/cmd/buf@latest && \
+    go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+WORKDIR /app
+
+# Copy go mod files first for dependency caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Generate protobuf code
+RUN buf generate
+
+# Build the server binary
+# CGO disabled for static binary, stripped for smaller size
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w" \
+    -o /server ./cmd/server
+
+# =============================================================================
+# Runtime stage
+# =============================================================================
+FROM gcr.io/distroless/static-debian12:nonroot
+
+# Copy the binary from builder
+COPY --from=builder /server /server
+
+# Expose ports:
+# - 8080: Public API (REST)
+# - 8081: Admin API (REST)
+# - 9090: gRPC (Agent communication)
+EXPOSE 8080 8081 9090
+
+# Run as non-root user (distroless nonroot user is UID 65532)
+USER nonroot:nonroot
+
+# Entry point
+ENTRYPOINT ["/server"]
+CMD ["--config", "/etc/marionette/config.yaml"]
