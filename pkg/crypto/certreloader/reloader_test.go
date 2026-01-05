@@ -28,7 +28,7 @@ func TestNew_LoadsInitialCertificate(t *testing.T) {
 	logger := zap.NewNop()
 	reloader, err := New(certFile, keyFile, logger)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	// Verify certificate is loaded
 	cert := reloader.Certificate()
@@ -57,7 +57,7 @@ func TestGetCertificate(t *testing.T) {
 	logger := zap.NewNop()
 	reloader, err := New(certFile, keyFile, logger)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	// Test GetCertificate callback
 	cert, err := reloader.GetCertificate(nil)
@@ -72,7 +72,7 @@ func TestGetClientCertificate(t *testing.T) {
 	logger := zap.NewNop()
 	reloader, err := New(certFile, keyFile, logger)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	// Test GetClientCertificate callback
 	cert, err := reloader.GetClientCertificate(nil)
@@ -87,7 +87,7 @@ func TestMustReload(t *testing.T) {
 	logger := zap.NewNop()
 	reloader, err := New(certFile, keyFile, logger)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	// Get initial cert
 	cert1 := reloader.Certificate()
@@ -125,7 +125,7 @@ func TestWatch_ReloadsOnFileChange(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	// Start watching
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -169,7 +169,7 @@ func TestWatch_KeepsOldCertOnReloadFailure(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	// Get original certificate
 	origCert := reloader.Certificate()
@@ -210,7 +210,7 @@ func TestWatch_StopsOnContextCancel(t *testing.T) {
 	logger := zap.NewNop()
 	reloader, err := New(certFile, keyFile, logger)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -238,7 +238,7 @@ func TestNewTLSConfig(t *testing.T) {
 	logger := zap.NewNop()
 	reloader, err := New(certFile, keyFile, logger)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	tlsConfig := reloader.NewTLSConfig()
 	require.NotNil(t, tlsConfig)
@@ -255,7 +255,7 @@ func TestNewServerTLSConfig(t *testing.T) {
 	logger := zap.NewNop()
 	reloader, err := New(certFile, keyFile, logger)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	tlsConfig, err := NewServerTLSConfig(reloader, caFile, true)
 	require.NoError(t, err)
@@ -272,7 +272,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 	logger := zap.NewNop()
 	reloader, err := New(certFile, keyFile, logger)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	tlsConfig, err := NewClientTLSConfig(reloader, caFile, false)
 	require.NoError(t, err)
@@ -305,7 +305,7 @@ func TestWatchFiles(t *testing.T) {
 	logger := zap.NewNop()
 	reloader, err := New(certFile, keyFile, logger)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	files := reloader.WatchFiles()
 	assert.Len(t, files, 2)
@@ -320,7 +320,7 @@ func TestConcurrentAccess(t *testing.T) {
 	logger := zap.NewNop()
 	reloader, err := New(certFile, keyFile, logger)
 	require.NoError(t, err)
-	defer reloader.Close()
+	defer func() { _ = reloader.Close() }()
 
 	// Start multiple goroutines accessing the certificate
 	var wg sync.WaitGroup
