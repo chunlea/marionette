@@ -916,24 +916,27 @@
   - [x] ChunkGCScheduler for multi-tenant management
   - [x] Configurable interval (default: 24h)
 
-### 5.7 Permission Timeout Suspend
+### 5.7 Permission Timeout Suspend ✓
 
-- [ ] Implement auto-suspend on permission timeout:
-  - [ ] Start timer when permission request created
-  - [ ] `suspend_after_seconds` default: 1800 (30 min)
-  - [ ] Trigger session suspend on timeout
-- [ ] Session suspend flow:
-  - [ ] Save context snapshot
-  - [ ] Sync workspace (if configured)
-  - [ ] Execute provider suspend strategy
-  - [ ] Update session status to `suspended`
-  - [ ] Permission request stays `pending`
-- [ ] Resume on permission response:
-  - [ ] User responds to pending permission
-  - [ ] Trigger session resume
-  - [ ] Acquire runner (same or new)
-  - [ ] Restore workspace and context
-  - [ ] Deliver permission response to agent
+- [x] Implement auto-suspend on permission timeout:
+  - [x] PermissionTimeoutEnforcer background worker (`pkg/server/core/permission_timeout_enforcer.go`)
+  - [x] `suspend_after_seconds` default: 1800 (30 min) (`DefaultSuspendAfterSeconds`)
+  - [x] Trigger session suspend on timeout via `SessionManager.Suspend()`
+  - [x] Started in `cmd/server/main.go` on boot
+- [x] Session suspend flow:
+  - [x] Save context snapshot (`SessionManager.SuspendWithOptions`)
+  - [x] Send `DetachSession` command to runner
+  - [x] Execute provider suspend strategy
+  - [x] Update session status to `suspended`
+  - [x] Permission request stays `pending` (no auto-deny)
+- [x] Resume on permission response:
+  - [x] `PermissionManager.Respond()` auto-resumes suspended session
+  - [x] `SessionManager.Resume()` transitions to `resuming`
+  - [x] On runner attach, `sendAttachSession()` includes `pending_permissions`
+  - [x] Agent processes cached responses via `OnApprovePermission` with `from_cache=true`
+- [x] Tests:
+  - [x] `permission_timeout_enforcer_test.go` (7 tests)
+  - [x] `permission_manager_test.go` (13 tests including suspend/resume)
 
 ---
 
