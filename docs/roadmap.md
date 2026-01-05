@@ -939,7 +939,7 @@
 
 ## Phase 6: Security Hardening
 
-### 6.1 mTLS Implementation
+### 6.1 mTLS Implementation ✓
 
 - [x] Upgrade from TLS to mTLS:
   - [x] Server presents certificate (existing)
@@ -960,11 +960,12 @@
     client_key: /etc/marionette/client.key
     verify_client: true  # Require client cert
   ```
-- [ ] Certificate hot-reload (`pkg/crypto/certreloader/`):
-  - [ ] Reload certificates without restart
-  - [ ] File watcher for cert changes (fsnotify)
-  - [ ] Atomic pointer for lock-free access
-  - [ ] Graceful degradation on reload failure
+- [x] Certificate hot-reload (`pkg/crypto/certreloader/`):
+  - [x] Reload certificates without restart
+  - [x] File watcher for cert changes (fsnotify)
+  - [x] Atomic pointer for lock-free access
+  - [x] Debounce support for simultaneous updates
+  - [x] Graceful degradation on reload failure
 - [x] mTLS integration tests (`pkg/server/grpc/mtls_integration_test.go`):
   - [x] Successful mTLS connection
   - [x] Rejection without client certificate
