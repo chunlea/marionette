@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/chunlea/marionette/pkg/store"
@@ -46,9 +47,31 @@ func (m *MockActionLogService) List(_ context.Context, opts ListActionLogsOption
 		return nil, m.internalError
 	}
 
+	// Collect all logs into a slice
 	items := make([]*store.ActionLog, 0, len(m.logs))
 	for _, log := range m.logs {
 		items = append(items, log)
+	}
+
+	// Sort by CreatedAt descending (newest first) for deterministic ordering
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+
+	// Apply cursor filter (skip items until we find the cursor)
+	if opts.Cursor != "" {
+		cursorIdx := -1
+		for i, log := range items {
+			if log.ID == opts.Cursor {
+				cursorIdx = i
+				break
+			}
+		}
+		if cursorIdx >= 0 && cursorIdx+1 < len(items) {
+			items = items[cursorIdx+1:]
+		} else {
+			items = []*store.ActionLog{}
+		}
 	}
 
 	limit := opts.Limit
@@ -56,10 +79,10 @@ func (m *MockActionLogService) List(_ context.Context, opts ListActionLogsOption
 		limit = 50
 	}
 
-	hasMore := false
-	if len(items) > limit {
+	// Check if there are more items beyond the limit
+	hasMore := len(items) > limit
+	if hasMore {
 		items = items[:limit]
-		hasMore = true
 	}
 
 	return &ListResult[store.ActionLog]{
