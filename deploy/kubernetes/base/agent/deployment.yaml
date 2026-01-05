@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marionette-agent
+  labels:
+    app.kubernetes.io/name: marionette
+    app.kubernetes.io/component: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: marionette
+      app.kubernetes.io/component: agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: marionette
+        app.kubernetes.io/component: agent
+    spec:
+      serviceAccountName: marionette-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: agent
+          image: marionette/agent:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MARIONETTE_SERVER
+              value: "marionette-server:9090"
+            - name: MARIONETTE_RUNNER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: marionette-secrets
+                  key: runner-token
+            - name: MARIONETTE_SANDBOX_MODE
+              value: "runner-is-sandbox"
+            - name: MARIONETTE_POOL_NAME
+              value: "kubernetes-pool"
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: workspace
+          emptyDir: {}

@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marionette-server
+  labels:
+    app.kubernetes.io/name: marionette
+    app.kubernetes.io/component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: marionette
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: marionette
+        app.kubernetes.io/component: server
+    spec:
+      serviceAccountName: marionette-server
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: server
+          image: marionette/server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: admin
+              containerPort: 8081
+              protocol: TCP
+            - name: grpc
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: MARIONETTE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: marionette-secrets
+                  key: database-url
+            - name: MARIONETTE_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: marionette-secrets
+                  key: master-key
+            - name: MARIONETTE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: marionette-secrets
+                  key: encryption-key
+            - name: MARIONETTE_UI_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: marionette-secrets
+                  key: ui-username
+                  optional: true
+            - name: MARIONETTE_UI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: marionette-secrets
+                  key: ui-password
+                  optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/marionette
+              readOnly: true
+            - name: storage
+              mountPath: /var/marionette/storage
+            - name: workspaces
+              mountPath: /var/marionette/workspaces
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: config
+          configMap:
+            name: marionette-config
+        - name: storage
+          persistentVolumeClaim:
+            claimName: marionette-storage
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: marionette-workspaces

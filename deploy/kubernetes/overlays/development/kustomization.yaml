@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: marionette-dev
+
+resources:
+  - ../../base
+
+namePrefix: dev-
+
+patches:
+  # Reduce replicas for development
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: marionette-server
+  # Reduce resource requests for development
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "128Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "100m"
+    target:
+      kind: Deployment
+  # Reduce PVC size for development
+  - patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: "1Gi"
+    target:
+      kind: PersistentVolumeClaim
+
+configMapGenerator:
+  - name: marionette-config
+    behavior: merge
+    literals:
+      - "config.yaml=server:\n  api:\n    host: \"0.0.0.0\"\n    port: 8080\n  admin:\n    host: \"0.0.0.0\"\n    port: 8081\n  grpc:\n    host: \"0.0.0.0\"\n    port: 9090\nlogging:\n  level: debug\n  format: console\ntls:\n  enabled: false\ndev:\n  skip_tls: true"
+
+commonLabels:
+  environment: development

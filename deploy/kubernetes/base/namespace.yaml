@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: marionette
+  labels:
+    app.kubernetes.io/name: marionette
+    app.kubernetes.io/component: infrastructure
