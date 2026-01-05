@@ -623,6 +623,11 @@ func listActionLogs(ctx context.Context, q querier, opts store.ListActionLogsOpt
 		args = append(args, *opts.Action)
 		argNum++
 	}
+	if opts.ActionPrefix != nil {
+		conditions = append(conditions, fmt.Sprintf("action LIKE $%d", argNum))
+		args = append(args, *opts.ActionPrefix+"%")
+		argNum++
+	}
 	if opts.ResourceType != nil {
 		conditions = append(conditions, fmt.Sprintf("resource_type = $%d", argNum))
 		args = append(args, *opts.ResourceType)
@@ -647,6 +652,31 @@ func listActionLogs(ctx context.Context, q querier, opts store.ListActionLogsOpt
 		conditions = append(conditions, fmt.Sprintf("success = $%d", argNum))
 		args = append(args, *opts.Success)
 		argNum++
+	}
+
+	// Time range filters
+	if opts.From != nil {
+		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", argNum))
+		args = append(args, *opts.From)
+		argNum++
+	}
+	if opts.To != nil {
+		conditions = append(conditions, fmt.Sprintf("created_at <= $%d", argNum))
+		args = append(args, *opts.To)
+		argNum++
+	}
+
+	// Cursor-based pagination
+	if opts.Cursor != "" {
+		cursorTime, cursorID, err := decodeCursor(opts.Cursor)
+		if err == nil && !cursorTime.IsZero() {
+			// For descending order (newest first): get items older than cursor
+			conditions = append(conditions, fmt.Sprintf(
+				"(created_at < $%d OR (created_at = $%d AND id < $%d))",
+				argNum, argNum+1, argNum+2))
+			args = append(args, cursorTime, cursorTime, cursorID)
+			argNum += 3
+		}
 	}
 
 	whereClause := ""
@@ -701,10 +731,18 @@ func listActionLogs(ctx context.Context, q querier, opts store.ListActionLogsOpt
 		logs = logs[:limit]
 	}
 
+	// Generate next cursor from last item
+	var nextCursor string
+	if hasMore && len(logs) > 0 {
+		lastLog := logs[len(logs)-1]
+		nextCursor = encodeCursor(lastLog.CreatedAt, lastLog.ID)
+	}
+
 	return &store.ListResult[store.ActionLog]{
 		Items:      logs,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

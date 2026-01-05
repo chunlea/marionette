@@ -194,6 +194,30 @@ type ActionLogService interface {
 
 // ListActionLogsOptions defines options for listing action logs.
 type ListActionLogsOptions struct {
+	// Pagination
 	Limit  int    `json:"limit,omitempty"`
 	Cursor string `json:"cursor,omitempty"`
+
+	// Actor filters
+	ActorType string `json:"actor_type,omitempty"` // user, api_key, system, runner
+	ActorID   string `json:"actor_id,omitempty"`
+
+	// Action filters
+	Action       string `json:"action,omitempty"`        // Exact match
+	ActionPrefix string `json:"action_prefix,omitempty"` // Prefix match (e.g., "permission.")
+
+	// Resource filters
+	ResourceType string `json:"resource_type,omitempty"`
+	ResourceID   string `json:"resource_id,omitempty"`
+
+	// Context filters
+	SessionID string `json:"session_id,omitempty"`
+	TaskID    string `json:"task_id,omitempty"`
+
+	// Result filters
+	Success *bool `json:"success,omitempty"` // nil = all, true = success only, false = failure only
+
+	// Time range filters (RFC3339 format)
+	From *time.Time `json:"from,omitempty"` // created_at >= from
+	To   *time.Time `json:"to,omitempty"`   // created_at <= to
 }

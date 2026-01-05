@@ -4,8 +4,11 @@
 package postgres
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -137,4 +140,36 @@ func derefInt(i *int) int {
 		return 0
 	}
 	return *i
+}
+
+// encodeCursor creates a cursor from timestamp and ID for pagination.
+// Format: base64(RFC3339Nano|id)
+func encodeCursor(t time.Time, id string) string {
+	data := fmt.Sprintf("%s|%s", t.Format(time.RFC3339Nano), id)
+	return base64.URLEncoding.EncodeToString([]byte(data))
+}
+
+// decodeCursor extracts timestamp and ID from a cursor.
+// Returns zero values on error.
+func decodeCursor(cursor string) (time.Time, string, error) {
+	if cursor == "" {
+		return time.Time{}, "", nil
+	}
+
+	data, err := base64.URLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("invalid cursor encoding: %w", err)
+	}
+
+	parts := strings.SplitN(string(data), "|", 2)
+	if len(parts) != 2 {
+		return time.Time{}, "", fmt.Errorf("invalid cursor format")
+	}
+
+	t, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("invalid cursor timestamp: %w", err)
+	}
+
+	return t, parts[1], nil
 }

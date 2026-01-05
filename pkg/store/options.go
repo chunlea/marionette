@@ -1,5 +1,7 @@
 package store
 
+import "time"
+
 // ListResult wraps paginated results with metadata.
 type ListResult[T any] struct {
 	Items      []*T   `json:"items"`
@@ -130,14 +132,17 @@ type ListTunnelsOptions struct {
 // ListActionLogsOptions for filtering action logs.
 type ListActionLogsOptions struct {
 	BaseListOptions
-	ActorType    *string // Filter by actor type
-	ActorID      *string // Filter by actor ID
-	Action       *string // Filter by action
-	ResourceType *string // Filter by resource type
-	ResourceID   *string // Filter by resource ID
-	SessionID    *string // Filter by session
-	TaskID       *string // Filter by task
-	Success      *bool   // Filter by success status
+	ActorType    *string    // Filter by actor type
+	ActorID      *string    // Filter by actor ID
+	Action       *string    // Filter by exact action match
+	ActionPrefix *string    // Filter by action prefix (e.g., "permission." matches "permission.approved")
+	ResourceType *string    // Filter by resource type
+	ResourceID   *string    // Filter by resource ID
+	SessionID    *string    // Filter by session
+	TaskID       *string    // Filter by task
+	Success      *bool      // Filter by success status
+	From         *time.Time // Filter by created_at >= from
+	To           *time.Time // Filter by created_at <= to
 }
 
 // ListLogsOptions for filtering task logs.
