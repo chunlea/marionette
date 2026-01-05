@@ -67,7 +67,7 @@ func TestMTLS_SuccessfulConnection(t *testing.T) {
 		grpc.WithTransportCredentials(clientCreds),
 	)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Make a request to verify connection works
 	client := pb.NewRunnerServiceClient(conn)
@@ -137,7 +137,7 @@ func TestMTLS_RejectedWithoutClientCert(t *testing.T) {
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
 	)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Try to make a request - should fail during TLS handshake
 	client := pb.NewRunnerServiceClient(conn)
@@ -208,7 +208,7 @@ func TestMTLS_RejectedWithWrongCA(t *testing.T) {
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
 	)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Try to make a request - should fail during TLS handshake
 	client := pb.NewRunnerServiceClient(conn)
@@ -347,7 +347,7 @@ func TestMTLS_RejectedWithExpiredCert(t *testing.T) {
 		grpc.WithTransportCredentials(clientCreds),
 	)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Try to make a request - should fail due to expired cert
 	client := pb.NewRunnerServiceClient(conn)
@@ -418,7 +418,7 @@ func TestTLS_ServerOnlyNoClientVerification(t *testing.T) {
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
 	)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Make a request - TLS handshake should succeed
 	client := pb.NewRunnerServiceClient(conn)
