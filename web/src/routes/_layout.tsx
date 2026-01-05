@@ -20,7 +20,6 @@ export const Route = createFileRoute('/_layout')({
 
 function DashboardLayout() {
   const navigate = useNavigate()
-  const router = useRouterState()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { data: pendingPerms } = usePendingPermissions()
 

@@ -16,12 +16,10 @@ function DashboardHome() {
   const { data: permissions } = usePendingPermissions()
 
   const activeSessions = sessions?.items?.filter((s) => s.status === 'active').length || 0
-  const pendingSessions = sessions?.items?.filter((s) => s.status === 'pending').length || 0
   const suspendedSessions = sessions?.items?.filter((s) => s.status === 'suspended').length || 0
 
   const runningTasks = tasks?.items?.filter((t) => t.status === 'running').length || 0
   const pendingTasks = tasks?.items?.filter((t) => t.status === 'pending').length || 0
-  const completedTasks = tasks?.items?.filter((t) => t.status === 'completed').length || 0
 
   const onlineRunners = runners?.items?.filter((r) => r.status !== 'offline').length || 0
   const busyRunners = runners?.items?.filter((r) => r.status === 'busy').length || 0

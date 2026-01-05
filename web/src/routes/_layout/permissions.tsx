@@ -6,7 +6,7 @@ import {
   useApprovePermission,
   useDenyPermission,
 } from '@/api/hooks'
-import { Card, CardHeader, CardBody } from '@/components/Card'
+import { Card, CardHeader } from '@/components/Card'
 import { Badge } from '@/components/Badge'
 import { Button } from '@/components/Button'
 import { Input } from '@/components/Input'
