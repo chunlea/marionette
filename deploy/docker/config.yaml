@@ -1,0 +1,50 @@
+# Marionette Server Configuration for Docker
+# This file is mounted at /etc/marionette/config.yaml
+
+server:
+  api:
+    host: "0.0.0.0"
+    port: 8080
+  admin:
+    host: "0.0.0.0"
+    port: 8081
+  grpc:
+    host: "0.0.0.0"
+    port: 9090
+
+# Database configuration
+# Connection string is set via MARIONETTE_DATABASE_URL environment variable
+database:
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: "1h"
+
+# Provider configuration
+providers:
+  default: docker
+  docker:
+    host: "unix:///var/run/docker.sock"
+    image: "marionette/agent:latest"
+    network: "marionette_default"
+
+# Storage configuration
+storage:
+  provider: local
+  local:
+    path: /var/marionette/storage
+  workspace:
+    base_dir: /var/marionette/workspaces
+
+# Logging configuration
+logging:
+  level: info
+  format: json
+
+# TLS configuration (disabled in development)
+tls:
+  enabled: false
+
+# Development settings
+dev:
+  hot_reload: false
+  skip_tls: true
