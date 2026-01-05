@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useTask, useTaskRuns, usePermissions } from '@/api/hooks'
 import { Card, CardHeader, CardBody } from '@/components/Card'
 import { Badge } from '@/components/Badge'
 import { Button } from '@/components/Button'
+import { LogViewer } from '@/components/LogViewer'
 import {
   Table,
   TableHeader,
@@ -33,6 +35,7 @@ export const Route = createFileRoute('/_layout/tasks/$taskId')({
 function TaskDetailPage() {
   const { taskId } = Route.useParams()
   const navigate = useNavigate()
+  const [showLogs, setShowLogs] = useState(false)
   const { data: task, isLoading: taskLoading } = useTask(taskId)
   const { data: runs, isLoading: runsLoading } = useTaskRuns(taskId)
   const { data: permissions, isLoading: permsLoading } = usePermissions({ task_id: taskId })
@@ -186,12 +189,25 @@ function TaskDetailPage() {
               Retry Task
             </Button>
           )}
-          <Button variant="secondary">
+          <Button variant="secondary" onClick={() => setShowLogs(!showLogs)}>
             <Terminal className="mr-2 h-4 w-4" />
-            View Logs
+            {showLogs ? 'Hide Logs' : 'View Logs'}
           </Button>
         </CardBody>
       </Card>
+
+      {/* Log Viewer */}
+      {showLogs && (
+        <Card>
+          <CardHeader className="flex items-center gap-2">
+            <Terminal className="h-4 w-4" />
+            Task Logs
+          </CardHeader>
+          <CardBody className="p-0">
+            <LogViewer taskId={taskId} maxHeight="400px" showTimestamps />
+          </CardBody>
+        </Card>
+      )}
 
       {/* Task Runs */}
       <Card>

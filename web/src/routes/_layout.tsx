@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, useNavigate, Link, useRouterState } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { isAuthenticated, clearApiKey } from '@/api/client'
 import {
   LayoutDashboard,
@@ -13,6 +13,9 @@ import {
   X,
 } from 'lucide-react'
 import { usePendingPermissions } from '@/api/hooks'
+import { useEventStream } from '@/hooks/useEventStream'
+import { PermissionNotification } from '@/components/PermissionNotification'
+import type { PermissionRequest } from '@/types/api'
 
 export const Route = createFileRoute('/_layout')({
   component: DashboardLayout,
@@ -21,9 +24,23 @@ export const Route = createFileRoute('/_layout')({
 function DashboardLayout() {
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [newPermission, setNewPermission] = useState<PermissionRequest | null>(null)
   const { data: pendingPerms } = usePendingPermissions()
 
   const pendingCount = pendingPerms?.items?.length || 0
+
+  // Handle new permission requests from event stream
+  const handlePermission = useCallback((permission: PermissionRequest) => {
+    if (permission.status === 'pending') {
+      setNewPermission(permission)
+    }
+  }, [])
+
+  // Connect to event stream for real-time updates
+  useEventStream({
+    enabled: isAuthenticated(),
+    onPermission: handlePermission,
+  })
 
   useEffect(() => {
     // Redirect to login if not authenticated
@@ -44,6 +61,13 @@ function DashboardLayout() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Real-time permission notification */}
+      {newPermission && (
+        <PermissionNotification
+          permission={newPermission}
+          onDismiss={() => setNewPermission(null)}
+        />
+      )}
       {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
         <div
