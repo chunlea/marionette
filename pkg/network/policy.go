@@ -141,7 +141,7 @@ func validateHostPattern(pattern string) error {
 
 	// Wildcard validation
 	parts := strings.Split(pattern, ".")
-	for i, part := range parts {
+	for _, part := range parts {
 		if part == "" {
 			return fmt.Errorf("empty label")
 		}
@@ -168,8 +168,6 @@ func validateHostPattern(pattern string) error {
 		if len(part) > 63 {
 			return fmt.Errorf("label %q exceeds 63 characters", part[:20]+"...")
 		}
-
-		_ = i // Silence unused variable warning
 	}
 
 	return nil
