@@ -3,6 +3,7 @@ import { apiClient } from '../client'
 import type {
   Task,
   TaskList,
+  TaskRunList,
   CreateTaskRequest,
   TasksQueryParams,
   LogList,
@@ -15,6 +16,7 @@ export const taskKeys = {
   list: (params: TasksQueryParams) => [...taskKeys.lists(), params] as const,
   details: () => [...taskKeys.all, 'detail'] as const,
   detail: (id: string) => [...taskKeys.details(), id] as const,
+  runs: (id: string) => [...taskKeys.all, 'runs', id] as const,
   logs: (id: string) => [...taskKeys.all, 'logs', id] as const,
 }
 
@@ -35,6 +37,18 @@ export function useTask(taskId: string) {
     queryKey: taskKeys.detail(taskId),
     queryFn: async () => {
       const { data } = await apiClient.get<Task>(`/tasks/${taskId}`)
+      return data
+    },
+    enabled: !!taskId,
+  })
+}
+
+// Get task runs
+export function useTaskRuns(taskId: string) {
+  return useQuery({
+    queryKey: taskKeys.runs(taskId),
+    queryFn: async () => {
+      const { data } = await apiClient.get<TaskRunList>(`/tasks/${taskId}/runs`)
       return data
     },
     enabled: !!taskId,

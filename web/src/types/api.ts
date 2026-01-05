@@ -15,10 +15,14 @@ export interface Session {
   agent: string
   runner_id?: string
   workspace_id: string
+  is_byok: boolean
+  network_policy: string
   lifecycle_mode: LifecycleMode
   labels: Labels
+  annotations: Record<string, unknown>
   created_at: string
   updated_at: string
+  last_activity_at?: string
 }
 
 export interface CreateSessionRequest {
@@ -48,6 +52,7 @@ export interface Task {
   retry_count: number
   timeout_seconds: number
   labels: Labels
+  annotations: Record<string, unknown>
   created_at: string
   updated_at: string
 }
@@ -63,6 +68,31 @@ export interface CreateTaskRequest {
 
 export interface TaskList {
   items: Task[]
+  next_cursor?: string
+}
+
+// Task Run types
+export type TaskRunStatus = 'pending' | 'assigned' | 'running' | 'completed' | 'failed' | 'timeout' | 'canceled'
+
+export interface TaskRun {
+  id: string
+  task_id: string
+  attempt: number
+  runner_id?: string
+  status: TaskRunStatus
+  error?: string
+  exit_code?: number
+  tokens_input?: number
+  tokens_output?: number
+  queued_at: string
+  assigned_at?: string
+  started_at?: string
+  ended_at?: string
+  updated_at: string
+}
+
+export interface TaskRunList {
+  items: TaskRun[]
   next_cursor?: string
 }
 

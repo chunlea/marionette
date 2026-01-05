@@ -17,9 +17,10 @@ interface CardHeaderProps {
   children: React.ReactNode
   className?: string
   action?: React.ReactNode
+  icon?: React.ReactNode
 }
 
-export function CardHeader({ children, className, action }: CardHeaderProps) {
+export function CardHeader({ children, className, action, icon }: CardHeaderProps) {
   return (
     <div
       className={cn(
@@ -27,7 +28,10 @@ export function CardHeader({ children, className, action }: CardHeaderProps) {
         className
       )}
     >
-      <h3 className="text-lg font-semibold text-gray-900">{children}</h3>
+      <h3 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
+        {icon}
+        {children}
+      </h3>
       {action}
     </div>
   )
