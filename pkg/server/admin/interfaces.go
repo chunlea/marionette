@@ -182,3 +182,18 @@ type SessionActivator interface {
 	// Suspend suspends a session with the given strategy.
 	Suspend(ctx context.Context, sessionID, strategy string) error
 }
+
+// ActionLogService defines the interface for querying action logs.
+type ActionLogService interface {
+	// Get retrieves an action log by ID.
+	Get(ctx context.Context, id string) (*store.ActionLog, error)
+
+	// List returns action logs matching the given options.
+	List(ctx context.Context, opts ListActionLogsOptions) (*ListResult[store.ActionLog], error)
+}
+
+// ListActionLogsOptions defines options for listing action logs.
+type ListActionLogsOptions struct {
+	Limit  int    `json:"limit,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
+}
