@@ -48,7 +48,7 @@ services:
     depends_on:
       - server
     environment:
-      MARIONETTE_SERVER: server:9090
+      MARIONETTE_SERVER_ADDRESS: server:9090
       MARIONETTE_RUNNER_TOKEN: ${MARIONETTE_RUNNER_TOKEN:-dev-runner-token}
       MARIONETTE_SANDBOX_MODE: runner-is-sandbox
       MARIONETTE_POOL_NAME: docker-pool
