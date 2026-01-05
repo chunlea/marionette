@@ -40,7 +40,7 @@ export function LogViewer({
     }
   }, [isPaused])
 
-  const { logs: streamLogs, status, isConnected, clearLogs, reconnect } = useLogStream({
+  const { logs: streamLogs, status, isConnected, clearLogs } = useLogStream({
     taskId,
     enabled: !isPaused,
     onNewLog: handleNewLog,

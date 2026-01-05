@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useApprovePermission, useDenyPermission } from '@/api/hooks'
 import { Button } from './Button'
@@ -29,6 +29,11 @@ export function PermissionNotification({
   const approvePermission = useApprovePermission()
   const denyPermission = useDenyPermission()
 
+  const handleDismiss = useCallback(() => {
+    setIsVisible(false)
+    setTimeout(() => onDismiss?.(), 300)
+  }, [onDismiss])
+
   useEffect(() => {
     if (autoHideDelay && autoHideDelay > 0) {
       const timer = setTimeout(() => {
@@ -36,12 +41,7 @@ export function PermissionNotification({
       }, autoHideDelay)
       return () => clearTimeout(timer)
     }
-  }, [autoHideDelay])
-
-  const handleDismiss = () => {
-    setIsVisible(false)
-    setTimeout(() => onDismiss?.(), 300)
-  }
+  }, [autoHideDelay, handleDismiss])
 
   const handleApprove = async () => {
     setIsProcessing(true)

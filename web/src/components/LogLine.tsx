@@ -49,7 +49,8 @@ interface ParsedSegment {
 
 function parseAnsi(text: string): ParsedSegment[] {
   const segments: ParsedSegment[] = []
-  // Match ANSI escape sequences
+  // Match ANSI escape sequences (ESC[...m)
+  // eslint-disable-next-line no-control-regex
   const ansiRegex = /\x1b\[([0-9;]*)m/g
 
   let currentClasses: string[] = []
