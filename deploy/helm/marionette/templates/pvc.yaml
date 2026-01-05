@@ -1,0 +1,35 @@
+{{- if .Values.storage.data.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "marionette.fullname" . }}-storage
+  labels:
+    {{- include "marionette.server.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.storage.data.accessModes | nindent 4 }}
+  {{- if .Values.storage.data.storageClass }}
+  storageClassName: {{ .Values.storage.data.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.data.size }}
+{{- end }}
+---
+{{- if .Values.storage.workspaces.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "marionette.fullname" . }}-workspaces
+  labels:
+    {{- include "marionette.server.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.storage.workspaces.accessModes | nindent 4 }}
+  {{- if .Values.storage.workspaces.storageClass }}
+  storageClassName: {{ .Values.storage.workspaces.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.workspaces.size }}
+{{- end }}

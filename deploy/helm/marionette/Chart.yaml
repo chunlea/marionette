@@ -1,0 +1,26 @@
+apiVersion: v2
+name: marionette
+description: A Helm chart for Marionette - Remote Agent Orchestration Platform
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+keywords:
+  - marionette
+  - ai-agent
+  - orchestration
+  - claude
+
+home: https://github.com/chunlea/marionette
+sources:
+  - https://github.com/chunlea/marionette
+
+maintainers:
+  - name: chunlea
+    url: https://github.com/chunlea
+
+dependencies:
+  - name: postgresql
+    version: "15.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled

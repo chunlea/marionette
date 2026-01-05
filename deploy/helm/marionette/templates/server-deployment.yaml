@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "marionette.fullname" . }}-server
+  labels:
+    {{- include "marionette.server.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.server.autoscaling.enabled }}
+  replicas: {{ .Values.server.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "marionette.server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/server-configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        {{- with .Values.server.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "marionette.server.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "marionette.server.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.server.podSecurityContext | nindent 8 }}
+      containers:
+        - name: server
+          securityContext:
+            {{- toYaml .Values.server.securityContext | nindent 12 }}
+          image: {{ include "marionette.server.image" . }}
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: admin
+              containerPort: 8081
+              protocol: TCP
+            - name: grpc
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: MARIONETTE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "marionette.fullname" . }}-secrets
+                  key: database-url
+            - name: MARIONETTE_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "marionette.fullname" . }}-secrets
+                  key: master-key
+            - name: MARIONETTE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "marionette.fullname" . }}-secrets
+                  key: encryption-key
+            - name: MARIONETTE_UI_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "marionette.fullname" . }}-secrets
+                  key: ui-username
+                  optional: true
+            - name: MARIONETTE_UI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "marionette.fullname" . }}-secrets
+                  key: ui-password
+                  optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/marionette
+              readOnly: true
+            {{- if .Values.storage.data.enabled }}
+            - name: storage
+              mountPath: /var/marionette/storage
+            {{- end }}
+            {{- if .Values.storage.workspaces.enabled }}
+            - name: workspaces
+              mountPath: /var/marionette/workspaces
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.server.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.server.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "marionette.fullname" . }}-config
+        {{- if .Values.storage.data.enabled }}
+        - name: storage
+          persistentVolumeClaim:
+            claimName: {{ include "marionette.fullname" . }}-storage
+        {{- end }}
+        {{- if .Values.storage.workspaces.enabled }}
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: {{ include "marionette.fullname" . }}-workspaces
+        {{- end }}
+      {{- with .Values.server.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
