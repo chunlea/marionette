@@ -349,6 +349,250 @@ func TestConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+func TestNew_CertAndKeyInDifferentDirectories(t *testing.T) {
+	// Create two separate directories
+	certDir := t.TempDir()
+	keyDir := t.TempDir()
+
+	// Generate cert and key in certDir first
+	certFile, keyFileOrig := generateTestCert(t, certDir, "test")
+
+	// Move key to keyDir
+	keyFile := filepath.Join(keyDir, "test.key")
+	keyData, err := os.ReadFile(keyFileOrig)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(keyFile, keyData, 0600))
+
+	logger := zap.NewNop()
+	reloader, err := New(certFile, keyFile, logger)
+	require.NoError(t, err)
+	defer func() { _ = reloader.Close() }()
+
+	// Verify certificate is loaded
+	cert := reloader.Certificate()
+	require.NotNil(t, cert)
+
+	// Verify both directories are being watched
+	files := reloader.WatchFiles()
+	assert.Contains(t, files, certFile)
+	assert.Contains(t, files, keyFile)
+}
+
+func TestNewServerTLSConfig_InvalidCA(t *testing.T) {
+	tmpDir := t.TempDir()
+	certFile, keyFile := generateTestCert(t, tmpDir, "server")
+
+	// Create invalid CA file
+	invalidCAFile := filepath.Join(tmpDir, "invalid-ca.crt")
+	err := os.WriteFile(invalidCAFile, []byte("not a valid certificate"), 0600)
+	require.NoError(t, err)
+
+	logger := zap.NewNop()
+	reloader, err := New(certFile, keyFile, logger)
+	require.NoError(t, err)
+	defer func() { _ = reloader.Close() }()
+
+	// Should fail to parse invalid CA
+	_, err = NewServerTLSConfig(reloader, invalidCAFile, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse CA certificate")
+}
+
+func TestNewServerTLSConfig_MissingCAFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	certFile, keyFile := generateTestCert(t, tmpDir, "server")
+
+	logger := zap.NewNop()
+	reloader, err := New(certFile, keyFile, logger)
+	require.NoError(t, err)
+	defer func() { _ = reloader.Close() }()
+
+	// Should fail with missing CA file
+	_, err = NewServerTLSConfig(reloader, "/nonexistent/ca.crt", true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reading CA certificate")
+}
+
+func TestNewClientTLSConfig_InvalidCA(t *testing.T) {
+	tmpDir := t.TempDir()
+	certFile, keyFile := generateTestCert(t, tmpDir, "client")
+
+	// Create invalid CA file
+	invalidCAFile := filepath.Join(tmpDir, "invalid-ca.crt")
+	err := os.WriteFile(invalidCAFile, []byte("not a valid certificate"), 0600)
+	require.NoError(t, err)
+
+	logger := zap.NewNop()
+	reloader, err := New(certFile, keyFile, logger)
+	require.NoError(t, err)
+	defer func() { _ = reloader.Close() }()
+
+	// Should fail to parse invalid CA
+	_, err = NewClientTLSConfig(reloader, invalidCAFile, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse CA certificate")
+}
+
+func TestNewClientTLSConfig_MissingCAFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	certFile, keyFile := generateTestCert(t, tmpDir, "client")
+
+	logger := zap.NewNop()
+	reloader, err := New(certFile, keyFile, logger)
+	require.NoError(t, err)
+	defer func() { _ = reloader.Close() }()
+
+	// Should fail with missing CA file
+	_, err = NewClientTLSConfig(reloader, "/nonexistent/ca.crt", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reading CA certificate")
+}
+
+func TestNewClientTLSConfig_SkipVerify(t *testing.T) {
+	tmpDir := t.TempDir()
+	certFile, keyFile := generateTestCert(t, tmpDir, "client")
+
+	logger := zap.NewNop()
+	reloader, err := New(certFile, keyFile, logger)
+	require.NoError(t, err)
+	defer func() { _ = reloader.Close() }()
+
+	// With skipVerify=true, CA file should be ignored
+	tlsConfig, err := NewClientTLSConfig(reloader, "", true)
+	require.NoError(t, err)
+	assert.True(t, tlsConfig.InsecureSkipVerify)
+	assert.Nil(t, tlsConfig.RootCAs)
+}
+
+func TestNewServerTLSConfig_NoClientVerification(t *testing.T) {
+	tmpDir := t.TempDir()
+	certFile, keyFile := generateTestCert(t, tmpDir, "server")
+	caFile := generateCACert(t, tmpDir)
+
+	logger := zap.NewNop()
+	reloader, err := New(certFile, keyFile, logger)
+	require.NoError(t, err)
+	defer func() { _ = reloader.Close() }()
+
+	// With verifyClient=false, ClientCAs should not be set
+	tlsConfig, err := NewServerTLSConfig(reloader, caFile, false)
+	require.NoError(t, err)
+	assert.Nil(t, tlsConfig.ClientCAs)
+	assert.Equal(t, tls.NoClientCert, tlsConfig.ClientAuth)
+}
+
+func TestWatch_StopsWhenWatcherClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	certFile, keyFile := generateTestCert(t, tmpDir, "test")
+
+	logger := zap.NewNop()
+	reloader, err := New(certFile, keyFile, logger)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- reloader.Watch(ctx)
+	}()
+
+	// Give watcher time to start
+	time.Sleep(50 * time.Millisecond)
+
+	// Close the reloader (which closes the watcher)
+	err = reloader.Close()
+	require.NoError(t, err)
+
+	// Watch should return with an error about closed channel
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "closed")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for Watch to return")
+	}
+}
+
+func TestWatch_IgnoresIrrelevantFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	certFile, keyFile := generateTestCert(t, tmpDir, "test")
+
+	reloadCh := make(chan error, 10)
+
+	logger := zap.NewNop()
+	reloader, err := New(certFile, keyFile, logger,
+		WithDebounceDelay(50*time.Millisecond),
+		WithOnReload(func(err error) {
+			reloadCh <- err
+		}),
+	)
+	require.NoError(t, err)
+	defer func() { _ = reloader.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = reloader.Watch(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Create an unrelated file in the same directory - should be ignored
+	unrelatedFile := filepath.Join(tmpDir, "unrelated.txt")
+	err = os.WriteFile(unrelatedFile, []byte("test"), 0600)
+	require.NoError(t, err)
+
+	// Wait a bit and ensure no reload was triggered
+	select {
+	case <-reloadCh:
+		t.Fatal("reload should not have been triggered for unrelated file")
+	case <-time.After(300 * time.Millisecond):
+		// Expected - no reload
+	}
+}
+
+func TestWatch_IgnoresDeleteEvents(t *testing.T) {
+	tmpDir := t.TempDir()
+	certFile, keyFile := generateTestCert(t, tmpDir, "test")
+
+	reloadCh := make(chan error, 10)
+
+	logger := zap.NewNop()
+	reloader, err := New(certFile, keyFile, logger,
+		WithDebounceDelay(50*time.Millisecond),
+		WithOnReload(func(err error) {
+			reloadCh <- err
+		}),
+	)
+	require.NoError(t, err)
+	defer func() { _ = reloader.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = reloader.Watch(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Create and then delete a file with same base name in a subdirectory
+	subDir := filepath.Join(tmpDir, "subdir")
+	require.NoError(t, os.Mkdir(subDir, 0755))
+	tempFile := filepath.Join(subDir, "test.crt")
+	require.NoError(t, os.WriteFile(tempFile, []byte("temp"), 0600))
+	require.NoError(t, os.Remove(tempFile))
+
+	// Wait a bit - no reload should happen (delete events are ignored)
+	select {
+	case <-reloadCh:
+		t.Fatal("reload should not have been triggered for delete event")
+	case <-time.After(300 * time.Millisecond):
+		// Expected - no reload
+	}
+}
+
 // =============================================================================
 // Test helpers
 // =============================================================================
