@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useApiKeys, useCreateApiKey, useRevokeApiKey } from '@/api/hooks'
 import { Button } from '@/components/Button'
@@ -10,6 +10,37 @@ import { Badge } from '@/components/Badge'
 import { formatRelativeTime, copyToClipboard } from '@/lib/utils'
 import { Plus, Copy, Check, Trash2 } from 'lucide-react'
 import type { CreateAPIKeyRequest } from '@/types/api'
+
+// Available scopes organized by resource
+const AVAILABLE_SCOPES = {
+  sessions: {
+    label: 'Sessions',
+    scopes: [
+      { value: 'sessions:read', label: 'Read', description: 'List and view sessions' },
+      { value: 'sessions:write', label: 'Write', description: 'Create, suspend, resume, terminate sessions' },
+    ],
+  },
+  tasks: {
+    label: 'Tasks',
+    scopes: [
+      { value: 'tasks:read', label: 'Read', description: 'List, view tasks and logs' },
+      { value: 'tasks:write', label: 'Write', description: 'Create, execute, cancel, retry tasks' },
+    ],
+  },
+  runners: {
+    label: 'Runners',
+    scopes: [
+      { value: 'runners:read', label: 'Read', description: 'List and view runners' },
+    ],
+  },
+  permissions: {
+    label: 'Permissions',
+    scopes: [
+      { value: 'permissions:read', label: 'Read', description: 'List and view permission requests' },
+      { value: 'permissions:write', label: 'Write', description: 'Approve or deny permission requests' },
+    ],
+  },
+} as const
 
 export const Route = createFileRoute('/admin/_layout/api-keys')({
   component: ApiKeysPage,
@@ -132,15 +163,42 @@ interface CreateApiKeyDialogProps {
 function CreateApiKeyDialog({ open, onClose }: CreateApiKeyDialogProps) {
   const createApiKey = useCreateApiKey()
   const [name, setName] = useState('')
-  const [scopes, setScopes] = useState('')
+  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set())
+  const [fullAccess, setFullAccess] = useState(true)
   const [createdKey, setCreatedKey] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+
+  const toggleScope = useCallback((scope: string) => {
+    setSelectedScopes((prev) => {
+      const next = new Set(prev)
+      if (next.has(scope)) {
+        next.delete(scope)
+      } else {
+        next.add(scope)
+      }
+      return next
+    })
+  }, [])
+
+  const toggleResourceAll = useCallback((resource: keyof typeof AVAILABLE_SCOPES) => {
+    const resourceScopes = AVAILABLE_SCOPES[resource].scopes.map((s) => s.value)
+    setSelectedScopes((prev) => {
+      const next = new Set(prev)
+      const allSelected = resourceScopes.every((s) => prev.has(s))
+      if (allSelected) {
+        resourceScopes.forEach((s) => next.delete(s))
+      } else {
+        resourceScopes.forEach((s) => next.add(s))
+      }
+      return next
+    })
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const request: CreateAPIKeyRequest = {
       name,
-      scopes: scopes ? scopes.split(',').map((s) => s.trim()) : undefined,
+      scopes: fullAccess ? undefined : Array.from(selectedScopes),
     }
 
     try {
@@ -163,7 +221,8 @@ function CreateApiKeyDialog({ open, onClose }: CreateApiKeyDialogProps) {
 
   const handleClose = () => {
     setName('')
-    setScopes('')
+    setSelectedScopes(new Set())
+    setFullAccess(true)
     setCreatedKey(null)
     setCopied(false)
     onClose()
@@ -212,19 +271,88 @@ function CreateApiKeyDialog({ open, onClose }: CreateApiKeyDialogProps) {
               placeholder="My API Key"
               required
             />
-            <Input
-              label="Scopes (optional)"
-              value={scopes}
-              onChange={(e) => setScopes(e.target.value)}
-              placeholder="sessions:*, tasks:read"
-              helperText="Comma-separated list of scopes. Leave empty for full access."
-            />
+
+            {/* Permissions Section */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Permissions
+              </label>
+
+              {/* Full Access Toggle */}
+              <label className="flex items-center gap-2 p-3 rounded-lg border border-gray-200 bg-gray-50 cursor-pointer hover:bg-gray-100 mb-3">
+                <input
+                  type="checkbox"
+                  checked={fullAccess}
+                  onChange={(e) => setFullAccess(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <div>
+                  <span className="font-medium text-gray-900">Full Access</span>
+                  <p className="text-xs text-gray-500">Grant access to all current and future API endpoints</p>
+                </div>
+              </label>
+
+              {/* Scope Selection */}
+              {!fullAccess && (
+                <div className="space-y-3 border rounded-lg p-3 bg-white">
+                  {(Object.keys(AVAILABLE_SCOPES) as Array<keyof typeof AVAILABLE_SCOPES>).map((resource) => {
+                    const { label, scopes } = AVAILABLE_SCOPES[resource]
+                    const allSelected = scopes.every((s) => selectedScopes.has(s.value))
+                    const someSelected = scopes.some((s) => selectedScopes.has(s.value))
+
+                    return (
+                      <div key={resource} className="space-y-1">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            ref={(el) => {
+                              if (el) el.indeterminate = someSelected && !allSelected
+                            }}
+                            onChange={() => toggleResourceAll(resource)}
+                            className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                          />
+                          <span className="font-medium text-gray-900">{label}</span>
+                        </label>
+                        <div className="ml-6 space-y-1">
+                          {scopes.map((scope) => (
+                            <label
+                              key={scope.value}
+                              className="flex items-center gap-2 cursor-pointer text-sm"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedScopes.has(scope.value)}
+                                onChange={() => toggleScope(scope.value)}
+                                className="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                              />
+                              <span className="text-gray-700">{scope.label}</span>
+                              <span className="text-gray-400">- {scope.description}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {selectedScopes.size === 0 && (
+                    <p className="text-sm text-amber-600 mt-2">
+                      Select at least one permission or enable Full Access
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </DialogBody>
           <DialogFooter>
             <Button variant="secondary" type="button" onClick={handleClose}>
               Cancel
             </Button>
-            <Button type="submit" loading={createApiKey.isPending}>
+            <Button
+              type="submit"
+              loading={createApiKey.isPending}
+              disabled={!fullAccess && selectedScopes.size === 0}
+            >
               Create Key
             </Button>
           </DialogFooter>
