@@ -11,6 +11,7 @@ import (
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
+	"github.com/chunlea/marionette/pkg/crypto/certreloader"
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/server/core"
 	"github.com/chunlea/marionette/pkg/store"
@@ -22,10 +23,11 @@ import (
 
 // Server is the gRPC server for runner communication.
 type Server struct {
-	server      *grpc.Server
-	listener    net.Listener
-	logger      *zap.Logger
-	connManager *ConnectionManager
+	server       *grpc.Server
+	listener     net.Listener
+	logger       *zap.Logger
+	connManager  *ConnectionManager
+	certReloader *certreloader.CertReloader
 }
 
 // Config holds configuration for the gRPC server.
@@ -93,14 +95,17 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 	var grpcOpts []grpc.ServerOption
 
 	// Configure TLS if enabled
+	var certReloader *certreloader.CertReloader
 	if cfg.TLS != nil && cfg.TLS.Enabled {
-		tlsCreds, err := loadTLSCredentials(cfg.TLS, logger)
+		tlsCreds, reloader, err := loadTLSCredentials(cfg.TLS, logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load TLS credentials: %w", err)
 		}
+		certReloader = reloader
 		grpcOpts = append(grpcOpts, grpc.Creds(tlsCreds))
 		logger.Info("TLS enabled for gRPC server",
 			zap.Bool("verify_client", cfg.TLS.VerifyClient),
+			zap.Bool("hot_reload", certReloader != nil),
 		)
 	} else {
 		logger.Warn("TLS disabled for gRPC server - this is not recommended for production")
@@ -175,10 +180,11 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 	reflection.Register(s)
 
 	return &Server{
-		server:      s,
-		listener:    lis,
-		logger:      logger,
-		connManager: connManager,
+		server:       s,
+		listener:     lis,
+		logger:       logger,
+		connManager:  connManager,
+		certReloader: certReloader,
 	}, nil
 }
 
@@ -188,28 +194,29 @@ func (s *Server) ConnectionManager() *ConnectionManager {
 }
 
 // loadTLSCredentials loads TLS certificates and returns gRPC transport credentials.
-func loadTLSCredentials(cfg *config.TLSConfig, logger *zap.Logger) (credentials.TransportCredentials, error) {
-	// Load server certificate and key
-	serverCert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+// It returns a CertReloader for hot-reloading support.
+func loadTLSCredentials(cfg *config.TLSConfig, logger *zap.Logger) (credentials.TransportCredentials, *certreloader.CertReloader, error) {
+	// Create certificate reloader for hot-reload support
+	reloader, err := certreloader.New(cfg.CertFile, cfg.KeyFile, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load server certificate: %w", err)
+		return nil, nil, fmt.Errorf("failed to create certificate reloader: %w", err)
 	}
 
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		MinVersion:   tls.VersionTLS12,
-	}
+	// Build TLS config using the reloader
+	tlsConfig := reloader.NewTLSConfig()
 
 	// Load CA certificate for client verification (mTLS)
 	if cfg.CAFile != "" && cfg.VerifyClient {
 		caCert, err := os.ReadFile(cfg.CAFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+			_ = reloader.Close()
+			return nil, nil, fmt.Errorf("failed to read CA certificate: %w", err)
 		}
 
 		certPool := x509.NewCertPool()
 		if !certPool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate")
+			_ = reloader.Close()
+			return nil, nil, fmt.Errorf("failed to parse CA certificate")
 		}
 
 		tlsConfig.ClientCAs = certPool
@@ -217,15 +224,27 @@ func loadTLSCredentials(cfg *config.TLSConfig, logger *zap.Logger) (credentials.
 		logger.Info("mTLS enabled - client certificate verification required")
 	} else if cfg.VerifyClient {
 		// VerifyClient is true but no CA file - this is a configuration error
-		return nil, fmt.Errorf("verify_client is true but no ca_file specified")
+		_ = reloader.Close()
+		return nil, nil, fmt.Errorf("verify_client is true but no ca_file specified")
 	}
 
-	return credentials.NewTLS(tlsConfig), nil
+	return credentials.NewTLS(tlsConfig), reloader, nil
 }
 
 // Start starts the gRPC server.
 func (s *Server) Start() error {
 	s.logger.Info("starting gRPC server", zap.String("addr", s.listener.Addr().String()))
+
+	// Start certificate watcher in background if enabled
+	if s.certReloader != nil {
+		go func() {
+			ctx := context.Background()
+			if err := s.certReloader.Watch(ctx); err != nil && err != context.Canceled {
+				s.logger.Error("certificate watcher stopped unexpectedly", zap.Error(err))
+			}
+		}()
+	}
+
 	if err := s.server.Serve(s.listener); err != nil {
 		return fmt.Errorf("grpc server error: %w", err)
 	}
@@ -235,6 +254,14 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(_ context.Context) error {
 	s.logger.Info("shutting down gRPC server")
+
+	// Close certificate reloader first to stop the watcher
+	if s.certReloader != nil {
+		if err := s.certReloader.Close(); err != nil {
+			s.logger.Error("failed to close certificate reloader", zap.Error(err))
+		}
+	}
+
 	s.server.GracefulStop()
 	return nil
 }

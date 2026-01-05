@@ -11,6 +11,7 @@ import (
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/crypto/certreloader"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
@@ -61,8 +62,9 @@ type Client struct {
 	conn       *grpc.ClientConn
 	grpcClient pb.RunnerServiceClient
 
-	runnerID string
-	hostname string
+	runnerID     string
+	hostname     string
+	certReloader *certreloader.CertReloader
 
 	state   atomic.Int32
 	stateMu sync.RWMutex
@@ -168,27 +170,38 @@ func (c *Client) dial(ctx context.Context) (*grpc.ClientConn, error) {
 }
 
 func (c *Client) loadTLSCredentials() (credentials.TransportCredentials, error) {
-	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12,
-	}
+	var tlsConfig *tls.Config
 
-	// Load client certificate if provided
+	// Load client certificate if provided using CertReloader for hot-reload
 	if c.cfg.TLS.CertFile != "" && c.cfg.TLS.KeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(c.cfg.TLS.CertFile, c.cfg.TLS.KeyFile)
+		reloader, err := certreloader.New(c.cfg.TLS.CertFile, c.cfg.TLS.KeyFile, c.logger)
 		if err != nil {
-			return nil, fmt.Errorf("loading client certificate: %w", err)
+			return nil, fmt.Errorf("creating certificate reloader: %w", err)
 		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
+		c.certReloader = reloader
+		tlsConfig = reloader.NewTLSConfig()
+	} else {
+		tlsConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		}
 	}
 
 	// Load CA certificate if provided
 	if c.cfg.TLS.CAFile != "" {
 		caCert, err := os.ReadFile(c.cfg.TLS.CAFile)
 		if err != nil {
+			if c.certReloader != nil {
+				_ = c.certReloader.Close()
+				c.certReloader = nil
+			}
 			return nil, fmt.Errorf("reading CA certificate: %w", err)
 		}
 		certPool := x509.NewCertPool()
 		if !certPool.AppendCertsFromPEM(caCert) {
+			if c.certReloader != nil {
+				_ = c.certReloader.Close()
+				c.certReloader = nil
+			}
 			return nil, fmt.Errorf("failed to append CA certificate")
 		}
 		tlsConfig.RootCAs = certPool
@@ -309,6 +322,15 @@ func (c *Client) GRPCClient() pb.RunnerServiceClient {
 // Close closes the client connection.
 func (c *Client) Close() error {
 	c.setState(StateStopped)
+
+	// Close certificate reloader if present
+	if c.certReloader != nil {
+		if err := c.certReloader.Close(); err != nil {
+			c.logger.Error("failed to close certificate reloader", zap.Error(err))
+		}
+		c.certReloader = nil
+	}
+
 	if c.conn != nil {
 		err := c.conn.Close()
 		c.conn = nil
