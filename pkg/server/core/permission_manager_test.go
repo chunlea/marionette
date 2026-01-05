@@ -76,7 +76,7 @@ func setupPermissionManagerTest(t *testing.T) (*PermissionManager, store.Store, 
 	cmdSender := &mockCommandSenderForPerm{}
 	sessionMgr := &mockSessionMgrForPerm{}
 
-	pm := NewPermissionManager(s, cmdSender, sessionMgr, logger)
+	pm := NewPermissionManager(s, cmdSender, sessionMgr, nil, logger)
 
 	// Create a test workspace
 	ctx := context.Background()

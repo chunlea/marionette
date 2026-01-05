@@ -313,7 +313,7 @@ func setupTaskManagerTest() (*TaskManager, *testTaskStore, *mockCommandSender) {
 	cmdSender := &mockCommandSender{}
 	sessionMgr := &mockSessionMgrForTask{}
 	logger := zap.NewNop()
-	manager := NewTaskManager(s, cmdSender, sessionMgr, logger)
+	manager := NewTaskManager(s, cmdSender, sessionMgr, nil, logger)
 	return manager, s, cmdSender
 }
 
@@ -1025,7 +1025,7 @@ func TestTaskTimeoutEnforcer_StartStop(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
@@ -1062,7 +1062,7 @@ func TestTaskTimeoutEnforcer_ContextCancellation(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
@@ -1091,7 +1091,7 @@ func TestTaskTimeoutEnforcer_WithCheckInterval(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
@@ -1112,7 +1112,7 @@ func TestTaskTimeoutEnforcer_CheckTimeouts_NoRunningTasks(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
@@ -1130,7 +1130,7 @@ func TestTaskTimeoutEnforcer_CheckTimeouts_NotTimedOut(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
@@ -1167,7 +1167,7 @@ func TestTaskTimeoutEnforcer_CheckTimeouts_TimedOut(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
@@ -1217,7 +1217,7 @@ func TestTaskTimeoutEnforcer_CheckTimeouts_TimedOutWithRetry(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
@@ -1269,7 +1269,7 @@ func TestTaskTimeoutEnforcer_CheckTimeouts_NoStartedAt(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
@@ -1305,7 +1305,7 @@ func TestTaskTimeoutEnforcer_CheckTimeouts_TaskNotFound(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
@@ -1332,7 +1332,7 @@ func TestTaskTimeoutEnforcer_CheckTimeouts_NoRunnerID(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
@@ -1374,7 +1374,7 @@ func TestTaskTimeoutEnforcer_CheckTimeouts_NoMoreRetries(t *testing.T) {
 	s := newTestTaskStore()
 	cmdSender := &mockCommandSender{}
 	logger := zap.NewNop()
-	taskMgr := NewTaskManager(s, cmdSender, nil, logger)
+	taskMgr := NewTaskManager(s, cmdSender, nil, nil, logger)
 
 	enforcer := NewTaskTimeoutEnforcer(
 		s,
