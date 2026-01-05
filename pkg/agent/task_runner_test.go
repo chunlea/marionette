@@ -998,3 +998,456 @@ func TestTaskRunner_Execute_LogStreamerStartError(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.GetTaskCompleted().Success)
 }
+
+func TestTaskRunner_PermissionCache_HandleResponseCachesUnknownRequest(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	exec := &mockExecutor{}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
+
+	// Send a permission response for an unknown request (simulating resume scenario)
+	cmd := &pb.ApprovePermission{
+		RequestId: "perm_unknown",
+		Approved:  true,
+		Tool:      "bash",
+		Action:    "rm -rf /tmp/test",
+	}
+
+	err := runner.HandlePermissionResponse(context.Background(), cmd)
+	require.NoError(t, err)
+
+	// Verify it was cached
+	runner.mu.Lock()
+	cached, exists := runner.permCache["bash:rm -rf /tmp/test"]
+	runner.mu.Unlock()
+
+	assert.True(t, exists)
+	assert.True(t, cached.Approved)
+	assert.Equal(t, "perm_unknown", cached.RequestId)
+}
+
+func TestTaskRunner_PermissionCache_HandleResponseNoToolAction(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	exec := &mockExecutor{}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
+
+	// Send a permission response without tool/action (cannot cache)
+	cmd := &pb.ApprovePermission{
+		RequestId: "perm_unknown",
+		Approved:  true,
+		Tool:      "", // Empty tool
+		Action:    "",
+	}
+
+	err := runner.HandlePermissionResponse(context.Background(), cmd)
+	require.NoError(t, err)
+
+	// Verify nothing was cached
+	runner.mu.Lock()
+	assert.Empty(t, runner.permCache)
+	runner.mu.Unlock()
+}
+
+func TestTaskRunner_PermissionCache_RequestUsesCachedResponse(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	exec := &mockExecutor{}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
+
+	// Attach session first
+	attachCmd := &pb.AttachSession{
+		SessionId:     "sess_123",
+		WorkspacePath: "ws_test",
+	}
+	_, err := cmdHandler.HandleAttachSession(context.Background(), attachCmd)
+	require.NoError(t, err)
+
+	// Set up current task
+	runner.mu.Lock()
+	runner.currentTask = &pb.ExecuteTask{
+		TaskId:    "task_123",
+		RunId:     "trun_456",
+		SessionId: "sess_123",
+	}
+	runner.mu.Unlock()
+
+	// Pre-populate the cache
+	runner.mu.Lock()
+	runner.permCache["bash:echo hello"] = &pb.ApprovePermission{
+		RequestId: "perm_cached",
+		Approved:  true,
+		Tool:      "bash",
+		Action:    "echo hello",
+	}
+	runner.mu.Unlock()
+
+	// Request permission - should use cached response
+	req := &executor.PermissionRequest{
+		Tool:   "bash",
+		Action: "echo hello",
+	}
+
+	approved, err := runner.HandlePermissionRequest(context.Background(), req)
+	require.NoError(t, err)
+	assert.True(t, approved)
+
+	// Verify no message was sent to server
+	assert.Empty(t, sender.Messages())
+
+	// Verify cache was consumed (one-time use)
+	runner.mu.Lock()
+	_, exists := runner.permCache["bash:echo hello"]
+	runner.mu.Unlock()
+	assert.False(t, exists)
+}
+
+func TestTaskRunner_PermissionCache_DeniedResponse(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	exec := &mockExecutor{}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
+
+	// Attach session first
+	attachCmd := &pb.AttachSession{
+		SessionId:     "sess_123",
+		WorkspacePath: "ws_test",
+	}
+	_, err := cmdHandler.HandleAttachSession(context.Background(), attachCmd)
+	require.NoError(t, err)
+
+	// Set up current task
+	runner.mu.Lock()
+	runner.currentTask = &pb.ExecuteTask{
+		TaskId:    "task_123",
+		RunId:     "trun_456",
+		SessionId: "sess_123",
+	}
+	runner.mu.Unlock()
+
+	// Pre-populate the cache with a DENIED permission
+	runner.mu.Lock()
+	runner.permCache["bash:dangerous_cmd"] = &pb.ApprovePermission{
+		RequestId: "perm_denied",
+		Approved:  false,
+		Tool:      "bash",
+		Action:    "dangerous_cmd",
+	}
+	runner.mu.Unlock()
+
+	// Request permission - should use cached DENIED response
+	req := &executor.PermissionRequest{
+		Tool:   "bash",
+		Action: "dangerous_cmd",
+	}
+
+	approved, err := runner.HandlePermissionRequest(context.Background(), req)
+	require.NoError(t, err)
+	assert.False(t, approved) // Should be denied
+
+	// Verify no message was sent to server
+	assert.Empty(t, sender.Messages())
+}
+
+func TestTaskRunner_PermissionCache_SecondaryKeyFallback(t *testing.T) {
+	// Test that secondary cache key (task_id:tool) works when primary key (tool:action) doesn't match.
+	// This is important for task re-execution scenarios where Claude may generate
+	// a slightly different action string.
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	exec := &mockExecutor{}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
+
+	// Attach session first
+	attachCmd := &pb.AttachSession{
+		SessionId:     "sess_123",
+		WorkspacePath: "ws_test",
+	}
+	_, err := cmdHandler.HandleAttachSession(context.Background(), attachCmd)
+	require.NoError(t, err)
+
+	// Set up current task
+	runner.mu.Lock()
+	runner.currentTask = &pb.ExecuteTask{
+		TaskId:    "task_123",
+		RunId:     "trun_456",
+		SessionId: "sess_123",
+	}
+	runner.mu.Unlock()
+
+	// Pre-populate the cache with SECONDARY key only (task_id:tool)
+	// This simulates a permission that was cached with a different action string
+	runner.mu.Lock()
+	runner.permCache["task_123:bash"] = &pb.ApprovePermission{
+		RequestId: "perm_cached",
+		Approved:  true,
+		Tool:      "bash",
+		Action:    "original_action_string",
+		TaskId:    "task_123",
+	}
+	runner.mu.Unlock()
+
+	// Request permission with a DIFFERENT action string
+	// The primary key "bash:different_action_string" won't match
+	// But the secondary key "task_123:bash" should match
+	req := &executor.PermissionRequest{
+		Tool:   "bash",
+		Action: "different_action_string", // Different from cached action
+	}
+
+	approved, err := runner.HandlePermissionRequest(context.Background(), req)
+	require.NoError(t, err)
+	assert.True(t, approved) // Should be approved using secondary key
+
+	// Verify no message was sent to server
+	assert.Empty(t, sender.Messages())
+
+	// Verify cache was consumed (one-time use)
+	runner.mu.Lock()
+	_, exists := runner.permCache["task_123:bash"]
+	runner.mu.Unlock()
+	assert.False(t, exists)
+}
+
+func TestTaskRunner_PermissionCache_CachesBothKeys(t *testing.T) {
+	// Test that HandlePermissionResponse caches with both primary and secondary keys
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	exec := &mockExecutor{}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
+
+	ctx := context.Background()
+
+	// Cache a permission response with tool, action, and task_id
+	err := runner.HandlePermissionResponse(ctx, &pb.ApprovePermission{
+		RequestId: "perm_123",
+		Approved:  true,
+		Tool:      "bash",
+		Action:    "echo hello",
+		TaskId:    "task_456",
+	})
+	require.NoError(t, err)
+
+	// Verify both keys are cached
+	runner.mu.Lock()
+	primaryCached, hasPrimary := runner.permCache["bash:echo hello"]
+	secondaryCached, hasSecondary := runner.permCache["task_456:bash"]
+	runner.mu.Unlock()
+
+	assert.True(t, hasPrimary, "primary key should be cached")
+	assert.True(t, hasSecondary, "secondary key should be cached")
+	assert.True(t, primaryCached.Approved)
+	assert.True(t, secondaryCached.Approved)
+}
+
+// mockExecutorWithKill extends mockExecutor to track Kill() calls.
+type mockExecutorWithKill struct {
+	mockExecutor
+	mu     sync.Mutex
+	killed bool
+	killCh chan struct{}
+}
+
+func (m *mockExecutorWithKill) Kill() error {
+	m.mu.Lock()
+	m.killed = true
+	m.mu.Unlock()
+	if m.killCh != nil {
+		close(m.killCh)
+	}
+	return nil
+}
+
+func (m *mockExecutorWithKill) WasKilled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.killed
+}
+
+func TestTaskRunner_CancelTask_NoActiveTask(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	exec := &mockExecutorWithKill{}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
+
+	// Cancel task when there's no active task - should not panic
+	err := runner.CancelTask("sess_123")
+	require.NoError(t, err)
+
+	// Kill should not be called
+	assert.False(t, exec.WasKilled())
+}
+
+func TestTaskRunner_CancelTask_DifferentSession(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	exec := &mockExecutorWithKill{}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
+
+	// Set up current task for a different session
+	runner.mu.Lock()
+	runner.currentTask = &pb.ExecuteTask{
+		TaskId:    "task_123",
+		RunId:     "trun_456",
+		SessionId: "sess_123",
+	}
+	runner.mu.Unlock()
+
+	// Cancel task for a different session - should not kill
+	err := runner.CancelTask("sess_different")
+	require.NoError(t, err)
+
+	// Kill should not be called because session doesn't match
+	assert.False(t, exec.WasKilled())
+}
+
+func TestTaskRunner_CancelTask_MatchingSession(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+	exec := &mockExecutorWithKill{}
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
+
+	// Set up current task
+	runner.mu.Lock()
+	runner.currentTask = &pb.ExecuteTask{
+		TaskId:    "task_123",
+		RunId:     "trun_456",
+		SessionId: "sess_123",
+	}
+	runner.mu.Unlock()
+
+	// Cancel task for the matching session
+	err := runner.CancelTask("sess_123")
+	require.NoError(t, err)
+
+	// Kill should be called
+	assert.True(t, exec.WasKilled())
+
+	// canceledForDetach flag should be set
+	runner.mu.Lock()
+	assert.True(t, runner.canceledForDetach)
+	runner.mu.Unlock()
+}
+
+func TestTaskRunner_Execute_NoTaskCompletedWhenCanceledForDetach(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	sender := &mockMessageSender{}
+
+	// Create an executor that blocks until killed
+	killCh := make(chan struct{})
+	exec := &mockExecutorWithKill{
+		killCh: killCh,
+		mockExecutor: mockExecutor{
+			executeFunc: func(ctx context.Context, task *executor.Task, config *executor.AgentConfig, handler executor.OutputHandler) (*executor.Result, error) {
+				// Block until killed
+				<-killCh
+				return &executor.Result{Success: false, Error: "canceled"}, nil
+			},
+		},
+	}
+
+	wsMgr := NewWorkspaceManager("/tmp", logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	runner := NewTaskRunner(sender, exec, wsMgr, cmdHandler, nil, nil, logger)
+
+	// Attach session
+	attachCmd := &pb.AttachSession{
+		SessionId:     "sess_123",
+		WorkspacePath: "ws_test",
+	}
+	_, err := cmdHandler.HandleAttachSession(context.Background(), attachCmd)
+	require.NoError(t, err)
+
+	cmd := &pb.ExecuteTask{
+		TaskId:    "task_123",
+		RunId:     "trun_456",
+		SessionId: "sess_123",
+		Attempt:   1,
+		Prompt:    "test prompt",
+	}
+
+	// Start execution in goroutine
+	resultChan := make(chan *pb.RunnerMessage)
+	go func() {
+		result, _ := runner.Execute(context.Background(), cmd)
+		resultChan <- result
+	}()
+
+	// Wait a bit for the executor to start
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel task for session detach
+	err = runner.CancelTask("sess_123")
+	require.NoError(t, err)
+
+	// Get result - should be nil (no TaskCompleted sent)
+	result := <-resultChan
+	assert.Nil(t, result, "Expected nil result when task is canceled for detach")
+
+	// Verify no TaskCompleted message was sent
+	messages := sender.Messages()
+	for _, msg := range messages {
+		_, isTaskCompleted := msg.GetPayload().(*pb.RunnerMessage_TaskCompleted)
+		assert.False(t, isTaskCompleted, "TaskCompleted should not be sent when canceled for detach")
+	}
+}
+
+func TestDefaultCommandHandler_DetachSession_CancelsTask(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	wsMgr := NewWorkspaceManager(t.TempDir(), logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+
+	// Track if OnDetachSession was called
+	var canceledSessionID string
+	cmdHandler.OnDetachSession = func(sessionID string) error {
+		canceledSessionID = sessionID
+		return nil
+	}
+
+	// Attach session first
+	attachCmd := &pb.AttachSession{
+		SessionId:     "sess_test123",
+		WorkspacePath: "workspace1",
+	}
+	_, err := cmdHandler.HandleAttachSession(context.Background(), attachCmd)
+	require.NoError(t, err)
+
+	// Detach session
+	detachCmd := &pb.DetachSession{
+		SessionId:   "sess_test123",
+		SaveContext: true,
+	}
+	_, err = cmdHandler.HandleDetachSession(context.Background(), detachCmd)
+	require.NoError(t, err)
+
+	// Verify OnDetachSession was called with the correct session ID
+	assert.Equal(t, "sess_test123", canceledSessionID)
+}

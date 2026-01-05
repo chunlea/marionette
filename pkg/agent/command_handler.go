@@ -53,6 +53,7 @@ type DefaultCommandHandler struct {
 	OnExecuteTask       func(ctx context.Context, cmd *pb.ExecuteTask) (*pb.RunnerMessage, error)
 	OnApprovePermission func(ctx context.Context, cmd *pb.ApprovePermission) error
 	OnKillTask          func(ctx context.Context, cmd *pb.KillTask) error
+	OnDetachSession     func(sessionID string) error
 }
 
 // NewDefaultCommandHandler creates a new default command handler.
@@ -225,6 +226,9 @@ func (h *DefaultCommandHandler) HandleAttachSession(ctx context.Context, cmd *pb
 				FromCache:         true,
 				RespondedBy:       perm.RespondedBy,
 				RespondedAtUnixMs: perm.RespondedAtUnixMs,
+				Tool:              perm.Tool,
+				Action:            perm.Action,
+				TaskId:            perm.TaskId,
 			})
 		}
 	}
@@ -246,6 +250,16 @@ func (h *DefaultCommandHandler) HandleDetachSession(_ context.Context, cmd *pb.D
 		zap.String("session_id", cmd.SessionId),
 		zap.Bool("save_context", cmd.SaveContext),
 	)
+
+	// Cancel any running task for this session first
+	if h.OnDetachSession != nil {
+		if err := h.OnDetachSession(cmd.SessionId); err != nil {
+			h.logger.Warn("failed to cancel task on session detach",
+				zap.String("session_id", cmd.SessionId),
+				zap.Error(err),
+			)
+		}
+	}
 
 	h.sessionsMu.Lock()
 	session, exists := h.sessions[cmd.SessionId]
