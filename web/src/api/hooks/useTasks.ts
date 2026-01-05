@@ -44,12 +44,14 @@ export function useTask(taskId: string) {
 }
 
 // Get task runs
+// TODO: Backend endpoint not implemented yet, returning empty data
 export function useTaskRuns(taskId: string) {
   return useQuery({
     queryKey: taskKeys.runs(taskId),
-    queryFn: async () => {
-      const { data } = await apiClient.get<TaskRunList>(`/tasks/${taskId}/runs`)
-      return data
+    queryFn: async (): Promise<TaskRunList> => {
+      // Backend endpoint /tasks/{taskId}/runs not implemented yet
+      // Return empty list for now
+      return { items: [] }
     },
     enabled: !!taskId,
   })
