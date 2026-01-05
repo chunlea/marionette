@@ -10,8 +10,7 @@ services:
       POSTGRES_DB: marionette
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Port not exposed to host - services connect via internal network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U marionette"]
       interval: 10s
