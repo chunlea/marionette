@@ -67,7 +67,7 @@ func TestMTLS_SuccessfulConnection(t *testing.T) {
 		grpc.WithTransportCredentials(clientCreds),
 	)
 	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
+	defer conn.Close()
 
 	// Make a request to verify connection works
 	client := pb.NewRunnerServiceClient(conn)
@@ -137,7 +137,7 @@ func TestMTLS_RejectedWithoutClientCert(t *testing.T) {
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
 	)
 	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
+	defer conn.Close()
 
 	// Try to make a request - should fail during TLS handshake
 	client := pb.NewRunnerServiceClient(conn)
@@ -151,15 +151,7 @@ func TestMTLS_RejectedWithoutClientCert(t *testing.T) {
 	})
 	require.Error(t, err)
 	// The error should indicate certificate/TLS failure
-	// Error message varies by platform: "certificate required", "broken pipe", etc.
-	errStr := err.Error()
-	assert.True(t,
-		strings.Contains(errStr, "certificate required") ||
-			strings.Contains(errStr, "certificate") ||
-			strings.Contains(errStr, "tls:") ||
-			strings.Contains(errStr, "handshake") ||
-			strings.Contains(errStr, "broken pipe"),
-		"expected TLS/certificate error, got: %s", errStr)
+	assert.Contains(t, err.Error(), "certificate required")
 }
 
 // TestMTLS_RejectedWithWrongCA tests that a client with a certificate signed
@@ -216,7 +208,7 @@ func TestMTLS_RejectedWithWrongCA(t *testing.T) {
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
 	)
 	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
+	defer conn.Close()
 
 	// Try to make a request - should fail during TLS handshake
 	client := pb.NewRunnerServiceClient(conn)
@@ -355,7 +347,7 @@ func TestMTLS_RejectedWithExpiredCert(t *testing.T) {
 		grpc.WithTransportCredentials(clientCreds),
 	)
 	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
+	defer conn.Close()
 
 	// Try to make a request - should fail due to expired cert
 	client := pb.NewRunnerServiceClient(conn)
@@ -426,7 +418,7 @@ func TestTLS_ServerOnlyNoClientVerification(t *testing.T) {
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
 	)
 	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
+	defer conn.Close()
 
 	// Make a request - TLS handshake should succeed
 	client := pb.NewRunnerServiceClient(conn)
