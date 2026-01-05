@@ -195,11 +195,14 @@ function TaskDetailPage() {
 
       {/* Task Runs */}
       <Card>
-        <CardHeader className="flex items-center justify-between">
-          <span>Execution Runs</span>
-          <span className="text-sm font-normal text-gray-500">
-            {runs?.items?.length || 0} runs
-          </span>
+        <CardHeader
+          action={
+            <span className="text-sm font-normal text-gray-500">
+              {runs?.items?.length || 0} runs
+            </span>
+          }
+        >
+          Execution Runs
         </CardHeader>
         <Table>
           <TableHeader>
@@ -266,8 +269,7 @@ function TaskDetailPage() {
       {/* Permission Requests */}
       {permissions?.items && permissions.items.length > 0 && (
         <Card>
-          <CardHeader className="flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4" />
+          <CardHeader icon={<ShieldAlert className="h-4 w-4" />}>
             Permission Requests
           </CardHeader>
           <Table>

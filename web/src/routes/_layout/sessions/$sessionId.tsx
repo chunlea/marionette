@@ -124,8 +124,7 @@ function SessionDetailPage() {
         </Card>
 
         <Card>
-          <CardHeader className="flex items-center gap-2">
-            <Server className="h-4 w-4" />
+          <CardHeader icon={<Server className="h-4 w-4" />}>
             Runner Info
           </CardHeader>
           <CardBody>
@@ -190,11 +189,14 @@ function SessionDetailPage() {
 
       {/* Tasks List */}
       <Card>
-        <CardHeader className="flex items-center justify-between">
-          <span>Tasks</span>
-          <span className="text-sm font-normal text-gray-500">
-            {tasks?.items?.length || 0} total
-          </span>
+        <CardHeader
+          action={
+            <span className="text-sm font-normal text-gray-500">
+              {tasks?.items?.length || 0} total
+            </span>
+          }
+        >
+          Tasks
         </CardHeader>
         <Table>
           <TableHeader>

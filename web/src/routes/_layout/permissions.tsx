@@ -97,8 +97,10 @@ function PermissionsPage() {
       {/* Pending Permissions */}
       {pendingCount > 0 && (
         <Card className="border-amber-200">
-          <CardHeader className="flex items-center gap-2 bg-amber-50 text-amber-800">
-            <ShieldAlert className="h-5 w-5" />
+          <CardHeader
+            className="bg-amber-50 text-amber-800"
+            icon={<ShieldAlert className="h-5 w-5" />}
+          >
             Pending Permission Requests ({pendingCount})
           </CardHeader>
           <div className="divide-y divide-gray-100">

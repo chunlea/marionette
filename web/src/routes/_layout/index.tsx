@@ -75,14 +75,17 @@ function DashboardHome() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Recent Sessions */}
         <Card>
-          <CardHeader className="flex items-center justify-between">
-            <span>Recent Sessions</span>
-            <Link
-              to="/sessions"
-              className="text-sm font-medium text-primary-600 hover:text-primary-700"
-            >
-              View all
-            </Link>
+          <CardHeader
+            action={
+              <Link
+                to="/sessions"
+                className="text-sm font-medium text-primary-600 hover:text-primary-700"
+              >
+                View all
+              </Link>
+            }
+          >
+            Recent Sessions
           </CardHeader>
           <CardBody className="divide-y divide-gray-100">
             {!sessions?.items?.length ? (
@@ -112,14 +115,17 @@ function DashboardHome() {
 
         {/* Recent Tasks */}
         <Card>
-          <CardHeader className="flex items-center justify-between">
-            <span>Recent Tasks</span>
-            <Link
-              to="/tasks"
-              className="text-sm font-medium text-primary-600 hover:text-primary-700"
-            >
-              View all
-            </Link>
+          <CardHeader
+            action={
+              <Link
+                to="/tasks"
+                className="text-sm font-medium text-primary-600 hover:text-primary-700"
+              >
+                View all
+              </Link>
+            }
+          >
+            Recent Tasks
           </CardHeader>
           <CardBody className="divide-y divide-gray-100">
             {!tasks?.items?.length ? (
