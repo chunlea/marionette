@@ -1,4 +1,6 @@
-.PHONY: deps build test lint proto migrate dev clean help certs certs-clean certs-verify
+.PHONY: deps build test lint proto migrate dev clean help \
+	certs certs-clean certs-verify \
+	web-install web-dev web-build web-lint web-clean
 
 # Go parameters
 GOCMD=go
@@ -199,6 +201,10 @@ docker-up:
 docker-down:
 	docker-compose -f deploy/docker/docker-compose.yml down
 
+# =============================================================================
+# TLS Certificates
+# =============================================================================
+
 ## certs: Generate TLS certificates for mTLS
 certs:
 	@$(MAKE) -C scripts/certs all
@@ -210,3 +216,32 @@ certs-clean:
 ## certs-verify: Verify generated TLS certificates
 certs-verify:
 	@$(MAKE) -C scripts/certs verify
+
+# =============================================================================
+# Frontend (Web UI)
+# =============================================================================
+
+## web-install: Install frontend dependencies
+web-install:
+	cd web && pnpm install
+
+## web-dev: Start frontend dev server
+web-dev:
+	cd web && pnpm dev
+
+## web-build: Build frontend for production
+web-build:
+	cd web && pnpm build
+	rm -rf pkg/server/admin/dist
+	cp -r web/dist pkg/server/admin/dist
+	@echo "Frontend built and copied to pkg/server/admin/dist"
+
+## web-lint: Lint frontend code
+web-lint:
+	cd web && pnpm lint
+
+## web-clean: Clean frontend artifacts
+web-clean:
+	rm -rf web/node_modules web/dist
+	rm -rf pkg/server/admin/dist
+	@echo "Frontend artifacts cleaned"

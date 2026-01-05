@@ -1046,90 +1046,90 @@
 
 ## Phase 7: WebUI
 
-### 7.1 Project Setup
+### 7.1 Project Setup ✓
 
-- [ ] Initialize React project:
-  - [ ] Vite + React + TypeScript
-  - [ ] TanStack Router for routing
-  - [ ] TanStack Query for data fetching
-  - [ ] Tailwind CSS for styling
-- [ ] Directory structure:
+- [x] Initialize React project:
+  - [x] Vite + React + TypeScript
+  - [x] TanStack Router for routing
+  - [x] TanStack Query for data fetching
+  - [x] Tailwind CSS for styling
+- [x] Directory structure:
   ```
   web/
   ├── src/
   │   ├── components/
-  │   ├── pages/
+  │   ├── routes/
   │   ├── hooks/
   │   ├── api/
-  │   └── utils/
+  │   └── lib/
   ├── package.json
   └── vite.config.ts
   ```
-- [ ] API client setup:
-  - [ ] Axios or fetch wrapper
-  - [ ] Authentication handling
-  - [ ] Error handling
-  - [ ] TypeScript types from OpenAPI
+- [x] API client setup:
+  - [x] Axios wrapper with interceptors
+  - [x] Authentication handling (API Key + Basic Auth)
+  - [x] Error handling
+  - [x] TypeScript types from OpenAPI
 
-### 7.2 Admin UI
+### 7.2 Admin UI ✓
 
-- [ ] Login page:
-  - [ ] Basic Auth login form
-  - [ ] Session management (cookie)
-  - [ ] Redirect to dashboard on success
-- [ ] API Key management:
-  - [ ] List API keys (masked)
-  - [ ] Create new key (show once)
-  - [ ] Revoke key
-  - [ ] Show last used time
-- [ ] Agent Config management:
-  - [ ] List agent configs
-  - [ ] Create/edit form
-  - [ ] API key input (masked)
+- [x] Login page:
+  - [x] Basic Auth login form
+  - [x] Session management (localStorage)
+  - [x] Redirect to dashboard on success
+- [x] API Key management:
+  - [x] List API keys (masked)
+  - [x] Create new key (show once)
+  - [x] Revoke key
+  - [x] Show last used time
+- [x] Agent Config management:
+  - [x] List agent configs
+  - [x] Create/edit form
+  - [x] API key input (masked)
   - [ ] Test connection button
-- [ ] Provider Config management:
-  - [ ] List provider configs
-  - [ ] Create/edit form
-  - [ ] JSON editor for config
+- [x] Provider Config management:
+  - [x] List provider configs
+  - [x] Create/edit form
+  - [x] JSON editor for config
 
-### 7.3 Dashboard
+### 7.3 Dashboard ✓
 
-- [ ] Overview page:
-  - [ ] Active sessions count
-  - [ ] Running tasks count
-  - [ ] Online runners count
-  - [ ] Recent activity feed
-- [ ] Sessions page:
-  - [ ] Session list with status
+- [x] Overview page:
+  - [x] Active sessions count
+  - [x] Running tasks count
+  - [x] Online runners count
+  - [x] Recent activity feed
+- [x] Sessions page:
+  - [x] Session list with status
   - [ ] Create session form
-  - [ ] Session detail view
-  - [ ] Suspend/resume/terminate buttons
-- [ ] Task execution page:
+  - [x] Session detail view
+  - [ ] Suspend/resume/terminate buttons (UI only)
+- [x] Task execution page:
   - [ ] Prompt input
-  - [ ] Real-time log viewer (WebSocket)
-  - [ ] Task status display
-  - [ ] Cancel button
-- [ ] Permission approval:
-  - [ ] Pending permissions list
-  - [ ] Permission detail (tool, action, context)
-  - [ ] Approve/deny buttons
+  - [x] Real-time log viewer (WebSocket)
+  - [x] Task status display
+  - [ ] Cancel button (UI only)
+- [x] Permission approval:
+  - [x] Pending permissions list
+  - [x] Permission detail (tool, action, context)
+  - [x] Approve/deny buttons
   - [ ] Timeout countdown
 
-### 7.4 Real-time Log Viewer
+### 7.4 Real-time Log Viewer ✓
 
-- [ ] WebSocket connection:
-  - [ ] Connect to log stream endpoint
-  - [ ] Reconnection on disconnect
-  - [ ] Connection status indicator
-- [ ] Log display:
-  - [ ] ANSI color support
-  - [ ] Auto-scroll to bottom
-  - [ ] Pause auto-scroll on scroll up
+- [x] WebSocket connection:
+  - [x] Connect to log stream endpoint
+  - [x] Reconnection on disconnect
+  - [x] Connection status indicator
+- [x] Log display:
+  - [x] ANSI color support
+  - [x] Auto-scroll to bottom
+  - [x] Pause auto-scroll on scroll up
   - [ ] Search/filter logs
-- [ ] Log buffering:
+- [x] Log buffering:
   - [ ] Virtual scrolling for large logs
-  - [ ] Limit displayed lines (configurable)
-  - [ ] Download full logs button
+  - [x] Limit displayed lines (configurable)
+  - [x] Download full logs button
 
 ### 7.5 Embeddable React Components
 

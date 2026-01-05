@@ -59,3 +59,14 @@ __debug_bin*
 /server
 /agent
 /mctl
+
+# Frontend (Node.js)
+web/node_modules/
+web/dist/
+web/.env.local
+web/src/routeTree.gen.ts
+.pnpm-store/
+
+# Embedded frontend assets (built from web/)
+pkg/server/admin/dist/
+!pkg/server/admin/dist/.gitkeep
