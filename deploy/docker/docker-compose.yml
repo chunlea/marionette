@@ -41,7 +41,14 @@ services:
       - storage_data:/var/marionette/storage
       - workspace_data:/var/marionette/workspaces
 
+  # Agent requires a runner token - create one first via Admin API:
+  #   curl -X POST http://localhost:8081/api/runner-tokens \
+  #     -H 'Content-Type: application/json' \
+  #     -d '{"pool_name": "docker-pool"}'
+  # Then start agent with: docker compose --profile agent up -d
   agent:
+    profiles:
+      - agent
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.agent
@@ -49,12 +56,11 @@ services:
       - server
     environment:
       MARIONETTE_SERVER_ADDRESS: server:9090
-      MARIONETTE_RUNNER_TOKEN: ${MARIONETTE_RUNNER_TOKEN:-dev-runner-token}
+      MARIONETTE_RUNNER_TOKEN: ${MARIONETTE_RUNNER_TOKEN}
       MARIONETTE_SANDBOX_MODE: runner-is-sandbox
       MARIONETTE_POOL_NAME: docker-pool
     volumes:
       - agent_workspace:/workspace
-    # Restart policy for agent
     restart: unless-stopped
 
 volumes:
