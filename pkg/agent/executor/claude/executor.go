@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -96,7 +97,7 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	}()
 
 	// Build command arguments
-	args := e.buildArgs(task, config)
+	args, hasResume := e.buildArgs(task, config)
 
 	// Create cancellable context
 	ctx, cancel := context.WithCancel(ctx)
@@ -147,8 +148,10 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	e.mu.Lock()
 	e.cmd = cmd
 	e.stdin = stdin
-	// Enable stream mode if resuming
-	e.streamMode = task.ContextSnapshot != nil && len(task.ContextSnapshot) > 0
+	// Enable stream mode only if we're actually resuming (--resume flag was added)
+	// This is important: context snapshot may exist but not have a conversation_id,
+	// in which case we should NOT be in stream mode (stdin must be closed).
+	e.streamMode = hasResume
 	e.mu.Unlock()
 
 	// Start command
@@ -156,8 +159,9 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 		return nil, fmt.Errorf("failed to start claude: %w", err)
 	}
 
-	// Emit system event for start
+	// Emit system event for start with command info for debugging
 	handler.HandleOutput("system", []byte("Claude Code started"))
+	handler.HandleOutput("system", []byte(fmt.Sprintf("command: %s %s", e.binaryPath, strings.Join(args, " "))))
 
 	// Close stdin to signal no input is coming (for --print mode)
 	// Claude Code waits for stdin EOF before producing output
@@ -172,7 +176,7 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	// Stdout processing (stream-json)
 	go func() {
 		defer wg.Done()
-		e.processOutput(ctx, stdout, "stdout", handler)
+		e.processOutput(ctx, stdout, "stdout", handler, task)
 	}()
 
 	// Stderr processing (raw text)
@@ -220,7 +224,8 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 }
 
 // buildArgs constructs command line arguments for Claude Code.
-func (e *Executor) buildArgs(task *executor.Task, config *executor.AgentConfig) []string {
+// Returns the args and whether --resume was added (for stream mode).
+func (e *Executor) buildArgs(task *executor.Task, config *executor.AgentConfig) ([]string, bool) {
 	args := []string{
 		"--output-format", "stream-json",
 		"--verbose",
@@ -243,13 +248,24 @@ func (e *Executor) buildArgs(task *executor.Task, config *executor.AgentConfig) 
 	}
 
 	// Check for resume mode
+	hasResume := false
 	if task.ContextSnapshot != nil && len(task.ContextSnapshot) > 0 {
-		// Try to extract session_id from context
+		// Try to extract conversation_id from context (Claude's session ID for --resume)
 		var ctxData struct {
+			ConversationID string `json:"conversation_id"`
+			// Also support session_id for backwards compatibility
 			SessionID string `json:"session_id"`
 		}
-		if err := json.Unmarshal(task.ContextSnapshot, &ctxData); err == nil && ctxData.SessionID != "" {
-			args = append(args, "--resume", ctxData.SessionID)
+		if err := json.Unmarshal(task.ContextSnapshot, &ctxData); err == nil {
+			// Prefer conversation_id, fall back to session_id
+			resumeID := ctxData.ConversationID
+			if resumeID == "" {
+				resumeID = ctxData.SessionID
+			}
+			if resumeID != "" {
+				args = append(args, "--resume", resumeID)
+				hasResume = true
+			}
 		}
 	}
 
@@ -258,7 +274,7 @@ func (e *Executor) buildArgs(task *executor.Task, config *executor.AgentConfig) 
 		args = append(args, "--print", task.Prompt)
 	}
 
-	return args
+	return args, hasResume
 }
 
 // buildEnv constructs environment variables for Claude Code.
@@ -288,7 +304,7 @@ func (e *Executor) buildEnv(config *executor.AgentConfig) []string {
 }
 
 // processOutput processes stdout from Claude Code (stream-json format).
-func (e *Executor) processOutput(ctx context.Context, r io.Reader, stream string, handler executor.OutputHandler) {
+func (e *Executor) processOutput(ctx context.Context, r io.Reader, stream string, handler executor.OutputHandler, task *executor.Task) {
 	scanner := bufio.NewScanner(r)
 	// Increase buffer size for large outputs
 	buf := make([]byte, 0, 64*1024)
@@ -308,6 +324,16 @@ func (e *Executor) processOutput(ctx context.Context, r io.Reader, stream string
 
 		// Send raw output
 		handler.HandleOutput(stream, line)
+
+		// Try to parse the raw message to check for init
+		var rawMsg StreamMessage
+		if err := json.Unmarshal(line, &rawMsg); err == nil {
+			// Check for init message with session_id
+			if rawMsg.Type == MessageTypeSystem && rawMsg.Subtype == SystemSubtypeInit && rawMsg.SessionID != "" {
+				// Notify handler about context update with Claude's session_id
+				handler.HandleContextUpdate(ctx, task.SessionID, rawMsg.SessionID)
+			}
+		}
 
 		// Parse into events
 		events, err := e.parser.ParseLine(line)
