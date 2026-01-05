@@ -6,13 +6,20 @@ import (
 	"github.com/chunlea/marionette/pkg/store"
 )
 
-// ActionLogStoreAdapter adapts store.Store to ActionLogService.
+// ActionLogStore defines the store operations needed for action logs.
+// This interface is a subset of store.Store for better testability.
+type ActionLogStore interface {
+	GetActionLog(ctx context.Context, id string) (*store.ActionLog, error)
+	ListActionLogs(ctx context.Context, opts store.ListActionLogsOptions) (*store.ListResult[store.ActionLog], error)
+}
+
+// ActionLogStoreAdapter adapts ActionLogStore to ActionLogService.
 type ActionLogStoreAdapter struct {
-	store store.Store
+	store ActionLogStore
 }
 
 // NewActionLogStoreAdapter creates a new ActionLogStoreAdapter.
-func NewActionLogStoreAdapter(s store.Store) *ActionLogStoreAdapter {
+func NewActionLogStoreAdapter(s ActionLogStore) *ActionLogStoreAdapter {
 	return &ActionLogStoreAdapter{store: s}
 }
 
