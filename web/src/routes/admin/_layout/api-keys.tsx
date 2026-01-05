@@ -47,9 +47,15 @@ export const Route = createFileRoute('/admin/_layout/api-keys')({
 })
 
 function ApiKeysPage() {
-  const { data, isLoading } = useApiKeys()
+  const { data, isLoading, refetch } = useApiKeys()
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showRevokeDialog, setShowRevokeDialog] = useState<string | null>(null)
+
+  const handleCreateDialogClose = () => {
+    setShowCreateDialog(false)
+    // Refetch to ensure we have the latest data
+    refetch()
+  }
 
   return (
     <div className="space-y-6">
@@ -143,7 +149,7 @@ function ApiKeysPage() {
       {/* Create Dialog */}
       <CreateApiKeyDialog
         open={showCreateDialog}
-        onClose={() => setShowCreateDialog(false)}
+        onClose={handleCreateDialogClose}
       />
 
       {/* Revoke Dialog */}
