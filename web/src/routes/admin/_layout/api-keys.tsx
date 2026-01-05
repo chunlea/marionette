@@ -203,7 +203,7 @@ function CreateApiKeyDialog({ open, onClose }: CreateApiKeyDialogProps) {
 
     try {
       const result = await createApiKey.mutateAsync(request)
-      setCreatedKey(result.key)
+      setCreatedKey(result.raw_token)
     } catch (error) {
       console.error('Failed to create API key:', error)
     }
