@@ -10,6 +10,8 @@ services:
       POSTGRES_DB: marionette
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Auto-run schema.sql on first startup
+      - ../../docs/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     # Port not exposed to host - services connect via internal network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U marionette"]
