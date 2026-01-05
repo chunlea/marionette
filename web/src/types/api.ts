@@ -156,8 +156,10 @@ export interface APIKey {
   revoked_at?: string
 }
 
-export interface APIKeyWithSecret extends APIKey {
-  key: string
+// Response from creating an API key - includes the raw token shown once
+export interface CreateAPIKeyResponse {
+  key: APIKey
+  raw_token: string
 }
 
 export interface CreateAPIKeyRequest {

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminClient } from '../admin'
 import type {
   APIKey,
-  APIKeyWithSecret,
+  CreateAPIKeyResponse,
   APIKeyList,
   CreateAPIKeyRequest,
   PaginationParams,
@@ -46,7 +46,7 @@ export function useCreateApiKey() {
 
   return useMutation({
     mutationFn: async (request: CreateAPIKeyRequest) => {
-      const { data } = await adminClient.post<APIKeyWithSecret>('/keys', request)
+      const { data } = await adminClient.post<CreateAPIKeyResponse>('/keys', request)
       return data
     },
     onSuccess: () => {

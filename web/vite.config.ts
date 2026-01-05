@@ -18,7 +18,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // Proxy admin API requests to the admin server
-      '/admin/api': {
+      // Use trailing slash to avoid matching /admin/api-keys (a frontend route)
+      '/admin/api/': {
         target: 'http://localhost:8081',
         changeOrigin: true,
       },
