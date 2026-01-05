@@ -34,7 +34,7 @@ type PermissionManagerInterface interface {
 
 // CreatePermissionRequestInput contains input for creating a permission request.
 type CreatePermissionRequestInput struct {
-	OriginalRequestID   string  // Original request ID from agent (e.g., tool_use_id)
+	OriginalRequestID   string // Original request ID from agent (e.g., tool_use_id)
 	SessionID           string
 	TaskID              string
 	RunID               string

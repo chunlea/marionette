@@ -16,6 +16,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMain ensures the /tmp/claude directory exists for mock script tests.
+func TestMain(m *testing.M) {
+	// Create /tmp/claude directory for tests that need mock scripts
+	_ = os.MkdirAll("/tmp/claude", 0755)
+	os.Exit(m.Run())
+}
+
 // testOutputHandler captures output for testing.
 type testOutputHandler struct {
 	mu      sync.Mutex

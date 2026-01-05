@@ -1121,3 +1121,283 @@ func TestSessionManager_Activate_DetachesMultipleOldSessions(t *testing.T) {
 	assert.Equal(t, SessionStatusSuspended, s.sessions["sess_1"].Status)
 	assert.Equal(t, SessionStatusSuspended, s.sessions["sess_2"].Status)
 }
+
+// =============================================================================
+// Workspace-related Tests
+// =============================================================================
+
+// mockWorkspaceManagerForSession implements WorkspaceManagerInterface for testing.
+type mockWorkspaceManagerForSession struct {
+	hostPath             string
+	ensureHostDirCalled  bool
+	cleanupHostDirCalled bool
+	cleanupHostDirErr    error
+	ensureHostDirErr     error
+}
+
+func (m *mockWorkspaceManagerForSession) Create(_ context.Context, _ CreateWorkspaceOptions) (*store.Workspace, error) {
+	return nil, nil
+}
+
+func (m *mockWorkspaceManagerForSession) Get(_ context.Context, _ string) (*store.Workspace, error) {
+	return nil, nil
+}
+
+func (m *mockWorkspaceManagerForSession) List(_ context.Context, _ ListWorkspacesOptions) (*store.ListResult[store.Workspace], error) {
+	return nil, nil
+}
+
+func (m *mockWorkspaceManagerForSession) Update(_ context.Context, _ string, _ store.WorkspaceUpdates) (*store.Workspace, error) {
+	return nil, nil
+}
+
+func (m *mockWorkspaceManagerForSession) Delete(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockWorkspaceManagerForSession) GetHostPath(_ context.Context, _ string) (string, error) {
+	return m.hostPath, nil
+}
+
+func (m *mockWorkspaceManagerForSession) EnsureHostDirectory(_ context.Context, _ string) (string, error) {
+	m.ensureHostDirCalled = true
+	if m.ensureHostDirErr != nil {
+		return "", m.ensureHostDirErr
+	}
+	return m.hostPath, nil
+}
+
+func (m *mockWorkspaceManagerForSession) CleanupHostDirectory(_ context.Context, _ string) error {
+	m.cleanupHostDirCalled = true
+	return m.cleanupHostDirErr
+}
+
+func (m *mockWorkspaceManagerForSession) IsInUse(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+
+func TestSessionManager_SetWorkspaceManager(t *testing.T) {
+	manager, _ := setupSessionManagerTest()
+
+	// Initially nil
+	assert.Nil(t, manager.workspaceManager)
+
+	// Set workspace manager
+	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/test"}
+	manager.SetWorkspaceManager(mockWM)
+
+	assert.NotNil(t, manager.workspaceManager)
+	assert.Equal(t, mockWM, manager.workspaceManager)
+}
+
+func TestSessionManager_GetWorkspaceHostPath(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		manager, s := setupSessionManagerTest()
+		mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
+		manager.SetWorkspaceManager(mockWM)
+
+		s.sessions["sess_123"] = &store.Session{
+			ID:          "sess_123",
+			Status:      SessionStatusActive,
+			WorkspaceID: "ws_123",
+		}
+
+		path, err := manager.GetWorkspaceHostPath(context.Background(), "sess_123")
+		require.NoError(t, err)
+		assert.Equal(t, "/var/workspaces/ws_123", path)
+	})
+
+	t.Run("session not found", func(t *testing.T) {
+		manager, _ := setupSessionManagerTest()
+		mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces"}
+		manager.SetWorkspaceManager(mockWM)
+
+		_, err := manager.GetWorkspaceHostPath(context.Background(), "sess_nonexistent")
+		assert.ErrorIs(t, err, ErrSessionNotFound)
+	})
+
+	t.Run("no workspace manager", func(t *testing.T) {
+		manager, s := setupSessionManagerTest()
+		// No workspace manager set
+
+		s.sessions["sess_123"] = &store.Session{
+			ID:          "sess_123",
+			Status:      SessionStatusActive,
+			WorkspaceID: "ws_123",
+		}
+
+		path, err := manager.GetWorkspaceHostPath(context.Background(), "sess_123")
+		require.NoError(t, err)
+		assert.Empty(t, path)
+	})
+}
+
+func TestSessionManager_Activate_WorkspacePathForDockerRunner(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
+	manager.SetWorkspaceManager(mockWM)
+
+	// Setup with Docker runner (runner-is-sandbox mode)
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+		IsBYOK:      true,
+	}
+	s.runners["run_123"] = &store.Runner{
+		ID:          "run_123",
+		Status:      StatusIdle,
+		SandboxMode: "runner-is-sandbox", // Docker mode
+	}
+
+	// Activate
+	err := manager.Activate(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	// Verify workspace path is /workspace (container mount point)
+	attachCmd := cmdSender.lastCommand.GetAttachSession()
+	require.NotNil(t, attachCmd)
+	assert.Equal(t, "/workspace", attachCmd.WorkspacePath)
+}
+
+func TestSessionManager_Activate_WorkspacePathForLocalRunner(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
+	manager.SetWorkspaceManager(mockWM)
+
+	// Setup with local runner (no sandbox mode or "none")
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+		IsBYOK:      true,
+	}
+	s.runners["run_123"] = &store.Runner{
+		ID:          "run_123",
+		Status:      StatusIdle,
+		SandboxMode: "none", // Local mode
+	}
+
+	// Activate
+	err := manager.Activate(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	// Verify workspace path is the actual host path
+	attachCmd := cmdSender.lastCommand.GetAttachSession()
+	require.NotNil(t, attachCmd)
+	assert.Equal(t, "/var/workspaces/ws_123", attachCmd.WorkspacePath)
+}
+
+func TestSessionManager_Activate_WorkspacePathForRunnerCreatesSandbox(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
+	manager.SetWorkspaceManager(mockWM)
+
+	// Setup with runner-creates-sandbox mode
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+		IsBYOK:      true,
+	}
+	s.runners["run_123"] = &store.Runner{
+		ID:          "run_123",
+		Status:      StatusIdle,
+		SandboxMode: "runner-creates-sandbox", // macOS/GPU pool mode
+	}
+
+	// Activate
+	err := manager.Activate(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	// Verify workspace path is the actual host path (not /workspace)
+	attachCmd := cmdSender.lastCommand.GetAttachSession()
+	require.NotNil(t, attachCmd)
+	assert.Equal(t, "/var/workspaces/ws_123", attachCmd.WorkspacePath)
+}
+
+func TestSessionManager_Activate_WorkspacePathWithoutWorkspaceManager(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+	// No workspace manager set
+
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+		IsBYOK:      true,
+	}
+	s.runners["run_123"] = &store.Runner{
+		ID:          "run_123",
+		Status:      StatusIdle,
+		SandboxMode: "runner-is-sandbox",
+	}
+
+	// Activate
+	err := manager.Activate(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	// Without workspace manager, should fall back to workspace name
+	attachCmd := cmdSender.lastCommand.GetAttachSession()
+	require.NotNil(t, attachCmd)
+	assert.Equal(t, "test-workspace", attachCmd.WorkspacePath)
+}
+
+func TestSessionManager_AttachRunner_EnsuresHostDirectory(t *testing.T) {
+	manager, s := setupSessionManagerTest()
+	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
+	manager.SetWorkspaceManager(mockWM)
+
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+	}
+	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+
+	// Attach runner
+	err := manager.AttachRunner(context.Background(), "sess_123", "run_123")
+	require.NoError(t, err)
+
+	// Verify EnsureHostDirectory was called
+	assert.True(t, mockWM.ensureHostDirCalled)
+}
+
+func TestSessionManager_AttachRunner_EnsureHostDirectoryError(t *testing.T) {
+	manager, s := setupSessionManagerTest()
+	mockWM := &mockWorkspaceManagerForSession{
+		hostPath:         "/var/workspaces/ws_123",
+		ensureHostDirErr: assert.AnError,
+	}
+	manager.SetWorkspaceManager(mockWM)
+
+	s.workspaces["ws_123"] = &store.Workspace{ID: "ws_123", Name: "test-workspace"}
+	s.sessions["sess_123"] = &store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+	}
+	s.runners["run_123"] = &store.Runner{ID: "run_123", Status: StatusIdle}
+
+	// Attach runner - should fail if EnsureHostDirectory fails
+	err := manager.AttachRunner(context.Background(), "sess_123", "run_123")
+	require.Error(t, err)
+
+	// Session should still be in pending status (not activated)
+	session := s.sessions["sess_123"]
+	assert.Equal(t, SessionStatusPending, session.Status)
+}

@@ -35,6 +35,12 @@ and monitor their progress.`,
 			return nil
 		}
 
+		// Skip if client was explicitly set (e.g., by tests)
+		// This allows tests to set client to nil to test "no client" scenarios
+		if clientWasSet {
+			return nil
+		}
+
 		// Initialize the public API client
 		ctx, err := GetEffectiveConfig()
 		if err != nil {

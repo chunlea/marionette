@@ -1346,3 +1346,289 @@ func TestOpenAPIDocumentation(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), "Marionette Public API")
 	})
 }
+
+func TestWorkspaces(t *testing.T) {
+	workspaceSvc := NewMockWorkspaceService()
+	srv, _, token := testServer(t, WithWorkspaceService(workspaceSvc))
+
+	// Add a test workspace
+	testWorkspace := &store.Workspace{
+		ID:          "ws_test123",
+		Name:        "test-workspace",
+		Persist:     true,
+		StorageType: "volume",
+		Mobility:    "local",
+		Labels:      json.RawMessage(`{}`),
+		Annotations: json.RawMessage(`{}`),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	workspaceSvc.AddWorkspace(testWorkspace)
+
+	t.Run("create workspace", func(t *testing.T) {
+		body := `{"name": "new-workspace"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusCreated, rec.Code)
+	})
+
+	t.Run("create workspace with options", func(t *testing.T) {
+		body := `{"name": "workspace-with-opts", "persist": false, "storage_type": "volume", "disk_quota_mb": 2048}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusCreated, rec.Code)
+	})
+
+	t.Run("create workspace invalid json", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces", bytes.NewBufferString("{invalid json"))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		var resp ErrorResponse
+		err := json.NewDecoder(rec.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "invalid_json", resp.Code)
+	})
+
+	t.Run("list workspaces", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("list workspaces with limit", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces?limit=10", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("get workspace", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws_test123", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("get workspace not found", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws_notfound", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("update workspace", func(t *testing.T) {
+		body := `{"name": "updated-workspace"}`
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspaces/ws_test123", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("update workspace not found", func(t *testing.T) {
+		body := `{"name": "test"}`
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspaces/ws_notfound", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("update workspace invalid json", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspaces/ws_test123", bytes.NewBufferString("{invalid"))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("delete workspace", func(t *testing.T) {
+		// Create a workspace to delete
+		delWorkspace := &store.Workspace{
+			ID:          "ws_todelete",
+			Name:        "to-delete",
+			Persist:     true,
+			StorageType: "volume",
+			Mobility:    "local",
+			Labels:      json.RawMessage(`{}`),
+			Annotations: json.RawMessage(`{}`),
+			CreatedAt:   time.Now(),
+		}
+		workspaceSvc.AddWorkspace(delWorkspace)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/ws_todelete", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+	})
+
+	t.Run("delete workspace not found", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/ws_notfound", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("get deleted workspace returns gone", func(t *testing.T) {
+		// Create and delete a workspace
+		goneWorkspace := &store.Workspace{
+			ID:          "ws_gone",
+			Name:        "gone-workspace",
+			Persist:     true,
+			StorageType: "volume",
+			Mobility:    "local",
+			Labels:      json.RawMessage(`{}`),
+			Annotations: json.RawMessage(`{}`),
+			CreatedAt:   time.Now(),
+		}
+		workspaceSvc.AddWorkspace(goneWorkspace)
+
+		// Delete it first
+		delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/ws_gone", nil)
+		delReq.Header.Set("Authorization", "Bearer "+token)
+		delRec := httptest.NewRecorder()
+		srv.Router().ServeHTTP(delRec, delReq)
+
+		// Now try to get it
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws_gone", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusGone, rec.Code)
+	})
+}
+
+func TestWorkspaceServiceUnavailable(t *testing.T) {
+	srv, _, token := testServer(t) // No workspace service configured
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"create workspace", http.MethodPost, "/api/v1/workspaces", `{"name": "test"}`},
+		{"list workspaces", http.MethodGet, "/api/v1/workspaces", ""},
+		{"get workspace", http.MethodGet, "/api/v1/workspaces/ws_test", ""},
+		{"update workspace", http.MethodPatch, "/api/v1/workspaces/ws_test", `{"name": "test"}`},
+		{"delete workspace", http.MethodDelete, "/api/v1/workspaces/ws_test", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req *http.Request
+			if tt.body != "" {
+				req = httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body))
+				req.Header.Set("Content-Type", "application/json")
+			} else {
+				req = httptest.NewRequest(tt.method, tt.path, nil)
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+
+			srv.Router().ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusInternalServerError, rec.Code)
+			var resp ErrorResponse
+			err := json.NewDecoder(rec.Body).Decode(&resp)
+			require.NoError(t, err)
+			assert.Equal(t, "service_unavailable", resp.Code)
+		})
+	}
+}
+
+func TestWorkspaceScopeMiddleware(t *testing.T) {
+	workspaceSvc := NewMockWorkspaceService()
+	logger := zap.NewNop()
+	keyStore := newMockAPIKeyStore()
+	apiKeyService := auth.NewAPIKeyService(keyStore, func() string { return "key_test123" })
+
+	// Create API key with limited scope (only read)
+	_, token, err := apiKeyService.Create(context.Background(), auth.CreateAPIKeyOptions{
+		Name:   "read-only-key",
+		Scopes: []string{"workspaces:read"},
+	})
+	require.NoError(t, err)
+
+	srv := New(Config{Host: "localhost", Port: 8080}, logger,
+		WithAPIKeyService(apiKeyService),
+		WithWorkspaceService(workspaceSvc),
+	)
+
+	t.Run("allowed scope - list", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("forbidden scope - create", func(t *testing.T) {
+		body := `{"name": "test"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("forbidden scope - delete", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/ws_test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+}

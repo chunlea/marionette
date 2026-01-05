@@ -26,6 +26,7 @@ type Server struct {
 	tasks       TaskService
 	runners     RunnerService
 	permissions PermissionService
+	workspaces  WorkspaceService
 
 	// Streaming services
 	logStream   LogStreamService
@@ -69,6 +70,13 @@ func WithRunnerService(s RunnerService) Option {
 func WithPermissionService(s PermissionService) Option {
 	return func(srv *Server) {
 		srv.permissions = s
+	}
+}
+
+// WithWorkspaceService sets the workspace service.
+func WithWorkspaceService(s WorkspaceService) Option {
+	return func(srv *Server) {
+		srv.workspaces = s
 	}
 }
 
@@ -171,6 +179,15 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.With(RequireScope("permissions:read")).Get("/{permissionID}", srv.handleGetPermission)
 			r.With(RequireScope("permissions:write")).Post("/{permissionID}/approve", srv.handleApprovePermission)
 			r.With(RequireScope("permissions:write")).Post("/{permissionID}/deny", srv.handleDenyPermission)
+		})
+
+		// Workspaces
+		r.Route("/workspaces", func(r chi.Router) {
+			r.With(RequireScope("workspaces:write")).Post("/", srv.handleCreateWorkspace)
+			r.With(RequireScope("workspaces:read")).Get("/", srv.handleListWorkspaces)
+			r.With(RequireScope("workspaces:read")).Get("/{workspaceID}", srv.handleGetWorkspace)
+			r.With(RequireScope("workspaces:write")).Patch("/{workspaceID}", srv.handleUpdateWorkspace)
+			r.With(RequireScope("workspaces:write")).Delete("/{workspaceID}", srv.handleDeleteWorkspace)
 		})
 
 		// WebSocket endpoints

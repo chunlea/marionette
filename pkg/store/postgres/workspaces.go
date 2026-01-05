@@ -94,6 +94,11 @@ func listWorkspaces(ctx context.Context, q querier, opts store.ListWorkspacesOpt
 	if !opts.IncludeDeleted {
 		conditions = append(conditions, "deleted_at IS NULL")
 	}
+	if opts.TenantID != nil {
+		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", argNum))
+		args = append(args, *opts.TenantID)
+		argNum++
+	}
 	// TODO: Add label filtering with JSONB operators
 
 	whereClause := ""
