@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "marionette.fullname" . }}-server
+  labels:
+    {{- include "marionette.server.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.server.service.type }}
+  ports:
+    - port: {{ .Values.server.service.ports.http }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.server.service.ports.admin }}
+      targetPort: admin
+      protocol: TCP
+      name: admin
+    - port: {{ .Values.server.service.ports.grpc }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "marionette.server.selectorLabels" . | nindent 4 }}

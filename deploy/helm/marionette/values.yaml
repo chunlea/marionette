@@ -1,0 +1,250 @@
+# Default values for marionette.
+# This is a YAML-formatted file.
+
+# -- Override the name of the chart
+nameOverride: ""
+# -- Override the full name of the chart
+fullnameOverride: ""
+
+# Global settings
+global:
+  # -- Image pull secrets for all images
+  imagePullSecrets: []
+
+# Server configuration
+server:
+  # -- Number of server replicas
+  replicaCount: 1
+
+  image:
+    # -- Server image repository
+    repository: marionette/server
+    # -- Server image pull policy
+    pullPolicy: IfNotPresent
+    # -- Server image tag (defaults to chart appVersion)
+    tag: ""
+
+  # -- Service account configuration
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  # -- Pod annotations
+  podAnnotations: {}
+
+  # -- Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    fsGroup: 65532
+
+  # -- Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  # -- Service configuration
+  service:
+    type: ClusterIP
+    ports:
+      http: 8080
+      admin: 8081
+      grpc: 9090
+
+  # -- Ingress configuration
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: marionette.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  # -- Resource limits and requests
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  # -- Autoscaling configuration
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  # -- Node selector
+  nodeSelector: {}
+
+  # -- Tolerations
+  tolerations: []
+
+  # -- Affinity rules
+  affinity: {}
+
+  # -- Liveness probe configuration
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 15
+
+  # -- Readiness probe configuration
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+  # -- Server configuration (mounted as config.yaml)
+  config:
+    logging:
+      level: info
+      format: json
+    tls:
+      enabled: false
+
+# Agent configuration
+agent:
+  # -- Enable agent deployment
+  enabled: true
+
+  # -- Number of agent replicas
+  replicaCount: 1
+
+  image:
+    # -- Agent image repository
+    repository: marionette/agent
+    # -- Agent image pull policy
+    pullPolicy: IfNotPresent
+    # -- Agent image tag (defaults to chart appVersion)
+    tag: ""
+
+  # -- Service account configuration
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  # -- Pod annotations
+  podAnnotations: {}
+
+  # -- Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+
+  # -- Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+  # -- Resource limits and requests
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
+  # -- Autoscaling configuration
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 60
+
+  # -- Node selector
+  nodeSelector: {}
+
+  # -- Tolerations
+  tolerations: []
+
+  # -- Affinity rules
+  affinity: {}
+
+  # -- Agent configuration
+  config:
+    sandboxMode: runner-is-sandbox
+    poolName: kubernetes-pool
+
+# Storage configuration
+storage:
+  # -- Storage PVC for server data
+  data:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+
+  # -- Workspaces PVC
+  workspaces:
+    enabled: true
+    size: 50Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+
+# Secrets configuration
+secrets:
+  # -- Create secrets (set to false if using external secrets)
+  create: true
+
+  # -- Database URL (required)
+  databaseUrl: ""
+
+  # -- Master key for admin operations (required)
+  masterKey: ""
+
+  # -- Encryption key for credentials (required, exactly 32 bytes)
+  encryptionKey: ""
+
+  # -- Admin UI username
+  uiUsername: "admin"
+
+  # -- Admin UI password
+  uiPassword: ""
+
+  # -- Runner authentication token
+  runnerToken: ""
+
+# PostgreSQL subchart configuration
+postgresql:
+  # -- Enable PostgreSQL subchart
+  enabled: true
+
+  auth:
+    # -- PostgreSQL username
+    username: marionette
+    # -- PostgreSQL password (auto-generated if empty)
+    password: ""
+    # -- PostgreSQL database name
+    database: marionette
+
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+
+# Network policies
+networkPolicy:
+  # -- Enable network policies
+  enabled: true
