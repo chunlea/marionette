@@ -102,7 +102,7 @@ func TestMockProvider_Start(t *testing.T) {
 func TestMockProvider_Start_AlreadyActive(t *testing.T) {
 	p := NewMockProvider(nil)
 
-	p.Start(context.Background(), nil)
+	_ = p.Start(context.Background(), nil)
 	err := p.Start(context.Background(), nil)
 
 	if err != ErrStreamAlreadyActive {
@@ -112,7 +112,7 @@ func TestMockProvider_Start_AlreadyActive(t *testing.T) {
 
 func TestMockProvider_Start_Closed(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Close()
+	_ = p.Close()
 
 	err := p.Start(context.Background(), nil)
 	if err != ErrProviderClosed {
@@ -152,7 +152,7 @@ func TestMockProvider_Start_WithHook(t *testing.T) {
 
 func TestMockProvider_Stop(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Start(context.Background(), nil)
+	_ = p.Start(context.Background(), nil)
 
 	err := p.Stop(context.Background())
 	if err != nil {
@@ -171,8 +171,8 @@ func TestMockProvider_Stop(t *testing.T) {
 
 func TestMockProvider_Stop_AlreadyStopped(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Start(context.Background(), nil)
-	p.Stop(context.Background())
+	_ = p.Start(context.Background(), nil)
+	_ = p.Stop(context.Background())
 
 	// Second stop should be no-op
 	err := p.Stop(context.Background())
@@ -202,7 +202,7 @@ func TestMockProvider_Stop_WithHook(t *testing.T) {
 		}),
 	)
 
-	p.Start(context.Background(), nil)
+	_ = p.Start(context.Background(), nil)
 	err := p.Stop(context.Background())
 
 	if !hookCalled {
@@ -215,7 +215,7 @@ func TestMockProvider_Stop_WithHook(t *testing.T) {
 
 func TestMockProvider_Pause(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Start(context.Background(), nil)
+	_ = p.Start(context.Background(), nil)
 
 	err := p.Pause(context.Background())
 	if err != nil {
@@ -238,8 +238,8 @@ func TestMockProvider_Pause_NotActive(t *testing.T) {
 
 func TestMockProvider_Pause_Closed(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Start(context.Background(), nil)
-	p.Close()
+	_ = p.Start(context.Background(), nil)
+	_ = p.Close()
 
 	err := p.Pause(context.Background())
 	if err != ErrProviderClosed {
@@ -249,8 +249,8 @@ func TestMockProvider_Pause_Closed(t *testing.T) {
 
 func TestMockProvider_Resume(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Start(context.Background(), nil)
-	p.Pause(context.Background())
+	_ = p.Start(context.Background(), nil)
+	_ = p.Pause(context.Background())
 
 	err := p.Resume(context.Background())
 	if err != nil {
@@ -264,7 +264,7 @@ func TestMockProvider_Resume(t *testing.T) {
 
 func TestMockProvider_Resume_NotPaused(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Start(context.Background(), nil)
+	_ = p.Start(context.Background(), nil)
 
 	err := p.Resume(context.Background())
 	if err != ErrStreamNotActive {
@@ -274,9 +274,9 @@ func TestMockProvider_Resume_NotPaused(t *testing.T) {
 
 func TestMockProvider_Resume_Closed(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Start(context.Background(), nil)
-	p.Pause(context.Background())
-	p.Close()
+	_ = p.Start(context.Background(), nil)
+	_ = p.Pause(context.Background())
+	_ = p.Close()
 
 	err := p.Resume(context.Background())
 	if err != ErrProviderClosed {
@@ -288,8 +288,8 @@ func TestMockProvider_Frames(t *testing.T) {
 	p := NewMockProvider(nil)
 
 	// Push frames
-	p.PushFrame(&Frame{Sequence: 1})
-	p.PushFrame(&Frame{Sequence: 2})
+	_ = p.PushFrame(&Frame{Sequence: 1})
+	_ = p.PushFrame(&Frame{Sequence: 2})
 
 	ch := p.Frames()
 	frame1 := <-ch
@@ -304,9 +304,9 @@ func TestMockProvider_PushFrame_AutoSequence(t *testing.T) {
 	p := NewMockProvider(nil)
 
 	// Push without sequence
-	p.PushFrame(&Frame{})
-	p.PushFrame(&Frame{})
-	p.PushFrame(&Frame{})
+	_ = p.PushFrame(&Frame{})
+	_ = p.PushFrame(&Frame{})
+	_ = p.PushFrame(&Frame{})
 
 	ch := p.Frames()
 	frame1 := <-ch
@@ -356,7 +356,7 @@ func TestMockProvider_SendInput_InvalidType(t *testing.T) {
 
 func TestMockProvider_SendInput_Closed(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Close()
+	_ = p.Close()
 
 	event := &InputEvent{Type: InputEventMouseMove}
 	err := p.SendInput(context.Background(), event)
@@ -409,7 +409,7 @@ func TestMockProvider_Navigate_EmptyURL(t *testing.T) {
 
 func TestMockProvider_Navigate_Closed(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Close()
+	_ = p.Close()
 
 	req := &NavigateRequest{URL: "https://example.com"}
 	err := p.Navigate(context.Background(), req)
@@ -457,7 +457,7 @@ func TestMockProvider_GetBrowserInfo(t *testing.T) {
 
 func TestMockProvider_GetBrowserInfo_Closed(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Close()
+	_ = p.Close()
 
 	_, err := p.GetBrowserInfo(context.Background())
 	if err != ErrProviderClosed {
@@ -489,7 +489,7 @@ func TestMockProvider_ListTabs(t *testing.T) {
 
 func TestMockProvider_ListTabs_Closed(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Close()
+	_ = p.Close()
 
 	_, err := p.ListTabs(context.Background())
 	if err != ErrProviderClosed {
@@ -523,7 +523,7 @@ func TestMockProvider_SwitchTab_NotFound(t *testing.T) {
 
 func TestMockProvider_SwitchTab_Closed(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Close()
+	_ = p.Close()
 
 	err := p.SwitchTab(context.Background(), "any-tab")
 	if err != ErrProviderClosed {
@@ -547,10 +547,10 @@ func TestMockProvider_OnStateChange(t *testing.T) {
 		mu.Unlock()
 	})
 
-	p.Start(context.Background(), nil)
-	p.Pause(context.Background())
-	p.Resume(context.Background())
-	p.Stop(context.Background())
+	_ = p.Start(context.Background(), nil)
+	_ = p.Pause(context.Background())
+	_ = p.Resume(context.Background())
+	_ = p.Stop(context.Background())
 
 	// Give time for async callbacks
 	time.Sleep(10 * time.Millisecond)
@@ -571,7 +571,7 @@ func TestMockProvider_OnStateChange(t *testing.T) {
 
 func TestMockProvider_Close(t *testing.T) {
 	p := NewMockProvider(nil)
-	p.Start(context.Background(), nil)
+	_ = p.Start(context.Background(), nil)
 
 	err := p.Close()
 	if err != nil {
@@ -593,7 +593,7 @@ func TestMockProvider_Close_Multiple(t *testing.T) {
 	p := NewMockProvider(nil)
 
 	// Multiple closes should be safe
-	p.Close()
+	_ = p.Close()
 	err := p.Close()
 	if err != nil {
 		t.Errorf("second Close() error = %v", err)
@@ -626,8 +626,8 @@ func TestMockProvider_SetError(t *testing.T) {
 func TestMockProvider_Stats(t *testing.T) {
 	p := NewMockProvider(nil)
 
-	p.PushFrame(&Frame{})
-	p.PushFrame(&Frame{})
+	_ = p.PushFrame(&Frame{})
+	_ = p.PushFrame(&Frame{})
 
 	// FramesSent = TotalFrames - DroppedFrames (frames successfully queued)
 	// Both frames were pushed successfully with no drops

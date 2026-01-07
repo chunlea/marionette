@@ -8,10 +8,10 @@ import (
 
 func TestNewFrameBuffer(t *testing.T) {
 	tests := []struct {
-		name     string
-		cfg      FrameBufferConfig
-		wantCap  int
-		wantPol  DropPolicy
+		name    string
+		cfg     FrameBufferConfig
+		wantCap int
+		wantPol DropPolicy
 	}{
 		{
 			name:    "default capacity",
@@ -114,8 +114,8 @@ func TestFrameBuffer_DropPolicyNewest(t *testing.T) {
 	frame3 := &Frame{Sequence: 3}
 
 	// Fill buffer
-	buf.Push(frame1)
-	buf.Push(frame2)
+	_ = buf.Push(frame1)
+	_ = buf.Push(frame2)
 
 	// Push when full should fail
 	err := buf.Push(frame3)
@@ -148,8 +148,8 @@ func TestFrameBuffer_DropPolicyOldest(t *testing.T) {
 	frame3 := &Frame{Sequence: 3}
 
 	// Fill buffer
-	buf.Push(frame1)
-	buf.Push(frame2)
+	_ = buf.Push(frame1)
+	_ = buf.Push(frame2)
 
 	// Push when full should drop oldest and add new
 	err := buf.Push(frame3)
@@ -183,7 +183,7 @@ func TestFrameBuffer_DropPolicyBlock(t *testing.T) {
 	frame2 := &Frame{Sequence: 2}
 
 	// Push first frame
-	buf.Push(frame1)
+	_ = buf.Push(frame1)
 
 	// Start consumer
 	done := make(chan struct{})
@@ -218,7 +218,7 @@ func TestFrameBuffer_IsFullIsEmpty(t *testing.T) {
 		t.Error("IsFull() = true, want false")
 	}
 
-	buf.Push(&Frame{Sequence: 1})
+	_ = buf.Push(&Frame{Sequence: 1})
 
 	if buf.IsEmpty() {
 		t.Error("IsEmpty() = true, want false")
@@ -227,7 +227,7 @@ func TestFrameBuffer_IsFullIsEmpty(t *testing.T) {
 		t.Error("IsFull() = true, want false")
 	}
 
-	buf.Push(&Frame{Sequence: 2})
+	_ = buf.Push(&Frame{Sequence: 2})
 
 	if buf.IsEmpty() {
 		t.Error("IsEmpty() = true, want false")
@@ -241,7 +241,7 @@ func TestFrameBuffer_Clear(t *testing.T) {
 	buf := NewFrameBuffer(FrameBufferConfig{Capacity: 5})
 
 	for i := 0; i < 5; i++ {
-		buf.Push(&Frame{Sequence: uint64(i)})
+		_ = buf.Push(&Frame{Sequence: uint64(i)})
 	}
 
 	if buf.Len() != 5 {
@@ -260,7 +260,7 @@ func TestFrameBuffer_Clear(t *testing.T) {
 
 func TestFrameBuffer_Close(t *testing.T) {
 	buf := NewFrameBuffer(FrameBufferConfig{Capacity: 5})
-	buf.Push(&Frame{Sequence: 1})
+	_ = buf.Push(&Frame{Sequence: 1})
 
 	if buf.IsClosed() {
 		t.Error("IsClosed() = true before Close()")
@@ -293,7 +293,7 @@ func TestFrameBuffer_Frames(t *testing.T) {
 
 	// Push some frames
 	for i := 1; i <= 3; i++ {
-		buf.Push(&Frame{Sequence: uint64(i)})
+		_ = buf.Push(&Frame{Sequence: uint64(i)})
 	}
 
 	// Read from channel
@@ -316,9 +316,9 @@ func TestFrameBuffer_Stats(t *testing.T) {
 		DropPolicy: DropPolicyNewest,
 	})
 
-	buf.Push(&Frame{Sequence: 1})
-	buf.Push(&Frame{Sequence: 2})
-	buf.Push(&Frame{Sequence: 3}) // dropped
+	_ = buf.Push(&Frame{Sequence: 1})
+	_ = buf.Push(&Frame{Sequence: 2})
+	_ = buf.Push(&Frame{Sequence: 3}) // dropped
 
 	stats := buf.Stats()
 
@@ -338,29 +338,29 @@ func TestFrameBuffer_Stats(t *testing.T) {
 
 func TestFrameBufferStats_DropRate(t *testing.T) {
 	tests := []struct {
-		name    string
-		stats   FrameBufferStats
-		want    float64
+		name  string
+		stats FrameBufferStats
+		want  float64
 	}{
 		{
-			name:    "no frames",
-			stats:   FrameBufferStats{TotalFrames: 0, DroppedFrames: 0},
-			want:    0,
+			name:  "no frames",
+			stats: FrameBufferStats{TotalFrames: 0, DroppedFrames: 0},
+			want:  0,
 		},
 		{
-			name:    "no drops",
-			stats:   FrameBufferStats{TotalFrames: 100, DroppedFrames: 0},
-			want:    0,
+			name:  "no drops",
+			stats: FrameBufferStats{TotalFrames: 100, DroppedFrames: 0},
+			want:  0,
 		},
 		{
-			name:    "50% drop",
-			stats:   FrameBufferStats{TotalFrames: 100, DroppedFrames: 50},
-			want:    50,
+			name:  "50% drop",
+			stats: FrameBufferStats{TotalFrames: 100, DroppedFrames: 50},
+			want:  50,
 		},
 		{
-			name:    "all dropped",
-			stats:   FrameBufferStats{TotalFrames: 100, DroppedFrames: 100},
-			want:    100,
+			name:  "all dropped",
+			stats: FrameBufferStats{TotalFrames: 100, DroppedFrames: 100},
+			want:  100,
 		},
 	}
 
@@ -428,7 +428,7 @@ func TestFrameBuffer_Concurrent(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < numFramesPerWriter; i++ {
 				frame := &Frame{Sequence: uint64(writerID*numFramesPerWriter + i)}
-				buf.Push(frame)
+				_ = buf.Push(frame)
 			}
 		}(w)
 	}
@@ -458,7 +458,7 @@ func TestFrameBuffer_TotalFrames(t *testing.T) {
 	buf := NewFrameBuffer(FrameBufferConfig{Capacity: 5})
 
 	for i := 0; i < 10; i++ {
-		buf.Push(&Frame{Sequence: uint64(i)})
+		_ = buf.Push(&Frame{Sequence: uint64(i)})
 		buf.Pop()
 	}
 
