@@ -113,3 +113,6 @@ func TunnelToken() string { return New("ttok") }
 
 // Manifest generates a manifest ID (prefix: mfst_).
 func Manifest() string { return New("mfst") }
+
+// AndroidStream generates an Android stream ID (prefix: astr_).
+func AndroidStream() string { return New("astr") }
