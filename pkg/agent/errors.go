@@ -31,6 +31,12 @@ var (
 
 	// ErrStreamNotActive indicates no log stream is active.
 	ErrStreamNotActive = errors.New("log stream not active")
+
+	// ErrInvalidRequest indicates an invalid request.
+	ErrInvalidRequest = errors.New("invalid request")
+
+	// ErrStreamNotFound indicates the requested stream was not found.
+	ErrStreamNotFound = errors.New("stream not found")
 )
 
 // ErrRegistrationRejected indicates the server rejected runner registration.

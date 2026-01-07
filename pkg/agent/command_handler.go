@@ -49,6 +49,9 @@ type DefaultCommandHandler struct {
 	sessions   map[string]*SessionState
 	sessionsMu sync.RWMutex
 
+	// Android stream manager
+	androidStreamManager *AndroidStreamManager
+
 	// Callbacks for extensibility (set by executor in G3)
 	OnExecuteTask       func(ctx context.Context, cmd *pb.ExecuteTask) (*pb.RunnerMessage, error)
 	OnApprovePermission func(ctx context.Context, cmd *pb.ApprovePermission) error
@@ -59,10 +62,24 @@ type DefaultCommandHandler struct {
 // NewDefaultCommandHandler creates a new default command handler.
 func NewDefaultCommandHandler(workspace *WorkspaceManager, logger *zap.Logger) *DefaultCommandHandler {
 	return &DefaultCommandHandler{
-		workspace: workspace,
-		logger:    logger.Named("handler"),
-		sessions:  make(map[string]*SessionState),
+		workspace:            workspace,
+		logger:               logger.Named("handler"),
+		sessions:             make(map[string]*SessionState),
+		androidStreamManager: NewAndroidStreamManager(logger),
 	}
+}
+
+// SetMessageSender sets the callback for sending messages to the server.
+// This is used by the Android stream manager to send stream data.
+func (h *DefaultCommandHandler) SetMessageSender(sender func(*pb.RunnerMessage) error) {
+	if h.androidStreamManager != nil {
+		h.androidStreamManager.SetMessageSender(sender)
+	}
+}
+
+// GetAndroidStreamManager returns the Android stream manager.
+func (h *DefaultCommandHandler) GetAndroidStreamManager() *AndroidStreamManager {
+	return h.androidStreamManager
 }
 
 // HandleExecuteTask handles task execution.
@@ -161,8 +178,7 @@ func (h *DefaultCommandHandler) HandleKillTask(ctx context.Context, cmd *pb.Kill
 }
 
 // HandleCreateTunnel handles tunnel creation.
-// This is a stub for later phase implementation.
-func (h *DefaultCommandHandler) HandleCreateTunnel(_ context.Context, cmd *pb.CreateTunnel) (*pb.RunnerMessage, error) {
+func (h *DefaultCommandHandler) HandleCreateTunnel(ctx context.Context, cmd *pb.CreateTunnel) (*pb.RunnerMessage, error) {
 	h.logger.Info("received create tunnel command",
 		zap.String("tunnel_id", cmd.TunnelId),
 		zap.String("type", cmd.Type),
@@ -170,7 +186,38 @@ func (h *DefaultCommandHandler) HandleCreateTunnel(_ context.Context, cmd *pb.Cr
 		zap.String("direction", cmd.Direction),
 	)
 
-	// Tunnel creation will be implemented in a later phase
+	switch cmd.Type {
+	case "android":
+		return h.handleAndroidTunnel(ctx, cmd)
+	default:
+		// Other tunnel types will be implemented in later phases
+		h.logger.Warn("unsupported tunnel type", zap.String("type", cmd.Type))
+		return nil, nil
+	}
+}
+
+// handleAndroidTunnel handles Android screen streaming tunnel creation.
+func (h *DefaultCommandHandler) handleAndroidTunnel(ctx context.Context, cmd *pb.CreateTunnel) (*pb.RunnerMessage, error) {
+	if h.androidStreamManager == nil {
+		h.logger.Error("android stream manager not initialized")
+		return nil, ErrInvalidRequest
+	}
+
+	if cmd.AndroidOptions == nil {
+		h.logger.Error("android options not provided")
+		return nil, ErrInvalidRequest
+	}
+
+	// Start the Android stream
+	if err := h.androidStreamManager.StartStream(ctx, cmd); err != nil {
+		h.logger.Error("failed to start android stream",
+			zap.String("tunnel_id", cmd.TunnelId),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+
+	// The stream started message is sent asynchronously by the stream manager
 	return nil, nil
 }
 

@@ -50,6 +50,11 @@ message RunnerMessage {
     SessionAttached session_attached = 7;
     SessionSuspended session_suspended = 8;
     ContextUpdate context_update = 9;
+
+    // Android streaming messages
+    AndroidStreamStarted android_stream_started = 10;
+    AndroidStreamData android_stream_data = 11;
+    AndroidStreamStopped android_stream_stopped = 12;
   }
 }
 
@@ -288,6 +293,19 @@ message CreateTunnel {
 
   // Expiration time (Unix milliseconds)
   int64 expires_at_unix_ms = 6;
+
+  // Android stream options (only used when type = "android")
+  AndroidStreamOptions android_options = 7;
+}
+
+// AndroidStreamOptions configures Android screen streaming via scrcpy
+message AndroidStreamOptions {
+  string device_serial = 1;   // ADB device serial
+  int32 max_width = 2;        // Max video width (0 = original)
+  int32 max_height = 3;       // Max video height (0 = original)
+  int32 max_fps = 4;          // Max frame rate (0 = 60)
+  int32 bitrate = 5;          // Video bitrate in bits/s (0 = 8Mbps)
+  bool audio_enabled = 6;     // Enable audio streaming (requires Android 11+)
 }
 
 //------------------------------------------------------------------------------
@@ -406,4 +424,36 @@ message LogEntry {
   // Runner context
   // Server validates this matches the authenticated runner_id
   string runner_id = 11;
+}
+
+//------------------------------------------------------------------------------
+// Android Streaming Messages
+//------------------------------------------------------------------------------
+
+// AndroidStreamStarted is sent when scrcpy stream is ready
+message AndroidStreamStarted {
+  string tunnel_id = 1;       // Tunnel ID from CreateTunnel
+  string device_serial = 2;   // Device being streamed
+  int32 width = 3;            // Actual video width
+  int32 height = 4;           // Actual video height
+  string video_codec = 5;     // "h264" or "h265"
+  string audio_codec = 6;     // "opus" or "aac" (empty if no audio)
+  bytes video_config = 7;     // H.264 SPS/PPS or H.265 VPS/SPS/PPS
+  bytes audio_config = 8;     // Audio config (codec-specific)
+}
+
+// AndroidStreamData contains video or audio frame data
+message AndroidStreamData {
+  string tunnel_id = 1;       // Tunnel ID
+  bool is_video = 2;          // true = video, false = audio
+  bytes data = 3;             // H.264/H.265 NAL units or audio data
+  int64 pts_us = 4;           // Presentation timestamp in microseconds
+  bool is_keyframe = 5;       // true if this is a keyframe (for video)
+}
+
+// AndroidStreamStopped is sent when stream ends
+message AndroidStreamStopped {
+  string tunnel_id = 1;       // Tunnel ID
+  string reason = 2;          // "closed", "error", "device_disconnected"
+  string error = 3;           // Error message if reason is "error"
 }
