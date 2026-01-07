@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/audit"
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
@@ -71,6 +72,7 @@ type SessionManager struct {
 	connManager      ConnectionManagerInterface
 	cmdSender        CommandSender
 	workspaceManager WorkspaceManagerInterface
+	auditLog         audit.Logger
 	logger           *zap.Logger
 }
 
@@ -80,6 +82,7 @@ type SessionManagerConfig struct {
 	ConnManager      ConnectionManagerInterface
 	CmdSender        CommandSender
 	WorkspaceManager WorkspaceManagerInterface
+	AuditLog         audit.Logger
 	Logger           *zap.Logger
 }
 
@@ -100,6 +103,7 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 		connManager:      cfg.ConnManager,
 		cmdSender:        cfg.CmdSender,
 		workspaceManager: cfg.WorkspaceManager,
+		auditLog:         cfg.AuditLog,
 		logger:           cfg.Logger,
 	}
 }
@@ -213,6 +217,22 @@ func (m *SessionManager) Create(ctx context.Context, opts CreateSessionOptions) 
 		zap.String("agent", session.Agent),
 		zap.String("lifecycle_mode", session.LifecycleMode),
 	)
+
+	// Log audit event
+	if m.auditLog != nil {
+		_ = audit.NewEvent(audit.ActionSessionCreated).
+			WithSystemActor().
+			WithResource(audit.ResourceTypeSession, session.ID).
+			WithSession(session.ID).
+			WithDetails(map[string]any{
+				"workspace_id":   session.WorkspaceID,
+				"agent":          session.Agent,
+				"lifecycle_mode": session.LifecycleMode,
+				"is_byok":        session.IsBYOK,
+			}).
+			WithSuccess(true).
+			Log(ctx, m.auditLog)
+	}
 
 	return session, nil
 }
@@ -411,6 +431,24 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 		zap.Bool("workspace_synced", opts.WorkspaceSynced),
 	)
 
+	// Log audit event
+	if m.auditLog != nil {
+		details := map[string]any{
+			"strategy":         opts.Strategy,
+			"workspace_synced": opts.WorkspaceSynced,
+		}
+		if previousRunnerID != nil {
+			details["previous_runner_id"] = *previousRunnerID
+		}
+		_ = audit.NewEvent(audit.ActionSessionSuspended).
+			WithSystemActor().
+			WithResource(audit.ResourceTypeSession, sessionID).
+			WithSession(sessionID).
+			WithDetails(details).
+			WithSuccess(true).
+			Log(ctx, m.auditLog)
+	}
+
 	return nil
 }
 
@@ -485,6 +523,21 @@ func (m *SessionManager) ResumeWithResult(ctx context.Context, sessionID string)
 		zap.String("session_id", sessionID),
 		zap.Stringp("suspend_strategy", session.SuspendStrategy),
 	)
+
+	// Log audit event
+	if m.auditLog != nil {
+		details := map[string]any{}
+		if session.SuspendStrategy != nil {
+			details["suspend_strategy"] = *session.SuspendStrategy
+		}
+		_ = audit.NewEvent(audit.ActionSessionResumed).
+			WithSystemActor().
+			WithResource(audit.ResourceTypeSession, sessionID).
+			WithSession(sessionID).
+			WithDetails(details).
+			WithSuccess(true).
+			Log(ctx, m.auditLog)
+	}
 
 	result := &ResumeResult{
 		Session:         session,
@@ -576,6 +629,23 @@ func (m *SessionManager) Terminate(ctx context.Context, sessionID string) error 
 		zap.String("from_status", session.Status),
 		zap.Stringp("previous_runner_id", previousRunnerID),
 	)
+
+	// Log audit event
+	if m.auditLog != nil {
+		details := map[string]any{
+			"from_status": session.Status,
+		}
+		if previousRunnerID != nil {
+			details["previous_runner_id"] = *previousRunnerID
+		}
+		_ = audit.NewEvent(audit.ActionSessionTerminated).
+			WithSystemActor().
+			WithResource(audit.ResourceTypeSession, sessionID).
+			WithSession(sessionID).
+			WithDetails(details).
+			WithSuccess(true).
+			Log(ctx, m.auditLog)
+	}
 
 	// Optionally cleanup workspace host directory
 	// Note: The workspace database record is NOT deleted here - only the host directory

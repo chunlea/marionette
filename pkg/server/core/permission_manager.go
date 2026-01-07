@@ -6,6 +6,7 @@ import (
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/audit"
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
@@ -44,6 +45,7 @@ type PermissionManager struct {
 	store      store.Store
 	cmdSender  CommandSender
 	sessionMgr SessionManagerInterface
+	auditLog   audit.Logger
 	logger     *zap.Logger
 }
 
@@ -52,12 +54,14 @@ func NewPermissionManager(
 	store store.Store,
 	cmdSender CommandSender,
 	sessionMgr SessionManagerInterface,
+	auditLog audit.Logger,
 	logger *zap.Logger,
 ) *PermissionManager {
 	return &PermissionManager{
 		store:      store,
 		cmdSender:  cmdSender,
 		sessionMgr: sessionMgr,
+		auditLog:   auditLog,
 		logger:     logger,
 	}
 }
@@ -152,6 +156,27 @@ func (m *PermissionManager) Respond(ctx context.Context, permID string, approved
 		zap.Bool("approved", approved),
 		zap.String("responded_by", respondedBy),
 	)
+
+	// Log audit event
+	if m.auditLog != nil {
+		action := audit.ActionPermissionDenied
+		if approved {
+			action = audit.ActionPermissionApproved
+		}
+		_ = audit.NewEvent(action).
+			WithActor(audit.ActorTypeAPIKey, respondedBy, "").
+			WithResource(audit.ResourceTypePermissionRequest, permID).
+			WithSession(perm.SessionID).
+			WithTask(perm.TaskID).
+			WithDetails(map[string]any{
+				"tool":       perm.Tool,
+				"action":     perm.Action,
+				"reason":     reason,
+				"risk_level": perm.RiskLevel,
+			}).
+			WithSuccess(true).
+			Log(ctx, m.auditLog)
+	}
 
 	// Get session to find runner
 	session, err := m.store.GetSession(ctx, perm.SessionID)
@@ -253,6 +278,22 @@ func (m *PermissionManager) Cancel(ctx context.Context, permID string) error {
 	m.logger.Info("permission request canceled",
 		zap.String("perm_id", permID),
 	)
+
+	// Log audit event
+	if m.auditLog != nil {
+		_ = audit.NewEvent(audit.ActionPermissionCanceled).
+			WithSystemActor().
+			WithResource(audit.ResourceTypePermissionRequest, permID).
+			WithSession(perm.SessionID).
+			WithTask(perm.TaskID).
+			WithDetails(map[string]any{
+				"tool":       perm.Tool,
+				"action":     perm.Action,
+				"risk_level": perm.RiskLevel,
+			}).
+			WithSuccess(true).
+			Log(ctx, m.auditLog)
+	}
 
 	return nil
 }

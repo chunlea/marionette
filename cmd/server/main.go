@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chunlea/marionette/pkg/audit"
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
 	"github.com/chunlea/marionette/pkg/id"
@@ -97,13 +98,17 @@ func main() {
 		// Create workspace manager
 		workspaceMgr := core.NewWorkspaceManager(dbStore, cfg.Storage.Workspace, logger)
 
+		// Create audit logger
+		auditStoreAdapter := audit.NewStoreAdapter(dbStore)
+		auditLog := audit.NewLogger(auditStoreAdapter)
+
 		// Create core managers
 		sessionMgr = core.NewSessionManager(dbStore, connManager, connManager, logger)
 		sessionMgr.SetWorkspaceManager(workspaceMgr)
-		taskMgr = core.NewTaskManager(dbStore, connManager, sessionMgr, logger)
+		taskMgr = core.NewTaskManager(dbStore, connManager, sessionMgr, auditLog, logger)
 
 		// Create permission manager with connection manager as command sender
-		permMgr = core.NewPermissionManager(dbStore, connManager, sessionMgr, logger)
+		permMgr = core.NewPermissionManager(dbStore, connManager, sessionMgr, auditLog, logger)
 
 		// Create permission timeout enforcer
 		permEnforcer = core.NewPermissionTimeoutEnforcer(dbStore, sessionMgr, logger)
@@ -149,6 +154,12 @@ func main() {
 	if sessionMgr != nil {
 		adminOpts = append(adminOpts, admin.WithSessionActivator(sessionMgr))
 		logger.Info("Session activator wired to Admin API")
+	}
+	if dbStore != nil {
+		// Create action log service adapter for admin API
+		actionLogAdapter := admin.NewActionLogStoreAdapter(dbStore)
+		adminOpts = append(adminOpts, admin.WithActionLogService(actionLogAdapter))
+		logger.Info("Action log service wired to Admin API")
 	}
 
 	adminServer := admin.New(admin.Config{

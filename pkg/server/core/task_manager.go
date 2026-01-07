@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/audit"
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
@@ -91,6 +92,7 @@ type TaskManager struct {
 	store      store.Store
 	cmdSender  CommandSender
 	sessionMgr SessionManagerInterface
+	auditLog   audit.Logger
 	logger     *zap.Logger
 }
 
@@ -99,12 +101,14 @@ func NewTaskManager(
 	store store.Store,
 	cmdSender CommandSender,
 	sessionMgr SessionManagerInterface,
+	auditLog audit.Logger,
 	logger *zap.Logger,
 ) *TaskManager {
 	return &TaskManager{
 		store:      store,
 		cmdSender:  cmdSender,
 		sessionMgr: sessionMgr,
+		auditLog:   auditLog,
 		logger:     logger,
 	}
 }
@@ -199,6 +203,21 @@ func (m *TaskManager) Create(ctx context.Context, opts CreateTaskOptions) (*stor
 		zap.Int("max_retries", task.MaxRetries),
 	)
 
+	// Log audit event
+	if m.auditLog != nil {
+		_ = audit.NewEvent(audit.ActionTaskCreated).
+			WithSystemActor().
+			WithResource(audit.ResourceTypeTask, task.ID).
+			WithSession(task.SessionID).
+			WithTask(task.ID).
+			WithDetails(map[string]any{
+				"timeout_seconds": task.TimeoutSeconds,
+				"max_retries":     task.MaxRetries,
+			}).
+			WithSuccess(true).
+			Log(ctx, m.auditLog)
+	}
+
 	return task, nil
 }
 
@@ -272,6 +291,20 @@ func (m *TaskManager) Cancel(ctx context.Context, taskID string) error {
 		zap.String("task_id", taskID),
 		zap.String("from_status", task.Status),
 	)
+
+	// Log audit event
+	if m.auditLog != nil {
+		_ = audit.NewEvent(audit.ActionTaskCanceled).
+			WithSystemActor().
+			WithResource(audit.ResourceTypeTask, taskID).
+			WithSession(task.SessionID).
+			WithTask(taskID).
+			WithDetails(map[string]any{
+				"from_status": task.Status,
+			}).
+			WithSuccess(true).
+			Log(ctx, m.auditLog)
+	}
 
 	return nil
 }
