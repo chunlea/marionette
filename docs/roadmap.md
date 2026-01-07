@@ -1415,6 +1415,11 @@
 
 ### 10.1 HTTP/TCP Tunneling
 
+- [x] Store extension methods (`pkg/store/postgres/storage.go`):
+  - [x] `CloseSessionTunnels` - close all tunnels for a session
+  - [x] `DeleteExpiredTunnels` - remove expired tunnels
+  - [x] `GetTunnelsByRunner` - get all active tunnels for a runner
+  - [x] `GetActiveTunnelCount` - count active tunnels
 - [ ] Tunnel relay implementation:
   - [ ] WebSocket-based tunnel
   - [ ] Proxy HTTP requests to runner port
