@@ -90,6 +90,35 @@ func TestRule_ToArgs(t *testing.T) {
 			},
 			expected: []string{"-A", "OUTPUT", "-j", "LOG", "--log-prefix", "[MARIONETTE] "},
 		},
+		{
+			name: "source CIDR",
+			rule: Rule{
+				Chain:      "INPUT",
+				Action:     ActionAccept,
+				Protocol:   ProtocolTCP,
+				SourceCIDR: mustParseCIDR("192.168.0.0/16"),
+			},
+			expected: []string{"-A", "INPUT", "-p", "tcp", "-s", "192.168.0.0/16", "-j", "ACCEPT"},
+		},
+		{
+			name: "port without tcp/udp is ignored",
+			rule: Rule{
+				Chain:    "OUTPUT",
+				Action:   ActionAccept,
+				Protocol: ProtocolICMP,
+				DestPort: 443,
+			},
+			expected: []string{"-A", "OUTPUT", "-p", "icmp", "-j", "ACCEPT"},
+		},
+		{
+			name: "protocol all is not included",
+			rule: Rule{
+				Chain:    "OUTPUT",
+				Action:   ActionDrop,
+				Protocol: ProtocolAll,
+			},
+			expected: []string{"-A", "OUTPUT", "-j", "DROP"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -124,6 +153,42 @@ func TestRule_String(t *testing.T) {
 				DestPort: 443,
 			},
 			contains: []string{"OUTPUT", "tcp", "8.8.8.8", "443", "ACCEPT"},
+		},
+		{
+			name: "with source IP",
+			rule: Rule{
+				Chain:    "INPUT",
+				Action:   ActionAccept,
+				SourceIP: net.ParseIP("192.168.1.1"),
+			},
+			contains: []string{"INPUT", "from", "192.168.1.1", "ACCEPT"},
+		},
+		{
+			name: "with source CIDR",
+			rule: Rule{
+				Chain:      "INPUT",
+				Action:     ActionAccept,
+				SourceCIDR: mustParseCIDR("192.168.0.0/16"),
+			},
+			contains: []string{"INPUT", "from", "192.168.0.0/16", "ACCEPT"},
+		},
+		{
+			name: "with destination CIDR",
+			rule: Rule{
+				Chain:    "OUTPUT",
+				Action:   ActionDrop,
+				DestCIDR: mustParseCIDR("10.0.0.0/8"),
+			},
+			contains: []string{"OUTPUT", "to", "10.0.0.0/8", "DROP"},
+		},
+		{
+			name: "with protocol all (should not display)",
+			rule: Rule{
+				Chain:    "OUTPUT",
+				Action:   ActionDrop,
+				Protocol: ProtocolAll,
+			},
+			contains: []string{"OUTPUT", "DROP"},
 		},
 	}
 

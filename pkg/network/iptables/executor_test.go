@@ -88,6 +88,46 @@ func TestMockExecutor_RunIPv6(t *testing.T) {
 	})
 }
 
+func TestMockExecutor_OutputIPv6(t *testing.T) {
+	t.Run("returns configured output", func(t *testing.T) {
+		m := NewMockExecutor()
+		expectedOutput := []byte("Chain OUTPUT (policy ACCEPT)")
+		m.Outputs["v6:-L OUTPUT"] = expectedOutput
+
+		output, err := m.OutputIPv6(context.Background(), "-L", "OUTPUT")
+		require.NoError(t, err)
+		assert.Equal(t, expectedOutput, output)
+	})
+
+	t.Run("returns error for configured error", func(t *testing.T) {
+		m := NewMockExecutor()
+		m.Errors["v6:-L OUTPUT"] = errors.New("permission denied")
+
+		output, err := m.OutputIPv6(context.Background(), "-L", "OUTPUT")
+		require.Error(t, err)
+		assert.Nil(t, output)
+		assert.Contains(t, err.Error(), "permission denied")
+	})
+
+	t.Run("returns empty for unconfigured", func(t *testing.T) {
+		m := NewMockExecutor()
+
+		output, err := m.OutputIPv6(context.Background(), "-L", "UNKNOWN")
+		require.NoError(t, err)
+		assert.Empty(t, output)
+	})
+
+	t.Run("records IPv6 commands", func(t *testing.T) {
+		m := NewMockExecutor()
+
+		_, _ = m.OutputIPv6(context.Background(), "-L", "OUTPUT", "-n")
+
+		commands := m.GetIPv6Commands()
+		require.Len(t, commands, 1)
+		assert.Equal(t, []string{"-L", "OUTPUT", "-n"}, commands[0])
+	})
+}
+
 func TestMockExecutor_Reset(t *testing.T) {
 	m := NewMockExecutor()
 
