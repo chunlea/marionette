@@ -58,10 +58,10 @@ func TestResolvedPolicy_AllIPsFiltered(t *testing.T) {
 		{
 			Pattern: "mixed.com",
 			IPs: []net.IP{
-				net.ParseIP("8.8.8.8"),       // Public
-				net.ParseIP("192.168.1.1"),   // Private (blocked)
-				net.ParseIP("1.1.1.1"),       // Public
-				net.ParseIP("127.0.0.1"),     // Loopback (blocked)
+				net.ParseIP("8.8.8.8"),     // Public
+				net.ParseIP("192.168.1.1"), // Private (blocked)
+				net.ParseIP("1.1.1.1"),     // Public
+				net.ParseIP("127.0.0.1"),   // Loopback (blocked)
 			},
 		},
 	}
@@ -131,11 +131,11 @@ func TestResolvedPolicy_IsIPAllowed(t *testing.T) {
 		ip      string
 		allowed bool
 	}{
-		{"1.2.3.4", true},       // In allowed list
-		{"5.6.7.8", true},       // In allowed list
-		{"9.10.11.12", false},   // Not in allowed list
-		{"192.168.1.1", false},  // Blocked (private network)
-		{"127.0.0.1", false},    // Blocked (loopback)
+		{"1.2.3.4", true},      // In allowed list
+		{"5.6.7.8", true},      // In allowed list
+		{"9.10.11.12", false},  // Not in allowed list
+		{"192.168.1.1", false}, // Blocked (private network)
+		{"127.0.0.1", false},   // Blocked (loopback)
 	}
 
 	for _, tt := range tests {
@@ -186,9 +186,9 @@ func TestResolvedPolicy_IsConnectionAllowed(t *testing.T) {
 		port    int
 		allowed bool
 	}{
-		{"1.2.3.4", 443, true},   // Both allowed
-		{"1.2.3.4", 80, false},   // IP allowed, port not
-		{"5.6.7.8", 443, false},  // IP not allowed
+		{"1.2.3.4", 443, true},      // Both allowed
+		{"1.2.3.4", 80, false},      // IP allowed, port not
+		{"5.6.7.8", 443, false},     // IP not allowed
 		{"192.168.1.1", 443, false}, // Blocked IP
 	}
 
@@ -223,8 +223,8 @@ func TestResolvedPolicy_Summary(t *testing.T) {
 	assert.Equal(t, PolicyAllowList, summary["level"])
 	assert.Equal(t, 1, summary["host_patterns"])
 	assert.Equal(t, 2, summary["resolved_ips"])
-	assert.Equal(t, 1, summary["allowed_ips"])  // After filtering
-	assert.Equal(t, 1, summary["blocked_ips"])  // The private IP
+	assert.Equal(t, 1, summary["allowed_ips"]) // After filtering
+	assert.Equal(t, 1, summary["blocked_ips"]) // The private IP
 	assert.False(t, summary["has_errors"].(bool))
 }
 

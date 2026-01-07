@@ -22,10 +22,10 @@ var DefaultBlockedCIDRs = []string{
 	"192.168.0.0/16", // Class C private
 
 	// IPv6 blocked ranges
-	"::1/128",    // IPv6 loopback
-	"fe80::/10",  // IPv6 link-local
-	"fc00::/7",   // IPv6 unique local (private)
-	"fd00::/8",   // IPv6 unique local (private)
+	"::1/128",   // IPv6 loopback
+	"fe80::/10", // IPv6 link-local
+	"fc00::/7",  // IPv6 unique local (private)
+	"fd00::/8",  // IPv6 unique local (private)
 	// Note: We don't block ::ffff:0:0/96 here because Go's net.IP stores
 	// all IPv4 addresses as IPv4-mapped IPv6 internally. Instead, IPv4
 	// addresses are checked against the IPv4 CIDRs above.

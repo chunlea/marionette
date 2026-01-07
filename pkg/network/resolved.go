@@ -141,14 +141,14 @@ func (r *ResolvedPolicy) Summary() map[string]interface{} {
 	filteredCount := len(r.AllIPsFiltered())
 
 	return map[string]interface{}{
-		"level":           r.OriginalPolicy.Level,
-		"host_patterns":   hostCount,
-		"resolved_ips":    ipCount,
-		"allowed_ips":     filteredCount,
-		"blocked_ips":     ipCount - filteredCount,
-		"allowed_ports":   r.AllowedPorts,
-		"pinned_at":       r.PinnedAt,
-		"expires_at":      r.ExpiresAt,
-		"has_errors":      r.HasErrors(),
+		"level":         r.OriginalPolicy.Level,
+		"host_patterns": hostCount,
+		"resolved_ips":  ipCount,
+		"allowed_ips":   filteredCount,
+		"blocked_ips":   ipCount - filteredCount,
+		"allowed_ports": r.AllowedPorts,
+		"pinned_at":     r.PinnedAt,
+		"expires_at":    r.ExpiresAt,
+		"has_errors":    r.HasErrors(),
 	}
 }
