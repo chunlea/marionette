@@ -25,6 +25,8 @@ type Server struct {
 	runners          RunnerAdminService
 	sessionActivator SessionActivator
 	actionLogs       ActionLogService
+	streams          StreamService
+	signaling        SignalingService
 
 	// Basic auth credentials
 	username string
@@ -81,6 +83,20 @@ func WithSessionActivator(s SessionActivator) Option {
 func WithActionLogService(s ActionLogService) Option {
 	return func(srv *Server) {
 		srv.actionLogs = s
+	}
+}
+
+// WithStreamService sets the stream service.
+func WithStreamService(s StreamService) Option {
+	return func(srv *Server) {
+		srv.streams = s
+	}
+}
+
+// WithSignalingService sets the signaling service.
+func WithSignalingService(s SignalingService) Option {
+	return func(srv *Server) {
+		srv.signaling = s
 	}
 }
 
@@ -162,6 +178,17 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 		r.Route("/sessions", func(r chi.Router) {
 			r.Post("/{sessionID}/activate", srv.handleActivateSession)
 			r.Post("/{sessionID}/suspend", srv.handleSuspendSession)
+
+			// Desktop streams for a session
+			r.Post("/{sessionID}/streams/desktop", srv.handleStartDesktopStream)
+			r.Get("/{sessionID}/streams", srv.handleListSessionStreams)
+		})
+
+		// Streams
+		r.Route("/streams", func(r chi.Router) {
+			r.Get("/{streamID}", srv.handleGetStream)
+			r.Delete("/{streamID}", srv.handleStopDesktopStream)
+			r.Get("/{streamID}/signaling", srv.handleSignaling)
 		})
 
 		// Action Logs

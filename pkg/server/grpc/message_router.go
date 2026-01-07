@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/server/core"
@@ -18,6 +19,7 @@ type MessageRouter struct {
 	taskManager       core.TaskManagerInterface
 	permissionManager core.PermissionManagerInterface
 	sessionManager    core.SessionManagerInterface
+	streamManager     core.StreamManagerInterface
 	store             store.Store
 }
 
@@ -49,6 +51,13 @@ func WithMRStore(s store.Store) MessageRouterOption {
 func WithMRSessionManager(sm core.SessionManagerInterface) MessageRouterOption {
 	return func(r *MessageRouter) {
 		r.sessionManager = sm
+	}
+}
+
+// WithMRStreamManager sets the stream manager for the message router.
+func WithMRStreamManager(sm core.StreamManagerInterface) MessageRouterOption {
+	return func(r *MessageRouter) {
+		r.streamManager = sm
 	}
 }
 
@@ -97,6 +106,15 @@ func (r *MessageRouter) HandleMessage(ctx context.Context, runnerID string, msg 
 
 	case *pb.RunnerMessage_ContextUpdate:
 		return r.handleContextUpdate(ctx, runnerID, payload.ContextUpdate)
+
+	case *pb.RunnerMessage_DesktopStreamStarted:
+		return r.handleDesktopStreamStarted(ctx, runnerID, payload.DesktopStreamStarted)
+
+	case *pb.RunnerMessage_DesktopStreamStopped:
+		return r.handleDesktopStreamStopped(ctx, runnerID, payload.DesktopStreamStopped)
+
+	case *pb.RunnerMessage_DesktopStreamError:
+		return r.handleDesktopStreamError(ctx, runnerID, payload.DesktopStreamError)
 
 	default:
 		r.logger.Warn("unknown message type",
@@ -402,4 +420,108 @@ func (r *MessageRouter) handleContextUpdate(ctx context.Context, runnerID string
 	)
 
 	return nil
+}
+
+// handleDesktopStreamStarted processes a desktop stream started message.
+func (r *MessageRouter) handleDesktopStreamStarted(ctx context.Context, runnerID string, msg *pb.DesktopStreamStarted) error {
+	r.logger.Info("desktop stream started",
+		zap.String("runner_id", runnerID),
+		zap.String("stream_id", msg.GetStreamId()),
+		zap.String("session_id", msg.GetSessionId()),
+		zap.String("provider", msg.GetProvider()),
+	)
+
+	if r.streamManager == nil {
+		r.logger.Warn("no stream manager configured, skipping desktop stream started handling")
+		return nil
+	}
+
+	// Convert proto config to core config
+	var config *core.StreamConfig
+	if msg.GetActualConfig() != nil {
+		cfg := msg.GetActualConfig()
+		config = &core.StreamConfig{
+			Width:        int(cfg.GetWidth()),
+			Height:       int(cfg.GetHeight()),
+			FrameRate:    int(cfg.GetFrameRate()),
+			Bitrate:      int(cfg.GetBitrate()),
+			VideoCodec:   cfg.GetVideoCodec(),
+			AudioEnabled: cfg.GetAudioEnabled(),
+			InputEnabled: cfg.GetInputEnabled(),
+			Display:      cfg.GetDisplay(),
+			HWAccel:      cfg.GetHwAccel(),
+		}
+	}
+
+	startedAt := timeFromUnixMS(msg.GetStartedAtUnixMs())
+
+	return r.streamManager.OnStreamStarted(ctx, &core.StreamStartedMessage{
+		StreamID:        msg.GetStreamId(),
+		SessionID:       msg.GetSessionId(),
+		ActualConfig:    config,
+		SignalingURL:    msg.GetSignalingUrl(),
+		Provider:        msg.GetProvider(),
+		ProviderVersion: msg.GetProviderVersion(),
+		StartedAt:       startedAt,
+	})
+}
+
+// handleDesktopStreamStopped processes a desktop stream stopped message.
+func (r *MessageRouter) handleDesktopStreamStopped(ctx context.Context, runnerID string, msg *pb.DesktopStreamStopped) error {
+	r.logger.Info("desktop stream stopped",
+		zap.String("runner_id", runnerID),
+		zap.String("stream_id", msg.GetStreamId()),
+		zap.String("session_id", msg.GetSessionId()),
+		zap.String("reason", msg.GetReason()),
+	)
+
+	if r.streamManager == nil {
+		r.logger.Warn("no stream manager configured, skipping desktop stream stopped handling")
+		return nil
+	}
+
+	stoppedAt := timeFromUnixMS(msg.GetStoppedAtUnixMs())
+
+	return r.streamManager.OnStreamStopped(ctx, &core.StreamStoppedMessage{
+		StreamID:  msg.GetStreamId(),
+		SessionID: msg.GetSessionId(),
+		Reason:    msg.GetReason(),
+		StoppedAt: stoppedAt,
+	})
+}
+
+// handleDesktopStreamError processes a desktop stream error message.
+func (r *MessageRouter) handleDesktopStreamError(ctx context.Context, runnerID string, msg *pb.DesktopStreamError) error {
+	r.logger.Error("desktop stream error",
+		zap.String("runner_id", runnerID),
+		zap.String("stream_id", msg.GetStreamId()),
+		zap.String("session_id", msg.GetSessionId()),
+		zap.String("error", msg.GetError()),
+		zap.String("error_code", msg.GetErrorCode()),
+		zap.Bool("recoverable", msg.GetRecoverable()),
+	)
+
+	if r.streamManager == nil {
+		r.logger.Warn("no stream manager configured, skipping desktop stream error handling")
+		return nil
+	}
+
+	timestamp := timeFromUnixMS(msg.GetTimestampUnixMs())
+
+	return r.streamManager.OnStreamError(ctx, &core.StreamErrorMessage{
+		StreamID:    msg.GetStreamId(),
+		SessionID:   msg.GetSessionId(),
+		Error:       msg.GetError(),
+		ErrorCode:   msg.GetErrorCode(),
+		Recoverable: msg.GetRecoverable(),
+		Timestamp:   timestamp,
+	})
+}
+
+// timeFromUnixMS converts Unix milliseconds to time.Time.
+func timeFromUnixMS(ms int64) time.Time {
+	if ms == 0 {
+		return time.Now()
+	}
+	return time.UnixMilli(ms)
 }
