@@ -234,6 +234,14 @@ type SpawnOptions struct {
 
 	// TenantID is the tenant identifier for isolation.
 	TenantID string
+
+	// NetworkPolicy specifies the network isolation level.
+	// Values: "none", "allow_list", "proxy", "air_gapped"
+	NetworkPolicy string
+
+	// AllowedHosts contains allowed host patterns for allow_list mode.
+	// Supports wildcards: *.github.com, api.*.example.com
+	AllowedHosts []string
 }
 
 // RunnerInstance represents a spawned runner.

@@ -42,6 +42,9 @@ type Provider struct {
 	// networkOnce ensures network is only created once.
 	networkOnce sync.Once
 	networkErr  error
+
+	// networkIsolation handles network policy enforcement.
+	networkIsolation *NetworkIsolation
 }
 
 // Compile-time interface checks.
@@ -68,10 +71,11 @@ func New(cfg *store.ProviderConfig) (*Provider, error) {
 	}
 
 	return &Provider{
-		name:          cfg.Name,
-		config:        dockerCfg,
-		suspendConfig: suspendCfg,
-		client:        client,
+		name:             cfg.Name,
+		config:           dockerCfg,
+		suspendConfig:    suspendCfg,
+		client:           client,
+		networkIsolation: NewNetworkIsolation(),
 	}, nil
 }
 
@@ -82,10 +86,26 @@ func NewWithClient(name string, cfg *Config, suspendCfg *SuspendConfig, client D
 		suspendCfg.applyDefaults()
 	}
 	return &Provider{
-		name:          name,
-		config:        cfg,
-		suspendConfig: suspendCfg,
-		client:        client,
+		name:             name,
+		config:           cfg,
+		suspendConfig:    suspendCfg,
+		client:           client,
+		networkIsolation: NewNetworkIsolation(),
+	}
+}
+
+// NewWithClientAndNetworkIsolation creates a provider with injected client and network isolation (for testing).
+func NewWithClientAndNetworkIsolation(name string, cfg *Config, suspendCfg *SuspendConfig, client DockerClient, ni *NetworkIsolation) *Provider {
+	if suspendCfg == nil {
+		suspendCfg = &SuspendConfig{}
+		suspendCfg.applyDefaults()
+	}
+	return &Provider{
+		name:             name,
+		config:           cfg,
+		suspendConfig:    suspendCfg,
+		client:           client,
+		networkIsolation: ni,
 	}
 }
 
@@ -143,6 +163,15 @@ func (p *Provider) Spawn(ctx context.Context, opts provider.SpawnOptions) (*prov
 		return nil, &provider.ErrSpawnFailed{Reason: "container start failed", Cause: err}
 	}
 
+	// Apply network isolation policy if configured.
+	if opts.NetworkPolicy != "" && opts.NetworkPolicy != "none" {
+		if err := p.networkIsolation.ApplyPolicy(ctx, resp.ID, opts); err != nil {
+			// Cleanup on failure.
+			_ = p.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+			return nil, &provider.ErrSpawnFailed{Reason: "network policy failed", Cause: err}
+		}
+	}
+
 	return &provider.RunnerInstance{
 		ID:          opts.RunnerID,
 		ProviderID:  resp.ID,
@@ -166,6 +195,9 @@ func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
 	if err != nil {
 		return err
 	}
+
+	// Cleanup network isolation rules (ignore errors as container may be stopping).
+	_ = p.networkIsolation.CleanupPolicy(ctx, containerID)
 
 	// Stop with timeout.
 	timeout := defaultStopTimeout
@@ -524,10 +556,11 @@ func NewFromJSON(name string, configJSON, suspendConfigJSON json.RawMessage) (*P
 	}
 
 	return &Provider{
-		name:          name,
-		config:        cfg,
-		suspendConfig: suspendCfg,
-		client:        client,
+		name:             name,
+		config:           cfg,
+		suspendConfig:    suspendCfg,
+		client:           client,
+		networkIsolation: NewNetworkIsolation(),
 	}, nil
 }
 

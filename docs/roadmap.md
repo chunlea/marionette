@@ -1025,21 +1025,36 @@
   - [x] SessionManager: session.created/suspended/resumed/terminated
   - [x] TaskManager: task.created/canceled
 
-### 6.4 Network Isolation (Basic)
+### 6.4 Network Isolation (Basic) ✓
 
-- [ ] Implement allow_list network policy:
-  - [ ] DNS pinning at task start
-  - [ ] Resolve allowed hosts to IPs
-  - [ ] Configure iptables/pf rules
-- [ ] Metadata endpoint blocking:
-  - [ ] Always block 169.254.169.254
-  - [ ] Block link-local addresses
-  - [ ] Block localhost (SSRF prevention)
-- [ ] Docker network isolation:
-  - [ ] Create isolated bridge network
-  - [ ] Apply iptables rules to container
-  - [ ] Block inter-container communication
-- [ ] Policy configuration:
+- [x] Network policy types (`pkg/network/policy.go`):
+  - [x] `PolicyLevel` enum: `none`, `allow_list`, `proxy`, `air_gapped`
+  - [x] `NetworkPolicy` struct with validation
+  - [x] Host pattern validation (DNS label rules)
+- [x] Wildcard host matching (`pkg/network/hostmatcher.go`):
+  - [x] Exact match: `github.com`
+  - [x] Leading wildcard: `*.github.com`
+  - [x] Embedded wildcard: `api.*.example.com`
+- [x] DNS resolver with caching (`pkg/network/resolver.go`):
+  - [x] DNS pinning to prevent rebinding attacks
+  - [x] Configurable cache TTL
+  - [x] Resolve policy hosts to IPs
+- [x] Blocked CIDRs (`pkg/network/blocked.go`):
+  - [x] Metadata service: `169.254.169.254/32`
+  - [x] Link-local: `169.254.0.0/16`
+  - [x] Loopback: `127.0.0.0/8`
+  - [x] Private networks: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+  - [x] IPv6 equivalents
+- [x] iptables manager (`pkg/network/iptables/`):
+  - [x] Chain creation/deletion per session
+  - [x] Rule generation from resolved policy
+  - [x] IPv4 and IPv6 support
+  - [x] Mock executor for testing
+- [x] Docker provider integration:
+  - [x] `NetworkPolicy` and `AllowedHosts` in `SpawnOptions`
+  - [x] Apply iptables rules in container namespace via `nsenter`
+  - [x] Cleanup rules on container destroy
+- [x] Policy configuration:
   ```yaml
   network:
     level: allow_list
