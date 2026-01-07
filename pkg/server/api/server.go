@@ -29,8 +29,9 @@ type Server struct {
 	workspaces  WorkspaceService
 
 	// Streaming services
-	logStream   LogStreamService
-	eventStream EventStreamService
+	logStream     LogStreamService
+	eventStream   EventStreamService
+	browserStream BrowserStreamService
 
 	// Auth
 	apiKeyService *auth.APIKeyService
@@ -98,6 +99,13 @@ func WithLogStreamService(s LogStreamService) Option {
 func WithEventStreamService(s EventStreamService) Option {
 	return func(srv *Server) {
 		srv.eventStream = s
+	}
+}
+
+// WithBrowserStreamService sets the browser stream service for WebSocket browser streaming.
+func WithBrowserStreamService(s BrowserStreamService) Option {
+	return func(srv *Server) {
+		srv.browserStream = s
 	}
 }
 
@@ -196,6 +204,12 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 		})
 
 		r.With(RequireScope("events:read")).Get("/events", srv.handleEventStream)
+
+		// Browser streaming endpoint
+		// Token is passed in query param, so this endpoint does its own auth
+		r.Route("/streams", func(r chi.Router) {
+			r.Get("/{tunnelID}/connect", srv.handleBrowserStream)
+		})
 	})
 
 	srv.server = &http.Server{

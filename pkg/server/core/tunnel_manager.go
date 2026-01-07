@@ -32,6 +32,13 @@ type TunnelConnection struct {
 	ConnectAt time.Time
 }
 
+// TunnelInfo contains essential tunnel information for WebSocket handlers.
+type TunnelInfo struct {
+	TunnelID  string
+	SessionID string
+	Type      string
+}
+
 // NewTunnelManager creates a new TunnelManager.
 func NewTunnelManager(st store.Store, logger *zap.Logger) *TunnelManager {
 	if logger == nil {
