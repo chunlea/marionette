@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -700,4 +701,313 @@ func TestTunnelManager_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	assert.Equal(t, 50, m.GetActiveCount())
+}
+
+func TestTunnelManager_WithURLGenerator(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	customGen := &mockURLGenerator{url: "https://custom.example.com/tunnel/test"}
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+		WithURLGenerator(customGen),
+	)
+
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeHTTP,
+		LocalPort: 3000,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "https://custom.example.com/tunnel/test", tunnel.PublicURL)
+}
+
+type mockURLGenerator struct {
+	url string
+}
+
+func (g *mockURLGenerator) GenerateURL(_ *Tunnel) string {
+	return g.url
+}
+
+func TestTunnelManager_Get_FromStore(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+	)
+
+	// Create a tunnel
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeHTTP,
+		LocalPort: 3000,
+	})
+	require.NoError(t, err)
+
+	// Remove from cache but keep in store
+	m.tunnelsMu.Lock()
+	delete(m.tunnels, tunnel.ID)
+	m.tunnelsMu.Unlock()
+
+	// Get should fetch from store
+	got, err := m.Get(context.Background(), tunnel.ID)
+	require.NoError(t, err)
+	assert.Equal(t, tunnel.ID, got.ID)
+}
+
+func TestTunnelManager_Get_ClosedInStore(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+	)
+
+	// Create a tunnel
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeHTTP,
+		LocalPort: 3000,
+	})
+	require.NoError(t, err)
+
+	// Mark as closed in store
+	closedAt := time.Now()
+	err = store.UpdateTunnel(context.Background(), tunnel.ID, Updates{ClosedAt: &closedAt})
+	require.NoError(t, err)
+
+	// Remove from cache
+	m.tunnelsMu.Lock()
+	delete(m.tunnels, tunnel.ID)
+	m.tunnelsMu.Unlock()
+
+	// Get should return error for closed tunnel
+	_, err = m.Get(context.Background(), tunnel.ID)
+	assert.Equal(t, ErrTunnelClosed, err)
+}
+
+func TestTunnelManager_Get_ExpiredInStore(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+	)
+
+	// Create a tunnel
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeHTTP,
+		LocalPort: 3000,
+		TTL:       -time.Hour, // Already expired
+	})
+	require.NoError(t, err)
+
+	// Remove from cache
+	m.tunnelsMu.Lock()
+	delete(m.tunnels, tunnel.ID)
+	m.tunnelsMu.Unlock()
+
+	// Update store to have expired tunnel
+	store.mu.Lock()
+	if st, ok := store.tunnels[tunnel.ID]; ok {
+		st.tunnel.ExpiresAt = time.Now().Add(-time.Hour)
+	}
+	store.mu.Unlock()
+
+	// Get should return error for expired tunnel
+	_, err = m.Get(context.Background(), tunnel.ID)
+	assert.Equal(t, ErrTunnelExpired, err)
+}
+
+func TestTunnelManager_HandleHTTPRequest_ClosedTunnel(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+	)
+
+	// Create a tunnel
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeHTTP,
+		LocalPort: 3000,
+	})
+	require.NoError(t, err)
+
+	// Close the tunnel
+	err = m.Close(context.Background(), tunnel.ID)
+	require.NoError(t, err)
+
+	// HandleHTTPRequest should return error
+	err = m.HandleHTTPRequest(context.Background(), tunnel.ID, nil, nil)
+	assert.Equal(t, ErrTunnelNotFound, err)
+}
+
+func TestTunnelManager_HandleHTTPRequest_ExpiredTunnel(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+	)
+
+	// Create a tunnel with expired TTL
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeHTTP,
+		LocalPort: 3000,
+		TTL:       -time.Hour,
+	})
+	require.NoError(t, err)
+
+	// Manually expire the tunnel
+	m.tunnelsMu.Lock()
+	if active, ok := m.tunnels[tunnel.ID]; ok {
+		active.ExpiresAt = time.Now().Add(-time.Hour)
+	}
+	m.tunnelsMu.Unlock()
+
+	// HandleHTTPRequest should return expired error
+	err = m.HandleHTTPRequest(context.Background(), tunnel.ID, nil, nil)
+	assert.Equal(t, ErrTunnelExpired, err)
+}
+
+func TestTunnelManager_HandleHTTPRequest_WithConnectedHandler(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+	)
+
+	// Create an HTTP tunnel
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeHTTP,
+		LocalPort: 3000,
+	})
+	require.NoError(t, err)
+
+	// Register a connected handler
+	handler := newMockConnectionHandler()
+	m.RegisterHandler("run_456", handler)
+
+	// HandleHTTPRequest with nil writer/request will return error
+	// but it should get past the connection check
+	err = m.HandleHTTPRequest(context.Background(), tunnel.ID, nil, nil)
+	// Since proxy is not implemented in PR3, this will just return nil or panic
+	// For PR3, we just verify handler lookup works by checking it doesn't return ErrRunnerNotConnected
+	assert.NotEqual(t, ErrRunnerNotConnected, err)
+}
+
+func TestTunnelManager_HandleTCPConnection_ClosedTunnel(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+	)
+
+	// Create a tunnel
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeTCP,
+		LocalPort: 5432,
+	})
+	require.NoError(t, err)
+
+	// Close the tunnel
+	err = m.Close(context.Background(), tunnel.ID)
+	require.NoError(t, err)
+
+	// HandleTCPConnection should return error
+	err = m.HandleTCPConnection(context.Background(), tunnel.ID, nil)
+	assert.Equal(t, ErrTunnelNotFound, err)
+}
+
+func TestTunnelManager_HandleTCPConnection_ExpiredTunnel(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+	)
+
+	// Create a tunnel
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeTCP,
+		LocalPort: 5432,
+	})
+	require.NoError(t, err)
+
+	// Manually expire the tunnel
+	m.tunnelsMu.Lock()
+	if active, ok := m.tunnels[tunnel.ID]; ok {
+		active.ExpiresAt = time.Now().Add(-time.Hour)
+	}
+	m.tunnelsMu.Unlock()
+
+	// HandleTCPConnection should return expired error
+	err = m.HandleTCPConnection(context.Background(), tunnel.ID, nil)
+	assert.Equal(t, ErrTunnelExpired, err)
+}
+
+func TestTunnelManager_ValidateToken_ExpiredTunnel(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+	)
+
+	// Create a tunnel
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeHTTP,
+		LocalPort: 3000,
+	})
+	require.NoError(t, err)
+
+	// Manually expire the tunnel
+	m.tunnelsMu.Lock()
+	if active, ok := m.tunnels[tunnel.ID]; ok {
+		active.ExpiresAt = time.Now().Add(-time.Hour)
+	}
+	m.tunnelsMu.Unlock()
+
+	// ValidateToken should return expired error
+	_, err = m.ValidateToken(context.Background(), tunnel.ID, tunnel.Token)
+	assert.Equal(t, ErrTunnelExpired, err)
+}
+
+func TestIsNotFoundError(t *testing.T) {
+	assert.True(t, isNotFoundError(ErrTunnelNotFound))
+	assert.False(t, isNotFoundError(errors.New("other error")))
+	assert.False(t, isNotFoundError(nil))
 }

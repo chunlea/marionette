@@ -74,7 +74,7 @@ type URLGenerator interface {
 type ManagerConfig struct {
 	Store   Store
 	Logger  *zap.Logger
-	BaseURL string      // Base URL for generating public URLs
+	BaseURL string // Base URL for generating public URLs
 	IDGen   func() string
 	URLGen  URLGenerator
 }
