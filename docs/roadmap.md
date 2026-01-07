@@ -1013,11 +1013,17 @@
   - [x] Details (JSON)
   - [x] IP address, user agent
   - [x] Success/failure
-- [ ] Admin API for audit logs:
-  - [ ] `GET /admin/api/v1/action-logs`
-  - [ ] Filter by actor, action, resource, time range
-  - [ ] Pagination support
-- [ ] Integration with existing services (deferred)
+- [x] Admin API for audit logs:
+  - [x] `GET /admin/api/v1/action-logs` - List with pagination
+  - [x] `GET /admin/api/v1/action-logs/{id}` - Get single log
+  - [x] Filter by actor_type, actor_id, action, action_prefix
+  - [x] Filter by resource_type, resource_id, session_id, task_id
+  - [x] Filter by success, time range (from/to in RFC3339)
+  - [x] Cursor-based pagination
+- [x] Integration with existing services:
+  - [x] PermissionManager: permission.approved/denied/canceled
+  - [x] SessionManager: session.created/suspended/resumed/terminated
+  - [x] TaskManager: task.created/canceled
 
 ### 6.4 Network Isolation (Basic)
 

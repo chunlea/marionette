@@ -24,6 +24,7 @@ type Server struct {
 	providerConfigs  ProviderConfigService
 	runners          RunnerAdminService
 	sessionActivator SessionActivator
+	actionLogs       ActionLogService
 
 	// Basic auth credentials
 	username string
@@ -73,6 +74,13 @@ func WithRunnerAdminService(s RunnerAdminService) Option {
 func WithSessionActivator(s SessionActivator) Option {
 	return func(srv *Server) {
 		srv.sessionActivator = s
+	}
+}
+
+// WithActionLogService sets the action log service.
+func WithActionLogService(s ActionLogService) Option {
+	return func(srv *Server) {
+		srv.actionLogs = s
 	}
 }
 
@@ -154,6 +162,12 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 		r.Route("/sessions", func(r chi.Router) {
 			r.Post("/{sessionID}/activate", srv.handleActivateSession)
 			r.Post("/{sessionID}/suspend", srv.handleSuspendSession)
+		})
+
+		// Action Logs
+		r.Route("/action-logs", func(r chi.Router) {
+			r.Get("/", srv.handleListActionLogs)
+			r.Get("/{logID}", srv.handleGetActionLog)
 		})
 	})
 
