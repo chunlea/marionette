@@ -3,14 +3,19 @@
 
 FROM golang:1.25-alpine
 
-# Install dependencies needed for tests
+# Install dependencies needed for tests (including gcc for CGO/race detector)
 RUN apk add --no-cache \
     git \
     make \
     util-linux \
     bash \
     iptables \
-    ip6tables
+    ip6tables \
+    gcc \
+    musl-dev
+
+# Enable CGO for race detector
+ENV CGO_ENABLED=1
 
 # Set working directory
 WORKDIR /app
@@ -25,5 +30,5 @@ COPY . .
 # Set environment variable for tests
 ENV MARIONETTE_RUNNER_TOKEN=test_token
 
-# Run tests with coverage
-CMD ["go", "test", "-race", "-cover", "./pkg/agent/..."]
+# Run tests with coverage for all packages
+CMD ["go", "test", "-race", "-cover", "./pkg/..."]
