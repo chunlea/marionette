@@ -161,3 +161,13 @@ type ListLogArchivesOptions struct {
 	BaseListOptions
 	IncludeDeleted bool // Include soft-deleted archives
 }
+
+// ListAndroidStreamsOptions for filtering Android streams.
+type ListAndroidStreamsOptions struct {
+	BaseListOptions
+	SessionID     *string  // Filter by session
+	RunnerID      *string  // Filter by runner
+	DeviceSerial  *string  // Filter by device serial
+	State         []string // Filter by state (starting, active, paused, closing, closed, failed)
+	IncludeClosed bool     // Include closed streams
+}

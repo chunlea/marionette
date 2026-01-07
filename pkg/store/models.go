@@ -593,3 +593,38 @@ type Manifest struct {
 	TenantID    string          `json:"tenant_id"`
 	CreatedAt   time.Time       `json:"created_at"`
 }
+
+// AndroidStream represents an Android screen streaming session.
+type AndroidStream struct {
+	ID           string          `json:"id"`
+	SessionID    string          `json:"session_id"`
+	RunnerID     *string         `json:"runner_id,omitempty"`
+	DeviceSerial string          `json:"device_serial"`
+	State        string          `json:"state"` // starting, active, paused, closing, closed, failed
+	ErrorMessage *string         `json:"error_message,omitempty"`
+	Options      json.RawMessage `json:"options"`
+	Width        *int            `json:"width,omitempty"`
+	Height       *int            `json:"height,omitempty"`
+	VideoCodec   *string         `json:"video_codec,omitempty"`
+	AudioCodec   *string         `json:"audio_codec,omitempty"`
+	LocalPort    *int            `json:"local_port,omitempty"`
+	TenantID     *string         `json:"tenant_id,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	StartedAt    *time.Time      `json:"started_at,omitempty"`
+	ClosedAt     *time.Time      `json:"closed_at,omitempty"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+}
+
+// AndroidStreamUpdates contains fields that can be updated on an Android stream.
+type AndroidStreamUpdates struct {
+	RunnerID     *string
+	State        *string
+	ErrorMessage *string
+	Width        *int
+	Height       *int
+	VideoCodec   *string
+	AudioCodec   *string
+	LocalPort    *int
+	StartedAt    *time.Time
+	ClosedAt     *time.Time
+}

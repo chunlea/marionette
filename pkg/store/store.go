@@ -157,6 +157,13 @@ type Store interface {
 	GetLatestManifest(ctx context.Context, workspaceID string) (*Manifest, error)
 	DeleteManifest(ctx context.Context, id string) error
 
+	// AndroidStreams
+	CreateAndroidStream(ctx context.Context, stream *AndroidStream) error
+	GetAndroidStream(ctx context.Context, id string) (*AndroidStream, error)
+	ListAndroidStreams(ctx context.Context, opts ListAndroidStreamsOptions) (*ListResult[AndroidStream], error)
+	UpdateAndroidStream(ctx context.Context, id string, updates AndroidStreamUpdates) error
+	DeleteAndroidStream(ctx context.Context, id string) error
+
 	// Transactions
 	BeginTx(ctx context.Context) (Tx, error)
 
@@ -318,6 +325,13 @@ type Tx interface {
 	GetManifest(ctx context.Context, id string) (*Manifest, error)
 	GetLatestManifest(ctx context.Context, workspaceID string) (*Manifest, error)
 	DeleteManifest(ctx context.Context, id string) error
+
+	// AndroidStreams
+	CreateAndroidStream(ctx context.Context, stream *AndroidStream) error
+	GetAndroidStream(ctx context.Context, id string) (*AndroidStream, error)
+	ListAndroidStreams(ctx context.Context, opts ListAndroidStreamsOptions) (*ListResult[AndroidStream], error)
+	UpdateAndroidStream(ctx context.Context, id string, updates AndroidStreamUpdates) error
+	DeleteAndroidStream(ctx context.Context, id string) error
 
 	// Transaction control
 	Commit(ctx context.Context) error

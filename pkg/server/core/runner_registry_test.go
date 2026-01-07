@@ -365,6 +365,21 @@ func (m *mockRunnerStore) BeginTx(_ context.Context) (store.Tx, error) { return 
 func (m *mockRunnerStore) Ping(_ context.Context) error                { return nil }
 func (m *mockRunnerStore) Close() error                                { return nil }
 
+// AndroidStream methods (stub)
+func (m *mockRunnerStore) CreateAndroidStream(_ context.Context, _ *store.AndroidStream) error {
+	return nil
+}
+func (m *mockRunnerStore) GetAndroidStream(_ context.Context, _ string) (*store.AndroidStream, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockRunnerStore) ListAndroidStreams(_ context.Context, _ store.ListAndroidStreamsOptions) (*store.ListResult[store.AndroidStream], error) {
+	return &store.ListResult[store.AndroidStream]{}, nil
+}
+func (m *mockRunnerStore) UpdateAndroidStream(_ context.Context, _ string, _ store.AndroidStreamUpdates) error {
+	return nil
+}
+func (m *mockRunnerStore) DeleteAndroidStream(_ context.Context, _ string) error { return nil }
+
 func TestRunnerRegistry_Register_NoToken(t *testing.T) {
 	runnerStore := newMockRunnerStore()
 	tokenStore := mockstore.NewRunnerTokenStore()

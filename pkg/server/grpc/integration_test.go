@@ -417,6 +417,21 @@ func (s *integrationTestStore) BeginTx(_ context.Context) (store.Tx, error) { re
 func (s *integrationTestStore) Ping(_ context.Context) error                { return nil }
 func (s *integrationTestStore) Close() error                                { return nil }
 
+// AndroidStream methods (stub)
+func (s *integrationTestStore) CreateAndroidStream(_ context.Context, _ *store.AndroidStream) error {
+	return nil
+}
+func (s *integrationTestStore) GetAndroidStream(_ context.Context, _ string) (*store.AndroidStream, error) {
+	return nil, store.ErrNotFound
+}
+func (s *integrationTestStore) ListAndroidStreams(_ context.Context, _ store.ListAndroidStreamsOptions) (*store.ListResult[store.AndroidStream], error) {
+	return &store.ListResult[store.AndroidStream]{}, nil
+}
+func (s *integrationTestStore) UpdateAndroidStream(_ context.Context, _ string, _ store.AndroidStreamUpdates) error {
+	return nil
+}
+func (s *integrationTestStore) DeleteAndroidStream(_ context.Context, _ string) error { return nil }
+
 // integrationTestSetup holds all test components.
 type integrationTestSetup struct {
 	server      *grpc.Server

@@ -576,3 +576,18 @@ func (s *testStore) Close() error {
 func (s *testStore) DeleteDataKey(_ context.Context, _ string) error {
 	return nil
 }
+
+// AndroidStream methods (stub)
+func (s *testStore) CreateAndroidStream(_ context.Context, _ *store.AndroidStream) error {
+	return nil
+}
+func (s *testStore) GetAndroidStream(_ context.Context, _ string) (*store.AndroidStream, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testStore) ListAndroidStreams(_ context.Context, _ store.ListAndroidStreamsOptions) (*store.ListResult[store.AndroidStream], error) {
+	return &store.ListResult[store.AndroidStream]{}, nil
+}
+func (s *testStore) UpdateAndroidStream(_ context.Context, _ string, _ store.AndroidStreamUpdates) error {
+	return nil
+}
+func (s *testStore) DeleteAndroidStream(_ context.Context, _ string) error { return nil }

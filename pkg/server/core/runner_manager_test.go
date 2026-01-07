@@ -409,6 +409,21 @@ func (w *testStoreWrapper) BeginTx(_ context.Context) (store.Tx, error) { return
 func (w *testStoreWrapper) Ping(_ context.Context) error                { return nil }
 func (w *testStoreWrapper) Close() error                                { return nil }
 
+// AndroidStream methods (stub)
+func (w *testStoreWrapper) CreateAndroidStream(_ context.Context, _ *store.AndroidStream) error {
+	return nil
+}
+func (w *testStoreWrapper) GetAndroidStream(_ context.Context, _ string) (*store.AndroidStream, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListAndroidStreams(_ context.Context, _ store.ListAndroidStreamsOptions) (*store.ListResult[store.AndroidStream], error) {
+	return &store.ListResult[store.AndroidStream]{}, nil
+}
+func (w *testStoreWrapper) UpdateAndroidStream(_ context.Context, _ string, _ store.AndroidStreamUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteAndroidStream(_ context.Context, _ string) error { return nil }
+
 // Helper to create test setup with real RunnerManager
 func setupRunnerManagerTest() (*RunnerManager, *testRunnerStore) {
 	s := newTestRunnerStore()

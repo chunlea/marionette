@@ -32,6 +32,10 @@ type Server struct {
 	logStream   LogStreamService
 	eventStream EventStreamService
 
+	// Android streaming services
+	androidStreams   AndroidStreamService
+	androidSignaling AndroidSignalingService
+
 	// Auth
 	apiKeyService *auth.APIKeyService
 }
@@ -101,6 +105,20 @@ func WithEventStreamService(s EventStreamService) Option {
 	}
 }
 
+// WithAndroidStreamService sets the Android stream service for screen streaming.
+func WithAndroidStreamService(s AndroidStreamService) Option {
+	return func(srv *Server) {
+		srv.androidStreams = s
+	}
+}
+
+// WithAndroidSignalingService sets the Android signaling service for WebRTC signaling.
+func WithAndroidSignalingService(s AndroidSignalingService) Option {
+	return func(srv *Server) {
+		srv.androidSignaling = s
+	}
+}
+
 // New creates a new public API server.
 func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	srv := &Server{
@@ -154,6 +172,18 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.With(RequireScope("sessions:write")).Post("/{sessionID}/suspend", srv.handleSuspendSession)
 			r.With(RequireScope("sessions:write")).Post("/{sessionID}/resume", srv.handleResumeSession)
 			r.With(RequireScope("sessions:write")).Delete("/{sessionID}", srv.handleTerminateSession)
+
+			// Android streaming routes (nested under session)
+			r.Route("/{sessionID}/android", func(r chi.Router) {
+				// Streams
+				r.With(RequireScope("streams:write")).Post("/streams", srv.handleStartAndroidStream)
+				r.With(RequireScope("streams:read")).Get("/streams", srv.handleListAndroidStreams)
+				r.With(RequireScope("streams:read")).Get("/streams/{streamID}", srv.handleGetAndroidStream)
+				r.With(RequireScope("streams:write")).Delete("/streams/{streamID}", srv.handleStopAndroidStream)
+				r.With(RequireScope("streams:write")).Post("/streams/{streamID}/input", srv.handleSendAndroidInput)
+				// Devices
+				r.With(RequireScope("streams:read")).Get("/devices", srv.handleListAndroidDevices)
+			})
 		})
 
 		// Tasks
@@ -196,6 +226,11 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 		})
 
 		r.With(RequireScope("events:read")).Get("/events", srv.handleEventStream)
+
+		// Android WebRTC signaling (WebSocket)
+		r.Route("/android/streams", func(r chi.Router) {
+			r.With(RequireScope("streams:read")).Get("/{streamID}/signal", srv.handleAndroidSignaling)
+		})
 	})
 
 	srv.server = &http.Server{

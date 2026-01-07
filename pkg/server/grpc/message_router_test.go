@@ -950,6 +950,21 @@ func (m *mockStoreForRouter) BeginTx(_ context.Context) (store.Tx, error)      {
 func (m *mockStoreForRouter) Ping(_ context.Context) error                     { return nil }
 func (m *mockStoreForRouter) Close() error                                     { return nil }
 
+// AndroidStream methods (stub)
+func (m *mockStoreForRouter) CreateAndroidStream(_ context.Context, _ *store.AndroidStream) error {
+	return nil
+}
+func (m *mockStoreForRouter) GetAndroidStream(_ context.Context, _ string) (*store.AndroidStream, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStoreForRouter) ListAndroidStreams(_ context.Context, _ store.ListAndroidStreamsOptions) (*store.ListResult[store.AndroidStream], error) {
+	return &store.ListResult[store.AndroidStream]{}, nil
+}
+func (m *mockStoreForRouter) UpdateAndroidStream(_ context.Context, _ string, _ store.AndroidStreamUpdates) error {
+	return nil
+}
+func (m *mockStoreForRouter) DeleteAndroidStream(_ context.Context, _ string) error { return nil }
+
 func TestMessageRouter_HandleMessage_PermissionRequest_WithManager(t *testing.T) {
 	logger := zap.NewNop()
 	pm := &mockPermissionManager{}
