@@ -53,6 +53,8 @@ type RunnerService struct {
 	router           MessageRouterInterface
 	registry         *core.RunnerRegistry
 	logSubscriberMgr core.LogSubscriberManagerInterface
+	tunnelMgr        *core.TunnelManager
+	frameHub         *core.FrameHub
 }
 
 // RunnerServiceOption is a functional option for RunnerService.
