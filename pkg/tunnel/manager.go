@@ -378,6 +378,8 @@ func (m *TunnelManager) ValidateToken(_ context.Context, tunnelID, token string)
 }
 
 // HandleHTTPRequest handles an incoming HTTP request for a tunnel.
+// It serializes the request, sends it to the runner, waits for the response,
+// and writes the response back to the client.
 func (m *TunnelManager) HandleHTTPRequest(ctx context.Context, tunnelID string, w http.ResponseWriter, r *http.Request) error {
 	// Get tunnel
 	m.tunnelsMu.RLock()
@@ -396,6 +398,11 @@ func (m *TunnelManager) HandleHTTPRequest(ctx context.Context, tunnelID string, 
 		return ErrTunnelExpired
 	}
 
+	// Verify tunnel type
+	if active.Type != TypeHTTP {
+		return fmt.Errorf("tunnel type mismatch: expected %s, got %s", TypeHTTP, active.Type)
+	}
+
 	// Get handler for runner
 	m.handlersMu.RLock()
 	handler, hasHandler := m.handlers[active.RunnerID]
@@ -409,13 +416,8 @@ func (m *TunnelManager) HandleHTTPRequest(ctx context.Context, tunnelID string, 
 	active.connections.Add(1)
 	defer active.connections.Done()
 
-	// HTTP proxying will be implemented in PR 2
-	_ = ctx
-	_ = w
-	_ = r
-	_ = handler
-
-	return nil
+	// Proxy the HTTP request
+	return m.handleHTTPProxyRequest(ctx, tunnelID, handler, w, r)
 }
 
 // HandleTCPConnection handles an incoming TCP connection for a tunnel.
