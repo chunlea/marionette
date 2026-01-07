@@ -18,6 +18,7 @@ type testStore struct {
 	taskRuns           map[string]*store.TaskRun
 	permissionRequests map[string]*store.PermissionRequest
 	logs               []*store.Log
+	tunnels            map[string]*store.Tunnel
 }
 
 func newTestStore() *testStore {
@@ -28,6 +29,7 @@ func newTestStore() *testStore {
 		taskRuns:           make(map[string]*store.TaskRun),
 		permissionRequests: make(map[string]*store.PermissionRequest),
 		logs:               make([]*store.Log, 0),
+		tunnels:            make(map[string]*store.Tunnel),
 	}
 }
 
@@ -461,20 +463,70 @@ func (s *testStore) UpdateSnapshot(_ context.Context, _ string, _ store.Snapshot
 }
 func (s *testStore) DeleteSnapshot(_ context.Context, _ string) error { return nil }
 
-func (s *testStore) CreateTunnel(_ context.Context, _ *store.Tunnel) error { return nil }
-func (s *testStore) GetTunnel(_ context.Context, _ string) (*store.Tunnel, error) {
-	return nil, store.ErrNotFound
-}
-func (s *testStore) GetTunnelByTokenHash(_ context.Context, _ string) (*store.Tunnel, error) {
-	return nil, store.ErrNotFound
-}
-func (s *testStore) ListTunnels(_ context.Context, _ store.ListTunnelsOptions) (*store.ListResult[store.Tunnel], error) {
-	return &store.ListResult[store.Tunnel]{}, nil
-}
-func (s *testStore) UpdateTunnel(_ context.Context, _ string, _ store.TunnelUpdates) error {
+func (s *testStore) CreateTunnel(_ context.Context, tunnel *store.Tunnel) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tunnels[tunnel.ID] = tunnel
 	return nil
 }
-func (s *testStore) DeleteTunnel(_ context.Context, _ string) error { return nil }
+func (s *testStore) GetTunnel(_ context.Context, id string) (*store.Tunnel, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tunnel, ok := s.tunnels[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return tunnel, nil
+}
+func (s *testStore) GetTunnelByTokenHash(_ context.Context, hash string) (*store.Tunnel, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, tunnel := range s.tunnels {
+		if tunnel.TokenHash == hash {
+			return tunnel, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+func (s *testStore) ListTunnels(_ context.Context, opts store.ListTunnelsOptions) (*store.ListResult[store.Tunnel], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]*store.Tunnel, 0, len(s.tunnels))
+	for _, tunnel := range s.tunnels {
+		if opts.SessionID != nil && tunnel.SessionID != *opts.SessionID {
+			continue
+		}
+		if !opts.IncludeClosed && tunnel.ClosedAt != nil {
+			continue
+		}
+		items = append(items, tunnel)
+	}
+	return &store.ListResult[store.Tunnel]{Items: items}, nil
+}
+func (s *testStore) UpdateTunnel(_ context.Context, id string, updates store.TunnelUpdates) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tunnel, ok := s.tunnels[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if updates.RunnerID != nil {
+		tunnel.RunnerID = updates.RunnerID
+	}
+	if updates.PublicURL != nil {
+		tunnel.PublicURL = updates.PublicURL
+	}
+	if updates.ClosedAt != nil {
+		tunnel.ClosedAt = updates.ClosedAt
+	}
+	return nil
+}
+func (s *testStore) DeleteTunnel(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tunnels, id)
+	return nil
+}
 
 func (s *testStore) CreateActionLog(_ context.Context, _ *store.ActionLog) error { return nil }
 func (s *testStore) GetActionLog(_ context.Context, _ string) (*store.ActionLog, error) {
