@@ -179,9 +179,18 @@ func filterToOptions(filter Filter) store.ListActionLogsOptions {
 		opts.Success = &f
 	}
 
-	// Note: ActionPrefix, StartTime, EndTime, Offset are not supported by
-	// the existing ListActionLogsOptions. These would need to be added to
-	// the store layer if needed.
+	// Action prefix filter
+	if filter.ActionPrefix != "" {
+		opts.ActionPrefix = &filter.ActionPrefix
+	}
+
+	// Time range filters
+	if !filter.StartTime.IsZero() {
+		opts.From = &filter.StartTime
+	}
+	if !filter.EndTime.IsZero() {
+		opts.To = &filter.EndTime
+	}
 
 	return opts
 }

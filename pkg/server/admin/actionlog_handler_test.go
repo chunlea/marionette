@@ -217,3 +217,150 @@ func TestActionLogHandlers_RequiresAuth(t *testing.T) {
 		}
 	})
 }
+
+func TestActionLogHandlers_Filters(t *testing.T) {
+	mockService := NewMockActionLogService()
+	srv := newTestServer(WithActionLogService(mockService))
+
+	// Add test data
+	mockService.AddLog(&store.ActionLog{
+		ID:           "alog_test1",
+		ActorType:    "api_key",
+		Action:       "permission.approved",
+		ResourceType: "permission_request",
+		ResourceID:   "perm_abc",
+		Success:      true,
+		CreatedAt:    time.Now(),
+	})
+
+	t.Run("list with actor_type filter", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/action-logs?actor_type=api_key", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+		}
+	})
+
+	t.Run("list with action filter", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/action-logs?action=permission.approved", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+		}
+	})
+
+	t.Run("list with action_prefix filter", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/action-logs?action_prefix=permission.", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+		}
+	})
+
+	t.Run("list with resource filters", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/action-logs?resource_type=permission_request&resource_id=perm_abc", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+		}
+	})
+
+	t.Run("list with session_id filter", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/action-logs?session_id=sess_abc", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+		}
+	})
+
+	t.Run("list with success filter", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/action-logs?success=true", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+		}
+	})
+
+	t.Run("list with time range filters", func(t *testing.T) {
+		from := time.Now().Add(-24 * time.Hour).Format(time.RFC3339)
+		to := time.Now().Format(time.RFC3339)
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/action-logs?from="+from+"&to="+to, nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+		}
+	})
+
+	t.Run("list with invalid from time format", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/action-logs?from=invalid-time", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected status %d, got %d", http.StatusBadRequest, rr.Code)
+		}
+
+		var errResp ErrorResponse
+		if err := json.NewDecoder(rr.Body).Decode(&errResp); err != nil {
+			t.Fatalf("failed to decode error response: %v", err)
+		}
+
+		if errResp.Code != "invalid_parameter" {
+			t.Errorf("expected error code 'invalid_parameter', got %q", errResp.Code)
+		}
+	})
+
+	t.Run("list with invalid to time format", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/action-logs?to=2024-01-01", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected status %d, got %d", http.StatusBadRequest, rr.Code)
+		}
+	})
+
+	t.Run("list with multiple filters", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/action-logs?actor_type=api_key&action=permission.approved&success=true", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+		}
+	})
+}
