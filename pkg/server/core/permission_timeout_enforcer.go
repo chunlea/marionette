@@ -147,8 +147,9 @@ func (e *PermissionTimeoutEnforcer) checkTimeouts(ctx context.Context) error {
 			zap.Duration("suspend_after", suspendAfter),
 		)
 
-		// Suspend the session
-		if err := e.sessionMgr.Suspend(ctx, session.ID, "permission_timeout"); err != nil {
+		// Suspend the session using terminate_preserve_storage strategy
+		// This releases the runner while preserving workspace for resume
+		if err := e.sessionMgr.Suspend(ctx, session.ID, "terminate_preserve_storage"); err != nil {
 			e.logger.Error("failed to suspend session after permission timeout",
 				zap.String("session_id", session.ID),
 				zap.String("perm_id", perm.ID),

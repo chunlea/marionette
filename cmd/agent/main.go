@@ -102,6 +102,7 @@ func main() {
 	cmdHandler.OnApprovePermission = func(ctx context.Context, cmd *pb.ApprovePermission) error {
 		return taskRunner.HandlePermissionResponse(ctx, cmd)
 	}
+	cmdHandler.OnDetachSession = taskRunner.CancelTask
 
 	// Start control channel
 	if err := controlChannel.Start(ctx); err != nil {

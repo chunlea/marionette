@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -16,6 +17,7 @@ type MessageRouter struct {
 	runnerManager     RunnerManagerInterface
 	taskManager       core.TaskManagerInterface
 	permissionManager core.PermissionManagerInterface
+	sessionManager    core.SessionManagerInterface
 	store             store.Store
 }
 
@@ -40,6 +42,13 @@ func WithMRPermissionManager(pm core.PermissionManagerInterface) MessageRouterOp
 func WithMRStore(s store.Store) MessageRouterOption {
 	return func(r *MessageRouter) {
 		r.store = s
+	}
+}
+
+// WithMRSessionManager sets the session manager for the message router.
+func WithMRSessionManager(sm core.SessionManagerInterface) MessageRouterOption {
+	return func(r *MessageRouter) {
+		r.sessionManager = sm
 	}
 }
 
@@ -85,6 +94,9 @@ func (r *MessageRouter) HandleMessage(ctx context.Context, runnerID string, msg 
 
 	case *pb.RunnerMessage_SessionSuspended:
 		return r.handleSessionSuspended(ctx, runnerID, payload.SessionSuspended)
+
+	case *pb.RunnerMessage_ContextUpdate:
+		return r.handleContextUpdate(ctx, runnerID, payload.ContextUpdate)
 
 	default:
 		r.logger.Warn("unknown message type",
@@ -341,5 +353,53 @@ func (r *MessageRouter) handleSessionSuspended(_ context.Context, runnerID strin
 		zap.String("session_id", msg.GetSessionId()),
 	)
 	// G3: Implement session suspended handling
+	return nil
+}
+
+// handleContextUpdate processes a context update from the runner.
+// This is used to save context (like Claude Code's conversation_id)
+// for session resume.
+func (r *MessageRouter) handleContextUpdate(ctx context.Context, runnerID string, msg *pb.ContextUpdate) error {
+	r.logger.Info("received context update",
+		zap.String("runner_id", runnerID),
+		zap.String("session_id", msg.GetSessionId()),
+		zap.String("task_id", msg.GetTaskId()),
+		zap.Int("context_size", len(msg.GetContextSnapshot())),
+	)
+
+	if r.sessionManager == nil {
+		r.logger.Warn("session manager not set, cannot save context update")
+		return nil
+	}
+
+	// Parse context snapshot to create ContextSnapshot object
+	var snapshotData map[string]interface{}
+	if err := json.Unmarshal(msg.GetContextSnapshot(), &snapshotData); err != nil {
+		r.logger.Warn("failed to parse context snapshot",
+			zap.Error(err),
+		)
+		return nil
+	}
+
+	// Create context snapshot with conversation_id
+	snapshot := core.NewContextSnapshot()
+	if convID, ok := snapshotData["conversation_id"].(string); ok {
+		snapshot.ConversationID = convID
+	}
+
+	// Save to session
+	if err := r.sessionManager.UpdateContextSnapshot(ctx, msg.GetSessionId(), snapshot); err != nil {
+		r.logger.Warn("failed to update session context snapshot",
+			zap.String("session_id", msg.GetSessionId()),
+			zap.Error(err),
+		)
+		return nil
+	}
+
+	r.logger.Info("context snapshot saved",
+		zap.String("session_id", msg.GetSessionId()),
+		zap.String("conversation_id", snapshot.ConversationID),
+	)
+
 	return nil
 }

@@ -70,6 +70,18 @@ func (h *testOutputHandler) GetOutputs() []outputRecord {
 	return h.outputs
 }
 
+func (h *testOutputHandler) HandleContextUpdate(_ context.Context, _ string, _ string) {
+	// No-op for tests
+}
+
+// testTask creates a simple task for processOutput tests.
+func testTask() *executor.Task {
+	return &executor.Task{
+		ID:        "task_test",
+		SessionID: "sess_test",
+	}
+}
+
 func TestExecutor_Name(t *testing.T) {
 	e := New()
 	assert.Equal(t, "claude", e.Name())
@@ -90,7 +102,7 @@ func TestExecutor_buildArgs_Basic(t *testing.T) {
 		Prompt: "Hello, Claude!",
 	}
 
-	args := e.buildArgs(task, nil)
+	args, _ := e.buildArgs(task, nil)
 
 	assert.Contains(t, args, "--output-format")
 	assert.Contains(t, args, "stream-json")
@@ -109,7 +121,7 @@ func TestExecutor_buildArgs_WithWorkingDir(t *testing.T) {
 		WorkingDir: "/workspace/project",
 	}
 
-	args := e.buildArgs(task, nil)
+	args, _ := e.buildArgs(task, nil)
 
 	assert.Contains(t, args, "--add-dir")
 	assert.Contains(t, args, "/workspace/project")
@@ -126,7 +138,7 @@ func TestExecutor_buildArgs_WithWorkingDirFromConfig(t *testing.T) {
 		WorkingDir: "/config/workspace",
 	}
 
-	args := e.buildArgs(task, config)
+	args, _ := e.buildArgs(task, config)
 
 	assert.Contains(t, args, "--add-dir")
 	assert.Contains(t, args, "/config/workspace")
@@ -143,7 +155,7 @@ func TestExecutor_buildArgs_TaskWorkingDirOverridesConfig(t *testing.T) {
 		WorkingDir: "/config/workspace",
 	}
 
-	args := e.buildArgs(task, config)
+	args, _ := e.buildArgs(task, config)
 
 	// Task WorkingDir should take precedence
 	assert.Contains(t, args, "--add-dir")
@@ -159,7 +171,7 @@ func TestExecutor_buildArgs_NoWorkingDir(t *testing.T) {
 		// No WorkingDir
 	}
 
-	args := e.buildArgs(task, nil)
+	args, _ := e.buildArgs(task, nil)
 
 	// Should not contain --add-dir if no working dir
 	assert.NotContains(t, args, "--add-dir")
@@ -175,7 +187,7 @@ func TestExecutor_buildArgs_WithModel(t *testing.T) {
 		Model: "claude-sonnet-4-20250514",
 	}
 
-	args := e.buildArgs(task, config)
+	args, _ := e.buildArgs(task, config)
 
 	assert.Contains(t, args, "--model")
 	assert.Contains(t, args, "claude-sonnet-4-20250514")
@@ -184,15 +196,50 @@ func TestExecutor_buildArgs_WithModel(t *testing.T) {
 func TestExecutor_buildArgs_WithResume(t *testing.T) {
 	e := New()
 
+	// Test with session_id (backwards compatibility)
 	task := &executor.Task{
 		Prompt:          "Continue",
 		ContextSnapshot: []byte(`{"session_id":"sess_abc123"}`),
 	}
 
-	args := e.buildArgs(task, nil)
+	args, hasResume := e.buildArgs(task, nil)
 
 	assert.Contains(t, args, "--resume")
 	assert.Contains(t, args, "sess_abc123")
+	assert.True(t, hasResume)
+}
+
+func TestExecutor_buildArgs_WithResumeConversationID(t *testing.T) {
+	e := New()
+
+	// Test with conversation_id (preferred field)
+	task := &executor.Task{
+		Prompt:          "Continue",
+		ContextSnapshot: []byte(`{"conversation_id":"conv_xyz789"}`),
+	}
+
+	args, hasResume := e.buildArgs(task, nil)
+
+	assert.Contains(t, args, "--resume")
+	assert.Contains(t, args, "conv_xyz789")
+	assert.True(t, hasResume)
+}
+
+func TestExecutor_buildArgs_WithResumeBothFields(t *testing.T) {
+	e := New()
+
+	// Test with both fields - conversation_id should be preferred
+	task := &executor.Task{
+		Prompt:          "Continue",
+		ContextSnapshot: []byte(`{"conversation_id":"conv_preferred","session_id":"sess_fallback"}`),
+	}
+
+	args, hasResume := e.buildArgs(task, nil)
+
+	assert.Contains(t, args, "--resume")
+	assert.Contains(t, args, "conv_preferred")
+	assert.NotContains(t, args, "sess_fallback")
+	assert.True(t, hasResume)
 }
 
 func TestExecutor_buildArgs_EmptyPrompt(t *testing.T) {
@@ -202,7 +249,7 @@ func TestExecutor_buildArgs_EmptyPrompt(t *testing.T) {
 		Prompt: "",
 	}
 
-	args := e.buildArgs(task, nil)
+	args, _ := e.buildArgs(task, nil)
 
 	// Should not contain --print with empty prompt
 	for i, arg := range args {
@@ -213,6 +260,23 @@ func TestExecutor_buildArgs_EmptyPrompt(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestExecutor_buildArgs_ContextSnapshotWithoutResumeID(t *testing.T) {
+	e := New()
+
+	// Test with context snapshot that has no conversation_id or session_id
+	// This happens when session is suspended with a running task
+	task := &executor.Task{
+		Prompt:          "Test",
+		ContextSnapshot: []byte(`{"version":1,"last_activity":"2024-01-01T00:00:00Z"}`),
+	}
+
+	args, hasResume := e.buildArgs(task, nil)
+
+	// Should NOT contain --resume since there's no conversation_id or session_id
+	assert.NotContains(t, args, "--resume")
+	assert.False(t, hasResume, "hasResume should be false when no conversation_id/session_id")
 }
 
 func TestExecutor_buildEnv_NoConfig(t *testing.T) {
@@ -431,7 +495,7 @@ func TestExecutor_processOutput_PermissionRequest(t *testing.T) {
 	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"Bash","input":"{\"command\":\"ls -la\"}"}]}}`
 
 	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler)
+	e.processOutput(ctx, reader, "stdout", handler, testTask())
 
 	// Verify permission request was made
 	requests := handler.GetPermissionRequests()
@@ -454,7 +518,7 @@ func TestExecutor_processOutput_PermissionApproved(t *testing.T) {
 	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_456","name":"Write","input":"{\"file_path\":\"/tmp/test.txt\"}"}]}}`
 
 	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler)
+	e.processOutput(ctx, reader, "stdout", handler, testTask())
 
 	// Verify permission was approved
 	outputs := handler.GetOutputs()
@@ -480,7 +544,7 @@ func TestExecutor_processOutput_PermissionDenied(t *testing.T) {
 	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_789","name":"Edit","input":"{\"file_path\":\"/etc/passwd\"}"}]}}`
 
 	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler)
+	e.processOutput(ctx, reader, "stdout", handler, testTask())
 
 	// Verify permission was denied
 	outputs := handler.GetOutputs()
@@ -506,7 +570,7 @@ func TestExecutor_processOutput_PermissionError(t *testing.T) {
 	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_err","name":"Bash","input":"{}"}]}}`
 
 	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler)
+	e.processOutput(ctx, reader, "stdout", handler, testTask())
 
 	// Verify error message was emitted
 	outputs := handler.GetOutputs()
@@ -531,7 +595,7 @@ func TestExecutor_processOutput_NoPermissionForReadTools(t *testing.T) {
 	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":"{\"file_path\":\"/tmp/test.txt\"}"}]}}`
 
 	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler)
+	e.processOutput(ctx, reader, "stdout", handler, testTask())
 
 	// Verify no permission request was made
 	requests := handler.GetPermissionRequests()
@@ -552,7 +616,7 @@ func TestExecutor_processOutput_MultipleToolUses(t *testing.T) {
 	writeJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_3","name":"Write","input":"{}"}]}}`
 
 	reader := strings.NewReader(bashJSON + "\n" + readJSON + "\n" + writeJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler)
+	e.processOutput(ctx, reader, "stdout", handler, testTask())
 
 	// Verify only Bash and Write triggered permission requests
 	requests := handler.GetPermissionRequests()
@@ -574,7 +638,7 @@ func TestExecutor_processOutput_ContextCanceled(t *testing.T) {
 	// This should return when we cancel context and close the writer
 	done := make(chan struct{})
 	go func() {
-		e.processOutput(ctx, reader, "stdout", handler)
+		e.processOutput(ctx, reader, "stdout", handler, testTask())
 		close(done)
 	}()
 
@@ -613,7 +677,7 @@ func TestExecutor_processOutput_PermissionRequestStopsOnError(t *testing.T) {
 	bashJSON2 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":"{}"}]}}`
 
 	reader := strings.NewReader(bashJSON1 + "\n" + bashJSON2 + "\n")
-	e.processOutput(ctx, reader, "stdout", handler)
+	e.processOutput(ctx, reader, "stdout", handler, testTask())
 
 	// Should only have one permission request since processing stops on error
 	requests := handler.GetPermissionRequests()
@@ -798,7 +862,7 @@ func TestExecutor_processOutput_EmptyLines(t *testing.T) {
 	output := "\n\n{\"type\":\"system\",\"data\":\"Hello\"}\n\n"
 	reader := strings.NewReader(output)
 
-	e.processOutput(ctx, reader, "stdout", handler)
+	e.processOutput(ctx, reader, "stdout", handler, testTask())
 
 	// Should skip empty lines
 	outputs := handler.GetOutputs()
@@ -816,7 +880,7 @@ func TestExecutor_processOutput_ParseError(t *testing.T) {
 	output := "Invalid JSON here\n"
 	reader := strings.NewReader(output)
 
-	e.processOutput(ctx, reader, "stdout", handler)
+	e.processOutput(ctx, reader, "stdout", handler, testTask())
 
 	// Parser handles invalid JSON gracefully (returns text event)
 	// The raw output should still be sent to handler

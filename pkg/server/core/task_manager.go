@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -67,6 +68,7 @@ type TaskManagerInterface interface {
 	List(ctx context.Context, opts ListTasksOptions) (*store.ListResult[store.Task], error)
 	Cancel(ctx context.Context, taskID string) error
 	Execute(ctx context.Context, taskID string) error
+	ReExecute(ctx context.Context, taskID string) error
 	CreateRun(ctx context.Context, taskID string) (*store.TaskRun, error)
 	OnTaskAccepted(ctx context.Context, runID string) error
 	OnTaskStarted(ctx context.Context, runID string) error
@@ -376,6 +378,88 @@ func (m *TaskManager) Execute(ctx context.Context, taskID string) error {
 	return nil
 }
 
+// ReExecute re-sends a running task to a runner after session resume.
+// Unlike Execute, this reuses the existing task_run instead of creating a new one.
+// This is used when a session resumes and needs to continue a task that was
+// interrupted by suspend.
+func (m *TaskManager) ReExecute(ctx context.Context, taskID string) error {
+	// Get task
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrTaskNotFound
+		}
+		return err
+	}
+
+	// Task must be in running status
+	if task.Status != TaskStatusRunning {
+		return fmt.Errorf("task is not running: status=%s", task.Status)
+	}
+
+	// Get session
+	session, err := m.store.GetSession(ctx, task.SessionID)
+	if err != nil {
+		return err
+	}
+
+	// Check if session has a runner
+	if session.RunnerID == nil || *session.RunnerID == "" {
+		return ErrNoRunnerAttached
+	}
+
+	// Find the existing running task_run
+	runs, err := m.store.ListTaskRuns(ctx, store.ListTaskRunsOptions{
+		TaskID: &taskID,
+		Status: []string{TaskRunStatusPending, TaskRunStatusAssigned, TaskRunStatusRunning},
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(runs.Items) == 0 {
+		return fmt.Errorf("no running task_run found for task %s", taskID)
+	}
+
+	// Use the most recent running task_run
+	run := runs.Items[0]
+
+	// Update runner_id in case it changed (e.g., different runner after resume)
+	if err := m.store.UpdateTaskRun(ctx, run.ID, store.TaskRunUpdates{
+		RunnerID: session.RunnerID,
+	}); err != nil {
+		return err
+	}
+
+	// Send ExecuteTask command to runner
+	cmd := &pb.ServerCommand{
+		Payload: &pb.ServerCommand_ExecuteTask{
+			ExecuteTask: &pb.ExecuteTask{
+				TaskId:    task.ID,
+				RunId:     run.ID,
+				Attempt:   int32(run.Attempt), //nolint:gosec // Attempt is bounded by MaxRetries
+				SessionId: session.ID,
+				Prompt:    task.Prompt,
+				Sandbox: &pb.SandboxConfig{
+					TimeoutSeconds: int64(task.TimeoutSeconds),
+				},
+			},
+		},
+	}
+
+	if err := m.cmdSender.SendCommand(*session.RunnerID, cmd); err != nil {
+		return err
+	}
+
+	m.logger.Info("task re-execution started after resume",
+		zap.String("task_id", taskID),
+		zap.String("run_id", run.ID),
+		zap.String("runner_id", *session.RunnerID),
+	)
+
+	return nil
+}
+
 // CreateRun creates a new task run.
 func (m *TaskManager) CreateRun(ctx context.Context, taskID string) (*store.TaskRun, error) {
 	task, err := m.store.GetTask(ctx, taskID)
@@ -430,6 +514,14 @@ func (m *TaskManager) OnTaskAccepted(ctx context.Context, runID string) error {
 		return err
 	}
 
+	// Idempotent: if already assigned (e.g., after session resume), just return success
+	if run.Status == TaskRunStatusAssigned {
+		m.logger.Debug("task run already accepted (idempotent)",
+			zap.String("run_id", runID),
+		)
+		return nil
+	}
+
 	if !isValidTaskRunTransition(run.Status, TaskRunStatusAssigned) {
 		m.logger.Warn("invalid task run transition",
 			zap.String("run_id", runID),
@@ -465,6 +557,14 @@ func (m *TaskManager) OnTaskStarted(ctx context.Context, runID string) error {
 			return ErrTaskRunNotFound
 		}
 		return err
+	}
+
+	// Idempotent: if already running (e.g., after session resume), just return success
+	if run.Status == TaskRunStatusRunning {
+		m.logger.Debug("task run already started (idempotent)",
+			zap.String("run_id", runID),
+		)
+		return nil
 	}
 
 	if !isValidTaskRunTransition(run.Status, TaskRunStatusRunning) {

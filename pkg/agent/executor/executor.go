@@ -57,6 +57,11 @@ type OutputHandler interface {
 	// Returns true if approved, false if denied.
 	// This blocks until a response is received or context is cancelled.
 	HandlePermissionRequest(ctx context.Context, req *PermissionRequest) (approved bool, err error)
+
+	// HandleContextUpdate is called when the agent's context changes (e.g., on init).
+	// This allows the server to save context (like Claude Code's session_id)
+	// needed for session resume.
+	HandleContextUpdate(ctx context.Context, sessionID string, conversationID string)
 }
 
 // RiskLevel represents the risk level of a permission request.

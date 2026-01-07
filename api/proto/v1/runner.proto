@@ -49,6 +49,7 @@ message RunnerMessage {
     TaskStarted task_started = 6;
     SessionAttached session_attached = 7;
     SessionSuspended session_suspended = 8;
+    ContextUpdate context_update = 9;
   }
 }
 
@@ -143,6 +144,18 @@ message SessionSuspended {
   int64 suspended_at_unix_ms = 8;
 }
 
+// ContextUpdate is sent by runner to update session context during task execution.
+// This allows the server to save context (like Claude Code's conversation_id)
+// that's needed for session resume.
+message ContextUpdate {
+  string session_id = 1;
+  string task_id = 2;
+
+  // The context snapshot as JSON bytes.
+  // Contains conversation_id from Claude Code's init message.
+  bytes context_snapshot = 3;
+}
+
 //------------------------------------------------------------------------------
 // Server -> Runner Commands
 //------------------------------------------------------------------------------
@@ -193,6 +206,15 @@ message PendingPermissionResponse {
   string reason = 3;
   string responded_by = 4;
   int64 responded_at_unix_ms = 5;
+
+  // Tool and action for caching (so task can reuse on re-run)
+  string tool = 6;
+  string action = 7;
+
+  // Task ID for secondary cache key (task_id:tool)
+  // When task re-executes from scratch, action string may differ slightly
+  // but permission for same task/tool should still be valid
+  string task_id = 8;
 }
 
 message DetachSession {
@@ -236,6 +258,15 @@ message ApprovePermission {
   // Who approved/denied (for audit logging)
   string responded_by = 5;
   int64 responded_at_unix_ms = 6;
+
+  // Tool and action for caching (so task can reuse on re-run)
+  string tool = 7;
+  string action = 8;
+
+  // Task ID for secondary cache key (task_id:tool)
+  // When task re-executes from scratch, action string may differ slightly
+  // but permission for same task/tool should still be valid
+  string task_id = 9;
 }
 
 message KillTask {

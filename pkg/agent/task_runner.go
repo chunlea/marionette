@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"sync"
@@ -39,9 +40,20 @@ type TaskRunner struct {
 	mu            sync.Mutex
 	permResponses map[string]chan *pb.ApprovePermission
 
+	// Permission cache for resume scenarios.
+	// When a session resumes with pending permission responses, we cache them here.
+	// When a task requests a permission, we check this cache first.
+	// Key format: "tool:action" (e.g., "bash:rm -rf /tmp/foo")
+	permCache map[string]*pb.ApprovePermission
+
 	// Current task state
 	currentTask *pb.ExecuteTask
 	currentCtx  context.Context
+
+	// Flag to indicate the task was canceled due to session detach.
+	// When this is true, we don't send TaskCompleted message because
+	// the task will be re-executed after session resume.
+	canceledForDetach bool
 }
 
 // NewTaskRunner creates a new TaskRunner.
@@ -63,6 +75,7 @@ func NewTaskRunner(
 		logStreamer:   logStreamer,
 		logger:        logger.Named("task-runner"),
 		permResponses: make(map[string]chan *pb.ApprovePermission),
+		permCache:     make(map[string]*pb.ApprovePermission),
 	}
 }
 
@@ -167,6 +180,13 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 		ContextSnapshot: session.ContextSnapshot,
 	}
 
+	r.logger.Debug("executor task built",
+		zap.String("task_id", task.ID),
+		zap.String("prompt", task.Prompt),
+		zap.Int("context_snapshot_len", len(session.ContextSnapshot)),
+		zap.ByteString("context_snapshot", session.ContextSnapshot),
+	)
+
 	// Build agent config from session
 	var agentConfig *executor.AgentConfig
 	if session.AgentConfig != nil {
@@ -188,6 +208,22 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 
 	// Execute the task
 	result, err := r.executor.Execute(ctx, task, agentConfig, r)
+
+	// Check if task was canceled for session detach.
+	// If so, don't send TaskCompleted - the task will be re-executed after resume.
+	r.mu.Lock()
+	canceledForDetach := r.canceledForDetach
+	r.canceledForDetach = false // Reset for next task
+	r.mu.Unlock()
+
+	if canceledForDetach {
+		r.logger.Info("task execution interrupted for session detach, not sending TaskCompleted",
+			zap.String("task_id", cmd.TaskId),
+		)
+		// Return nil to indicate no message should be sent
+		return nil, nil
+	}
+
 	if err != nil {
 		r.logger.Error("executor error", zap.Error(err))
 		// If executor was already running, don't reset status - the other task will do it
@@ -278,6 +314,53 @@ func streamToLevel(stream string) string {
 	}
 }
 
+// HandleContextUpdate implements executor.OutputHandler.
+// It sends context updates (like Claude Code's session_id) to the server
+// so they can be saved for session resume.
+func (r *TaskRunner) HandleContextUpdate(ctx context.Context, sessionID string, conversationID string) {
+	r.mu.Lock()
+	task := r.currentTask
+	r.mu.Unlock()
+
+	if task == nil {
+		r.logger.Warn("context update with no active task",
+			zap.String("session_id", sessionID),
+			zap.String("conversation_id", conversationID),
+		)
+		return
+	}
+
+	r.logger.Info("sending context update to server",
+		zap.String("session_id", sessionID),
+		zap.String("task_id", task.TaskId),
+		zap.String("conversation_id", conversationID),
+	)
+
+	// Build context snapshot JSON with conversation_id
+	contextSnapshot := map[string]string{
+		"conversation_id": conversationID,
+	}
+	snapshotJSON, err := json.Marshal(contextSnapshot)
+	if err != nil {
+		r.logger.Warn("failed to marshal context snapshot",
+			zap.Error(err),
+		)
+		return
+	}
+
+	// Send ContextUpdate to server
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_ContextUpdate{
+			ContextUpdate: &pb.ContextUpdate{
+				SessionId:       sessionID,
+				TaskId:          task.TaskId,
+				ContextSnapshot: snapshotJSON,
+			},
+		},
+	}
+	r.sender.Send(msg)
+}
+
 // HandlePermissionRequest implements executor.OutputHandler.
 // It sends permission requests to the server and waits for response.
 func (r *TaskRunner) HandlePermissionRequest(ctx context.Context, req *executor.PermissionRequest) (bool, error) {
@@ -287,6 +370,39 @@ func (r *TaskRunner) HandlePermissionRequest(ctx context.Context, req *executor.
 
 	if task == nil {
 		return false, ErrNoActiveTask
+	}
+
+	// Check permission cache first (for resume scenarios)
+	// Try primary key (tool:action) first, then fallback to secondary key (task_id:tool)
+	primaryKey := req.Tool + ":" + req.Action
+	secondaryKey := task.TaskId + ":" + req.Tool
+
+	r.mu.Lock()
+	cachedResp, hasCached := r.permCache[primaryKey]
+	usedKey := primaryKey
+	if hasCached {
+		// Remove from cache after use (one-time use)
+		delete(r.permCache, primaryKey)
+		// Also remove secondary key if it exists
+		delete(r.permCache, secondaryKey)
+	} else {
+		// Try secondary key (task_id:tool) - more lenient matching
+		// This handles the case where Claude re-generates a slightly different action string
+		cachedResp, hasCached = r.permCache[secondaryKey]
+		usedKey = secondaryKey
+		if hasCached {
+			delete(r.permCache, secondaryKey)
+		}
+	}
+	r.mu.Unlock()
+
+	if hasCached {
+		r.logger.Info("using cached permission response",
+			zap.String("tool", req.Tool),
+			zap.String("cache_key", usedKey),
+			zap.Bool("approved", cachedResp.Approved),
+		)
+		return cachedResp.Approved, nil
 	}
 
 	// Generate request ID if not set
@@ -345,19 +461,93 @@ func (r *TaskRunner) HandlePermissionRequest(ctx context.Context, req *executor.
 	}
 }
 
+// CancelTask cancels the current running task for the given session.
+// This is called when a session is detached to stop any running task.
+func (r *TaskRunner) CancelTask(sessionID string) error {
+	r.mu.Lock()
+	task := r.currentTask
+	r.mu.Unlock()
+
+	if task == nil {
+		r.logger.Debug("no task to cancel", zap.String("session_id", sessionID))
+		return nil
+	}
+
+	// Only cancel if the task belongs to the detached session
+	if task.SessionId != sessionID {
+		r.logger.Debug("task belongs to different session, not canceling",
+			zap.String("task_session_id", task.SessionId),
+			zap.String("detached_session_id", sessionID),
+		)
+		return nil
+	}
+
+	r.logger.Info("canceling task due to session detach",
+		zap.String("task_id", task.TaskId),
+		zap.String("session_id", sessionID),
+	)
+
+	// Set flag to prevent sending TaskCompleted message.
+	// The task will be re-executed after session resume.
+	r.mu.Lock()
+	r.canceledForDetach = true
+	r.mu.Unlock()
+
+	// Kill the executor to stop the task
+	if killer, ok := r.executor.(interface{ Kill() error }); ok {
+		if err := killer.Kill(); err != nil {
+			r.logger.Warn("failed to kill executor", zap.Error(err))
+		}
+	}
+
+	return nil
+}
+
 // HandlePermissionResponse handles permission approval/denial from the server.
 // This is called by the CommandHandler's OnApprovePermission callback.
 func (r *TaskRunner) HandlePermissionResponse(ctx context.Context, cmd *pb.ApprovePermission) error {
 	r.mu.Lock()
 	respChan, exists := r.permResponses[cmd.RequestId]
-	r.mu.Unlock()
 
 	if !exists {
-		r.logger.Warn("permission response for unknown request",
+		// No pending request - this happens after suspend/resume.
+		// Cache the response so it can be used when the task is re-run.
+		// Use both primary (tool:action) and secondary (task_id:tool) cache keys.
+		// Secondary key is needed because when task re-executes from scratch,
+		// Claude may generate a slightly different action string.
+		if cmd.Tool != "" {
+			// Secondary cache key: task_id:tool (more lenient matching)
+			if cmd.TaskId != "" {
+				secondaryKey := cmd.TaskId + ":" + cmd.Tool
+				r.permCache[secondaryKey] = cmd
+				r.logger.Info("cached permission response with secondary key",
+					zap.String("request_id", cmd.RequestId),
+					zap.String("secondary_key", secondaryKey),
+					zap.Bool("approved", cmd.Approved),
+				)
+			}
+
+			// Primary cache key: tool:action (exact matching)
+			if cmd.Action != "" {
+				primaryKey := cmd.Tool + ":" + cmd.Action
+				r.permCache[primaryKey] = cmd
+				r.logger.Info("cached permission response with primary key",
+					zap.String("request_id", cmd.RequestId),
+					zap.String("primary_key", primaryKey),
+					zap.Bool("approved", cmd.Approved),
+				)
+			}
+
+			r.mu.Unlock()
+			return nil
+		}
+		r.mu.Unlock()
+		r.logger.Warn("permission response for unknown request (no tool to cache)",
 			zap.String("request_id", cmd.RequestId),
 		)
 		return nil
 	}
+	r.mu.Unlock()
 
 	select {
 	case respChan <- cmd:

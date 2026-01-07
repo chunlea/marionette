@@ -127,6 +127,10 @@ func (m *MockOutputHandler) HandlePermissionRequest(_ context.Context, req *Perm
 	return true, nil
 }
 
+func (m *MockOutputHandler) HandleContextUpdate(_ context.Context, _ string, _ string) {
+	// No-op for tests
+}
+
 func TestOutputWriter(t *testing.T) {
 	handler := NewMockOutputHandler()
 	writer := &OutputWriter{

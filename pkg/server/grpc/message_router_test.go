@@ -106,6 +106,7 @@ func (m *mockTaskManager) ShouldRetry(_ context.Context, _ string) (bool, error)
 func (m *mockTaskManager) Retry(_ context.Context, _ string) (*store.TaskRun, error) {
 	return nil, nil
 }
+func (m *mockTaskManager) ReExecute(_ context.Context, _ string) error { return nil }
 
 func TestMessageRouter_HandleMessage_Heartbeat(t *testing.T) {
 	logger := zap.NewNop()

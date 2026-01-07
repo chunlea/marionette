@@ -68,6 +68,10 @@ func (m *mockSessionMgrForPerm) DetachRunner(_ context.Context, _ string) error 
 	return nil
 }
 
+func (m *mockSessionMgrForPerm) UpdateContextSnapshot(_ context.Context, _ string, _ *ContextSnapshot) error {
+	return nil
+}
+
 func setupPermissionManagerTest(t *testing.T) (*PermissionManager, store.Store, *mockCommandSenderForPerm, *mockSessionMgrForPerm) {
 	t.Helper()
 	logger := zaptest.NewLogger(t)

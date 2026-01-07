@@ -145,7 +145,11 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 		registry := core.NewRunnerRegistry(cfg.Store, tokenSvc, logger)
 
 		// Create runner manager for lifecycle management
-		runnerManager := core.NewRunnerManager(cfg.Store, connManager, logger)
+		runnerMgrOpts := []core.RunnerManagerOption{}
+		if srvOpts.sessionManager != nil {
+			runnerMgrOpts = append(runnerMgrOpts, core.WithSessionManager(srvOpts.sessionManager))
+		}
+		runnerManager := core.NewRunnerManager(cfg.Store, connManager, logger, runnerMgrOpts...)
 
 		// Create message router with optional managers
 		routerOpts := []MessageRouterOption{
@@ -156,6 +160,9 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 		}
 		if srvOpts.taskManager != nil {
 			routerOpts = append(routerOpts, WithMRTaskManager(srvOpts.taskManager))
+		}
+		if srvOpts.sessionManager != nil {
+			routerOpts = append(routerOpts, WithMRSessionManager(srvOpts.sessionManager))
 		}
 		router := NewMessageRouter(logger, runnerManager, routerOpts...)
 
