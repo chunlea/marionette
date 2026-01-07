@@ -1438,9 +1438,14 @@
   - [x] `RelayConnection` for single tunnel relay
   - [x] `RelayManager` for multiple relay connections
   - [x] Thread-safe concurrent access
-- [ ] HTTP/TCP proxy implementation:
-  - [ ] Proxy HTTP requests to runner port
-  - [ ] Proxy TCP connections
+- [x] HTTP proxy implementation (`pkg/tunnel/http_proxy.go`):
+  - [x] Request serialization using `httputil.DumpRequest`
+  - [x] Response deserialization using `http.ReadResponse`
+  - [x] Configurable limits (request/response size, timeouts)
+  - [x] Full proxy flow through ConnectionHandler
+- [ ] TCP proxy implementation:
+  - [ ] Bidirectional TCP relay
+  - [ ] Buffer management
 - [ ] Dynamic subdomain assignment (deferred):
   - [ ] Generate unique subdomain per tunnel
   - [ ] DNS or wildcard certificate
