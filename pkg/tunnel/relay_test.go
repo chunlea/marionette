@@ -164,7 +164,7 @@ func TestRelayConnection_ConnectAndClose(t *testing.T) {
 	// Start a test server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	// Accept connections in background
 	go func() {
@@ -173,7 +173,7 @@ func TestRelayConnection_ConnectAndClose(t *testing.T) {
 			if err != nil {
 				return
 			}
-			conn.Close()
+			_ = conn.Close()
 		}
 	}()
 
@@ -212,7 +212,7 @@ func TestRelayConnection_SendToLocal(t *testing.T) {
 	// Start a test server that reads data
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	received := make(chan []byte, 1)
 	go func() {
@@ -220,7 +220,7 @@ func TestRelayConnection_SendToLocal(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		buf := make([]byte, 1024)
 		n, _ := conn.Read(buf)
 		if n > 0 {
@@ -231,7 +231,7 @@ func TestRelayConnection_SendToLocal(t *testing.T) {
 	relay := NewRelayConnection("tun_123", listener.Addr().String(), logger)
 	err = relay.Connect()
 	require.NoError(t, err)
-	defer relay.Close()
+	defer func() { _ = relay.Close() }()
 
 	// Send data
 	testData := []byte("hello from relay")
@@ -273,7 +273,7 @@ func TestRelayManager_HandleConnect(t *testing.T) {
 	// Start a test server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	// Extract port
 	_, portStr, _ := net.SplitHostPort(listener.Addr().String())
@@ -292,7 +292,7 @@ func TestRelayManager_HandleConnect(t *testing.T) {
 			}
 			// Keep connection open
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				buf := make([]byte, 1024)
 				for {
 					_, err := c.Read(buf)
@@ -347,7 +347,7 @@ func TestRelayManager_HandleData(t *testing.T) {
 	// Start a test server that echoes data
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	received := make(chan []byte, 1)
 	go func() {
@@ -355,7 +355,7 @@ func TestRelayManager_HandleData(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		buf := make([]byte, 1024)
 		n, _ := conn.Read(buf)
 		if n > 0 {
@@ -403,7 +403,7 @@ func TestRelayManager_HandleClose(t *testing.T) {
 	// Start a test server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	go func() {
 		for {
@@ -412,7 +412,7 @@ func TestRelayManager_HandleClose(t *testing.T) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				buf := make([]byte, 1024)
 				for {
 					_, err := c.Read(buf)
@@ -474,7 +474,7 @@ func TestRelayManager_CloseAll(t *testing.T) {
 					return
 				}
 				go func(c net.Conn) {
-					defer c.Close()
+					defer func() { _ = c.Close() }()
 					buf := make([]byte, 1024)
 					for {
 						_, err := c.Read(buf)
@@ -488,7 +488,7 @@ func TestRelayManager_CloseAll(t *testing.T) {
 	}
 	defer func() {
 		for _, l := range listeners {
-			l.Close()
+			_ = l.Close()
 		}
 	}()
 
@@ -568,7 +568,7 @@ func TestRelayManager_ConcurrentOperations(t *testing.T) {
 	// Start a test server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	go func() {
 		for {
@@ -577,7 +577,7 @@ func TestRelayManager_ConcurrentOperations(t *testing.T) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				buf := make([]byte, 1024)
 				for {
 					_, err := c.Read(buf)
@@ -627,7 +627,7 @@ func TestRelayConnection_ReadFromLocal_Close(t *testing.T) {
 	// Start a test server that doesn't send any data
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	go func() {
 		conn, err := listener.Accept()
@@ -635,7 +635,7 @@ func TestRelayConnection_ReadFromLocal_Close(t *testing.T) {
 			return
 		}
 		// Don't send anything, just keep connection open
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		time.Sleep(10 * time.Second)
 	}()
 
@@ -655,7 +655,7 @@ func TestRelayConnection_ReadFromLocal_Close(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Close the relay - this should cause ReadFromLocal to return
-	relay.Close()
+	_ = relay.Close()
 
 	select {
 	case <-done:

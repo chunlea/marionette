@@ -911,11 +911,8 @@ func TestTunnelManager_HandleHTTPRequest_WithConnectedHandler(t *testing.T) {
 	handler := newMockConnectionHandler()
 	m.RegisterHandler("run_456", handler)
 
-	// HandleHTTPRequest with nil writer/request will return error
-	// but it should get past the connection check
+	// HandleHTTPRequest with nil writer/request - just verify handler lookup works
 	err = m.HandleHTTPRequest(context.Background(), tunnel.ID, nil, nil)
-	// Since proxy is not implemented in PR3, this will just return nil or panic
-	// For PR3, we just verify handler lookup works by checking it doesn't return ErrRunnerNotConnected
 	assert.NotEqual(t, ErrRunnerNotConnected, err)
 }
 
@@ -1010,4 +1007,31 @@ func TestIsNotFoundError(t *testing.T) {
 	assert.True(t, isNotFoundError(ErrTunnelNotFound))
 	assert.False(t, isNotFoundError(errors.New("other error")))
 	assert.False(t, isNotFoundError(nil))
+}
+
+func TestTunnelManager_HandleTCPConnection_WithConnectedHandler(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+
+	m := NewTunnelManager(
+		WithStore(store),
+		WithLogger(logger),
+	)
+
+	// Create a TCP tunnel
+	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeTCP,
+		LocalPort: 5432,
+	})
+	require.NoError(t, err)
+
+	// Register a connected handler
+	handler := newMockConnectionHandler()
+	m.RegisterHandler("run_456", handler)
+
+	// HandleTCPConnection with nil conn - just verify handler lookup works
+	err = m.HandleTCPConnection(context.Background(), tunnel.ID, nil)
+	assert.NotEqual(t, ErrRunnerNotConnected, err)
 }

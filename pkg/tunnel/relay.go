@@ -23,9 +23,6 @@ const (
 	FrameTypeError   = 0x06 // Error frame
 )
 
-// Frame header size: type (1 byte) + length (4 bytes) + tunnel ID (16 bytes)
-const frameHeaderSize = 21
-
 // MaxFrameSize is the maximum size of a single frame payload.
 const MaxFrameSize = 64 * 1024 // 64KB
 
