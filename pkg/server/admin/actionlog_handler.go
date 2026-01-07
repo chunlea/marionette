@@ -6,7 +6,6 @@ import (
 
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/go-chi/chi/v5"
-	"go.uber.org/zap"
 )
 
 // handleListActionLogs handles GET /admin/api/v1/action-logs.
@@ -23,7 +22,7 @@ func (s *Server) handleListActionLogs(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.actionLogs.List(r.Context(), opts)
 	if err != nil {
-		s.logger.Error("failed to list action logs", zap.Error(err))
+		s.logger.Error("failed to list action logs", logError(err))
 		WriteError(w, http.StatusInternalServerError, "internal_error", "failed to list action logs")
 		return
 	}
@@ -50,7 +49,7 @@ func (s *Server) handleGetActionLog(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusNotFound, "not_found", "action log not found")
 			return
 		}
-		s.logger.Error("failed to get action log", zap.Error(err), zap.String("log_id", logID))
+		s.logger.Error("failed to get action log", logError(err))
 		WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get action log")
 		return
 	}
