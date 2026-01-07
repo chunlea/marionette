@@ -91,7 +91,7 @@ func (p *HTTPProxy) WriteResponse(w http.ResponseWriter, resp *http.Response) er
 
 	// Copy body
 	if resp.Body != nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		_, err := io.Copy(w, resp.Body)
 		if err != nil {
 			return fmt.Errorf("failed to write response body: %w", err)

@@ -127,7 +127,7 @@ func TestHTTPProxy_DeserializeResponse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			resp, err := proxy.DeserializeResponse([]byte(tt.rawResponse))
 			require.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
 
@@ -167,7 +167,7 @@ func TestHTTPProxy_WriteResponse(t *testing.T) {
 	require.NoError(t, err)
 
 	result := w.Result()
-	defer result.Body.Close()
+	defer func() { _ = result.Body.Close() }()
 
 	assert.Equal(t, 200, result.StatusCode)
 	assert.Equal(t, "text/plain", result.Header.Get("Content-Type"))
@@ -236,7 +236,7 @@ func TestHTTPProxy_ProxyHTTPRequest(t *testing.T) {
 
 	// Verify the response
 	result := w.Result()
-	defer result.Body.Close()
+	defer func() { _ = result.Body.Close() }()
 
 	assert.Equal(t, 200, result.StatusCode)
 	body, _ := io.ReadAll(result.Body)
@@ -314,7 +314,7 @@ func TestHTTPProxy_ProxyHTTPRequest_POSTWithBody(t *testing.T) {
 
 	// Verify response
 	result := w.Result()
-	defer result.Body.Close()
+	defer func() { _ = result.Body.Close() }()
 	assert.Equal(t, 201, result.StatusCode)
 }
 
