@@ -318,6 +318,53 @@ func TestMatchLabels(t *testing.T) {
 	}
 }
 
+func TestLabelsEqual(t *testing.T) {
+	tests := []struct {
+		name     string
+		a        []string
+		b        []string
+		expected bool
+	}{
+		{
+			name:     "equal slices",
+			a:        []string{"github", "com"},
+			b:        []string{"github", "com"},
+			expected: true,
+		},
+		{
+			name:     "different lengths",
+			a:        []string{"github", "com"},
+			b:        []string{"api", "github", "com"},
+			expected: false,
+		},
+		{
+			name:     "same length different content",
+			a:        []string{"github", "com"},
+			b:        []string{"gitlab", "com"},
+			expected: false,
+		},
+		{
+			name:     "empty slices",
+			a:        []string{},
+			b:        []string{},
+			expected: true,
+		},
+		{
+			name:     "one empty one not",
+			a:        []string{},
+			b:        []string{"com"},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := labelsEqual(tt.a, tt.b)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func BenchmarkHostMatcher_Match(b *testing.B) {
 	patterns := []string{
 		"github.com",

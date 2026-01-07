@@ -152,6 +152,22 @@ func TestNetworkPolicy_Validate(t *testing.T) {
 			wantErr:     true,
 			errContains: "cannot start or end with hyphen",
 		},
+		{
+			name: "invalid level",
+			policy: NetworkPolicy{
+				Level: PolicyLevel("invalid"),
+			},
+			wantErr:     true,
+			errContains: "unknown policy level",
+		},
+		{
+			name: "empty level",
+			policy: NetworkPolicy{
+				Level: PolicyLevel(""),
+			},
+			wantErr:     true,
+			errContains: "policy level is required",
+		},
 	}
 
 	for _, tt := range tests {
@@ -287,6 +303,8 @@ func TestValidateHostPattern(t *testing.T) {
 		{"foo-.com", "cannot start or end with hyphen"},
 		{"foo@bar.com", "invalid character"},
 		{"foo/bar.com", "invalid character"},
+		// Label exceeds 63 characters (DNS spec limit)
+		{"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmn.com", "exceeds 63 characters"},
 	}
 
 	for _, tc := range invalidPatterns {
