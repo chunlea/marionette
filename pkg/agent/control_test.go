@@ -285,6 +285,30 @@ func (m *MockCommandHandler) HandleDetachSession(_ context.Context, cmd *pb.Deta
 	}, nil
 }
 
+func (m *MockCommandHandler) HandleStartDesktopStream(_ context.Context, cmd *pb.StartDesktopStream) (*pb.RunnerMessage, error) {
+	return &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_DesktopStreamStarted{
+			DesktopStreamStarted: &pb.DesktopStreamStarted{
+				StreamId:  cmd.StreamId,
+				SessionId: cmd.SessionId,
+				Provider:  "mock",
+			},
+		},
+	}, nil
+}
+
+func (m *MockCommandHandler) HandleStopDesktopStream(_ context.Context, cmd *pb.StopDesktopStream) (*pb.RunnerMessage, error) {
+	return &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_DesktopStreamStopped{
+			DesktopStreamStopped: &pb.DesktopStreamStopped{
+				StreamId:  cmd.StreamId,
+				SessionId: cmd.SessionId,
+				Reason:    cmd.Reason,
+			},
+		},
+	}, nil
+}
+
 func TestControlChannel_ReceiveCommands(t *testing.T) {
 	server, err := NewMockServer()
 	require.NoError(t, err)

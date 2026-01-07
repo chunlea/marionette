@@ -28,6 +28,12 @@ type CommandHandler interface {
 
 	// HandleDetachSession handles a session detach command.
 	HandleDetachSession(ctx context.Context, cmd *pb.DetachSession) (*pb.RunnerMessage, error)
+
+	// HandleStartDesktopStream handles a desktop stream start command.
+	HandleStartDesktopStream(ctx context.Context, cmd *pb.StartDesktopStream) (*pb.RunnerMessage, error)
+
+	// HandleStopDesktopStream handles a desktop stream stop command.
+	HandleStopDesktopStream(ctx context.Context, cmd *pb.StopDesktopStream) (*pb.RunnerMessage, error)
 }
 
 // SessionState holds the state of an attached session.
@@ -42,8 +48,9 @@ type SessionState struct {
 // DefaultCommandHandler provides a basic implementation of CommandHandler.
 // It manages sessions and workspaces, and can be extended for task execution.
 type DefaultCommandHandler struct {
-	workspace *WorkspaceManager
-	logger    *zap.Logger
+	workspace        *WorkspaceManager
+	desktopStreamMgr *DesktopStreamManager
+	logger           *zap.Logger
 
 	// Active sessions
 	sessions   map[string]*SessionState
@@ -325,4 +332,55 @@ func (h *DefaultCommandHandler) ActiveSessionCount() int {
 	h.sessionsMu.RLock()
 	defer h.sessionsMu.RUnlock()
 	return len(h.sessions)
+}
+
+// SetDesktopStreamManager sets the desktop stream manager.
+func (h *DefaultCommandHandler) SetDesktopStreamManager(mgr *DesktopStreamManager) {
+	h.desktopStreamMgr = mgr
+}
+
+// HandleStartDesktopStream handles a desktop stream start command.
+func (h *DefaultCommandHandler) HandleStartDesktopStream(ctx context.Context, cmd *pb.StartDesktopStream) (*pb.RunnerMessage, error) {
+	h.logger.Info("received start desktop stream command",
+		zap.String("stream_id", cmd.StreamId),
+		zap.String("session_id", cmd.SessionId),
+	)
+
+	// Check if desktop streaming is enabled
+	if h.desktopStreamMgr == nil {
+		h.logger.Warn("desktop streaming not configured")
+		return &pb.RunnerMessage{
+			Payload: &pb.RunnerMessage_DesktopStreamError{
+				DesktopStreamError: &pb.DesktopStreamError{
+					StreamId:        cmd.StreamId,
+					SessionId:       cmd.SessionId,
+					Error:           "desktop streaming not configured",
+					ErrorCode:       "NOT_CONFIGURED",
+					Recoverable:     false,
+					TimestampUnixMs: time.Now().UnixMilli(),
+				},
+			},
+		}, nil
+	}
+
+	// Delegate to desktop stream manager
+	return h.desktopStreamMgr.HandleStartDesktopStream(ctx, cmd)
+}
+
+// HandleStopDesktopStream handles a desktop stream stop command.
+func (h *DefaultCommandHandler) HandleStopDesktopStream(ctx context.Context, cmd *pb.StopDesktopStream) (*pb.RunnerMessage, error) {
+	h.logger.Info("received stop desktop stream command",
+		zap.String("stream_id", cmd.StreamId),
+		zap.String("session_id", cmd.SessionId),
+		zap.String("reason", cmd.Reason),
+	)
+
+	// Check if desktop streaming is enabled
+	if h.desktopStreamMgr == nil {
+		h.logger.Warn("desktop streaming not configured")
+		return nil, nil
+	}
+
+	// Delegate to desktop stream manager
+	return h.desktopStreamMgr.HandleStopDesktopStream(ctx, cmd)
 }
