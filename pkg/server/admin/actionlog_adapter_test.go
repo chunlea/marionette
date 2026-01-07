@@ -14,9 +14,9 @@ import (
 
 // mockActionLogStore implements ActionLogStore for testing.
 type mockActionLogStore struct {
-	logs          map[string]*store.ActionLog
-	listError     error
-	getError      error
+	logs      map[string]*store.ActionLog
+	listError error
+	getError  error
 }
 
 func newMockActionLogStore() *mockActionLogStore {
