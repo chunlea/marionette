@@ -1,14 +1,16 @@
 # Dockerfile for running Go tests on Linux
 # This enables testing Linux-specific code like namespace detection.
 
-FROM golang:1.24-alpine
+FROM golang:1.25-alpine
 
 # Install dependencies needed for tests
 RUN apk add --no-cache \
     git \
     make \
     util-linux \
-    bash
+    bash \
+    iptables \
+    ip6tables
 
 # Set working directory
 WORKDIR /app
