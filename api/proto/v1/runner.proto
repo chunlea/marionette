@@ -50,6 +50,9 @@ message RunnerMessage {
     SessionAttached session_attached = 7;
     SessionSuspended session_suspended = 8;
     ContextUpdate context_update = 9;
+    DesktopStreamStarted desktop_stream_started = 10;
+    DesktopStreamStopped desktop_stream_stopped = 11;
+    DesktopStreamError desktop_stream_error = 12;
   }
 }
 
@@ -168,6 +171,8 @@ message ServerCommand {
     CreateTunnel create_tunnel = 4;
     AttachSession attach_session = 5;
     DetachSession detach_session = 6;
+    StartDesktopStream start_desktop_stream = 7;
+    StopDesktopStream stop_desktop_stream = 8;
   }
 }
 
@@ -406,4 +411,111 @@ message LogEntry {
   // Runner context
   // Server validates this matches the authenticated runner_id
   string runner_id = 11;
+}
+
+//------------------------------------------------------------------------------
+// Desktop Streaming
+//------------------------------------------------------------------------------
+
+// StartDesktopStream tells the runner to start desktop streaming.
+// The runner should start a WebRTC stream and report back with DesktopStreamStarted.
+message StartDesktopStream {
+  string stream_id = 1;       // Server-assigned stream ID
+  string session_id = 2;      // Session this stream belongs to
+
+  // Stream configuration
+  StreamConfig config = 3;
+
+  // ICE servers for WebRTC
+  repeated ICEServer ice_servers = 4;
+
+  // Signaling server URL for WebRTC
+  // Example: "wss://signal.example.com/stream/{stream_id}"
+  string signaling_url = 5;
+
+  // Token for authenticating with the signaling server
+  string signaling_token = 6;
+
+  // Expiration time (Unix milliseconds)
+  int64 expires_at_unix_ms = 7;
+}
+
+// StopDesktopStream tells the runner to stop desktop streaming.
+message StopDesktopStream {
+  string stream_id = 1;
+  string session_id = 2;
+  string reason = 3;          // Optional reason for stopping
+}
+
+// StreamConfig contains desktop stream configuration.
+message StreamConfig {
+  // Resolution
+  int32 width = 1;
+  int32 height = 2;
+
+  // Frame rate (fps)
+  int32 frame_rate = 3;
+
+  // Bitrate in kbps
+  int32 bitrate = 4;
+
+  // Video codec: "h264", "vp8", "vp9", "av1"
+  string video_codec = 5;
+
+  // Enable audio capture
+  bool audio_enabled = 6;
+
+  // Enable input forwarding (keyboard/mouse)
+  bool input_enabled = 7;
+
+  // Display to capture (e.g., ":0", ":99")
+  // Empty means default/primary display
+  string display = 8;
+
+  // Hardware acceleration: "auto", "vaapi", "nvenc", "qsv", "none"
+  string hw_accel = 9;
+}
+
+// ICEServer represents a STUN or TURN server for WebRTC.
+message ICEServer {
+  repeated string urls = 1;   // e.g., ["stun:stun.l.google.com:19302"]
+  string username = 2;        // For TURN authentication
+  string credential = 3;      // For TURN authentication
+}
+
+// DesktopStreamStarted is sent by the runner when desktop streaming starts.
+message DesktopStreamStarted {
+  string stream_id = 1;
+  string session_id = 2;
+
+  // Actual stream configuration (may differ from requested)
+  StreamConfig actual_config = 3;
+
+  // Signaling URL for clients to connect
+  string signaling_url = 4;
+
+  // Provider information
+  string provider = 5;        // e.g., "selkies", "vnc", "rdp"
+  string provider_version = 6;
+
+  // Started timestamp
+  int64 started_at_unix_ms = 7;
+}
+
+// DesktopStreamStopped is sent by the runner when desktop streaming stops.
+message DesktopStreamStopped {
+  string stream_id = 1;
+  string session_id = 2;
+  string reason = 3;          // Why the stream stopped
+  int64 stopped_at_unix_ms = 4;
+}
+
+// DesktopStreamError is sent when a stream encounters an error.
+message DesktopStreamError {
+  string stream_id = 1;
+  string session_id = 2;
+  string error = 3;           // Error message
+  string error_code = 4;      // Machine-readable error code
+  bool recoverable = 5;       // Whether the stream can be restarted
+  int64 timestamp_unix_ms = 6;
 }
