@@ -572,6 +572,82 @@ func scanTunnelFromRows(rows pgx.Rows) (*store.Tunnel, error) {
 }
 
 // =============================================================================
+// Tunnel Extension Methods
+// =============================================================================
+
+// CloseSessionTunnels closes all active tunnels for a session by setting closed_at.
+// Returns the number of tunnels closed.
+func (s *Store) CloseSessionTunnels(ctx context.Context, sessionID string) (int64, error) {
+	query := `
+		UPDATE tunnels
+		SET closed_at = NOW(), updated_at = NOW()
+		WHERE session_id = $1 AND closed_at IS NULL`
+
+	result, err := s.pool.Exec(ctx, query, sessionID)
+	if err != nil {
+		return 0, fmt.Errorf("closing session tunnels: %w", err)
+	}
+
+	return result.RowsAffected(), nil
+}
+
+// DeleteExpiredTunnels removes all tunnels that have expired.
+// Returns the number of tunnels deleted.
+func (s *Store) DeleteExpiredTunnels(ctx context.Context) (int64, error) {
+	query := `DELETE FROM tunnels WHERE expires_at < NOW()`
+
+	result, err := s.pool.Exec(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("deleting expired tunnels: %w", err)
+	}
+
+	return result.RowsAffected(), nil
+}
+
+// GetTunnelsByRunner returns all active tunnels for a runner.
+func (s *Store) GetTunnelsByRunner(ctx context.Context, runnerID string) ([]*store.Tunnel, error) {
+	query := fmt.Sprintf(`
+		SELECT %s FROM tunnels
+		WHERE runner_id = $1 AND closed_at IS NULL
+		ORDER BY created_at ASC`,
+		tunnelColumns)
+
+	rows, err := s.pool.Query(ctx, query, runnerID)
+	if err != nil {
+		return nil, fmt.Errorf("querying tunnels by runner: %w", err)
+	}
+	defer rows.Close()
+
+	var tunnels []*store.Tunnel
+	for rows.Next() {
+		tunnel, err := scanTunnelFromRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning tunnel: %w", err)
+		}
+		tunnels = append(tunnels, tunnel)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating tunnels: %w", err)
+	}
+
+	return tunnels, nil
+}
+
+// GetActiveTunnelCount returns the count of active tunnels.
+// Active means not closed and not expired.
+func (s *Store) GetActiveTunnelCount(ctx context.Context) (int64, error) {
+	query := `SELECT COUNT(*) FROM tunnels WHERE closed_at IS NULL AND expires_at > NOW()`
+
+	var count int64
+	if err := s.pool.QueryRow(ctx, query).Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting active tunnels: %w", err)
+	}
+
+	return count, nil
+}
+
+// =============================================================================
 // DataKey CRUD
 // =============================================================================
 
