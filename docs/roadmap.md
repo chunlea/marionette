@@ -1420,6 +1420,11 @@
   - [x] `DeleteExpiredTunnels` - remove expired tunnels
   - [x] `GetTunnelsByRunner` - get all active tunnels for a runner
   - [x] `GetActiveTunnelCount` - count active tunnels
+- [x] Tunnel types and interfaces (`pkg/tunnel/types.go`):
+  - [x] Tunnel types: `http`, `tcp`, `desktop`, `browser`, `ios`, `android`
+  - [x] Directions: `inbound` (streaming to user), `outbound` (exposing to internet)
+  - [x] `Manager`, `Connection`, `Relay`, `Store` interfaces
+  - [x] `CreateTunnelOptions` with validation
 - [ ] Tunnel relay implementation:
   - [ ] WebSocket-based tunnel
   - [ ] Proxy HTTP requests to runner port
