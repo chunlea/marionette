@@ -113,12 +113,12 @@ type errorSink struct {
 	err error
 }
 
-func (e *errorSink) OnVideoData([]byte) error                      { return e.err }
-func (e *errorSink) OnVideoConfig(int, int, string, []byte) error  { return e.err }
-func (e *errorSink) OnAudioData([]byte) error                      { return e.err }
-func (e *errorSink) OnAudioConfig(int, int, string, []byte) error  { return e.err }
-func (e *errorSink) OnError(error)                                 {}
-func (e *errorSink) OnClose()                                      {}
+func (e *errorSink) OnVideoData([]byte) error                     { return e.err }
+func (e *errorSink) OnVideoConfig(int, int, string, []byte) error { return e.err }
+func (e *errorSink) OnAudioData([]byte) error                     { return e.err }
+func (e *errorSink) OnAudioConfig(int, int, string, []byte) error { return e.err }
+func (e *errorSink) OnError(error)                                {}
+func (e *errorSink) OnClose()                                     {}
 
 var _ VideoSink = (*recordingSink)(nil)
 var _ VideoSink = (*errorSink)(nil)
