@@ -1425,6 +1425,13 @@
   - [x] Directions: `inbound` (streaming to user), `outbound` (exposing to internet)
   - [x] `Manager`, `Connection`, `Relay`, `Store` interfaces
   - [x] `CreateTunnelOptions` with validation
+- [x] TunnelManager implementation (`pkg/tunnel/manager.go`):
+  - [x] Tunnel lifecycle management (Create, Get, Close)
+  - [x] Token generation and validation (via `pkg/cryptoutil`)
+  - [x] In-memory cache with store fallback
+  - [x] Connection handler registry
+  - [x] URL generation for public URLs
+  - [x] Expired tunnel cleanup
 - [ ] Tunnel relay implementation:
   - [ ] WebSocket-based tunnel
   - [ ] Proxy HTTP requests to runner port
