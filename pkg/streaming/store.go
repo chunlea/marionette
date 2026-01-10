@@ -41,16 +41,16 @@ type UpdateStreamParams struct {
 
 // ListStreamsParams contains parameters for listing streams.
 type ListStreamsParams struct {
-	SessionID    string
-	RunnerID     string
-	TenantID     string
-	Type         *StreamType
-	State        *StreamState
-	ActiveOnly   bool // If true, only return non-terminal streams
-	Limit        int
-	Offset       int
-	OrderBy      string // created_at, updated_at
-	OrderDesc    bool
+	SessionID  string
+	RunnerID   string
+	TenantID   string
+	Type       *StreamType
+	State      *StreamState
+	ActiveOnly bool // If true, only return non-terminal streams
+	Limit      int
+	Offset     int
+	OrderBy    string // created_at, updated_at
+	OrderDesc  bool
 }
 
 // StreamStore defines the interface for stream persistence.
