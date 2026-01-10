@@ -11,6 +11,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// CommandSender is an interface for sending commands to runners.
+// This allows mocking in tests.
+type CommandSender interface {
+	SendCommand(runnerID string, cmd *pb.ServerCommand) error
+}
+
 // MessageRouter routes incoming runner messages to appropriate handlers.
 type MessageRouter struct {
 	logger            *zap.Logger
@@ -19,7 +25,7 @@ type MessageRouter struct {
 	permissionManager core.PermissionManagerInterface
 	sessionManager    core.SessionManagerInterface
 	tunnelHandler     TunnelHandlerInterface
-	connManager       *ConnectionManager
+	connManager       CommandSender
 	store             store.Store
 }
 
@@ -62,7 +68,7 @@ func WithMRTunnelHandler(th TunnelHandlerInterface) MessageRouterOption {
 }
 
 // WithMRConnectionManager sets the connection manager for the message router.
-func WithMRConnectionManager(cm *ConnectionManager) MessageRouterOption {
+func WithMRConnectionManager(cm CommandSender) MessageRouterOption {
 	return func(r *MessageRouter) {
 		r.connManager = cm
 	}
