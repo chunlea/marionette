@@ -22,7 +22,7 @@ func createTestPeerConnection(t *testing.T) *webrtc.PeerConnection {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		pc.Close()
+		_ = pc.Close()
 	})
 
 	return pc
@@ -540,16 +540,16 @@ func BenchmarkPeer_CreateOffer(b *testing.B) {
 			Logger: logger,
 		}, pc)
 
-		pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo)
-		peer.CreateOffer()
-		pc.Close()
+		_, _ = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo)
+		_, _ = peer.CreateOffer()
+		_ = pc.Close()
 	}
 }
 
 func BenchmarkPeer_StateLookup(b *testing.B) {
 	config := webrtc.Configuration{}
 	pc, _ := webrtc.NewPeerConnection(config)
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	peer := NewPeer(PeerConfig{
 		ID:     "bench-peer",
@@ -597,7 +597,7 @@ func TestPeer_CreateOffer_Error(t *testing.T) {
 	peer := createTestPeer(t, PeerRolePublisher)
 
 	// Close the connection first
-	peer.Connection.Close()
+	_ = peer.Connection.Close()
 
 	// CreateOffer should fail on closed connection
 	_, err := peer.CreateOffer()
@@ -616,7 +616,7 @@ func TestPeer_SetRemoteDescription_Error(t *testing.T) {
 	peer := createTestPeer(t, PeerRoleSubscriber)
 
 	// Close the connection first
-	peer.Connection.Close()
+	_ = peer.Connection.Close()
 
 	// SetRemoteDescription should fail on closed connection
 	err := peer.SetRemoteDescription(webrtc.SessionDescription{
@@ -640,7 +640,7 @@ func TestPeer_AddTrack_Error(t *testing.T) {
 	peer := createTestPeer(t, PeerRoleSubscriber)
 
 	// Close connection first
-	peer.Connection.Close()
+	_ = peer.Connection.Close()
 
 	track, err := webrtc.NewTrackLocalStaticRTP(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8},
@@ -658,7 +658,7 @@ func TestPeer_CreateDataChannel_Error(t *testing.T) {
 	peer := createTestPeer(t, PeerRolePublisher)
 
 	// Close connection first
-	peer.Connection.Close()
+	_ = peer.Connection.Close()
 
 	// CreateDataChannel on closed connection should fail
 	_, err := peer.CreateDataChannel("test", nil)

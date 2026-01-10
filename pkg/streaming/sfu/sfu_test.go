@@ -21,7 +21,7 @@ func TestNew(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sfu)
 
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	assert.Equal(t, 0, sfu.RoomCount())
 }
@@ -33,7 +33,7 @@ func TestNew_NilLogger(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sfu)
 
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 }
 
 func TestNew_WithICEServers(t *testing.T) {
@@ -47,7 +47,7 @@ func TestNew_WithICEServers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sfu)
 
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 }
 
 func TestSFU_CreateRoom(t *testing.T) {
@@ -56,7 +56,7 @@ func TestSFU_CreateRoom(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	room, err := sfu.CreateRoom("stream-1")
 	require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestSFU_CreateRoom_Duplicate(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	_, err = sfu.CreateRoom("stream-1")
 	require.NoError(t, err)
@@ -87,7 +87,7 @@ func TestSFU_GetRoom(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	_, err = sfu.CreateRoom("stream-1")
 	require.NoError(t, err)
@@ -104,7 +104,7 @@ func TestSFU_GetRoom_NotFound(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	room, ok := sfu.GetRoom("nonexistent")
 	assert.False(t, ok)
@@ -117,7 +117,7 @@ func TestSFU_GetOrCreateRoom_New(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	room, err := sfu.GetOrCreateRoom("stream-1")
 	require.NoError(t, err)
@@ -133,7 +133,7 @@ func TestSFU_GetOrCreateRoom_Existing(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	room1, err := sfu.GetOrCreateRoom("stream-1")
 	require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestSFU_RemoveRoom(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	_, err = sfu.CreateRoom("stream-1")
 	require.NoError(t, err)
@@ -170,7 +170,7 @@ func TestSFU_RemoveRoom_NotFound(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	ctx := context.Background()
 	err = sfu.RemoveRoom(ctx, "nonexistent")
@@ -183,7 +183,7 @@ func TestSFU_ListRooms(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	_, err = sfu.CreateRoom("stream-a")
 	require.NoError(t, err)
@@ -207,7 +207,7 @@ func TestSFU_ListRooms_Empty(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	rooms := sfu.ListRooms()
 	assert.Empty(t, rooms)
@@ -219,7 +219,7 @@ func TestSFU_RoomCount(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	assert.Equal(t, 0, sfu.RoomCount())
 
@@ -269,7 +269,7 @@ func TestSFU_GetStats(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	stats := sfu.GetStats()
 	assert.Equal(t, 0, stats.RoomCount)
@@ -283,7 +283,7 @@ func TestSFU_GetStats_WithRooms(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	room, _ := sfu.CreateRoom("stream-1")
 
@@ -304,7 +304,7 @@ func TestSFU_GetStats_MultipleRooms(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -342,7 +342,7 @@ func TestSFU_Config(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	gotCfg := sfu.Config()
 	assert.Equal(t, uint16(2000), gotCfg.PLIInterval)
@@ -354,7 +354,7 @@ func TestSFU_ConcurrentCreateRoom(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	var wg sync.WaitGroup
 
@@ -381,7 +381,7 @@ func TestSFU_ConcurrentGetRoom(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	_, _ = sfu.CreateRoom("stream-1")
 
@@ -405,7 +405,7 @@ func TestSFU_ConcurrentGetOrCreateRoom(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	var wg sync.WaitGroup
 	var rooms []*Room
@@ -441,7 +441,7 @@ func TestSFU_ConcurrentMixedOperations(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	var wg sync.WaitGroup
 
@@ -489,7 +489,7 @@ func TestSFU_API(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	// Verify API is initialized
 	sfu.mu.RLock()
@@ -500,35 +500,35 @@ func TestSFU_API(t *testing.T) {
 func BenchmarkSFU_CreateRoom(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		streamID := "stream-" + string(rune(i%26+'a'))
-		sfu.GetOrCreateRoom(streamID)
+		_, _ = sfu.GetOrCreateRoom(streamID)
 	}
 }
 
 func BenchmarkSFU_GetRoom(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
-	sfu.CreateRoom("stream-1")
+	_, _ = sfu.CreateRoom("stream-1")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		sfu.GetRoom("stream-1")
+		_, _ = sfu.GetRoom("stream-1")
 	}
 }
 
 func BenchmarkSFU_RoomCount(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	for i := 0; i < 100; i++ {
-		sfu.CreateRoom("stream-" + string(rune(i%26+'a')))
+		_, _ = sfu.CreateRoom("stream-" + string(rune(i%26+'a')))
 	}
 
 	b.ResetTimer()
@@ -540,14 +540,14 @@ func BenchmarkSFU_RoomCount(b *testing.B) {
 func BenchmarkSFU_GetStats(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	ctx := context.Background()
 	for i := 0; i < 10; i++ {
 		room, _ := sfu.CreateRoom("stream-" + string(rune(i+'a')))
-		room.SetPublisher(ctx, "publisher-"+string(rune(i+'a')))
+		_, _ = room.SetPublisher(ctx, "publisher-"+string(rune(i+'a')))
 		for j := 0; j < 5; j++ {
-			room.AddSubscriber(ctx, "subscriber-"+string(rune(i+'a'))+string(rune(j+'0')))
+			_, _ = room.AddSubscriber(ctx, "subscriber-"+string(rune(i+'a'))+string(rune(j+'0')))
 		}
 	}
 
@@ -560,13 +560,13 @@ func BenchmarkSFU_GetStats(b *testing.B) {
 func BenchmarkSFU_ConcurrentGetRoom(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
-	sfu.CreateRoom("stream-1")
+	_, _ = sfu.CreateRoom("stream-1")
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			sfu.GetRoom("stream-1")
+			_, _ = sfu.GetRoom("stream-1")
 		}
 	})
 }
@@ -578,7 +578,7 @@ func TestSFU_WithPLIInterval(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	assert.Equal(t, uint16(500), sfu.Config().PLIInterval)
 }
@@ -590,7 +590,7 @@ func TestSFU_WithZeroPLIInterval(t *testing.T) {
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	// Should not add PLI interceptor
 	assert.Equal(t, uint16(0), sfu.Config().PLIInterval)

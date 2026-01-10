@@ -178,7 +178,7 @@ func TestTrackRouter_Integration_NoTracks(t *testing.T) {
 	// Create a mock peer for subscriber
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(t, err)
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	peer := NewPeer(PeerConfig{
 		ID:     "subscriber-1",
@@ -199,7 +199,7 @@ func TestTrackRouter_AddSubscriber_Closed(t *testing.T) {
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(t, err)
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	peer := NewPeer(PeerConfig{
 		ID:     "subscriber-1",
@@ -368,8 +368,8 @@ func TestTrackRouter_MultipleSubscribers_RemoveOne(t *testing.T) {
 	assert.False(t, router.IsClosed())
 
 	// Close connections synchronously before test ends
-	pc1.Close()
-	pc2.Close()
+	_ = pc1.Close()
+	_ = pc2.Close()
 }
 
 func TestTrackRouter_Logger(t *testing.T) {

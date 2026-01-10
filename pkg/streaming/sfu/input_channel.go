@@ -113,7 +113,7 @@ func (ic *InputChannel) RemoveSubscriberChannel(peerID string) {
 	defer ic.mu.Unlock()
 
 	if dc, ok := ic.subscriberChannels[peerID]; ok {
-		dc.Close()
+		_ = dc.Close()
 		delete(ic.subscriberChannels, peerID)
 		ic.logger.Debug("removed subscriber input channel",
 			zap.String("peer_id", peerID),
@@ -163,7 +163,7 @@ func (ic *InputChannel) Close() {
 
 	// Close subscriber channels
 	for peerID, dc := range ic.subscriberChannels {
-		dc.Close()
+		_ = dc.Close()
 		ic.logger.Debug("closed subscriber input channel",
 			zap.String("peer_id", peerID),
 		)

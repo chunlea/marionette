@@ -142,20 +142,20 @@ func (r *Room) AddSubscriber(ctx context.Context, peerID string) (*Peer, error) 
 
 	// Add existing tracks from publisher to subscriber
 	if err := r.router.AddSubscriber(peer); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 
 	// Create input data channel for this subscriber
 	inputDC, err := peer.CreateDataChannel("input", nil)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 
 	// Forward input from subscriber to publisher
 	if err := r.inputChannel.AddSubscriberChannel(peerID, inputDC); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 

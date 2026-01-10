@@ -23,7 +23,7 @@ func createTestSFU(t *testing.T) *SFU {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		sfu.Close(context.Background())
+		_ = sfu.Close(context.Background())
 	})
 
 	return sfu
@@ -466,7 +466,7 @@ func TestRoom_HandleSubscriberStateChange_Disconnected(t *testing.T) {
 func BenchmarkRoom_Stats(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	room, _ := sfu.CreateRoom("bench-stream")
 
@@ -479,7 +479,7 @@ func BenchmarkRoom_Stats(b *testing.B) {
 func BenchmarkRoom_SubscriberCount(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	room, _ := sfu.CreateRoom("bench-stream")
 
@@ -492,7 +492,7 @@ func BenchmarkRoom_SubscriberCount(b *testing.B) {
 func BenchmarkRoom_HasPublisher(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	room, _ := sfu.CreateRoom("bench-stream")
 
@@ -505,7 +505,7 @@ func BenchmarkRoom_HasPublisher(b *testing.B) {
 func BenchmarkRoom_AddSubscriber(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	room, _ := sfu.CreateRoom("bench-stream")
 	ctx := context.Background()
@@ -513,7 +513,7 @@ func BenchmarkRoom_AddSubscriber(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		peerID := "subscriber-" + string(rune(i%26+'a'))
-		room.AddSubscriber(ctx, peerID)
+		_, _ = room.AddSubscriber(ctx, peerID)
 	}
 }
 

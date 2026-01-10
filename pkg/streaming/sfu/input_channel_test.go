@@ -167,7 +167,7 @@ func TestInputChannel_SetPublisherChannel_WhenClosed(t *testing.T) {
 	// Create a mock data channel
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(t, err)
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	dc, err := pc.CreateDataChannel("input", nil)
 	require.NoError(t, err)
@@ -187,7 +187,7 @@ func TestInputChannel_AddSubscriberChannel_WhenClosed(t *testing.T) {
 	// Create a mock data channel
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(t, err)
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	dc, err := pc.CreateDataChannel("input", nil)
 	require.NoError(t, err)
@@ -222,7 +222,7 @@ func TestInputChannel_WithDataChannel(t *testing.T) {
 	// Create peer connections for data channels
 	pc1, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(t, err)
-	defer pc1.Close()
+	defer func() { _ = pc1.Close() }()
 
 	dc1, err := pc1.CreateDataChannel("input", nil)
 	require.NoError(t, err)
@@ -243,7 +243,7 @@ func TestInputChannel_SetPublisherChannel(t *testing.T) {
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(t, err)
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	dc, err := pc.CreateDataChannel("input", nil)
 	require.NoError(t, err)
@@ -261,7 +261,7 @@ func TestInputChannel_MultipleSubscribers(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 		require.NoError(t, err)
-		defer pc.Close()
+		defer func(pc *webrtc.PeerConnection) { _ = pc.Close() }(pc)
 
 		dc, err := pc.CreateDataChannel("input", nil)
 		require.NoError(t, err)
@@ -286,7 +286,7 @@ func TestInputChannel_RemoveSubscriberChannel_Idempotent(t *testing.T) {
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(t, err)
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	dc, err := pc.CreateDataChannel("input", nil)
 	require.NoError(t, err)
@@ -362,7 +362,7 @@ func TestInputChannel_SetPublisherChannel_Callbacks(t *testing.T) {
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(t, err)
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	dc, err := pc.CreateDataChannel("input", nil)
 	require.NoError(t, err)
@@ -382,7 +382,7 @@ func TestInputChannel_AddSubscriberChannel_Callbacks(t *testing.T) {
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(t, err)
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	dc, err := pc.CreateDataChannel("input", nil)
 	require.NoError(t, err)
@@ -399,7 +399,7 @@ func TestInputChannel_ForwardToPublisher_NotOpen(t *testing.T) {
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(t, err)
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 
 	dc, err := pc.CreateDataChannel("input", nil)
 	require.NoError(t, err)

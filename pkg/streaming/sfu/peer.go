@@ -294,7 +294,7 @@ func (p *Peer) Close(_ context.Context) error {
 
 	// Close data channels
 	for _, dc := range p.dataChannels {
-		dc.Close()
+		_ = dc.Close()
 	}
 	p.dataChannels = make(map[string]*webrtc.DataChannel)
 
