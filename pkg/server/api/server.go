@@ -32,6 +32,9 @@ type Server struct {
 	logStream   LogStreamService
 	eventStream EventStreamService
 
+	// Tunnel proxy
+	tunnelProxy *TunnelProxyHandler
+
 	// Auth
 	apiKeyService *auth.APIKeyService
 }
@@ -101,6 +104,13 @@ func WithEventStreamService(s EventStreamService) Option {
 	}
 }
 
+// WithTunnelProxy sets the tunnel proxy handler.
+func WithTunnelProxy(h *TunnelProxyHandler) Option {
+	return func(srv *Server) {
+		srv.tunnelProxy = h
+	}
+}
+
 // New creates a new public API server.
 func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	srv := &Server{
@@ -140,6 +150,14 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	// Documentation endpoints (no auth required)
 	r.Get("/docs", srv.handleSwaggerUI)
 	r.Get("/openapi.yaml", srv.handleOpenAPISpec)
+
+	// Tunnel proxy (auth handled by handler - supports tunnel token or API key)
+	if srv.tunnelProxy != nil {
+		r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+			r.HandleFunc("/*", srv.tunnelProxy.ServeHTTP)
+			r.HandleFunc("/", srv.tunnelProxy.ServeHTTP)
+		})
+	}
 
 	// API v1 routes (auth required)
 	r.Route("/api/v1", func(r chi.Router) {
