@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest"
 )
 
 // createTestPeerConnection creates a WebRTC peer connection for testing.
@@ -29,27 +28,27 @@ func createTestPeerConnection(t *testing.T) *webrtc.PeerConnection {
 }
 
 // createTestPeer creates a Peer for testing.
+// Uses zap.NewNop() to avoid race conditions with zaptest.Logger
+// when pion fires callbacks asynchronously during cleanup.
 func createTestPeer(t *testing.T, role PeerRole) *Peer {
 	t.Helper()
 
 	pc := createTestPeerConnection(t)
-	logger := zaptest.NewLogger(t)
 
 	return NewPeer(PeerConfig{
 		ID:     "test-peer-" + string(role),
 		Role:   role,
-		Logger: logger,
+		Logger: zap.NewNop(),
 	}, pc)
 }
 
 func TestNewPeer(t *testing.T) {
 	pc := createTestPeerConnection(t)
-	logger := zaptest.NewLogger(t)
 
 	peer := NewPeer(PeerConfig{
 		ID:     "test-peer",
 		Role:   PeerRolePublisher,
-		Logger: logger,
+		Logger: zap.NewNop(),
 	}, pc)
 
 	assert.Equal(t, "test-peer", peer.ID)

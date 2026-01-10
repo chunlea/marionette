@@ -8,11 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest"
 )
 
 func TestNewInputChannel(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	// Create a mock room
 	ic := NewInputChannel(nil, logger)
@@ -31,7 +30,7 @@ func TestNewInputChannel_NilLogger(t *testing.T) {
 }
 
 func TestInputChannel_HasPublisherChannel(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	// Initially no publisher channel
@@ -39,14 +38,14 @@ func TestInputChannel_HasPublisherChannel(t *testing.T) {
 }
 
 func TestInputChannel_SubscriberCount(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	assert.Equal(t, 0, ic.SubscriberCount())
 }
 
 func TestInputChannel_IsClosed(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	assert.False(t, ic.IsClosed())
@@ -57,7 +56,7 @@ func TestInputChannel_IsClosed(t *testing.T) {
 }
 
 func TestInputChannel_Close(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	ic.Close()
@@ -66,7 +65,7 @@ func TestInputChannel_Close(t *testing.T) {
 }
 
 func TestInputChannel_CloseIdempotent(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	// Close multiple times should not panic
@@ -78,7 +77,7 @@ func TestInputChannel_CloseIdempotent(t *testing.T) {
 }
 
 func TestInputChannel_Stats(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	stats := ic.Stats()
@@ -101,7 +100,7 @@ func TestInputChannelStats_Struct(t *testing.T) {
 }
 
 func TestInputChannel_RemoveSubscriberChannel_NotExists(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	// Should not panic
@@ -109,7 +108,7 @@ func TestInputChannel_RemoveSubscriberChannel_NotExists(t *testing.T) {
 }
 
 func TestInputChannel_ConcurrentAccess(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	var wg sync.WaitGroup
@@ -139,7 +138,7 @@ func TestInputChannel_ConcurrentAccess(t *testing.T) {
 }
 
 func TestInputChannel_SubscriberChannelsMap(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	ic.mu.RLock()
@@ -148,7 +147,7 @@ func TestInputChannel_SubscriberChannelsMap(t *testing.T) {
 }
 
 func TestInputChannel_CloseEmptiesChannels(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	ic.Close()
@@ -159,7 +158,7 @@ func TestInputChannel_CloseEmptiesChannels(t *testing.T) {
 }
 
 func TestInputChannel_SetPublisherChannel_WhenClosed(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	ic.Close()
@@ -179,7 +178,7 @@ func TestInputChannel_SetPublisherChannel_WhenClosed(t *testing.T) {
 }
 
 func TestInputChannel_AddSubscriberChannel_WhenClosed(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	ic.Close()
@@ -197,7 +196,7 @@ func TestInputChannel_AddSubscriberChannel_WhenClosed(t *testing.T) {
 }
 
 func TestInputChannel_ForwardToPublisher_NoPublisher(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	// Should not panic when forwarding with no publisher
@@ -205,7 +204,7 @@ func TestInputChannel_ForwardToPublisher_NoPublisher(t *testing.T) {
 }
 
 func TestInputChannel_StatsAfterClose(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	ic.Close()
@@ -216,7 +215,7 @@ func TestInputChannel_StatsAfterClose(t *testing.T) {
 }
 
 func TestInputChannel_WithDataChannel(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	// Create peer connections for data channels
@@ -238,7 +237,7 @@ func TestInputChannel_WithDataChannel(t *testing.T) {
 }
 
 func TestInputChannel_SetPublisherChannel(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -254,7 +253,7 @@ func TestInputChannel_SetPublisherChannel(t *testing.T) {
 }
 
 func TestInputChannel_MultipleSubscribers(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	// Create multiple peer connections
@@ -281,7 +280,7 @@ func TestInputChannel_MultipleSubscribers(t *testing.T) {
 }
 
 func TestInputChannel_RemoveSubscriberChannel_Idempotent(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -342,14 +341,14 @@ func BenchmarkInputChannel_ConcurrentReads(b *testing.B) {
 }
 
 func TestInputChannel_Logger(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	assert.NotNil(t, ic.logger)
 }
 
 func TestInputChannel_Room(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	ic := NewInputChannel(nil, logger)
 
 	// Room should be nil when passed nil

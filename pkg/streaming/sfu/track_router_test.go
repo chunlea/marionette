@@ -9,11 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest"
 )
 
 func TestNewTrackRouter(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	assert.NotNil(t, router)
@@ -29,14 +28,14 @@ func TestNewTrackRouter_NilLogger(t *testing.T) {
 }
 
 func TestTrackRouter_TrackCount(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	assert.Equal(t, 0, router.TrackCount())
 }
 
 func TestTrackRouter_Close(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	router.Close()
@@ -45,7 +44,7 @@ func TestTrackRouter_Close(t *testing.T) {
 }
 
 func TestTrackRouter_CloseIdempotent(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	// Close multiple times should not panic
@@ -57,7 +56,7 @@ func TestTrackRouter_CloseIdempotent(t *testing.T) {
 }
 
 func TestTrackRouter_IsClosed(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	assert.False(t, router.IsClosed())
@@ -68,7 +67,7 @@ func TestTrackRouter_IsClosed(t *testing.T) {
 }
 
 func TestTrackRouter_GetTrackInfo_Empty(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	infos := router.GetTrackInfo()
@@ -77,7 +76,7 @@ func TestTrackRouter_GetTrackInfo_Empty(t *testing.T) {
 }
 
 func TestTrackRouter_GetLocalTrack_NotFound(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	track, ok := router.GetLocalTrack("nonexistent")
@@ -87,7 +86,7 @@ func TestTrackRouter_GetLocalTrack_NotFound(t *testing.T) {
 }
 
 func TestTrackRouter_RemoveSubscriber_Empty(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	// Should not panic when removing nonexistent subscriber
@@ -109,7 +108,7 @@ func TestTrackInfo_Struct(t *testing.T) {
 }
 
 func TestTrackRouter_ConcurrentAccess(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	var wg sync.WaitGroup
@@ -138,7 +137,7 @@ func TestTrackRouter_ConcurrentAccess(t *testing.T) {
 }
 
 func TestTrackRouter_TracksMapInitialized(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	router.mu.RLock()
@@ -147,7 +146,7 @@ func TestTrackRouter_TracksMapInitialized(t *testing.T) {
 }
 
 func TestTrackRouter_CloseEmptiesTracks(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	router.Close()
@@ -172,7 +171,7 @@ func TestRoutedTrack_Struct(t *testing.T) {
 }
 
 func TestTrackRouter_Integration_NoTracks(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	// Create a mock peer for subscriber
@@ -192,7 +191,7 @@ func TestTrackRouter_Integration_NoTracks(t *testing.T) {
 }
 
 func TestTrackRouter_AddSubscriber_Closed(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	router.Close()
@@ -212,7 +211,7 @@ func TestTrackRouter_AddSubscriber_Closed(t *testing.T) {
 }
 
 func TestTrackRouter_RemoveSubscriber_MultipleTimes(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	// Should not panic when removing same subscriber multiple times
@@ -222,7 +221,7 @@ func TestTrackRouter_RemoveSubscriber_MultipleTimes(t *testing.T) {
 }
 
 func TestTrackRouter_GetTrackInfo_AfterClose(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	router.Close()
@@ -232,7 +231,7 @@ func TestTrackRouter_GetTrackInfo_AfterClose(t *testing.T) {
 }
 
 func TestTrackRouter_GetLocalTrack_AfterClose(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	router.Close()
@@ -373,7 +372,7 @@ func TestTrackRouter_MultipleSubscribers_RemoveOne(t *testing.T) {
 }
 
 func TestTrackRouter_Logger(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 	router := NewTrackRouter(logger)
 
 	// Logger should be named
