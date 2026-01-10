@@ -3,6 +3,8 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -113,8 +115,9 @@ func (s *mockStore) DeleteExpiredTunnels(_ context.Context) (int64, error) {
 
 // mockConnectionHandler implements ConnectionHandler for testing.
 type mockConnectionHandler struct {
-	connected bool
-	mu        sync.RWMutex
+	connected    bool
+	responseData []byte
+	mu           sync.RWMutex
 }
 
 func newMockConnectionHandler() *mockConnectionHandler {
@@ -126,6 +129,9 @@ func (h *mockConnectionHandler) SendTunnelData(_ context.Context, _ string, _ []
 }
 
 func (h *mockConnectionHandler) ReceiveTunnelData(_ context.Context, _ string) ([]byte, error) {
+	if h.responseData != nil {
+		return h.responseData, nil
+	}
 	return nil, nil
 }
 
@@ -907,13 +913,17 @@ func TestTunnelManager_HandleHTTPRequest_WithConnectedHandler(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Register a connected handler
+	// Register a connected handler that returns a valid HTTP response
 	handler := newMockConnectionHandler()
+	handler.responseData = []byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK")
 	m.RegisterHandler("run_456", handler)
 
-	// HandleHTTPRequest with nil writer/request - just verify handler lookup works
-	err = m.HandleHTTPRequest(context.Background(), tunnel.ID, nil, nil)
-	assert.NotEqual(t, ErrRunnerNotConnected, err)
+	// HandleHTTPRequest with proper writer/request
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest("GET", "http://localhost:3000/test", nil)
+	err = m.HandleHTTPRequest(context.Background(), tunnel.ID, w, r)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, w.Code)
 }
 
 func TestTunnelManager_HandleTCPConnection_ClosedTunnel(t *testing.T) {
