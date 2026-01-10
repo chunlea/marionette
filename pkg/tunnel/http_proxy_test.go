@@ -147,6 +147,7 @@ func TestHTTPProxy_DeserializeResponse_TooLarge(t *testing.T) {
 	largeBody := strings.Repeat("x", 200)
 	rawResponse := "HTTP/1.1 200 OK\r\nContent-Length: 200\r\n\r\n" + largeBody
 
+	//nolint:bodyclose // Error case - response is nil when size check fails before parsing
 	_, err := proxy.DeserializeResponse([]byte(rawResponse))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "too large")
@@ -159,6 +160,7 @@ func TestHTTPProxy_WriteResponse(t *testing.T) {
 	rawResponse := "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nX-Custom: value\r\nContent-Length: 12\r\n\r\nHello World!"
 	resp, err := proxy.DeserializeResponse([]byte(rawResponse))
 	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Create a recorder
 	w := httptest.NewRecorder()

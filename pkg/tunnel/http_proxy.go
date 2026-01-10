@@ -134,6 +134,11 @@ func (p *HTTPProxy) ProxyHTTPRequest(
 	if err != nil {
 		return fmt.Errorf("failed to deserialize response: %w", err)
 	}
+	defer func() {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+	}()
 
 	// Write response to client
 	if err := p.WriteResponse(w, resp); err != nil {
