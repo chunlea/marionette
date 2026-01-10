@@ -30,6 +30,7 @@ func TestTunnelHandler_HandleCreateTunnelRequest(t *testing.T) {
 
 	t.Run("successful tunnel creation", func(t *testing.T) {
 		req := &pb.CreateTunnelRequest{
+			RequestId: "req_test789",
 			SessionId: "sess_test123",
 			Type:      "http",
 			LocalPort: 8000,
@@ -39,6 +40,7 @@ func TestTunnelHandler_HandleCreateTunnelRequest(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 
+		assert.Equal(t, "req_test789", resp.RequestId) // Verify request_id is passed through
 		assert.True(t, resp.Success)
 		assert.Empty(t, resp.Error)
 		assert.NotEmpty(t, resp.TunnelId)
@@ -49,6 +51,7 @@ func TestTunnelHandler_HandleCreateTunnelRequest(t *testing.T) {
 
 	t.Run("missing session_id", func(t *testing.T) {
 		req := &pb.CreateTunnelRequest{
+			RequestId: "req_error123",
 			Type:      "http",
 			LocalPort: 8000,
 		}
@@ -57,6 +60,7 @@ func TestTunnelHandler_HandleCreateTunnelRequest(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 
+		assert.Equal(t, "req_error123", resp.RequestId) // Verify request_id is passed through on error
 		assert.False(t, resp.Success)
 		assert.Contains(t, resp.Error, "session_id")
 	})

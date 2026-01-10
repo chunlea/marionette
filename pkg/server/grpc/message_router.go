@@ -438,11 +438,14 @@ func (r *MessageRouter) handleCreateTunnelRequest(ctx context.Context, runnerID 
 		zap.Int32("local_port", req.GetLocalPort()),
 	)
 
+	requestID := req.GetRequestId()
+
 	if r.tunnelHandler == nil {
 		r.logger.Warn("tunnel handler not configured, skipping create tunnel request")
 		return r.sendTunnelResponse(runnerID, &pb.CreateTunnelResponse{
-			Success: false,
-			Error:   "tunnel handler not configured",
+			RequestId: requestID,
+			Success:   false,
+			Error:     "tunnel handler not configured",
 		})
 	}
 
@@ -454,8 +457,9 @@ func (r *MessageRouter) handleCreateTunnelRequest(ctx context.Context, runnerID 
 			zap.Error(err),
 		)
 		return r.sendTunnelResponse(runnerID, &pb.CreateTunnelResponse{
-			Success: false,
-			Error:   fmt.Sprintf("internal error: %v", err),
+			RequestId: requestID,
+			Success:   false,
+			Error:     fmt.Sprintf("internal error: %v", err),
 		})
 	}
 

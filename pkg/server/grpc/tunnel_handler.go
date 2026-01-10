@@ -59,10 +59,13 @@ func (h *TunnelHandler) HandleCreateTunnelRequest(ctx context.Context, runnerID 
 		zap.Int32("local_port", req.GetLocalPort()),
 	)
 
+	requestID := req.GetRequestId()
+
 	if h.tunnelManager == nil {
 		return &pb.CreateTunnelResponse{
-			Success: false,
-			Error:   "tunnel manager not configured",
+			RequestId: requestID,
+			Success:   false,
+			Error:     "tunnel manager not configured",
 		}, nil
 	}
 
@@ -70,8 +73,9 @@ func (h *TunnelHandler) HandleCreateTunnelRequest(ctx context.Context, runnerID 
 	sessionID := req.GetSessionId()
 	if sessionID == "" {
 		return &pb.CreateTunnelResponse{
-			Success: false,
-			Error:   "session_id is required",
+			RequestId: requestID,
+			Success:   false,
+			Error:     "session_id is required",
 		}, nil
 	}
 
@@ -83,8 +87,9 @@ func (h *TunnelHandler) HandleCreateTunnelRequest(ctx context.Context, runnerID 
 	localPort := int(req.GetLocalPort())
 	if localPort <= 0 || localPort > 65535 {
 		return &pb.CreateTunnelResponse{
-			Success: false,
-			Error:   "invalid local_port: must be between 1 and 65535",
+			RequestId: requestID,
+			Success:   false,
+			Error:     "invalid local_port: must be between 1 and 65535",
 		}, nil
 	}
 
@@ -104,8 +109,9 @@ func (h *TunnelHandler) HandleCreateTunnelRequest(ctx context.Context, runnerID 
 			zap.Error(err),
 		)
 		return &pb.CreateTunnelResponse{
-			Success: false,
-			Error:   fmt.Sprintf("failed to create tunnel: %v", err),
+			RequestId: requestID,
+			Success:   false,
+			Error:     fmt.Sprintf("failed to create tunnel: %v", err),
 		}, nil
 	}
 
@@ -117,6 +123,7 @@ func (h *TunnelHandler) HandleCreateTunnelRequest(ctx context.Context, runnerID 
 	)
 
 	return &pb.CreateTunnelResponse{
+		RequestId:       requestID,
 		Success:         true,
 		TunnelId:        t.ID,
 		Token:           t.Token,
