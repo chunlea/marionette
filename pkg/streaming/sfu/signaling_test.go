@@ -440,7 +440,7 @@ func BenchmarkParseSignalingMessage(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ParseSignalingMessage(data)
+		_, _ = ParseSignalingMessage(data)
 	}
 }
 
@@ -454,7 +454,7 @@ func BenchmarkSignalingMessage_ToJSON(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		msg.ToJSON()
+		_, _ = msg.ToJSON()
 	}
 }
 
@@ -468,6 +468,6 @@ func BenchmarkSignalingMessage_Validate(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		msg.Validate()
+		_ = msg.Validate()
 	}
 }

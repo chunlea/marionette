@@ -22,7 +22,7 @@ func createTestSignalingHandler(t *testing.T) (*SignalingHandler, *SFU) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		sfu.Close(context.Background())
+		_ = sfu.Close(context.Background())
 	})
 
 	handler := NewSignalingHandler(sfu, logger)
@@ -40,7 +40,7 @@ func TestNewSignalingHandler_NilLogger(t *testing.T) {
 	cfg := DefaultConfig()
 	sfu, err := New(cfg, nil)
 	require.NoError(t, err)
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	handler := NewSignalingHandler(sfu, nil)
 	assert.NotNil(t, handler)
@@ -506,7 +506,7 @@ func TestSignalingHandler_ConcurrentJoins(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			peerID := "peer-" + string(rune('a'+i))
-			handler.HandleMessage(ctx, NewJoinMessage("stream-1", peerID, PeerRoleSubscriber))
+			_ = handler.HandleMessage(ctx, NewJoinMessage("stream-1", peerID, PeerRoleSubscriber))
 		}(i)
 	}
 
@@ -593,7 +593,7 @@ a=rtpmap:111 opus/48000/2
 func BenchmarkSignalingHandler_HandlePing(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	handler := NewSignalingHandler(sfu, zap.NewNop())
 	handler.OnSend(func(streamID, peerID string, msg *SignalingMessage) {})
@@ -603,14 +603,14 @@ func BenchmarkSignalingHandler_HandlePing(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		handler.HandleMessage(ctx, msg)
+		_ = handler.HandleMessage(ctx, msg)
 	}
 }
 
 func BenchmarkSignalingHandler_SessionLookup(b *testing.B) {
 	cfg := DefaultConfig()
 	sfu, _ := New(cfg, zap.NewNop())
-	defer sfu.Close(context.Background())
+	defer func() { _ = sfu.Close(context.Background()) }()
 
 	handler := NewSignalingHandler(sfu, zap.NewNop())
 
@@ -618,7 +618,7 @@ func BenchmarkSignalingHandler_SessionLookup(b *testing.B) {
 	ctx := context.Background()
 	for i := 0; i < 100; i++ {
 		peerID := "peer-" + string(rune('a'+i%26)) + string(rune('0'+i/26))
-		handler.HandleMessage(ctx, NewJoinMessage("stream-1", peerID, PeerRoleSubscriber))
+		_ = handler.HandleMessage(ctx, NewJoinMessage("stream-1", peerID, PeerRoleSubscriber))
 	}
 
 	b.ResetTimer()
