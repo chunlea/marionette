@@ -30,14 +30,12 @@ type Server struct {
 	workspaces  WorkspaceService
 
 	// Tunnel service
-	tunnels TunnelService
+	tunnels     TunnelService
+	tunnelProxy *TunnelProxyHandler
 
 	// Streaming services
 	logStream   LogStreamService
 	eventStream EventStreamService
-
-	// Tunnel proxy
-	tunnelProxy *TunnelProxyHandler
 
 	// Auth
 	apiKeyService *auth.APIKeyService
