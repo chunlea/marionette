@@ -1494,3 +1494,165 @@ func TestMessageRouter_HandleMessage_CreateTunnelRequest_SendError(t *testing.T)
 	// Connection manager should have been called
 	assert.True(t, cm.sendCalled)
 }
+
+// =============================================================================
+// Context Update Tests
+// =============================================================================
+
+// mockSessionManager implements core.SessionManagerInterface for testing.
+type mockSessionManager struct {
+	updateContextCalled bool
+	lastSessionID       string
+	lastContextSnapshot *core.ContextSnapshot
+	updateContextErr    error
+}
+
+func (m *mockSessionManager) Create(_ context.Context, _ core.CreateSessionOptions) (*store.Session, error) {
+	return nil, nil
+}
+
+func (m *mockSessionManager) Get(_ context.Context, _ string) (*store.Session, error) {
+	return nil, nil
+}
+
+func (m *mockSessionManager) List(_ context.Context, _ store.ListSessionsOptions) (*store.ListResult[store.Session], error) {
+	return nil, nil
+}
+
+func (m *mockSessionManager) Activate(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) Suspend(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) Resume(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) Terminate(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) AttachRunner(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) DetachRunner(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) UpdateContextSnapshot(_ context.Context, sessionID string, snapshot *core.ContextSnapshot) error {
+	m.updateContextCalled = true
+	m.lastSessionID = sessionID
+	m.lastContextSnapshot = snapshot
+	return m.updateContextErr
+}
+
+func TestMessageRouter_HandleMessage_ContextUpdate(t *testing.T) {
+	logger := zap.NewNop()
+	sm := &mockSessionManager{}
+	router := NewMessageRouter(logger, nil,
+		WithMRSessionManager(sm),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_ContextUpdate{
+			ContextUpdate: &pb.ContextUpdate{
+				SessionId:       "sess_123",
+				TaskId:          "task_456",
+				ContextSnapshot: []byte(`{"conversation_id": "conv_789"}`),
+			},
+		},
+	}
+
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+
+	// Verify session manager was called
+	assert.True(t, sm.updateContextCalled)
+	assert.Equal(t, "sess_123", sm.lastSessionID)
+	assert.NotNil(t, sm.lastContextSnapshot)
+	assert.Equal(t, "conv_789", sm.lastContextSnapshot.ConversationID)
+}
+
+func TestMessageRouter_HandleMessage_ContextUpdate_NoSessionManager(t *testing.T) {
+	logger := zap.NewNop()
+	// No session manager configured
+	router := NewMessageRouter(logger, nil)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_ContextUpdate{
+			ContextUpdate: &pb.ContextUpdate{
+				SessionId:       "sess_123",
+				TaskId:          "task_456",
+				ContextSnapshot: []byte(`{"conversation_id": "conv_789"}`),
+			},
+		},
+	}
+
+	// Should not error even without session manager
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+}
+
+func TestMessageRouter_HandleMessage_ContextUpdate_InvalidJSON(t *testing.T) {
+	logger := zap.NewNop()
+	sm := &mockSessionManager{}
+	router := NewMessageRouter(logger, nil,
+		WithMRSessionManager(sm),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_ContextUpdate{
+			ContextUpdate: &pb.ContextUpdate{
+				SessionId:       "sess_123",
+				TaskId:          "task_456",
+				ContextSnapshot: []byte(`{invalid json`),
+			},
+		},
+	}
+
+	// Should not error, just log warning
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+
+	// Session manager should not have been called
+	assert.False(t, sm.updateContextCalled)
+}
+
+func TestMessageRouter_HandleMessage_ContextUpdate_UpdateError(t *testing.T) {
+	logger := zap.NewNop()
+	sm := &mockSessionManager{
+		updateContextErr: errors.New("update failed"),
+	}
+	router := NewMessageRouter(logger, nil,
+		WithMRSessionManager(sm),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_ContextUpdate{
+			ContextUpdate: &pb.ContextUpdate{
+				SessionId:       "sess_123",
+				TaskId:          "task_456",
+				ContextSnapshot: []byte(`{"conversation_id": "conv_789"}`),
+			},
+		},
+	}
+
+	// Should not error (logs warning but continues)
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+
+	// Session manager should have been called
+	assert.True(t, sm.updateContextCalled)
+}
+
+func TestMessageRouter_WithMRSessionManager(t *testing.T) {
+	logger := zap.NewNop()
+	sm := &mockSessionManager{}
+	router := NewMessageRouter(logger, nil, WithMRSessionManager(sm))
+
+	assert.NotNil(t, router.sessionManager)
+}
