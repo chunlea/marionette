@@ -2,11 +2,14 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/tunnel"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -424,6 +427,22 @@ func TestNewTunnelProxyAdapter(t *testing.T) {
 	assert.NotNil(t, adapter.logger)
 }
 
+func TestTunnelProxyAdapter_WithOptions(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tm := tunnel.NewTunnelManager(tunnel.WithLogger(logger))
+	tr := &mockTunnelRouter{}
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		WithTPATunnelManager(tm),
+		WithTPATunnelRouter(tr),
+	)
+
+	require.NotNil(t, adapter)
+	assert.NotNil(t, adapter.tunnelManager)
+	assert.NotNil(t, adapter.tunnelRouter)
+}
+
 func TestTunnelProxyAdapter_ValidateTunnel_NoManager(t *testing.T) {
 	adapter := NewTunnelProxyAdapter()
 
@@ -432,11 +451,138 @@ func TestTunnelProxyAdapter_ValidateTunnel_NoManager(t *testing.T) {
 	assert.Contains(t, err.Error(), "tunnel manager not configured")
 }
 
+func TestTunnelProxyAdapter_ValidateTunnel_Success(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tm := tunnel.NewTunnelManager(
+		tunnel.WithLogger(logger),
+		tunnel.WithBaseURL("http://localhost:8080"),
+	)
+
+	// Create a tunnel using the manager
+	ctx := context.Background()
+	tun, err := tm.Create(ctx, tunnel.CreateTunnelOptions{
+		SessionID: "sess_test",
+		RunnerID:  "run_test",
+		Type:      "http",
+		LocalPort: 8000,
+	})
+	require.NoError(t, err)
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		WithTPATunnelManager(tm),
+	)
+
+	info, err := adapter.ValidateTunnel(ctx, tun.ID)
+	require.NoError(t, err)
+	assert.Equal(t, tun.ID, info.ID)
+	assert.Equal(t, "http", info.Type)
+	assert.Equal(t, "run_test", info.RunnerID)
+	assert.Equal(t, "sess_test", info.SessionID)
+}
+
+func TestTunnelProxyAdapter_ValidateTunnel_NotFound(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tm := tunnel.NewTunnelManager(tunnel.WithLogger(logger))
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		WithTPATunnelManager(tm),
+	)
+
+	_, err := adapter.ValidateTunnel(context.Background(), "tun_nonexistent")
+	assert.Error(t, err)
+}
+
+func TestTunnelProxyAdapter_ValidateTunnel_Closed(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tm := tunnel.NewTunnelManager(
+		tunnel.WithLogger(logger),
+		tunnel.WithBaseURL("http://localhost:8080"),
+	)
+
+	ctx := context.Background()
+	tun, err := tm.Create(ctx, tunnel.CreateTunnelOptions{
+		SessionID: "sess_test",
+		RunnerID:  "run_test",
+		Type:      "http",
+		LocalPort: 8000,
+	})
+	require.NoError(t, err)
+
+	// Close the tunnel
+	err = tm.Close(ctx, tun.ID)
+	require.NoError(t, err)
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		WithTPATunnelManager(tm),
+	)
+
+	// Closed tunnel is removed from cache, so it returns "not found"
+	_, err = adapter.ValidateTunnel(ctx, tun.ID)
+	assert.Error(t, err)
+}
+
 func TestTunnelProxyAdapter_ValidateTunnelToken_NoManager(t *testing.T) {
 	adapter := NewTunnelProxyAdapter()
 
 	valid, err := adapter.ValidateTunnelToken(context.Background(), "tun_test", "ttok_test")
 	assert.Error(t, err)
+	assert.False(t, valid)
+}
+
+func TestTunnelProxyAdapter_ValidateTunnelToken_Success(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tm := tunnel.NewTunnelManager(
+		tunnel.WithLogger(logger),
+		tunnel.WithBaseURL("http://localhost:8080"),
+	)
+
+	ctx := context.Background()
+	tun, err := tm.Create(ctx, tunnel.CreateTunnelOptions{
+		SessionID: "sess_test",
+		RunnerID:  "run_test",
+		Type:      "http",
+		LocalPort: 8000,
+	})
+	require.NoError(t, err)
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		WithTPATunnelManager(tm),
+	)
+
+	// Use the actual token from the created tunnel
+	valid, err := adapter.ValidateTunnelToken(ctx, tun.ID, tun.Token)
+	require.NoError(t, err)
+	assert.True(t, valid)
+}
+
+func TestTunnelProxyAdapter_ValidateTunnelToken_Invalid(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tm := tunnel.NewTunnelManager(
+		tunnel.WithLogger(logger),
+		tunnel.WithBaseURL("http://localhost:8080"),
+	)
+
+	ctx := context.Background()
+	tun, err := tm.Create(ctx, tunnel.CreateTunnelOptions{
+		SessionID: "sess_test",
+		RunnerID:  "run_test",
+		Type:      "http",
+		LocalPort: 8000,
+	})
+	require.NoError(t, err)
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		WithTPATunnelManager(tm),
+	)
+
+	// Use wrong token
+	valid, err := adapter.ValidateTunnelToken(ctx, tun.ID, "ttok_wrong")
+	require.NoError(t, err)
 	assert.False(t, valid)
 }
 
@@ -448,6 +594,88 @@ func TestTunnelProxyAdapter_SendRequest_NoRouter(t *testing.T) {
 	assert.Contains(t, err.Error(), "tunnel router not configured")
 }
 
+func TestTunnelProxyAdapter_SendRequest_Success(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	// Create mock router that returns test data
+	mockRouter := &mockTunnelRouter{
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan *pb.TunnelData, error) {
+			ch := make(chan *pb.TunnelData, 2)
+			ch <- &pb.TunnelData{Data: []byte("response part 1")}
+			ch <- &pb.TunnelData{Data: []byte("response part 2"), Eof: true}
+			close(ch)
+			return ch, nil
+		},
+	}
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		WithTPATunnelRouter(mockRouter),
+	)
+
+	ctx := context.Background()
+	responseCh, err := adapter.SendRequest(ctx, "tun_test", "conn_test", []byte("request"))
+	require.NoError(t, err)
+
+	// Collect all response data
+	var allData []byte
+	for data := range responseCh {
+		allData = append(allData, data...)
+	}
+
+	assert.Equal(t, "response part 1response part 2", string(allData))
+}
+
+func TestTunnelProxyAdapter_SendRequest_RouterError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockRouter := &mockTunnelRouter{
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan *pb.TunnelData, error) {
+			return nil, errors.New("router error")
+		},
+	}
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		WithTPATunnelRouter(mockRouter),
+	)
+
+	_, err := adapter.SendRequest(context.Background(), "tun_test", "conn_test", []byte("data"))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "router error")
+}
+
+func TestTunnelProxyAdapter_SendRequest_NilData(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	// Router returns nil data (should be skipped)
+	mockRouter := &mockTunnelRouter{
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan *pb.TunnelData, error) {
+			ch := make(chan *pb.TunnelData, 3)
+			ch <- nil // Should be skipped
+			ch <- &pb.TunnelData{Data: []byte("valid")}
+			ch <- &pb.TunnelData{Data: nil} // Empty data, should be skipped
+			close(ch)
+			return ch, nil
+		},
+	}
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		WithTPATunnelRouter(mockRouter),
+	)
+
+	responseCh, err := adapter.SendRequest(context.Background(), "tun_test", "conn_test", []byte("request"))
+	require.NoError(t, err)
+
+	var allData []byte
+	for data := range responseCh {
+		allData = append(allData, data...)
+	}
+
+	assert.Equal(t, "valid", string(allData))
+}
+
 func TestTunnelProxyAdapter_CloseConnection_NoRouter(t *testing.T) {
 	adapter := NewTunnelProxyAdapter()
 
@@ -455,9 +683,50 @@ func TestTunnelProxyAdapter_CloseConnection_NoRouter(t *testing.T) {
 	adapter.CloseConnection("conn_test")
 }
 
+func TestTunnelProxyAdapter_CloseConnection_Success(t *testing.T) {
+	mockRouter := &mockTunnelRouter{}
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPATunnelRouter(mockRouter),
+	)
+
+	adapter.CloseConnection("conn_test")
+	assert.True(t, mockRouter.closeConnectionCalled)
+	assert.Equal(t, "conn_test", mockRouter.lastClosedConnID)
+}
+
 func TestDefaultTunnelCleanupConfig(t *testing.T) {
 	cfg := DefaultTunnelCleanupConfig()
 
 	assert.Equal(t, 5*time.Minute, cfg.Interval)
 	assert.Equal(t, 10*time.Minute, cfg.MaxAge)
+}
+
+// mockTunnelRouter implements TunnelRouter for testing.
+type mockTunnelRouter struct {
+	sendRequestFn          func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan *pb.TunnelData, error)
+	closeConnectionCalled  bool
+	lastClosedConnID       string
+	registerTunnelCalled   bool
+	unregisterTunnelCalled bool
+}
+
+func (m *mockTunnelRouter) SendRequest(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan *pb.TunnelData, error) {
+	if m.sendRequestFn != nil {
+		return m.sendRequestFn(ctx, tunnelID, connectionID, data)
+	}
+	return nil, nil
+}
+
+func (m *mockTunnelRouter) CloseConnection(connectionID string) {
+	m.closeConnectionCalled = true
+	m.lastClosedConnID = connectionID
+}
+
+func (m *mockTunnelRouter) RegisterTunnel(tunnelID, runnerID string) {
+	m.registerTunnelCalled = true
+}
+
+func (m *mockTunnelRouter) UnregisterTunnel(tunnelID string) {
+	m.unregisterTunnelCalled = true
 }
