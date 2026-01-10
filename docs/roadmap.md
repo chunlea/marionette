@@ -1432,18 +1432,23 @@
   - [x] Connection handler registry
   - [x] URL generation for public URLs
   - [x] Expired tunnel cleanup
-- [ ] Tunnel relay implementation:
-  - [ ] WebSocket-based tunnel
+- [x] RelayManager implementation (`pkg/tunnel/relay.go`):
+  - [x] Frame protocol for efficient binary data transmission
+  - [x] Frame types: Data, Close, Ping, Pong, Connect, Error
+  - [x] `RelayConnection` for single tunnel relay
+  - [x] `RelayManager` for multiple relay connections
+  - [x] Thread-safe concurrent access
+- [ ] HTTP/TCP proxy implementation:
   - [ ] Proxy HTTP requests to runner port
   - [ ] Proxy TCP connections
-- [ ] Dynamic subdomain assignment:
+- [ ] Dynamic subdomain assignment (deferred):
   - [ ] Generate unique subdomain per tunnel
   - [ ] DNS or wildcard certificate
   - [ ] Route based on subdomain
-- [ ] Tunnel token authentication:
-  - [ ] Generate `ttok_` token per tunnel
-  - [ ] Validate on connection
-  - [ ] Token expiration
+- [x] Tunnel token authentication:
+  - [x] Generate `ttok_` token per tunnel
+  - [x] Validate on connection
+  - [x] Token expiration (max 24 hours)
 - [ ] Security:
   - [ ] Rate limiting per tunnel
   - [ ] Connection limits
