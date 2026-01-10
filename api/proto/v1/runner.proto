@@ -50,6 +50,11 @@ message RunnerMessage {
     SessionAttached session_attached = 7;
     SessionSuspended session_suspended = 8;
     ContextUpdate context_update = 9;
+
+    // Tunnel messages (runner-initiated)
+    CreateTunnelRequest create_tunnel_request = 10;
+    TunnelData tunnel_data = 11;
+    CloseTunnel close_tunnel = 12;
   }
 }
 
@@ -157,6 +162,56 @@ message ContextUpdate {
 }
 
 //------------------------------------------------------------------------------
+// Tunnel Messages (Runner-Initiated)
+//------------------------------------------------------------------------------
+
+// CreateTunnelRequest is sent by runner to request a new tunnel.
+// The agent uses this to expose a local port (e.g., a dev server) to users.
+message CreateTunnelRequest {
+  string session_id = 1;
+  string type = 2;          // "http", "tcp"
+  int32 local_port = 3;     // Port on the runner to tunnel
+
+  // Direction for network policy enforcement
+  // "outbound": Agent → External (http, tcp) - agent exposes a port
+  // Note: For inbound tunnels (desktop streaming), server uses CreateTunnel
+  string direction = 4;
+}
+
+// CreateTunnelResponse is sent by server in response to CreateTunnelRequest.
+message CreateTunnelResponse {
+  string request_id = 1;    // Correlates with the request (optional)
+  bool success = 2;
+  string error = 3;         // Error message if success is false
+
+  // Tunnel info (only set if success is true)
+  string tunnel_id = 4;
+  string token = 5;         // Access token for the tunnel (ttok_xxx)
+  string public_url = 6;    // Full URL to access the tunnel
+  int64 expires_at_unix_ms = 7;
+}
+
+// TunnelData carries data between server and runner for an active tunnel.
+// Used for both directions: server→runner (incoming request) and runner→server (response).
+message TunnelData {
+  string tunnel_id = 1;
+  string connection_id = 2; // Unique ID for this connection (for multiplexing)
+  bytes data = 3;           // Payload data
+
+  // For HTTP tunnels: data contains serialized HTTP request/response
+  // For TCP tunnels: data contains raw bytes
+
+  // Connection lifecycle
+  bool eof = 4;             // End of data for this direction
+}
+
+// CloseTunnel is sent by runner to close a tunnel.
+message CloseTunnel {
+  string tunnel_id = 1;
+  string reason = 2;        // Optional reason for closing
+}
+
+//------------------------------------------------------------------------------
 // Server -> Runner Commands
 //------------------------------------------------------------------------------
 
@@ -168,6 +223,10 @@ message ServerCommand {
     CreateTunnel create_tunnel = 4;
     AttachSession attach_session = 5;
     DetachSession detach_session = 6;
+
+    // Tunnel messages
+    CreateTunnelResponse create_tunnel_response = 7;
+    TunnelData tunnel_data = 8;
   }
 }
 
@@ -275,15 +334,18 @@ message KillTask {
   string reason = 3;
 }
 
+// CreateTunnel is a SERVER-INITIATED tunnel command.
+// Used for inbound tunnels where the server needs to stream TO the agent
+// (e.g., desktop streaming, browser streaming, mobile emulator).
+// For outbound tunnels (agent exposing ports), use CreateTunnelRequest instead.
 message CreateTunnel {
   string tunnel_id = 1;
-  string type = 2;          // "http", "tcp", "desktop", "browser", "ios", "android"
+  string type = 2;          // "desktop", "browser", "ios", "android"
   int32 local_port = 3;
   string token = 4;         // One-time token (server stores hash only)
 
   // Direction for network policy enforcement
   // "inbound": Server/User → Agent (desktop, browser, ios, android)
-  // "outbound": Agent → External (http, tcp)
   string direction = 5;
 
   // Expiration time (Unix milliseconds)
