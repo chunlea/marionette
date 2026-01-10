@@ -1225,3 +1225,434 @@ func TestMessageRouter_HandleMessage_PermissionRequest_MissingTaskOrRunID(t *tes
 	// Permission manager should not have been called
 	assert.False(t, pm.createCalled)
 }
+
+// =============================================================================
+// Tunnel Handler Tests
+// =============================================================================
+
+// mockTunnelHandler implements TunnelHandlerInterface for testing.
+type mockTunnelHandler struct {
+	handleCalled bool
+	lastReq      *pb.CreateTunnelRequest
+	lastRunnerID string
+	resp         *pb.CreateTunnelResponse
+	err          error
+}
+
+func (m *mockTunnelHandler) HandleCreateTunnelRequest(_ context.Context, runnerID string, req *pb.CreateTunnelRequest) (*pb.CreateTunnelResponse, error) {
+	m.handleCalled = true
+	m.lastRunnerID = runnerID
+	m.lastReq = req
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.resp != nil {
+		return m.resp, nil
+	}
+	return &pb.CreateTunnelResponse{
+		RequestId: req.GetRequestId(),
+		Success:   true,
+		TunnelId:  "tun_test123",
+		Token:     "ttok_test",
+		PublicUrl: "http://localhost:8080/tunnels/tun_test123",
+	}, nil
+}
+
+// mockConnectionManager implements a minimal mock for sending commands.
+type mockConnectionManager struct {
+	sendCalled   bool
+	lastRunnerID string
+	lastCmd      *pb.ServerCommand
+	sendErr      error
+}
+
+func (m *mockConnectionManager) SendCommand(runnerID string, cmd *pb.ServerCommand) error {
+	m.sendCalled = true
+	m.lastRunnerID = runnerID
+	m.lastCmd = cmd
+	return m.sendErr
+}
+
+func TestMessageRouter_HandleMessage_CreateTunnelRequest(t *testing.T) {
+	logger := zap.NewNop()
+	th := &mockTunnelHandler{}
+	cm := &mockConnectionManager{}
+	router := NewMessageRouter(logger, nil,
+		WithMRTunnelHandler(th),
+		WithMRConnectionManager(cm),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_CreateTunnelRequest{
+			CreateTunnelRequest: &pb.CreateTunnelRequest{
+				RequestId: "req_123",
+				SessionId: "sess_123",
+				Type:      "http",
+				LocalPort: 8000,
+			},
+		},
+	}
+
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+
+	// Verify tunnel handler was called
+	assert.True(t, th.handleCalled)
+	assert.Equal(t, "run_123", th.lastRunnerID)
+	assert.Equal(t, "req_123", th.lastReq.GetRequestId())
+	assert.Equal(t, "sess_123", th.lastReq.GetSessionId())
+	assert.Equal(t, "http", th.lastReq.GetType())
+	assert.Equal(t, int32(8000), th.lastReq.GetLocalPort())
+
+	// Verify response was sent
+	assert.True(t, cm.sendCalled)
+	assert.Equal(t, "run_123", cm.lastRunnerID)
+	require.NotNil(t, cm.lastCmd)
+	resp := cm.lastCmd.GetCreateTunnelResponse()
+	require.NotNil(t, resp)
+	assert.Equal(t, "req_123", resp.GetRequestId())
+	assert.True(t, resp.GetSuccess())
+	assert.Equal(t, "tun_test123", resp.GetTunnelId())
+}
+
+func TestMessageRouter_HandleMessage_CreateTunnelRequest_NoHandler(t *testing.T) {
+	logger := zap.NewNop()
+	cm := &mockConnectionManager{}
+	// No tunnel handler configured
+	router := NewMessageRouter(logger, nil,
+		WithMRConnectionManager(cm),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_CreateTunnelRequest{
+			CreateTunnelRequest: &pb.CreateTunnelRequest{
+				RequestId: "req_123",
+				SessionId: "sess_123",
+				Type:      "http",
+				LocalPort: 8000,
+			},
+		},
+	}
+
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+
+	// Verify error response was sent
+	assert.True(t, cm.sendCalled)
+	resp := cm.lastCmd.GetCreateTunnelResponse()
+	require.NotNil(t, resp)
+	assert.Equal(t, "req_123", resp.GetRequestId())
+	assert.False(t, resp.GetSuccess())
+	assert.Contains(t, resp.GetError(), "tunnel handler not configured")
+}
+
+func TestMessageRouter_HandleMessage_CreateTunnelRequest_HandlerError(t *testing.T) {
+	logger := zap.NewNop()
+	th := &mockTunnelHandler{
+		err: errors.New("internal error"),
+	}
+	cm := &mockConnectionManager{}
+	router := NewMessageRouter(logger, nil,
+		WithMRTunnelHandler(th),
+		WithMRConnectionManager(cm),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_CreateTunnelRequest{
+			CreateTunnelRequest: &pb.CreateTunnelRequest{
+				RequestId: "req_123",
+				SessionId: "sess_123",
+				Type:      "http",
+				LocalPort: 8000,
+			},
+		},
+	}
+
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+
+	// Verify error response was sent
+	assert.True(t, cm.sendCalled)
+	resp := cm.lastCmd.GetCreateTunnelResponse()
+	require.NotNil(t, resp)
+	assert.Equal(t, "req_123", resp.GetRequestId())
+	assert.False(t, resp.GetSuccess())
+	assert.Contains(t, resp.GetError(), "internal error")
+}
+
+func TestMessageRouter_HandleMessage_CreateTunnelRequest_NoConnectionManager(t *testing.T) {
+	logger := zap.NewNop()
+	th := &mockTunnelHandler{}
+	// No connection manager configured
+	router := NewMessageRouter(logger, nil,
+		WithMRTunnelHandler(th),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_CreateTunnelRequest{
+			CreateTunnelRequest: &pb.CreateTunnelRequest{
+				RequestId: "req_123",
+				SessionId: "sess_123",
+				Type:      "http",
+				LocalPort: 8000,
+			},
+		},
+	}
+
+	// Should not error (logs warning but continues)
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+
+	// Handler should still have been called
+	assert.True(t, th.handleCalled)
+}
+
+func TestMessageRouter_HandleMessage_TunnelData(t *testing.T) {
+	logger := zap.NewNop()
+	router := NewMessageRouter(logger, nil)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_TunnelData{
+			TunnelData: &pb.TunnelData{
+				TunnelId:     "tun_123",
+				ConnectionId: "conn_456",
+				Data:         []byte("test data"),
+				Eof:          false,
+			},
+		},
+	}
+
+	// Should not error (stub implementation)
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+}
+
+func TestMessageRouter_HandleMessage_CloseTunnel(t *testing.T) {
+	logger := zap.NewNop()
+	router := NewMessageRouter(logger, nil)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_CloseTunnel{
+			CloseTunnel: &pb.CloseTunnel{
+				TunnelId: "tun_123",
+				Reason:   "user requested",
+			},
+		},
+	}
+
+	// Should not error (stub implementation)
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+}
+
+func TestMessageRouter_WithMRTunnelHandler(t *testing.T) {
+	logger := zap.NewNop()
+	th := &mockTunnelHandler{}
+	router := NewMessageRouter(logger, nil, WithMRTunnelHandler(th))
+
+	assert.NotNil(t, router.tunnelHandler)
+}
+
+func TestMessageRouter_WithMRConnectionManager(t *testing.T) {
+	logger := zap.NewNop()
+	cm := &ConnectionManager{}
+	router := NewMessageRouter(logger, nil, WithMRConnectionManager(cm))
+
+	assert.NotNil(t, router.connManager)
+}
+
+func TestMessageRouter_HandleMessage_CreateTunnelRequest_SendError(t *testing.T) {
+	logger := zap.NewNop()
+	th := &mockTunnelHandler{}
+	cm := &mockConnectionManager{
+		sendErr: errors.New("connection failed"),
+	}
+	router := NewMessageRouter(logger, nil,
+		WithMRTunnelHandler(th),
+		WithMRConnectionManager(cm),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_CreateTunnelRequest{
+			CreateTunnelRequest: &pb.CreateTunnelRequest{
+				RequestId: "req_123",
+				SessionId: "sess_123",
+				Type:      "http",
+				LocalPort: 8000,
+			},
+		},
+	}
+
+	// Should return the send error
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection failed")
+
+	// Handler should have been called
+	assert.True(t, th.handleCalled)
+
+	// Connection manager should have been called
+	assert.True(t, cm.sendCalled)
+}
+
+// =============================================================================
+// Context Update Tests
+// =============================================================================
+
+// mockSessionManager implements core.SessionManagerInterface for testing.
+type mockSessionManager struct {
+	updateContextCalled bool
+	lastSessionID       string
+	lastContextSnapshot *core.ContextSnapshot
+	updateContextErr    error
+}
+
+func (m *mockSessionManager) Create(_ context.Context, _ core.CreateSessionOptions) (*store.Session, error) {
+	return nil, nil
+}
+
+func (m *mockSessionManager) Get(_ context.Context, _ string) (*store.Session, error) {
+	return nil, nil
+}
+
+func (m *mockSessionManager) List(_ context.Context, _ store.ListSessionsOptions) (*store.ListResult[store.Session], error) {
+	return nil, nil
+}
+
+func (m *mockSessionManager) Activate(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) Suspend(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) Resume(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) Terminate(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) AttachRunner(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) DetachRunner(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockSessionManager) UpdateContextSnapshot(_ context.Context, sessionID string, snapshot *core.ContextSnapshot) error {
+	m.updateContextCalled = true
+	m.lastSessionID = sessionID
+	m.lastContextSnapshot = snapshot
+	return m.updateContextErr
+}
+
+func TestMessageRouter_HandleMessage_ContextUpdate(t *testing.T) {
+	logger := zap.NewNop()
+	sm := &mockSessionManager{}
+	router := NewMessageRouter(logger, nil,
+		WithMRSessionManager(sm),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_ContextUpdate{
+			ContextUpdate: &pb.ContextUpdate{
+				SessionId:       "sess_123",
+				TaskId:          "task_456",
+				ContextSnapshot: []byte(`{"conversation_id": "conv_789"}`),
+			},
+		},
+	}
+
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+
+	// Verify session manager was called
+	assert.True(t, sm.updateContextCalled)
+	assert.Equal(t, "sess_123", sm.lastSessionID)
+	assert.NotNil(t, sm.lastContextSnapshot)
+	assert.Equal(t, "conv_789", sm.lastContextSnapshot.ConversationID)
+}
+
+func TestMessageRouter_HandleMessage_ContextUpdate_NoSessionManager(t *testing.T) {
+	logger := zap.NewNop()
+	// No session manager configured
+	router := NewMessageRouter(logger, nil)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_ContextUpdate{
+			ContextUpdate: &pb.ContextUpdate{
+				SessionId:       "sess_123",
+				TaskId:          "task_456",
+				ContextSnapshot: []byte(`{"conversation_id": "conv_789"}`),
+			},
+		},
+	}
+
+	// Should not error even without session manager
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+}
+
+func TestMessageRouter_HandleMessage_ContextUpdate_InvalidJSON(t *testing.T) {
+	logger := zap.NewNop()
+	sm := &mockSessionManager{}
+	router := NewMessageRouter(logger, nil,
+		WithMRSessionManager(sm),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_ContextUpdate{
+			ContextUpdate: &pb.ContextUpdate{
+				SessionId:       "sess_123",
+				TaskId:          "task_456",
+				ContextSnapshot: []byte(`{invalid json`),
+			},
+		},
+	}
+
+	// Should not error, just log warning
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+
+	// Session manager should not have been called
+	assert.False(t, sm.updateContextCalled)
+}
+
+func TestMessageRouter_HandleMessage_ContextUpdate_UpdateError(t *testing.T) {
+	logger := zap.NewNop()
+	sm := &mockSessionManager{
+		updateContextErr: errors.New("update failed"),
+	}
+	router := NewMessageRouter(logger, nil,
+		WithMRSessionManager(sm),
+	)
+
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_ContextUpdate{
+			ContextUpdate: &pb.ContextUpdate{
+				SessionId:       "sess_123",
+				TaskId:          "task_456",
+				ContextSnapshot: []byte(`{"conversation_id": "conv_789"}`),
+			},
+		},
+	}
+
+	// Should not error (logs warning but continues)
+	err := router.HandleMessage(context.Background(), "run_123", msg)
+	require.NoError(t, err)
+
+	// Session manager should have been called
+	assert.True(t, sm.updateContextCalled)
+}
+
+func TestMessageRouter_WithMRSessionManager(t *testing.T) {
+	logger := zap.NewNop()
+	sm := &mockSessionManager{}
+	router := NewMessageRouter(logger, nil, WithMRSessionManager(sm))
+
+	assert.NotNil(t, router.sessionManager)
+}
