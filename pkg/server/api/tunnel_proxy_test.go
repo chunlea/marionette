@@ -410,3 +410,54 @@ func TestExtractTunnelToken(t *testing.T) {
 		})
 	}
 }
+
+// Tests for TunnelProxyAdapter
+
+func TestNewTunnelProxyAdapter(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+	)
+
+	require.NotNil(t, adapter)
+	assert.NotNil(t, adapter.logger)
+}
+
+func TestTunnelProxyAdapter_ValidateTunnel_NoManager(t *testing.T) {
+	adapter := NewTunnelProxyAdapter()
+
+	_, err := adapter.ValidateTunnel(context.Background(), "tun_test")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "tunnel manager not configured")
+}
+
+func TestTunnelProxyAdapter_ValidateTunnelToken_NoManager(t *testing.T) {
+	adapter := NewTunnelProxyAdapter()
+
+	valid, err := adapter.ValidateTunnelToken(context.Background(), "tun_test", "ttok_test")
+	assert.Error(t, err)
+	assert.False(t, valid)
+}
+
+func TestTunnelProxyAdapter_SendRequest_NoRouter(t *testing.T) {
+	adapter := NewTunnelProxyAdapter()
+
+	_, err := adapter.SendRequest(context.Background(), "tun_test", "conn_test", []byte("data"))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "tunnel router not configured")
+}
+
+func TestTunnelProxyAdapter_CloseConnection_NoRouter(t *testing.T) {
+	adapter := NewTunnelProxyAdapter()
+
+	// Should not panic with nil router
+	adapter.CloseConnection("conn_test")
+}
+
+func TestDefaultTunnelCleanupConfig(t *testing.T) {
+	cfg := DefaultTunnelCleanupConfig()
+
+	assert.Equal(t, 5*time.Minute, cfg.Interval)
+	assert.Equal(t, 10*time.Minute, cfg.MaxAge)
+}
