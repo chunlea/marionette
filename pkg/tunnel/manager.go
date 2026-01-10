@@ -439,6 +439,11 @@ func (m *TunnelManager) HandleTCPConnection(ctx context.Context, tunnelID string
 		return ErrTunnelExpired
 	}
 
+	// Verify tunnel type
+	if active.Type != TypeTCP {
+		return fmt.Errorf("tunnel type mismatch: expected %s, got %s", TypeTCP, active.Type)
+	}
+
 	// Get handler for runner
 	m.handlersMu.RLock()
 	handler, hasHandler := m.handlers[active.RunnerID]
@@ -452,12 +457,8 @@ func (m *TunnelManager) HandleTCPConnection(ctx context.Context, tunnelID string
 	active.connections.Add(1)
 	defer active.connections.Done()
 
-	// TCP proxying will be implemented in PR 3
-	_ = ctx
-	_ = conn
-	_ = handler
-
-	return nil
+	// Proxy the TCP connection
+	return m.handleTCPProxyConnection(ctx, tunnelID, handler, conn)
 }
 
 // RegisterHandler registers a connection handler for a runner.

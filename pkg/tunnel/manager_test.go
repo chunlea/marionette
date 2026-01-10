@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -149,6 +150,36 @@ func (h *mockConnectionHandler) SetConnected(connected bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.connected = connected
+}
+
+// mockManagerConnection implements Connection for testing in manager tests.
+type mockManagerConnection struct {
+	closed bool
+}
+
+func (m *mockManagerConnection) Read(_ []byte) (n int, err error) {
+	return 0, io.EOF
+}
+
+func (m *mockManagerConnection) Write(_ []byte) (n int, err error) {
+	return 0, nil
+}
+
+func (m *mockManagerConnection) Close() error {
+	m.closed = true
+	return nil
+}
+
+func (m *mockManagerConnection) SetDeadline(_ time.Time) error {
+	return nil
+}
+
+func (m *mockManagerConnection) SetReadDeadline(_ time.Time) error {
+	return nil
+}
+
+func (m *mockManagerConnection) SetWriteDeadline(_ time.Time) error {
+	return nil
 }
 
 func TestNewTunnelManager(t *testing.T) {
@@ -1041,7 +1072,13 @@ func TestTunnelManager_HandleTCPConnection_WithConnectedHandler(t *testing.T) {
 	handler := newMockConnectionHandler()
 	m.RegisterHandler("run_456", handler)
 
-	// HandleTCPConnection with nil conn - just verify handler lookup works
-	err = m.HandleTCPConnection(context.Background(), tunnel.ID, nil)
+	// Create a mock connection
+	mockConn := &mockManagerConnection{}
+
+	// HandleTCPConnection - verify handler lookup works and proxy starts
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err = m.HandleTCPConnection(ctx, tunnel.ID, mockConn)
+	// Error is expected due to timeout or mock behavior, but not ErrRunnerNotConnected
 	assert.NotEqual(t, ErrRunnerNotConnected, err)
 }
