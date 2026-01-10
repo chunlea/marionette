@@ -18,6 +18,8 @@ type MessageRouter struct {
 	taskManager       core.TaskManagerInterface
 	permissionManager core.PermissionManagerInterface
 	sessionManager    core.SessionManagerInterface
+	tunnelHandler     TunnelHandlerInterface
+	connManager       *ConnectionManager
 	store             store.Store
 }
 
@@ -49,6 +51,20 @@ func WithMRStore(s store.Store) MessageRouterOption {
 func WithMRSessionManager(sm core.SessionManagerInterface) MessageRouterOption {
 	return func(r *MessageRouter) {
 		r.sessionManager = sm
+	}
+}
+
+// WithMRTunnelHandler sets the tunnel handler for the message router.
+func WithMRTunnelHandler(th TunnelHandlerInterface) MessageRouterOption {
+	return func(r *MessageRouter) {
+		r.tunnelHandler = th
+	}
+}
+
+// WithMRConnectionManager sets the connection manager for the message router.
+func WithMRConnectionManager(cm *ConnectionManager) MessageRouterOption {
+	return func(r *MessageRouter) {
+		r.connManager = cm
 	}
 }
 
@@ -97,6 +113,15 @@ func (r *MessageRouter) HandleMessage(ctx context.Context, runnerID string, msg 
 
 	case *pb.RunnerMessage_ContextUpdate:
 		return r.handleContextUpdate(ctx, runnerID, payload.ContextUpdate)
+
+	case *pb.RunnerMessage_CreateTunnelRequest:
+		return r.handleCreateTunnelRequest(ctx, runnerID, payload.CreateTunnelRequest)
+
+	case *pb.RunnerMessage_TunnelData:
+		return r.handleTunnelData(ctx, runnerID, payload.TunnelData)
+
+	case *pb.RunnerMessage_CloseTunnel:
+		return r.handleCloseTunnel(ctx, runnerID, payload.CloseTunnel)
 
 	default:
 		r.logger.Warn("unknown message type",
@@ -401,5 +426,90 @@ func (r *MessageRouter) handleContextUpdate(ctx context.Context, runnerID string
 		zap.String("conversation_id", snapshot.ConversationID),
 	)
 
+	return nil
+}
+
+// handleCreateTunnelRequest handles a tunnel creation request from a runner.
+func (r *MessageRouter) handleCreateTunnelRequest(ctx context.Context, runnerID string, req *pb.CreateTunnelRequest) error {
+	r.logger.Info("create tunnel request received",
+		zap.String("runner_id", runnerID),
+		zap.String("session_id", req.GetSessionId()),
+		zap.String("type", req.GetType()),
+		zap.Int32("local_port", req.GetLocalPort()),
+	)
+
+	if r.tunnelHandler == nil {
+		r.logger.Warn("tunnel handler not configured, skipping create tunnel request")
+		return r.sendTunnelResponse(runnerID, &pb.CreateTunnelResponse{
+			Success: false,
+			Error:   "tunnel handler not configured",
+		})
+	}
+
+	// Handle the request
+	resp, err := r.tunnelHandler.HandleCreateTunnelRequest(ctx, runnerID, req)
+	if err != nil {
+		r.logger.Error("failed to handle create tunnel request",
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+		return r.sendTunnelResponse(runnerID, &pb.CreateTunnelResponse{
+			Success: false,
+			Error:   fmt.Sprintf("internal error: %v", err),
+		})
+	}
+
+	// Send response back to runner
+	return r.sendTunnelResponse(runnerID, resp)
+}
+
+// sendTunnelResponse sends a CreateTunnelResponse to the runner.
+func (r *MessageRouter) sendTunnelResponse(runnerID string, resp *pb.CreateTunnelResponse) error {
+	if r.connManager == nil {
+		r.logger.Warn("connection manager not configured, cannot send tunnel response")
+		return nil
+	}
+
+	cmd := &pb.ServerCommand{
+		Payload: &pb.ServerCommand_CreateTunnelResponse{
+			CreateTunnelResponse: resp,
+		},
+	}
+
+	if err := r.connManager.SendCommand(runnerID, cmd); err != nil {
+		r.logger.Error("failed to send tunnel response",
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	return nil
+}
+
+// handleTunnelData handles incoming tunnel data from a runner.
+// This will be fully implemented in PR4 (TunnelData Channel).
+func (r *MessageRouter) handleTunnelData(ctx context.Context, runnerID string, data *pb.TunnelData) error {
+	r.logger.Debug("tunnel data received",
+		zap.String("runner_id", runnerID),
+		zap.String("tunnel_id", data.GetTunnelId()),
+		zap.String("connection_id", data.GetConnectionId()),
+		zap.Int("data_len", len(data.GetData())),
+		zap.Bool("eof", data.GetEof()),
+	)
+
+	// TODO: Implement in PR4 - route data to HTTP response writer
+	return nil
+}
+
+// handleCloseTunnel handles a tunnel close request from a runner.
+func (r *MessageRouter) handleCloseTunnel(ctx context.Context, runnerID string, req *pb.CloseTunnel) error {
+	r.logger.Info("close tunnel request received",
+		zap.String("runner_id", runnerID),
+		zap.String("tunnel_id", req.GetTunnelId()),
+		zap.String("reason", req.GetReason()),
+	)
+
+	// TODO: Implement tunnel cleanup
 	return nil
 }
