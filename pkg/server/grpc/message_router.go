@@ -25,6 +25,7 @@ type MessageRouter struct {
 	permissionManager core.PermissionManagerInterface
 	sessionManager    core.SessionManagerInterface
 	tunnelHandler     TunnelHandlerInterface
+	tunnelRouter      *TunnelRouter
 	connManager       CommandSender
 	store             store.Store
 }
@@ -71,6 +72,13 @@ func WithMRTunnelHandler(th TunnelHandlerInterface) MessageRouterOption {
 func WithMRConnectionManager(cm CommandSender) MessageRouterOption {
 	return func(r *MessageRouter) {
 		r.connManager = cm
+	}
+}
+
+// WithMRTunnelRouter sets the tunnel router for the message router.
+func WithMRTunnelRouter(tr *TunnelRouter) MessageRouterOption {
+	return func(r *MessageRouter) {
+		r.tunnelRouter = tr
 	}
 }
 
@@ -498,7 +506,7 @@ func (r *MessageRouter) sendTunnelResponse(runnerID string, resp *pb.CreateTunne
 }
 
 // handleTunnelData handles incoming tunnel data from a runner.
-// This will be fully implemented in PR4 (TunnelData Channel).
+// Routes the data to the appropriate HTTP response handler via TunnelRouter.
 func (r *MessageRouter) handleTunnelData(ctx context.Context, runnerID string, data *pb.TunnelData) error {
 	r.logger.Debug("tunnel data received",
 		zap.String("runner_id", runnerID),
@@ -508,8 +516,12 @@ func (r *MessageRouter) handleTunnelData(ctx context.Context, runnerID string, d
 		zap.Bool("eof", data.GetEof()),
 	)
 
-	// TODO: Implement in PR4 - route data to HTTP response writer
-	return nil
+	if r.tunnelRouter == nil {
+		r.logger.Warn("tunnel router not configured, dropping tunnel data")
+		return nil
+	}
+
+	return r.tunnelRouter.HandleTunnelData(ctx, runnerID, data)
 }
 
 // handleCloseTunnel handles a tunnel close request from a runner.
@@ -520,6 +532,10 @@ func (r *MessageRouter) handleCloseTunnel(ctx context.Context, runnerID string, 
 		zap.String("reason", req.GetReason()),
 	)
 
-	// TODO: Implement tunnel cleanup
-	return nil
+	if r.tunnelRouter == nil {
+		r.logger.Warn("tunnel router not configured, cannot close tunnel")
+		return nil
+	}
+
+	return r.tunnelRouter.HandleCloseTunnel(ctx, runnerID, req.GetTunnelId(), req.GetReason())
 }

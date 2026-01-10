@@ -314,6 +314,11 @@ func TestRelayManager_HandleConnect(t *testing.T) {
 	}
 
 	manager := NewRelayManager(logger, sendFn)
+	// Ensure cleanup at the end
+	defer func() {
+		manager.CloseAll()
+		manager.Wait()
+	}()
 
 	t.Run("connect to local service", func(t *testing.T) {
 		err := manager.HandleConnect("tun_123", port)
@@ -371,6 +376,12 @@ func TestRelayManager_HandleData(t *testing.T) {
 	}
 
 	manager := NewRelayManager(logger, nil)
+	// Ensure cleanup at the end
+	defer func() {
+		manager.CloseAll()
+		manager.Wait()
+	}()
+
 	err = manager.HandleConnect("tun_data", port)
 	require.NoError(t, err)
 
@@ -438,6 +449,9 @@ func TestRelayManager_HandleClose(t *testing.T) {
 	err = manager.HandleClose("tun_close")
 	require.NoError(t, err)
 	assert.Equal(t, 0, manager.GetActiveCount())
+
+	// Wait for all goroutines to finish to prevent data race with zaptest logger
+	manager.Wait()
 }
 
 func TestRelayManager_HandleCloseNotFound(t *testing.T) {
@@ -502,6 +516,9 @@ func TestRelayManager_CloseAll(t *testing.T) {
 
 	manager.CloseAll()
 	assert.Equal(t, 0, manager.GetActiveCount())
+
+	// Wait for all goroutines to finish to prevent data race with zaptest logger
+	manager.Wait()
 }
 
 func TestRelayManager_HandleFrame(t *testing.T) {
@@ -619,6 +636,9 @@ func TestRelayManager_ConcurrentOperations(t *testing.T) {
 
 	// All should be closed
 	assert.Equal(t, 0, manager.GetActiveCount())
+
+	// Wait for all goroutines to finish to prevent data race with zaptest logger
+	manager.Wait()
 }
 
 func TestRelayConnection_ReadFromLocal_Close(t *testing.T) {
