@@ -168,14 +168,15 @@ message ContextUpdate {
 // CreateTunnelRequest is sent by runner to request a new tunnel.
 // The agent uses this to expose a local port (e.g., a dev server) to users.
 message CreateTunnelRequest {
-  string session_id = 1;
-  string type = 2;          // "http", "tcp"
-  int32 local_port = 3;     // Port on the runner to tunnel
+  string request_id = 1;    // Unique ID to correlate with CreateTunnelResponse
+  string session_id = 2;
+  string type = 3;          // "http", "tcp"
+  int32 local_port = 4;     // Port on the runner to tunnel
 
   // Direction for network policy enforcement
   // "outbound": Agent → External (http, tcp) - agent exposes a port
   // Note: For inbound tunnels (desktop streaming), server uses CreateTunnel
-  string direction = 4;
+  string direction = 5;
 }
 
 // CreateTunnelResponse is sent by server in response to CreateTunnelRequest.
