@@ -26,6 +26,7 @@ type TunnelCreator interface {
 type TunnelHandler struct {
 	logger        *zap.Logger
 	tunnelManager TunnelCreator
+	tunnelRouter  *TunnelRouter
 }
 
 // TunnelHandlerOption is a functional option for TunnelHandler.
@@ -42,6 +43,13 @@ func WithTHLogger(logger *zap.Logger) TunnelHandlerOption {
 func WithTHTunnelManager(tm TunnelCreator) TunnelHandlerOption {
 	return func(h *TunnelHandler) {
 		h.tunnelManager = tm
+	}
+}
+
+// WithTHTunnelRouter sets the tunnel router for the tunnel handler.
+func WithTHTunnelRouter(tr *TunnelRouter) TunnelHandlerOption {
+	return func(h *TunnelHandler) {
+		h.tunnelRouter = tr
 	}
 }
 
@@ -127,6 +135,11 @@ func (h *TunnelHandler) HandleCreateTunnelRequest(ctx context.Context, runnerID 
 		zap.String("session_id", sessionID),
 		zap.String("public_url", t.PublicURL),
 	)
+
+	// Register tunnel with router for data routing
+	if h.tunnelRouter != nil {
+		h.tunnelRouter.RegisterTunnel(t.ID, runnerID)
+	}
 
 	return &pb.CreateTunnelResponse{
 		RequestId:       requestID,
