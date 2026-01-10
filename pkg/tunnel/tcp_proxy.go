@@ -71,6 +71,13 @@ func (p *TCPProxy) ProxyTCPConnection(
 	proxyCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Close connection when context is cancelled to unblock any blocking Read/Write
+	// This is necessary because net.Conn.Read() is not context-aware
+	go func() {
+		<-proxyCtx.Done()
+		_ = conn.Close() // Ignore error - connection may already be closed
+	}()
+
 	// Error channel to collect errors from goroutines
 	errCh := make(chan error, 2)
 
