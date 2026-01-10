@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -132,4 +133,65 @@ func TestTunnelHandler_NoTunnelManager(t *testing.T) {
 
 	assert.False(t, resp.Success)
 	assert.Contains(t, resp.Error, "tunnel manager not configured")
+}
+
+// mockTunnelCreator implements TunnelCreator for testing.
+type mockTunnelCreator struct {
+	createCalled bool
+	lastOpts     tunnel.CreateTunnelOptions
+	tunnel       *tunnel.Tunnel
+	err          error
+}
+
+func (m *mockTunnelCreator) Create(_ context.Context, opts tunnel.CreateTunnelOptions) (*tunnel.Tunnel, error) {
+	m.createCalled = true
+	m.lastOpts = opts
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.tunnel != nil {
+		return m.tunnel, nil
+	}
+	return &tunnel.Tunnel{
+		ID:        "tun_test123",
+		Token:     "ttok_test",
+		PublicURL: "http://localhost:8080/tunnels/tun_test123",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}, nil
+}
+
+func TestTunnelHandler_HandleCreateTunnelRequest_CreateError(t *testing.T) {
+	ctx := context.Background()
+	logger := zaptest.NewLogger(t)
+
+	// Create mock that returns error
+	tm := &mockTunnelCreator{
+		err: errors.New("storage unavailable"),
+	}
+
+	handler := NewTunnelHandler(
+		WithTHLogger(logger),
+		WithTHTunnelManager(tm),
+	)
+
+	req := &pb.CreateTunnelRequest{
+		RequestId: "req_error789",
+		SessionId: "sess_test123",
+		Type:      "http",
+		LocalPort: 8000,
+	}
+
+	resp, err := handler.HandleCreateTunnelRequest(ctx, "run_test456", req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	assert.Equal(t, "req_error789", resp.RequestId)
+	assert.False(t, resp.Success)
+	assert.Contains(t, resp.Error, "failed to create tunnel")
+	assert.Contains(t, resp.Error, "storage unavailable")
+
+	// Verify mock was called
+	assert.True(t, tm.createCalled)
+	assert.Equal(t, "sess_test123", tm.lastOpts.SessionID)
+	assert.Equal(t, "run_test456", tm.lastOpts.RunnerID)
 }

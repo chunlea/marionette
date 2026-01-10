@@ -16,10 +16,16 @@ type TunnelHandlerInterface interface {
 	HandleCreateTunnelRequest(ctx context.Context, runnerID string, req *pb.CreateTunnelRequest) (*pb.CreateTunnelResponse, error)
 }
 
+// TunnelCreator is an interface for creating tunnels.
+// This allows mocking in tests.
+type TunnelCreator interface {
+	Create(ctx context.Context, opts tunnel.CreateTunnelOptions) (*tunnel.Tunnel, error)
+}
+
 // TunnelHandler handles tunnel requests from runners.
 type TunnelHandler struct {
 	logger        *zap.Logger
-	tunnelManager *tunnel.TunnelManager
+	tunnelManager TunnelCreator
 }
 
 // TunnelHandlerOption is a functional option for TunnelHandler.
@@ -33,7 +39,7 @@ func WithTHLogger(logger *zap.Logger) TunnelHandlerOption {
 }
 
 // WithTHTunnelManager sets the tunnel manager for the tunnel handler.
-func WithTHTunnelManager(tm *tunnel.TunnelManager) TunnelHandlerOption {
+func WithTHTunnelManager(tm TunnelCreator) TunnelHandlerOption {
 	return func(h *TunnelHandler) {
 		h.tunnelManager = tm
 	}
