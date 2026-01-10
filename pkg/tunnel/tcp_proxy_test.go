@@ -81,6 +81,9 @@ func (m *mockConnection) Write(p []byte) (n int, err error) {
 func (m *mockConnection) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.closed {
+		return nil // Already closed, idempotent
+	}
 	m.closed = true
 	close(m.readBlock)
 	return nil
