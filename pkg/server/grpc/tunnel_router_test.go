@@ -2,14 +2,46 @@ package grpc
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/tunnel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
+
+// mockTRConnectionManager is a mock for TunnelRouter tests.
+type mockTRConnectionManager struct {
+	mu       sync.Mutex
+	commands map[string][]*pb.ServerCommand
+	sendErr  error
+}
+
+func newMockTRConnectionManager() *mockTRConnectionManager {
+	return &mockTRConnectionManager{
+		commands: make(map[string][]*pb.ServerCommand),
+	}
+}
+
+func (m *mockTRConnectionManager) SendCommand(runnerID string, cmd *pb.ServerCommand) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	m.commands[runnerID] = append(m.commands[runnerID], cmd)
+	return nil
+}
+
+func (m *mockTRConnectionManager) GetCommands(runnerID string) []*pb.ServerCommand {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.commands[runnerID]
+}
 
 func TestNewTunnelRouter(t *testing.T) {
 	logger := zaptest.NewLogger(t)
@@ -283,4 +315,221 @@ func TestTunnelRouter_CleanupStaleConnections(t *testing.T) {
 
 	assert.False(t, oldExists)
 	assert.True(t, newExists)
+}
+
+func TestNewTunnelRouter_WithOptions(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	cm := newMockTRConnectionManager()
+	tm := tunnel.NewTunnelManager()
+
+	tr := NewTunnelRouter(
+		WithTRLogger(logger),
+		WithTRConnectionManager(cm),
+		WithTRTunnelManager(tm),
+	)
+
+	require.NotNil(t, tr)
+	assert.Equal(t, cm, tr.connManager)
+	assert.Equal(t, tm, tr.tm)
+}
+
+func TestTunnelRouter_SendRequest_Success(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	cm := newMockTRConnectionManager()
+
+	tr := NewTunnelRouter(
+		WithTRLogger(logger),
+		WithTRConnectionManager(cm),
+	)
+
+	// Register tunnel
+	tr.RegisterTunnel("tun_test", "run_test")
+
+	// Send request
+	responseCh, err := tr.SendRequest(context.Background(), "tun_test", "conn_123", []byte("hello"))
+	require.NoError(t, err)
+	require.NotNil(t, responseCh)
+
+	// Verify command was sent
+	commands := cm.GetCommands("run_test")
+	require.Len(t, commands, 1)
+
+	tunnelData := commands[0].GetTunnelData()
+	require.NotNil(t, tunnelData)
+	assert.Equal(t, "tun_test", tunnelData.TunnelId)
+	assert.Equal(t, "conn_123", tunnelData.ConnectionId)
+	assert.Equal(t, []byte("hello"), tunnelData.Data)
+	assert.False(t, tunnelData.Eof)
+
+	// Verify connection was registered
+	tr.connectionsMu.RLock()
+	_, exists := tr.connections["conn_123"]
+	tr.connectionsMu.RUnlock()
+	assert.True(t, exists)
+
+	// Cleanup
+	tr.CloseConnection("conn_123")
+}
+
+func TestTunnelRouter_SendRequest_SendError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	cm := newMockTRConnectionManager()
+	cm.sendErr = errors.New("connection lost")
+
+	tr := NewTunnelRouter(
+		WithTRLogger(logger),
+		WithTRConnectionManager(cm),
+	)
+
+	// Register tunnel
+	tr.RegisterTunnel("tun_test", "run_test")
+
+	// Send request should fail
+	responseCh, err := tr.SendRequest(context.Background(), "tun_test", "conn_123", []byte("hello"))
+	require.Error(t, err)
+	assert.Nil(t, responseCh)
+	assert.Contains(t, err.Error(), "connection lost")
+
+	// Verify connection was not registered (cleaned up)
+	tr.connectionsMu.RLock()
+	_, exists := tr.connections["conn_123"]
+	tr.connectionsMu.RUnlock()
+	assert.False(t, exists)
+}
+
+func TestTunnelRouter_SendEOF_Success(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	cm := newMockTRConnectionManager()
+
+	tr := NewTunnelRouter(
+		WithTRLogger(logger),
+		WithTRConnectionManager(cm),
+	)
+
+	// Register tunnel
+	tr.RegisterTunnel("tun_test", "run_test")
+
+	// Send EOF
+	err := tr.SendEOF("tun_test", "conn_123")
+	require.NoError(t, err)
+
+	// Verify EOF command was sent
+	commands := cm.GetCommands("run_test")
+	require.Len(t, commands, 1)
+
+	tunnelData := commands[0].GetTunnelData()
+	require.NotNil(t, tunnelData)
+	assert.Equal(t, "tun_test", tunnelData.TunnelId)
+	assert.Equal(t, "conn_123", tunnelData.ConnectionId)
+	assert.True(t, tunnelData.Eof)
+}
+
+func TestTunnelRouter_SendEOF_NoTunnel(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tr := NewTunnelRouter(WithTRLogger(logger))
+
+	err := tr.SendEOF("tun_unknown", "conn_123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tunnel not found")
+}
+
+func TestTunnelRouter_SendEOF_NoConnectionManager(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tr := NewTunnelRouter(WithTRLogger(logger))
+
+	// Register tunnel but no connection manager
+	tr.RegisterTunnel("tun_test", "run_test")
+
+	err := tr.SendEOF("tun_test", "conn_123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection manager not configured")
+}
+
+func TestTunnelRouter_HandleTunnelData_ContextCancelled(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tr := NewTunnelRouter(WithTRLogger(logger))
+
+	// Create connection with full channel (buffer size 0)
+	responseCh := make(chan *pb.TunnelData) // unbuffered
+	tr.connectionsMu.Lock()
+	tr.connections["conn_test"] = &tunnelConnection{
+		tunnelID:     "tun_test",
+		connectionID: "conn_test",
+		runnerID:     "run_test",
+		responseCh:   responseCh,
+		createdAt:    time.Now(),
+	}
+	tr.connectionsMu.Unlock()
+
+	// Use cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Handle data with cancelled context
+	err := tr.HandleTunnelData(ctx, "run_test", &pb.TunnelData{
+		TunnelId:     "tun_test",
+		ConnectionId: "conn_test",
+		Data:         []byte("test"),
+	})
+
+	// Should return context error
+	require.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+}
+
+func TestTunnelRouter_HandleTunnelData_ChannelFull(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tr := NewTunnelRouter(WithTRLogger(logger))
+
+	// Create connection with full channel
+	responseCh := make(chan *pb.TunnelData, 1)
+	responseCh <- &pb.TunnelData{} // fill the channel
+
+	tr.connectionsMu.Lock()
+	tr.connections["conn_test"] = &tunnelConnection{
+		tunnelID:     "tun_test",
+		connectionID: "conn_test",
+		runnerID:     "run_test",
+		responseCh:   responseCh,
+		createdAt:    time.Now(),
+	}
+	tr.connectionsMu.Unlock()
+
+	// Handle data when channel is full (should drop and not block)
+	err := tr.HandleTunnelData(context.Background(), "run_test", &pb.TunnelData{
+		TunnelId:     "tun_test",
+		ConnectionId: "conn_test",
+		Data:         []byte("dropped"),
+	})
+
+	// Should not error, just log warning and drop
+	require.NoError(t, err)
+}
+
+func TestTunnelRouter_CloseConnection_NotExists(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tr := NewTunnelRouter(WithTRLogger(logger))
+
+	// Close non-existent connection (should not panic)
+	tr.CloseConnection("conn_nonexistent")
+}
+
+func TestTunnelRouter_HandleCloseTunnel_WithTunnelManager(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tm := tunnel.NewTunnelManager(tunnel.WithLogger(logger))
+
+	tr := NewTunnelRouter(
+		WithTRLogger(logger),
+		WithTRTunnelManager(tm),
+	)
+
+	// Register tunnel
+	tr.RegisterTunnel("tun_test", "run_test")
+
+	// Handle close (will call tm.Close which may return error for non-existent tunnel)
+	err := tr.HandleCloseTunnel(context.Background(), "run_test", "tun_test", "test")
+
+	// The error from tm.Close is returned (tunnel doesn't exist in tm)
+	// This is expected behavior
+	assert.Error(t, err)
 }

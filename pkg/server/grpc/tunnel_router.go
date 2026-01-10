@@ -15,7 +15,7 @@ import (
 // It manages active connections and coordinates bidirectional data flow.
 type TunnelRouter struct {
 	logger      *zap.Logger
-	connManager *ConnectionManager
+	connManager CommandSender
 	tm          *tunnel.TunnelManager
 
 	// Active connections waiting for responses
@@ -49,7 +49,7 @@ func WithTRLogger(logger *zap.Logger) TunnelRouterOption {
 }
 
 // WithTRConnectionManager sets the connection manager for the tunnel router.
-func WithTRConnectionManager(cm *ConnectionManager) TunnelRouterOption {
+func WithTRConnectionManager(cm CommandSender) TunnelRouterOption {
 	return func(r *TunnelRouter) {
 		r.connManager = cm
 	}

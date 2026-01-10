@@ -195,3 +195,16 @@ func TestTunnelHandler_HandleCreateTunnelRequest_CreateError(t *testing.T) {
 	assert.Equal(t, "sess_test123", tm.lastOpts.SessionID)
 	assert.Equal(t, "run_test456", tm.lastOpts.RunnerID)
 }
+
+func TestTunnelHandler_WithTunnelRouter(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tr := NewTunnelRouter(WithTRLogger(logger))
+
+	handler := NewTunnelHandler(
+		WithTHLogger(logger),
+		WithTHTunnelRouter(tr),
+	)
+
+	require.NotNil(t, handler)
+	assert.Equal(t, tr, handler.tunnelRouter)
+}
