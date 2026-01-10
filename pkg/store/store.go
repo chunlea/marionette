@@ -157,6 +157,15 @@ type Store interface {
 	GetLatestManifest(ctx context.Context, workspaceID string) (*Manifest, error)
 	DeleteManifest(ctx context.Context, id string) error
 
+	// Streams
+	CreateStream(ctx context.Context, stream *Stream) error
+	GetStream(ctx context.Context, id string) (*Stream, error)
+	GetStreamBySessionAndType(ctx context.Context, sessionID, streamType string, activeOnly bool) (*Stream, error)
+	ListStreams(ctx context.Context, opts ListStreamsOptions) (*ListResult[Stream], error)
+	UpdateStream(ctx context.Context, id string, updates StreamUpdates) error
+	DeleteStream(ctx context.Context, id string) error
+	CleanupExpiredStreams(ctx context.Context) (int, error)
+
 	// Transactions
 	BeginTx(ctx context.Context) (Tx, error)
 
@@ -318,6 +327,15 @@ type Tx interface {
 	GetManifest(ctx context.Context, id string) (*Manifest, error)
 	GetLatestManifest(ctx context.Context, workspaceID string) (*Manifest, error)
 	DeleteManifest(ctx context.Context, id string) error
+
+	// Streams
+	CreateStream(ctx context.Context, stream *Stream) error
+	GetStream(ctx context.Context, id string) (*Stream, error)
+	GetStreamBySessionAndType(ctx context.Context, sessionID, streamType string, activeOnly bool) (*Stream, error)
+	ListStreams(ctx context.Context, opts ListStreamsOptions) (*ListResult[Stream], error)
+	UpdateStream(ctx context.Context, id string, updates StreamUpdates) error
+	DeleteStream(ctx context.Context, id string) error
+	CleanupExpiredStreams(ctx context.Context) (int, error)
 
 	// Transaction control
 	Commit(ctx context.Context) error

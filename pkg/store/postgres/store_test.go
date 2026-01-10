@@ -70,6 +70,7 @@ func runMigrations(ctx context.Context, s *pgstore.Store) error {
 	migrationFiles := []string{
 		"../../../migrations/001_initial.up.sql",
 		"../../../migrations/002_add_original_request_id.up.sql",
+		"../../../migrations/003_add_streams.up.sql",
 	}
 
 	for _, file := range migrationFiles {

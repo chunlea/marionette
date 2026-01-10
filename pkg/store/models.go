@@ -593,3 +593,49 @@ type Manifest struct {
 	TenantID    string          `json:"tenant_id"`
 	CreatedAt   time.Time       `json:"created_at"`
 }
+
+// Stream represents a streaming session for video/audio.
+type Stream struct {
+	ID               string          `json:"id"`
+	SessionID        string          `json:"session_id"`
+	RunnerID         *string         `json:"runner_id,omitempty"`
+	TenantID         *string         `json:"tenant_id,omitempty"`
+	Type             string          `json:"type"`  // desktop, browser, ios, android
+	State            string          `json:"state"` // pending, starting, active, paused, stopping, stopped, error
+	SignalingURL     *string         `json:"signaling_url,omitempty"`
+	ICEServers       json.RawMessage `json:"ice_servers"`
+	ResolutionWidth  *int            `json:"resolution_width,omitempty"`
+	ResolutionHeight *int            `json:"resolution_height,omitempty"`
+	FrameRate        *int            `json:"frame_rate,omitempty"`
+	BitRate          *int            `json:"bitrate,omitempty"`
+	VideoCodec       *string         `json:"video_codec,omitempty"`
+	AudioCodec       *string         `json:"audio_codec,omitempty"`
+	AudioEnabled     bool            `json:"audio_enabled"`
+	InputEnabled     bool            `json:"input_enabled"`
+	ProviderName     string          `json:"provider_name"`
+	ProviderStreamID *string         `json:"provider_stream_id,omitempty"`
+	Error            *string         `json:"error,omitempty"`
+	Metadata         json.RawMessage `json:"metadata"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+	StartedAt        *time.Time      `json:"started_at,omitempty"`
+	StoppedAt        *time.Time      `json:"stopped_at,omitempty"`
+	ExpiresAt        *time.Time      `json:"expires_at,omitempty"`
+}
+
+// StreamUpdates contains fields that can be updated on a stream.
+type StreamUpdates struct {
+	State            *string
+	SignalingURL     *string
+	ResolutionWidth  *int
+	ResolutionHeight *int
+	FrameRate        *int
+	BitRate          *int
+	VideoCodec       *string
+	AudioCodec       *string
+	ProviderStreamID *string
+	Error            *string
+	Metadata         json.RawMessage
+	StartedAt        *time.Time
+	StoppedAt        *time.Time
+}
