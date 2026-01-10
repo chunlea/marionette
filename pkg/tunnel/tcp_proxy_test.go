@@ -117,15 +117,15 @@ func (m *mockConnection) GetWrittenData() []byte {
 
 // mockTCPConnectionHandler implements ConnectionHandler for TCP testing.
 type mockTCPConnectionHandler struct {
-	connected        bool
-	sendData         [][]byte
-	receiveData      [][]byte
-	receiveIdx       int
-	sendErr          error
-	receiveErr       error
-	mu               sync.Mutex
-	receiveWaitCh    chan struct{}
-	sendNotifyCh     chan []byte
+	connected     bool
+	sendData      [][]byte
+	receiveData   [][]byte
+	receiveIdx    int
+	sendErr       error
+	receiveErr    error
+	mu            sync.Mutex
+	receiveWaitCh chan struct{}
+	sendNotifyCh  chan []byte
 }
 
 func newMockTCPConnectionHandler() *mockTCPConnectionHandler {
@@ -253,7 +253,7 @@ func TestTCPProxy_ProxyTCPConnection_BidirectionalRelay(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Close connection to end the proxy
-	conn.Close()
+	_ = conn.Close()
 
 	// Wait for proxy to complete
 	select {

@@ -21,7 +21,7 @@ type TCPProxyConfig struct {
 // DefaultTCPProxyConfig returns default TCP proxy configuration.
 func DefaultTCPProxyConfig() TCPProxyConfig {
 	return TCPProxyConfig{
-		BufferSize:            32 * 1024,     // 32KB
+		BufferSize:            32 * 1024, // 32KB
 		IdleTimeout:           5 * time.Minute,
 		MaxConnectionDuration: 1 * time.Hour,
 	}
