@@ -235,6 +235,9 @@ type RelayManager struct {
 
 	// Callback for sending frames back to the server
 	sendFrame func(*Frame) error
+
+	// WaitGroup for tracking active goroutines
+	wg sync.WaitGroup
 }
 
 // NewRelayManager creates a new relay manager.
@@ -269,6 +272,7 @@ func (m *RelayManager) HandleConnect(tunnelID string, localPort int) error {
 	m.connections[tunnelID] = relay
 
 	// Start reading from local service
+	m.wg.Add(1)
 	go m.readLoop(relay)
 
 	// Send connect acknowledgment
@@ -286,6 +290,8 @@ func (m *RelayManager) HandleConnect(tunnelID string, localPort int) error {
 
 // readLoop continuously reads from the local connection and sends frames.
 func (m *RelayManager) readLoop(relay *RelayConnection) {
+	defer m.wg.Done()
+
 	err := relay.ReadFromLocal(func(data []byte) error {
 		if m.sendFrame != nil {
 			return m.sendFrame(&Frame{
@@ -359,6 +365,12 @@ func (m *RelayManager) GetActiveCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.connections)
+}
+
+// Wait waits for all goroutines started by the RelayManager to finish.
+// This should be called after CloseAll or HandleClose to ensure clean shutdown.
+func (m *RelayManager) Wait() {
+	m.wg.Wait()
 }
 
 // HandleFrame dispatches an incoming frame to the appropriate handler.
