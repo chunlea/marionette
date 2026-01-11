@@ -1,11 +1,15 @@
 package agent
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -324,6 +328,7 @@ func (m *TunnelManager) HandleTunnelData(ctx context.Context, data *pb.TunnelDat
 
 // handleHTTPRequest handles a single HTTP request-response cycle.
 // Each HTTP request gets a fresh connection to the local service.
+// Supports streaming responses (SSE, chunked) by forwarding data as it arrives.
 func (m *TunnelManager) handleHTTPRequest(ctx context.Context, tunnelID, connectionID string, localPort int, requestData []byte) {
 	localAddr := fmt.Sprintf("localhost:%d", localPort)
 
@@ -348,13 +353,6 @@ func (m *TunnelManager) handleHTTPRequest(ctx context.Context, tunnelID, connect
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Set deadline for the entire operation
-	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
-		m.logger.Error("failed to set deadline", zap.Error(err))
-		m.sendHTTPErrorResponse(tunnelID, connectionID, err)
-		return
-	}
-
 	// Forward request to local service
 	if _, err := conn.Write(requestData); err != nil {
 		m.logger.Error("failed to write request to local service",
@@ -366,55 +364,206 @@ func (m *TunnelManager) handleHTTPRequest(ctx context.Context, tunnelID, connect
 		return
 	}
 
-	// Read response from local service
-	// For HTTP, we read the complete response
-	var responseData []byte
-	buf := make([]byte, 64*1024)
+	// Read response headers first
+	// Set a short deadline for reading headers
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		m.logger.Error("failed to set read deadline", zap.Error(err))
+		m.sendHTTPErrorResponse(tunnelID, connectionID, err)
+		return
+	}
+
+	// Read until we have complete headers
+	var headerBuf bytes.Buffer
+	reader := bufio.NewReader(conn)
 	for {
-		n, err := conn.Read(buf)
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			m.logger.Error("failed to read response headers",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+				zap.Error(err),
+			)
+			m.sendHTTPErrorResponse(tunnelID, connectionID, err)
+			return
+		}
+		headerBuf.Write(line)
+		// Check for end of headers (empty line)
+		if bytes.Equal(line, []byte("\r\n")) || bytes.Equal(line, []byte("\n")) {
+			break
+		}
+	}
+
+	// Parse the response to check if it's streaming
+	headerBytes := headerBuf.Bytes()
+	resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(headerBytes)), nil)
+	if err != nil {
+		m.logger.Error("failed to parse response headers",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.Error(err),
+		)
+		m.sendHTTPErrorResponse(tunnelID, connectionID, err)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Check if this is a streaming response
+	contentType := resp.Header.Get("Content-Type")
+	transferEncoding := resp.Header.Get("Transfer-Encoding")
+	isStreaming := strings.HasPrefix(contentType, "text/event-stream") ||
+		strings.EqualFold(transferEncoding, "chunked") ||
+		resp.ContentLength < 0
+
+	m.logger.Debug("response type detected",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+		zap.String("content_type", contentType),
+		zap.String("transfer_encoding", transferEncoding),
+		zap.Bool("is_streaming", isStreaming),
+		zap.Int64("content_length", resp.ContentLength),
+	)
+
+	// Send headers immediately
+	m.sendTunnelData(tunnelID, connectionID, headerBytes, false)
+
+	if isStreaming {
+		// For streaming responses, forward data as it arrives
+		m.handleStreamingResponse(ctx, tunnelID, connectionID, conn, reader)
+	} else {
+		// For regular responses, read the complete body
+		m.handleRegularResponse(tunnelID, connectionID, conn, reader, resp.ContentLength)
+	}
+}
+
+// handleStreamingResponse forwards streaming response data (SSE, chunked) as it arrives.
+func (m *TunnelManager) handleStreamingResponse(ctx context.Context, tunnelID, connectionID string, conn net.Conn, reader *bufio.Reader) {
+	m.logger.Debug("starting streaming response relay",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+	)
+
+	// For streaming, use a longer timeout or no timeout
+	// Reset deadline to allow long-running streams
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		m.logger.Error("failed to clear read deadline", zap.Error(err))
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-ctx.Done():
+			m.logger.Debug("streaming context cancelled",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+			)
+			m.sendTunnelData(tunnelID, connectionID, nil, true)
+			return
+		default:
+		}
+
+		// Set a short read deadline to allow checking context
+		if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			m.logger.Error("failed to set read deadline", zap.Error(err))
+			break
+		}
+
+		n, err := reader.Read(buf)
 		if n > 0 {
-			responseData = append(responseData, buf[:n]...)
+			m.sendTunnelData(tunnelID, connectionID, buf[:n], false)
 		}
 		if err != nil {
-			if err != io.EOF {
-				// Check if it's a timeout or expected close
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					break
-				}
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// Timeout is expected for streaming, continue
+				continue
+			}
+			if err == io.EOF {
+				m.logger.Debug("streaming response ended",
+					zap.String("tunnel_id", tunnelID),
+					zap.String("connection_id", connectionID),
+				)
+			} else {
+				m.logger.Error("error reading streaming response",
+					zap.String("tunnel_id", tunnelID),
+					zap.String("connection_id", connectionID),
+					zap.Error(err),
+				)
 			}
 			break
 		}
 	}
 
-	if len(responseData) == 0 {
-		m.logger.Warn("empty response from local service",
-			zap.String("tunnel_id", tunnelID),
-			zap.String("connection_id", connectionID),
-		)
-		m.sendHTTPErrorResponse(tunnelID, connectionID, errors.New("empty response from local service"))
-		return
+	// Send EOF
+	m.sendTunnelData(tunnelID, connectionID, nil, true)
+}
+
+// handleRegularResponse reads a complete HTTP response body.
+func (m *TunnelManager) handleRegularResponse(tunnelID, connectionID string, conn net.Conn, reader *bufio.Reader, contentLength int64) {
+	// Set deadline for reading body
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		m.logger.Error("failed to set read deadline", zap.Error(err))
 	}
 
-	m.logger.Debug("sending HTTP response",
+	var bodyData []byte
+	if contentLength > 0 {
+		// Known content length - read exactly that many bytes
+		bodyData = make([]byte, contentLength)
+		_, err := io.ReadFull(reader, bodyData)
+		if err != nil {
+			m.logger.Error("failed to read response body",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+				zap.Error(err),
+			)
+			// Send what we have
+		}
+	} else {
+		// Unknown content length - read until EOF or timeout
+		buf := make([]byte, 64*1024)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				bodyData = append(bodyData, buf[:n]...)
+			}
+			if err != nil {
+				if err != io.EOF {
+					if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+						break
+					}
+				}
+				break
+			}
+		}
+	}
+
+	m.logger.Debug("sending HTTP response body",
 		zap.String("tunnel_id", tunnelID),
 		zap.String("connection_id", connectionID),
-		zap.Int("response_len", len(responseData)),
+		zap.Int("body_len", len(bodyData)),
 	)
 
-	// Send response back to server with connection_id
-	if m.sender != nil {
-		msg := &pb.RunnerMessage{
-			Payload: &pb.RunnerMessage_TunnelData{
-				TunnelData: &pb.TunnelData{
-					TunnelId:     tunnelID,
-					ConnectionId: connectionID,
-					Data:         responseData,
-					Eof:          true,
-				},
-			},
-		}
-		m.sender.Send(msg)
+	// Send body and EOF
+	if len(bodyData) > 0 {
+		m.sendTunnelData(tunnelID, connectionID, bodyData, false)
 	}
+	m.sendTunnelData(tunnelID, connectionID, nil, true)
+}
+
+// sendTunnelData sends data back to the server.
+func (m *TunnelManager) sendTunnelData(tunnelID, connectionID string, data []byte, eof bool) {
+	if m.sender == nil {
+		return
+	}
+	msg := &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_TunnelData{
+			TunnelData: &pb.TunnelData{
+				TunnelId:     tunnelID,
+				ConnectionId: connectionID,
+				Data:         data,
+				Eof:          eof,
+			},
+		},
+	}
+	m.sender.Send(msg)
 }
 
 // sendHTTPErrorResponse sends an HTTP 502 error response back to the server.
