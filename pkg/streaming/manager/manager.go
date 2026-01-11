@@ -190,14 +190,14 @@ func (m *Manager) StartStream(ctx context.Context, opts streaming.StreamOptions)
 		ExpiresAt:    opts.ExpiresAt,
 	}
 
-	stream, err := m.store.CreateStream(ctx, createParams)
+	_, err := m.store.CreateStream(ctx, createParams)
 	if err != nil {
 		return nil, err
 	}
 
 	// Update state to starting
 	startingState := streaming.StreamStateStarting
-	stream, err = m.store.UpdateStream(ctx, streamID, streaming.UpdateStreamParams{
+	_, err = m.store.UpdateStream(ctx, streamID, streaming.UpdateStreamParams{
 		State: &startingState,
 	})
 	if err != nil {

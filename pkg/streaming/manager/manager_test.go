@@ -258,7 +258,7 @@ func createTestManager(t *testing.T) (*Manager, *mockStreamStore, *mockProvider)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		m.Stop(context.Background())
+		_ = m.Stop(context.Background())
 	})
 
 	provider := newMockProvider("test-provider", []streaming.StreamType{
@@ -281,7 +281,7 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, m)
 
 	t.Cleanup(func() {
-		m.Stop(context.Background())
+		_ = m.Stop(context.Background())
 	})
 
 	assert.NotNil(t, m.GetSFU())
@@ -298,7 +298,7 @@ func TestNew_NilLogger(t *testing.T) {
 	assert.NotNil(t, m)
 
 	t.Cleanup(func() {
-		m.Stop(context.Background())
+		_ = m.Stop(context.Background())
 	})
 }
 
@@ -703,7 +703,7 @@ func TestManager_DefaultProvider(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		m.Stop(context.Background())
+		_ = m.Stop(context.Background())
 	})
 
 	// Register provider
@@ -735,7 +735,7 @@ func TestManager_DefaultProvider_NotFound(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		m.Stop(context.Background())
+		_ = m.Stop(context.Background())
 	})
 
 	ctx := context.Background()
@@ -759,7 +759,7 @@ func TestManager_CleanupExpiredStreams(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		m.Stop(context.Background())
+		_ = m.Stop(context.Background())
 	})
 
 	// Register provider
@@ -865,7 +865,7 @@ func TestManager_StartStream_UpdateError(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		m.Stop(context.Background())
+		_ = m.Stop(context.Background())
 	})
 
 	// Register provider
@@ -914,7 +914,7 @@ func TestManager_StopStream_NoProviderInfo(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		m.Stop(context.Background())
+		_ = m.Stop(context.Background())
 	})
 
 	ctx := context.Background()
