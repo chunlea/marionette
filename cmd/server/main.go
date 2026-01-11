@@ -24,6 +24,7 @@ import (
 	grpcserver "github.com/chunlea/marionette/pkg/server/grpc"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/store/postgres"
+	"github.com/chunlea/marionette/pkg/streaming/browser"
 	"github.com/chunlea/marionette/pkg/tunnel"
 	"go.uber.org/zap"
 )
@@ -190,6 +191,23 @@ func main() {
 			zap.String("base_url", baseURL),
 		)
 
+		// Create browser stream provider
+		browserStreamProvider := browser.NewBrowserStreamProvider(browser.BrowserStreamProviderConfig{
+			BaseURL: baseURL,
+			Logger:  logger,
+		})
+
+		// Create browser stream handler for gRPC
+		browserStreamHandler := grpcserver.NewBrowserStreamHandler(browserStreamProvider, logger)
+
+		// Create browser stream adapter for API
+		browserStreamAdapter := api.NewBrowserStreamAdapter(browserStreamProvider)
+
+		apiOpts = append(apiOpts,
+			api.WithBrowserStreamService(browserStreamAdapter),
+		)
+		logger.Info("browser stream service wired to API")
+
 		// Wire gRPC server options
 		grpcOpts = append(grpcOpts,
 			grpcserver.WithConnManager(connManager),
@@ -197,6 +215,7 @@ func main() {
 			grpcserver.WithTaskManager(taskMgr),
 			grpcserver.WithSessionManager(sessionMgr),
 			grpcserver.WithTunnelRouter(tunnelRouter),
+			grpcserver.WithBrowserStream(browserStreamHandler),
 		)
 
 		logger.Info("core services initialized and wired to API")
