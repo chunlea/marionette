@@ -70,7 +70,7 @@ func runMigrations(ctx context.Context, s *pgstore.Store) error {
 	// Note: All migrations have been consolidated into 001_initial.up.sql
 	migrationFiles := []string{
 		"../../../migrations/001_initial.up.sql",
-		"../../../migrations/003_add_streams.up.sql",
+		"../../../migrations/002_add_streams.up.sql",
 	}
 
 	for _, file := range migrationFiles {
