@@ -40,6 +40,10 @@ type AdminClient interface {
 	// Runners (admin operations)
 	SpawnRunner(ctx context.Context, opts SpawnRunnerOptions) (*store.Runner, error)
 	DestroyRunner(ctx context.Context, id string) error
+
+	// Sessions (admin operations)
+	ActivateSession(ctx context.Context, sessionID, runnerID string) error
+	SuspendSession(ctx context.Context, sessionID, strategy string) error
 }
 
 // APIKeyWithSecret includes the raw API key (only returned on creation).
@@ -409,6 +413,23 @@ func (c *HTTPAdminClient) SpawnRunner(ctx context.Context, opts SpawnRunnerOptio
 // DestroyRunner destroys a runner.
 func (c *HTTPAdminClient) DestroyRunner(ctx context.Context, id string) error {
 	return c.doRequest(ctx, http.MethodDelete, "/admin/api/v1/runners/"+id, nil, nil)
+}
+
+// Sessions (admin operations)
+
+// ActivateSession activates a session by attaching a runner to it.
+func (c *HTTPAdminClient) ActivateSession(ctx context.Context, sessionID, runnerID string) error {
+	body := map[string]string{"runner_id": runnerID}
+	return c.doRequest(ctx, http.MethodPost, "/admin/api/v1/sessions/"+sessionID+"/activate", body, nil)
+}
+
+// SuspendSession suspends a session with the given strategy.
+func (c *HTTPAdminClient) SuspendSession(ctx context.Context, sessionID, strategy string) error {
+	var body any
+	if strategy != "" {
+		body = map[string]string{"strategy": strategy}
+	}
+	return c.doRequest(ctx, http.MethodPost, "/admin/api/v1/sessions/"+sessionID+"/suspend", body, nil)
 }
 
 // Ensure HTTPAdminClient implements AdminClient interface.

@@ -431,5 +431,48 @@ func (c *HTTPClient) DenyPermission(ctx context.Context, id string, reason strin
 	return c.doRequest(ctx, http.MethodPost, "/api/v1/permissions/"+id+"/deny", reqBody, nil)
 }
 
+// Tunnels
+
+// CreateTunnel creates a new tunnel for a session.
+func (c *HTTPClient) CreateTunnel(ctx context.Context, opts CreateTunnelOptions) (*Tunnel, error) {
+	reqBody := map[string]any{
+		"type":       opts.Type,
+		"local_port": opts.LocalPort,
+		"public":     opts.Public,
+	}
+
+	var tunnel Tunnel
+	path := "/api/v1/sessions/" + opts.SessionID + "/tunnels"
+	if err := c.doRequest(ctx, http.MethodPost, path, reqBody, &tunnel); err != nil {
+		return nil, err
+	}
+	return &tunnel, nil
+}
+
+// GetTunnel retrieves a tunnel by ID.
+func (c *HTTPClient) GetTunnel(ctx context.Context, id string) (*Tunnel, error) {
+	var tunnel Tunnel
+	if err := c.doRequest(ctx, http.MethodGet, "/api/v1/tunnels/"+id, nil, &tunnel); err != nil {
+		return nil, err
+	}
+	return &tunnel, nil
+}
+
+// ListTunnels lists tunnels for a session.
+func (c *HTTPClient) ListTunnels(ctx context.Context, opts ListTunnelsOptions) (*ListResult[Tunnel], error) {
+	path := "/api/v1/sessions/" + opts.SessionID + "/tunnels"
+
+	var result ListResult[Tunnel]
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CloseTunnel closes a tunnel.
+func (c *HTTPClient) CloseTunnel(ctx context.Context, id string) error {
+	return c.doRequest(ctx, http.MethodDelete, "/api/v1/tunnels/"+id, nil, nil)
+}
+
 // Ensure HTTPClient implements Client interface.
 var _ Client = (*HTTPClient)(nil)
