@@ -110,9 +110,12 @@ func TestSignalingHandler_HandleMessage_UnknownType(t *testing.T) {
 func TestSignalingHandler_HandleJoin_Publisher(t *testing.T) {
 	handler, sfu := createTestSignalingHandler(t)
 
+	var mu sync.Mutex
 	var messages []*SignalingMessage
 	handler.OnSend(func(streamID, peerID string, msg *SignalingMessage) {
+		mu.Lock()
 		messages = append(messages, msg)
+		mu.Unlock()
 	})
 
 	ctx := context.Background()
@@ -128,21 +131,26 @@ func TestSignalingHandler_HandleJoin_Publisher(t *testing.T) {
 	assert.True(t, room.HasPublisher())
 
 	// Should have received ready message
+	mu.Lock()
 	var hasReady bool
 	for _, msg := range messages {
 		if msg.Type == SignalingTypeReady {
 			hasReady = true
 		}
 	}
+	mu.Unlock()
 	assert.True(t, hasReady)
 }
 
 func TestSignalingHandler_HandleJoin_Subscriber(t *testing.T) {
 	handler, sfu := createTestSignalingHandler(t)
 
+	var mu sync.Mutex
 	var messages []*SignalingMessage
 	handler.OnSend(func(streamID, peerID string, msg *SignalingMessage) {
+		mu.Lock()
 		messages = append(messages, msg)
+		mu.Unlock()
 	})
 
 	ctx := context.Background()
