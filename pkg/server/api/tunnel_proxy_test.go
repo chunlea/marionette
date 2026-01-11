@@ -308,6 +308,214 @@ func TestTunnelProxyHandler_PathRewriting(t *testing.T) {
 	assert.NotContains(t, capturedPath, "/tunnels/tun_test123")
 }
 
+func TestTunnelProxyHandler_SendRequestError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockSvc := &mockTunnelProxyService{
+		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
+			return true, nil
+		},
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			return nil, errors.New("tunnel unavailable")
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	r := chi.NewRouter()
+	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
+
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
+	req.Header.Set("Authorization", "Bearer ttok_valid")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadGateway, w.Code)
+}
+
+func TestTunnelProxyHandler_EmptyResponse(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	responseCh := make(chan []byte, 1)
+	close(responseCh) // Close immediately with no data
+
+	mockSvc := &mockTunnelProxyService{
+		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
+			return true, nil
+		},
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			return responseCh, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	r := chi.NewRouter()
+	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
+
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
+	req.Header.Set("Authorization", "Bearer ttok_valid")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadGateway, w.Code)
+}
+
+func TestTunnelProxyHandler_InvalidResponse(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	responseCh := make(chan []byte, 1)
+	responseCh <- []byte("not a valid HTTP response")
+	close(responseCh)
+
+	mockSvc := &mockTunnelProxyService{
+		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
+			return true, nil
+		},
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			return responseCh, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	r := chi.NewRouter()
+	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
+
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
+	req.Header.Set("Authorization", "Bearer ttok_valid")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadGateway, w.Code)
+}
+
+func TestTunnelProxyHandler_TunnelNotFound(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockSvc := &mockTunnelProxyService{
+		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
+			return true, nil
+		},
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return nil, errors.New("tunnel not found")
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	r := chi.NewRouter()
+	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
+
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
+	req.Header.Set("Authorization", "Bearer ttok_valid")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestTunnelProxyHandler_AuthTokenError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockSvc := &mockTunnelProxyService{
+		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
+			return false, errors.New("token validation error")
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	r := chi.NewRouter()
+	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
+
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
+	req.Header.Set("Authorization", "Bearer ttok_test")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestTunnelProxyHandler_APIKeyAuthError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockSvc := &mockTunnelProxyService{
+		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
+			return false, nil // Token validation fails
+		},
+	}
+
+	// API key auth function that returns error
+	apiKeyAuth := func(r *http.Request) (bool, error) {
+		return false, errors.New("api key error")
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+		WithTPAPIKeyAuth(apiKeyAuth),
+	)
+
+	r := chi.NewRouter()
+	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
+
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
+	req.Header.Set("X-API-Key", "mk_test")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
 func TestTunnelProxyHandler_APIKeyAuth(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
@@ -700,6 +908,139 @@ func TestDefaultTunnelCleanupConfig(t *testing.T) {
 
 	assert.Equal(t, 5*time.Minute, cfg.Interval)
 	assert.Equal(t, 10*time.Minute, cfg.MaxAge)
+}
+
+func TestCreateAPIKeyValidator(t *testing.T) {
+	// Create a mock validate key function
+	validateKey := func(ctx context.Context, key string) (bool, error) {
+		if key == "valid_key" {
+			return true, nil
+		}
+		if key == "error_key" {
+			return false, errors.New("validation error")
+		}
+		return false, nil
+	}
+
+	validator := CreateAPIKeyValidator(validateKey)
+
+	t.Run("valid key", func(t *testing.T) {
+		ctx := context.Background()
+		valid, err := validator(&ctx, "valid_key")
+		require.NoError(t, err)
+		assert.True(t, valid)
+	})
+
+	t.Run("invalid key", func(t *testing.T) {
+		ctx := context.Background()
+		valid, err := validator(&ctx, "invalid_key")
+		require.NoError(t, err)
+		assert.False(t, valid)
+	})
+
+	t.Run("error case", func(t *testing.T) {
+		ctx := context.Background()
+		valid, err := validator(&ctx, "error_key")
+		assert.Error(t, err)
+		assert.False(t, valid)
+	})
+}
+
+func TestTunnelProxyHandler_RootPath(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	responseCh := make(chan []byte, 1)
+	responseCh <- []byte("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nroot")
+	close(responseCh)
+
+	var capturedPath string
+	mockSvc := &mockTunnelProxyService{
+		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
+			return true, nil
+		},
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			capturedPath = string(data)
+			return responseCh, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	r := chi.NewRouter()
+	r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+		r.HandleFunc("/*", h.ServeHTTP)
+		r.HandleFunc("/", h.ServeHTTP)
+	})
+
+	// Test root path - /tunnels/tun_test123 should become /
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/", nil)
+	req.Header.Set("Authorization", "Bearer ttok_valid")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	// The path should be "/" after removing prefix
+	assert.Contains(t, capturedPath, "GET / HTTP")
+}
+
+func TestTunnelProxyHandler_PathWithQueryString(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	responseCh := make(chan []byte, 1)
+	responseCh <- []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+	close(responseCh)
+
+	var capturedData string
+	mockSvc := &mockTunnelProxyService{
+		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
+			return true, nil
+		},
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			capturedData = string(data)
+			return responseCh, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	r := chi.NewRouter()
+	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
+
+	// Test path with query string - should preserve query string
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/api?param=value", nil)
+	req.Header.Set("Authorization", "Bearer ttok_valid")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	// The serialized request should contain the path with query string
+	assert.Contains(t, capturedData, "/api?param=value")
 }
 
 // mockTunnelRouter implements TunnelRouter for testing.
