@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -164,8 +165,20 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	// Tunnel proxy (auth handled by handler - supports tunnel token or API key)
 	if srv.tunnelProxy != nil {
 		r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+			// Handle root path: redirect if no trailing slash, otherwise proxy
+			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+				// Check if original request URL has trailing slash
+				// req.RequestURI preserves the original path before chi routing
+				path := strings.Split(req.RequestURI, "?")[0]
+				if !strings.HasSuffix(path, "/") {
+					// Redirect /tunnels/{tunnelID} to /tunnels/{tunnelID}/ for proper relative links
+					tunnelID := chi.URLParam(req, "tunnelID")
+					http.Redirect(w, req, "/tunnels/"+tunnelID+"/", http.StatusMovedPermanently)
+					return
+				}
+				srv.tunnelProxy.ServeHTTP(w, req)
+			})
 			r.HandleFunc("/*", srv.tunnelProxy.ServeHTTP)
-			r.HandleFunc("/", srv.tunnelProxy.ServeHTTP)
 		})
 	}
 
