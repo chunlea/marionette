@@ -1481,12 +1481,26 @@
   - [x] Peer connection wrapper with state management
   - [x] TrackRouter for RTP forwarding
   - [x] InputChannel for DataChannel forwarding
-  - [ ] SFU signaling (WebSocket handler)
-  - [ ] Streaming manager (lifecycle management)
-- [ ] Desktop streaming (Linux/macOS):
-  - [ ] Selkies GStreamer integration
-  - [ ] WebRTC signaling server
-  - [ ] Browser viewer component
+  - [x] SFU signaling handler (`pkg/streaming/sfu/handler.go`)
+  - [x] Streaming manager (`pkg/streaming/manager/`)
+- [x] Selkies Desktop Streaming Provider (`pkg/streaming/desktop/`):
+  - [x] `DesktopProvider` interface extending `StreamProvider`
+  - [x] `SelkiesProvider` implementation with Selkies GStreamer
+  - [x] Process lifecycle management (start, stop, monitor)
+  - [x] Hardware acceleration detection (VAAPI, NVENC, QSV)
+  - [x] Display info and multi-display support
+  - [x] Configuration merging (resolution, framerate, bitrate)
+  - [x] ICE server configuration
+  - [x] Input event types (mouse move, button, scroll, key)
+  - [x] Provider error types with error chaining
+  - [x] Test coverage: 73.7% (process management code excluded)
+- [ ] Desktop streaming integration (in progress - PR #104):
+  - [ ] Server-side stream management
+  - [ ] WebSocket signaling handler
+  - [ ] Agent-side desktop stream handler
+  - [ ] React desktop viewer component
+  - [ ] Session page integration
+- [ ] Desktop streaming enhancements (future):
   - [ ] Keyboard/mouse input forwarding
   - [ ] Clipboard sync
 - [ ] Browser streaming (headless Chrome):
