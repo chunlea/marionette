@@ -946,9 +946,29 @@ func (m *mockStoreForRouter) GetLatestManifest(_ context.Context, _ string) (*st
 	return nil, store.ErrNotFound
 }
 func (m *mockStoreForRouter) DeleteManifest(_ context.Context, _ string) error { return nil }
-func (m *mockStoreForRouter) BeginTx(_ context.Context) (store.Tx, error)      { return nil, nil }
-func (m *mockStoreForRouter) Ping(_ context.Context) error                     { return nil }
-func (m *mockStoreForRouter) Close() error                                     { return nil }
+
+// Stream methods (stub)
+func (m *mockStoreForRouter) CreateStream(_ context.Context, _ *store.Stream) error { return nil }
+func (m *mockStoreForRouter) GetStream(_ context.Context, _ string) (*store.Stream, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStoreForRouter) GetStreamBySessionAndType(_ context.Context, _, _ string, _ bool) (*store.Stream, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStoreForRouter) ListStreams(_ context.Context, _ store.ListStreamsOptions) (*store.ListResult[store.Stream], error) {
+	return &store.ListResult[store.Stream]{}, nil
+}
+func (m *mockStoreForRouter) UpdateStream(_ context.Context, _ string, _ store.StreamUpdates) error {
+	return nil
+}
+func (m *mockStoreForRouter) DeleteStream(_ context.Context, _ string) error { return nil }
+func (m *mockStoreForRouter) CleanupExpiredStreams(_ context.Context) (int, error) {
+	return 0, nil
+}
+
+func (m *mockStoreForRouter) BeginTx(_ context.Context) (store.Tx, error) { return nil, nil }
+func (m *mockStoreForRouter) Ping(_ context.Context) error                { return nil }
+func (m *mockStoreForRouter) Close() error                                { return nil }
 
 // Stream methods (stub)
 func (m *mockStoreForRouter) CreateStream(_ context.Context, _ *store.Stream) error { return nil }

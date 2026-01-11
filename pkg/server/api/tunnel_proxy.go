@@ -1,11 +1,15 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chunlea/marionette/pkg/id"
@@ -30,6 +34,9 @@ type TunnelProxyService interface {
 	// SendRequest sends a serialized HTTP request through the tunnel.
 	// Returns a channel for receiving response data.
 	SendRequest(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error)
+
+	// SendData sends data to the tunnel (for bidirectional streaming).
+	SendData(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error
 
 	// CloseConnection closes a tunnel connection.
 	CloseConnection(connectionID string)
@@ -89,8 +96,15 @@ func NewTunnelProxyHandler(opts ...TunnelProxyOption) *TunnelProxyHandler {
 	return h
 }
 
+// isWebSocketUpgrade checks if the request is a WebSocket upgrade request.
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Connection"), "upgrade") &&
+		strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
 // ServeHTTP handles HTTP requests to the tunnel proxy.
 // Route: ANY /tunnels/{tunnelID}/*
+// Supports: regular HTTP, WebSocket upgrades, SSE, and chunked responses.
 func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tunnelID := chi.URLParam(r, "tunnelID")
 	if tunnelID == "" {
@@ -102,6 +116,7 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.String("tunnel_id", tunnelID),
 		zap.String("method", r.Method),
 		zap.String("path", r.URL.Path),
+		zap.Bool("is_websocket", isWebSocketUpgrade(r)),
 	)
 
 	// Validate tunnel exists and is not expired first
@@ -180,6 +195,21 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.String("proxied_path", r.URL.Path),
 	)
 
+	// Handle WebSocket upgrade requests differently
+	if isWebSocketUpgrade(r) {
+		h.handleWebSocket(w, r, tunnelID, connectionID)
+		return
+	}
+
+	// Handle regular HTTP with streaming support
+	h.handleHTTPStream(w, r, tunnelID, connectionID)
+}
+
+// handleHTTPStream handles regular HTTP requests with streaming response support.
+// This supports SSE (Server-Sent Events), chunked transfer encoding, and regular responses.
+func (h *TunnelProxyHandler) handleHTTPStream(w http.ResponseWriter, r *http.Request, tunnelID, connectionID string) {
+	ctx := r.Context()
+
 	// Serialize the HTTP request
 	serialized, err := h.httpProxy.SerializeRequest(r)
 	if err != nil {
@@ -205,21 +235,35 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.service.CloseConnection(connectionID)
 
-	// Wait for response with timeout
+	// Wait for response with timeout (for initial headers)
 	timeout := 60 * time.Second
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Collect response data
+	// Collect initial data until we have complete HTTP headers
 	var responseData []byte
-	for {
+	headersDone := false
+	for !headersDone {
 		select {
 		case data, ok := <-responseCh:
 			if !ok {
-				// Channel closed, we have all the data
-				goto processResponse
+				// Channel closed before getting headers
+				if len(responseData) == 0 {
+					h.logger.Warn("empty response from tunnel",
+						zap.String("tunnel_id", tunnelID),
+						zap.String("connection_id", connectionID),
+					)
+					http.Error(w, "no response from tunnel", http.StatusBadGateway)
+					return
+				}
+				headersDone = true
+				break
 			}
 			responseData = append(responseData, data...)
+			// Check if we have complete headers (look for \r\n\r\n)
+			if bytes.Contains(responseData, []byte("\r\n\r\n")) {
+				headersDone = true
+			}
 		case <-ctx.Done():
 			h.logger.Warn("tunnel request timeout",
 				zap.String("tunnel_id", tunnelID),
@@ -230,20 +274,25 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-processResponse:
-	if len(responseData) == 0 {
-		h.logger.Warn("empty response from tunnel",
+	// Find the header/body boundary
+	headerEnd := bytes.Index(responseData, []byte("\r\n\r\n"))
+	if headerEnd == -1 {
+		h.logger.Error("malformed response: no header boundary",
 			zap.String("tunnel_id", tunnelID),
 			zap.String("connection_id", connectionID),
 		)
-		http.Error(w, "no response from tunnel", http.StatusBadGateway)
+		http.Error(w, "invalid response from tunnel", http.StatusBadGateway)
 		return
 	}
 
-	// Deserialize the HTTP response
-	resp, err := h.httpProxy.DeserializeResponse(responseData)
+	// Parse just the headers
+	headerBytes := responseData[:headerEnd+4] // Include \r\n\r\n
+	bodyStart := responseData[headerEnd+4:]
+
+	// Parse the HTTP response headers
+	resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(headerBytes)), nil)
 	if err != nil {
-		h.logger.Error("failed to deserialize response",
+		h.logger.Error("failed to parse response headers",
 			zap.String("tunnel_id", tunnelID),
 			zap.String("connection_id", connectionID),
 			zap.Error(err),
@@ -252,6 +301,22 @@ processResponse:
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	// Check if this is a streaming response
+	contentType := resp.Header.Get("Content-Type")
+	transferEncoding := resp.Header.Get("Transfer-Encoding")
+	isStreaming := strings.HasPrefix(contentType, "text/event-stream") ||
+		strings.EqualFold(transferEncoding, "chunked") ||
+		resp.ContentLength < 0
+
+	h.logger.Debug("response type detected",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+		zap.String("content_type", contentType),
+		zap.String("transfer_encoding", transferEncoding),
+		zap.Bool("is_streaming", isStreaming),
+		zap.Int64("content_length", resp.ContentLength),
+	)
 
 	// Copy response headers
 	for key, values := range resp.Header {
@@ -263,20 +328,283 @@ processResponse:
 	// Write status code
 	w.WriteHeader(resp.StatusCode)
 
-	// Copy response body
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		h.logger.Warn("error copying response body",
+	// Get the flusher for streaming
+	flusher, _ := w.(http.Flusher)
+
+	// Write any body data we already have
+	if len(bodyStart) > 0 {
+		if _, err := w.Write(bodyStart); err != nil {
+			h.logger.Warn("error writing initial body",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+				zap.Error(err),
+			)
+			return
+		}
+		if flusher != nil && isStreaming {
+			flusher.Flush()
+		}
+	}
+
+	// Stream remaining data
+	for {
+		select {
+		case data, ok := <-responseCh:
+			if !ok {
+				// Channel closed, we're done
+				h.logger.Debug("tunnel proxy request completed",
+					zap.String("tunnel_id", tunnelID),
+					zap.String("connection_id", connectionID),
+					zap.Int("status", resp.StatusCode),
+				)
+				return
+			}
+			if len(data) > 0 {
+				if _, err := w.Write(data); err != nil {
+					h.logger.Warn("error writing response body",
+						zap.String("tunnel_id", tunnelID),
+						zap.String("connection_id", connectionID),
+						zap.Error(err),
+					)
+					return
+				}
+				// Flush immediately for streaming responses
+				if flusher != nil && isStreaming {
+					flusher.Flush()
+				}
+			}
+		case <-ctx.Done():
+			h.logger.Warn("response stream interrupted",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+			)
+			return
+		}
+	}
+}
+
+// handleWebSocket handles WebSocket upgrade requests by hijacking the connection
+// and establishing a bidirectional relay through the tunnel.
+func (h *TunnelProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, tunnelID, connectionID string) {
+	ctx := r.Context()
+
+	h.logger.Debug("handling websocket upgrade",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+	)
+
+	// Serialize the HTTP request (including WebSocket upgrade headers)
+	serialized, err := h.httpProxy.SerializeRequest(r)
+	if err != nil {
+		h.logger.Error("failed to serialize websocket request",
 			zap.String("tunnel_id", tunnelID),
 			zap.String("connection_id", connectionID),
 			zap.Error(err),
 		)
+		http.Error(w, "failed to process request", http.StatusInternalServerError)
+		return
 	}
 
-	h.logger.Debug("tunnel proxy request completed",
+	// Send request through tunnel
+	responseCh, err := h.service.SendRequest(ctx, tunnelID, connectionID, serialized)
+	if err != nil {
+		h.logger.Error("failed to send websocket request through tunnel",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.Error(err),
+		)
+		http.Error(w, "tunnel unavailable", http.StatusBadGateway)
+		return
+	}
+	defer h.service.CloseConnection(connectionID)
+
+	// Wait for the initial response (WebSocket upgrade response)
+	timeout := 30 * time.Second
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Collect response until we have the complete HTTP response headers
+	var responseData []byte
+	headersDone := false
+	for !headersDone {
+		select {
+		case data, ok := <-responseCh:
+			if !ok {
+				h.logger.Warn("tunnel closed before websocket upgrade",
+					zap.String("tunnel_id", tunnelID),
+					zap.String("connection_id", connectionID),
+				)
+				http.Error(w, "tunnel closed unexpectedly", http.StatusBadGateway)
+				return
+			}
+			responseData = append(responseData, data...)
+			// Check if we have complete headers (look for \r\n\r\n)
+			if bytes.Contains(responseData, []byte("\r\n\r\n")) {
+				headersDone = true
+			}
+		case <-ctx.Done():
+			h.logger.Warn("websocket upgrade timeout",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+			)
+			http.Error(w, "upgrade timeout", http.StatusGatewayTimeout)
+			return
+		}
+	}
+
+	// Parse the HTTP response
+	resp, err := h.httpProxy.DeserializeResponse(responseData)
+	if err != nil {
+		h.logger.Error("failed to parse websocket upgrade response",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.Error(err),
+		)
+		http.Error(w, "invalid upgrade response", http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Check if upgrade was accepted
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		h.logger.Warn("websocket upgrade rejected",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.Int("status", resp.StatusCode),
+		)
+		// Forward the rejection response
+		for key, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+		return
+	}
+
+	// Hijack the connection
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		h.logger.Error("response writer does not support hijacking",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+		)
+		http.Error(w, "websocket not supported", http.StatusInternalServerError)
+		return
+	}
+
+	clientConn, bufrw, err := hijacker.Hijack()
+	if err != nil {
+		h.logger.Error("failed to hijack connection",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.Error(err),
+		)
+		http.Error(w, "failed to hijack connection", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = clientConn.Close() }()
+
+	// Write the upgrade response to the client
+	if _, err := bufrw.Write(responseData); err != nil {
+		h.logger.Error("failed to write upgrade response",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.Error(err),
+		)
+		return
+	}
+	if err := bufrw.Flush(); err != nil {
+		h.logger.Error("failed to flush upgrade response",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	h.logger.Info("websocket connection established",
 		zap.String("tunnel_id", tunnelID),
 		zap.String("connection_id", connectionID),
-		zap.Int("status", resp.StatusCode),
 	)
+
+	// Establish bidirectional relay
+	ctx = context.Background() // Use a fresh context for the relay
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Client -> Tunnel
+	go func() {
+		defer wg.Done()
+		h.relayClientToTunnel(ctx, clientConn, tunnelID, connectionID)
+	}()
+
+	// Tunnel -> Client
+	go func() {
+		defer wg.Done()
+		h.relayTunnelToClient(ctx, responseCh, clientConn, tunnelID, connectionID)
+	}()
+
+	wg.Wait()
+	h.logger.Info("websocket connection closed",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+	)
+}
+
+// relayClientToTunnel relays data from the client to the tunnel.
+func (h *TunnelProxyHandler) relayClientToTunnel(ctx context.Context, conn net.Conn, tunnelID, connectionID string) {
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			if err != io.EOF {
+				h.logger.Debug("client read error",
+					zap.String("tunnel_id", tunnelID),
+					zap.String("connection_id", connectionID),
+					zap.Error(err),
+				)
+			}
+			// Send EOF to tunnel
+			_ = h.service.SendData(ctx, tunnelID, connectionID, nil, true)
+			return
+		}
+		if n > 0 {
+			if err := h.service.SendData(ctx, tunnelID, connectionID, buf[:n], false); err != nil {
+				h.logger.Debug("failed to send data to tunnel",
+					zap.String("tunnel_id", tunnelID),
+					zap.String("connection_id", connectionID),
+					zap.Error(err),
+				)
+				return
+			}
+		}
+	}
+}
+
+// relayTunnelToClient relays data from the tunnel to the client.
+func (h *TunnelProxyHandler) relayTunnelToClient(ctx context.Context, responseCh <-chan []byte, conn net.Conn, tunnelID, connectionID string) {
+	for {
+		select {
+		case data, ok := <-responseCh:
+			if !ok {
+				return
+			}
+			if len(data) > 0 {
+				if _, err := conn.Write(data); err != nil {
+					h.logger.Debug("client write error",
+						zap.String("tunnel_id", tunnelID),
+						zap.String("connection_id", connectionID),
+						zap.Error(err),
+					)
+					return
+				}
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // authenticate validates the request has proper authentication.

@@ -1443,9 +1443,21 @@
   - [x] Response deserialization using `http.ReadResponse`
   - [x] Configurable limits (request/response size, timeouts)
   - [x] Full proxy flow through ConnectionHandler
-- [ ] TCP proxy implementation:
-  - [ ] Bidirectional TCP relay
-  - [ ] Buffer management
+- [x] TCP proxy implementation (`pkg/tunnel/tcp_proxy.go`):
+  - [x] Bidirectional TCP relay with connection tracking
+  - [x] Buffer management with configurable sizes
+  - [x] Graceful shutdown with context cancellation
+  - [x] Connection lifecycle management
+- [x] HTTP streaming support (`pkg/server/api/tunnel_proxy.go`):
+  - [x] SSE (Server-Sent Events) response detection and streaming
+  - [x] Chunked transfer-encoding support
+  - [x] http.Flusher integration for real-time data
+  - [x] Content-Length unknown response handling
+- [x] WebSocket support (`pkg/server/api/tunnel_proxy.go`):
+  - [x] WebSocket upgrade detection (Connection: Upgrade, Upgrade: websocket)
+  - [x] HTTP hijacking for raw connection access
+  - [x] Bidirectional relay (relayClientToTunnel, relayTunnelToClient)
+  - [x] SendData interface for tunnel router
 - [ ] Dynamic subdomain assignment (deferred):
   - [ ] Generate unique subdomain per tunnel
   - [ ] DNS or wildcard certificate
