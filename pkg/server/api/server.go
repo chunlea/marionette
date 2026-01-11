@@ -28,6 +28,9 @@ type Server struct {
 	permissions PermissionService
 	workspaces  WorkspaceService
 
+	// Tunnel service
+	tunnels TunnelService
+
 	// Streaming services
 	logStream   LogStreamService
 	eventStream EventStreamService
@@ -104,6 +107,13 @@ func WithEventStreamService(s EventStreamService) Option {
 	}
 }
 
+// WithTunnelService sets the tunnel service.
+func WithTunnelService(s TunnelService) Option {
+	return func(srv *Server) {
+		srv.tunnels = s
+	}
+}
+
 // WithTunnelProxy sets the tunnel proxy handler.
 func WithTunnelProxy(h *TunnelProxyHandler) Option {
 	return func(srv *Server) {
@@ -172,6 +182,10 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.With(RequireScope("sessions:write")).Post("/{sessionID}/suspend", srv.handleSuspendSession)
 			r.With(RequireScope("sessions:write")).Post("/{sessionID}/resume", srv.handleResumeSession)
 			r.With(RequireScope("sessions:write")).Delete("/{sessionID}", srv.handleTerminateSession)
+
+			// Session tunnels
+			r.With(RequireScope("tunnels:write")).Post("/{sessionID}/tunnels", srv.handleCreateTunnel)
+			r.With(RequireScope("tunnels:read")).Get("/{sessionID}/tunnels", srv.handleListTunnels)
 		})
 
 		// Tasks
@@ -189,6 +203,12 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 		r.Route("/runners", func(r chi.Router) {
 			r.With(RequireScope("runners:read")).Get("/", srv.handleListRunners)
 			r.With(RequireScope("runners:read")).Get("/{runnerID}", srv.handleGetRunner)
+		})
+
+		// Tunnels (get/close by ID)
+		r.Route("/tunnels", func(r chi.Router) {
+			r.With(RequireScope("tunnels:read")).Get("/{tunnelID}", srv.handleGetTunnel)
+			r.With(RequireScope("tunnels:write")).Delete("/{tunnelID}", srv.handleCloseTunnel)
 		})
 
 		// Permissions
