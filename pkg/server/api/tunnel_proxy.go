@@ -1,9 +1,10 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -183,6 +184,15 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.String("proxied_path", r.URL.Path),
 	)
 
+	// Handle HTTP with streaming support
+	h.handleHTTPStream(w, r, tunnelID, connectionID)
+}
+
+// handleHTTPStream handles regular HTTP requests with streaming response support.
+// This supports SSE (Server-Sent Events), chunked transfer encoding, and regular responses.
+func (h *TunnelProxyHandler) handleHTTPStream(w http.ResponseWriter, r *http.Request, tunnelID, connectionID string) {
+	ctx := r.Context()
+
 	// Serialize the HTTP request
 	serialized, err := h.httpProxy.SerializeRequest(r)
 	if err != nil {
@@ -208,21 +218,35 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.service.CloseConnection(connectionID)
 
-	// Wait for response with timeout
+	// Wait for response with timeout (for initial headers)
 	timeout := 60 * time.Second
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Collect response data
+	// Collect initial data until we have complete HTTP headers
 	var responseData []byte
-	for {
+	headersDone := false
+	for !headersDone {
 		select {
 		case data, ok := <-responseCh:
 			if !ok {
-				// Channel closed, we have all the data
-				goto processResponse
+				// Channel closed before getting headers
+				if len(responseData) == 0 {
+					h.logger.Warn("empty response from tunnel",
+						zap.String("tunnel_id", tunnelID),
+						zap.String("connection_id", connectionID),
+					)
+					http.Error(w, "no response from tunnel", http.StatusBadGateway)
+					return
+				}
+				headersDone = true
+				break
 			}
 			responseData = append(responseData, data...)
+			// Check if we have complete headers (look for \r\n\r\n)
+			if bytes.Contains(responseData, []byte("\r\n\r\n")) {
+				headersDone = true
+			}
 		case <-ctx.Done():
 			h.logger.Warn("tunnel request timeout",
 				zap.String("tunnel_id", tunnelID),
@@ -233,20 +257,25 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-processResponse:
-	if len(responseData) == 0 {
-		h.logger.Warn("empty response from tunnel",
+	// Find the header/body boundary
+	headerEnd := bytes.Index(responseData, []byte("\r\n\r\n"))
+	if headerEnd == -1 {
+		h.logger.Error("malformed response: no header boundary",
 			zap.String("tunnel_id", tunnelID),
 			zap.String("connection_id", connectionID),
 		)
-		http.Error(w, "no response from tunnel", http.StatusBadGateway)
+		http.Error(w, "invalid response from tunnel", http.StatusBadGateway)
 		return
 	}
 
-	// Deserialize the HTTP response
-	resp, err := h.httpProxy.DeserializeResponse(responseData)
+	// Parse just the headers
+	headerBytes := responseData[:headerEnd+4] // Include \r\n\r\n
+	bodyStart := responseData[headerEnd+4:]
+
+	// Parse the HTTP response headers
+	resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(headerBytes)), nil)
 	if err != nil {
-		h.logger.Error("failed to deserialize response",
+		h.logger.Error("failed to parse response headers",
 			zap.String("tunnel_id", tunnelID),
 			zap.String("connection_id", connectionID),
 			zap.Error(err),
@@ -255,6 +284,22 @@ processResponse:
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	// Check if this is a streaming response
+	contentType := resp.Header.Get("Content-Type")
+	transferEncoding := resp.Header.Get("Transfer-Encoding")
+	isStreaming := strings.HasPrefix(contentType, "text/event-stream") ||
+		strings.EqualFold(transferEncoding, "chunked") ||
+		resp.ContentLength < 0
+
+	h.logger.Debug("response type detected",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+		zap.String("content_type", contentType),
+		zap.String("transfer_encoding", transferEncoding),
+		zap.Bool("is_streaming", isStreaming),
+		zap.Int64("content_length", resp.ContentLength),
+	)
 
 	// Copy response headers
 	for key, values := range resp.Header {
@@ -266,20 +311,59 @@ processResponse:
 	// Write status code
 	w.WriteHeader(resp.StatusCode)
 
-	// Copy response body
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		h.logger.Warn("error copying response body",
-			zap.String("tunnel_id", tunnelID),
-			zap.String("connection_id", connectionID),
-			zap.Error(err),
-		)
+	// Get the flusher for streaming
+	flusher, _ := w.(http.Flusher)
+
+	// Write any body data we already have
+	if len(bodyStart) > 0 {
+		if _, err := w.Write(bodyStart); err != nil {
+			h.logger.Warn("error writing initial body",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+				zap.Error(err),
+			)
+			return
+		}
+		if flusher != nil && isStreaming {
+			flusher.Flush()
+		}
 	}
 
-	h.logger.Debug("tunnel proxy request completed",
-		zap.String("tunnel_id", tunnelID),
-		zap.String("connection_id", connectionID),
-		zap.Int("status", resp.StatusCode),
-	)
+	// Stream remaining data
+	for {
+		select {
+		case data, ok := <-responseCh:
+			if !ok {
+				// Channel closed, we're done
+				h.logger.Debug("tunnel proxy request completed",
+					zap.String("tunnel_id", tunnelID),
+					zap.String("connection_id", connectionID),
+					zap.Int("status", resp.StatusCode),
+				)
+				return
+			}
+			if len(data) > 0 {
+				if _, err := w.Write(data); err != nil {
+					h.logger.Warn("error writing response body",
+						zap.String("tunnel_id", tunnelID),
+						zap.String("connection_id", connectionID),
+						zap.Error(err),
+					)
+					return
+				}
+				// Flush immediately for streaming responses
+				if flusher != nil && isStreaming {
+					flusher.Flush()
+				}
+			}
+		case <-ctx.Done():
+			h.logger.Warn("response stream interrupted",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+			)
+			return
+		}
+	}
 }
 
 // authenticate validates the request has proper authentication.
