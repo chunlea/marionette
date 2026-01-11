@@ -384,25 +384,6 @@ func (m *mockRunnerStore) BeginTx(_ context.Context) (store.Tx, error) { return 
 func (m *mockRunnerStore) Ping(_ context.Context) error                { return nil }
 func (m *mockRunnerStore) Close() error                                { return nil }
 
-// Stream methods (stub)
-func (m *mockRunnerStore) CreateStream(_ context.Context, _ *store.Stream) error { return nil }
-func (m *mockRunnerStore) GetStream(_ context.Context, _ string) (*store.Stream, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockRunnerStore) GetStreamBySessionAndType(_ context.Context, _, _ string, _ bool) (*store.Stream, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockRunnerStore) ListStreams(_ context.Context, _ store.ListStreamsOptions) (*store.ListResult[store.Stream], error) {
-	return &store.ListResult[store.Stream]{}, nil
-}
-func (m *mockRunnerStore) UpdateStream(_ context.Context, _ string, _ store.StreamUpdates) error {
-	return nil
-}
-func (m *mockRunnerStore) DeleteStream(_ context.Context, _ string) error { return nil }
-func (m *mockRunnerStore) CleanupExpiredStreams(_ context.Context) (int, error) {
-	return 0, nil
-}
-
 func TestRunnerRegistry_Register_NoToken(t *testing.T) {
 	runnerStore := newMockRunnerStore()
 	tokenStore := mockstore.NewRunnerTokenStore()
