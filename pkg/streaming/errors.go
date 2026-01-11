@@ -52,6 +52,9 @@ var (
 	// ErrRoomNotFound is returned when a room is not found.
 	ErrRoomNotFound = errors.New("room not found")
 
+	// ErrRoomExists is returned when a room with the same ID already exists.
+	ErrRoomExists = errors.New("room already exists")
+
 	// ErrRoomClosed is returned when an operation is attempted on a closed room.
 	ErrRoomClosed = errors.New("room is closed")
 

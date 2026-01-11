@@ -161,3 +161,13 @@ type ListLogArchivesOptions struct {
 	BaseListOptions
 	IncludeDeleted bool // Include soft-deleted archives
 }
+
+// ListStreamsOptions for filtering streams.
+type ListStreamsOptions struct {
+	BaseListOptions
+	SessionID  *string  // Filter by session
+	RunnerID   *string  // Filter by runner
+	Type       []string // Filter by stream type (desktop, browser, ios, android)
+	State      []string // Filter by state (pending, starting, active, paused, stopping, stopped, error)
+	ActiveOnly bool     // Only return non-terminal streams (state not in stopped, error)
+}
