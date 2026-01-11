@@ -23,6 +23,9 @@ type CommandHandler interface {
 	// HandleCreateTunnel handles a tunnel creation command.
 	HandleCreateTunnel(ctx context.Context, cmd *pb.CreateTunnel) (*pb.RunnerMessage, error)
 
+	// HandleTunnelData handles tunnel data from the server.
+	HandleTunnelData(ctx context.Context, cmd *pb.TunnelData) (*pb.RunnerMessage, error)
+
 	// HandleAttachSession handles a session attach command.
 	HandleAttachSession(ctx context.Context, cmd *pb.AttachSession) (*pb.RunnerMessage, error)
 
@@ -53,6 +56,8 @@ type DefaultCommandHandler struct {
 	OnExecuteTask       func(ctx context.Context, cmd *pb.ExecuteTask) (*pb.RunnerMessage, error)
 	OnApprovePermission func(ctx context.Context, cmd *pb.ApprovePermission) error
 	OnKillTask          func(ctx context.Context, cmd *pb.KillTask) error
+	OnCreateTunnel      func(tunnelID, tunnelType string, localPort int) error
+	OnTunnelData        func(ctx context.Context, cmd *pb.TunnelData) error
 	OnDetachSession     func(sessionID string) error
 }
 
@@ -161,7 +166,6 @@ func (h *DefaultCommandHandler) HandleKillTask(ctx context.Context, cmd *pb.Kill
 }
 
 // HandleCreateTunnel handles tunnel creation.
-// This is a stub for later phase implementation.
 func (h *DefaultCommandHandler) HandleCreateTunnel(_ context.Context, cmd *pb.CreateTunnel) (*pb.RunnerMessage, error) {
 	h.logger.Info("received create tunnel command",
 		zap.String("tunnel_id", cmd.TunnelId),
@@ -170,7 +174,37 @@ func (h *DefaultCommandHandler) HandleCreateTunnel(_ context.Context, cmd *pb.Cr
 		zap.String("direction", cmd.Direction),
 	)
 
-	// Tunnel creation will be implemented in a later phase
+	// Delegate to callback if set (for tunnel manager integration)
+	if h.OnCreateTunnel != nil {
+		if err := h.OnCreateTunnel(cmd.TunnelId, cmd.Type, int(cmd.LocalPort)); err != nil {
+			h.logger.Error("failed to create tunnel relay",
+				zap.String("tunnel_id", cmd.TunnelId),
+				zap.Error(err),
+			)
+			return nil, err
+		}
+	}
+
+	return nil, nil
+}
+
+// HandleTunnelData handles tunnel data from the server.
+func (h *DefaultCommandHandler) HandleTunnelData(ctx context.Context, cmd *pb.TunnelData) (*pb.RunnerMessage, error) {
+	h.logger.Debug("received tunnel data",
+		zap.String("tunnel_id", cmd.TunnelId),
+		zap.String("connection_id", cmd.ConnectionId),
+		zap.Int("data_len", len(cmd.Data)),
+		zap.Bool("eof", cmd.Eof),
+	)
+
+	// Delegate to callback if set (for tunnel manager integration)
+	if h.OnTunnelData != nil {
+		if err := h.OnTunnelData(ctx, cmd); err != nil {
+			return nil, err
+		}
+	}
+
+	// No response message needed - tunnel data responses are sent separately
 	return nil, nil
 }
 

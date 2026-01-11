@@ -47,6 +47,7 @@ type serverOptions struct {
 	sessionManager    core.SessionManagerInterface
 	taskManager       core.TaskManagerInterface
 	connManager       *ConnectionManager
+	tunnelRouter      *TunnelRouter
 }
 
 // WithPermissionManager sets the permission manager for handling permission requests from runners.
@@ -75,6 +76,13 @@ func WithTaskManager(tm core.TaskManagerInterface) ServerOption {
 func WithConnManager(cm *ConnectionManager) ServerOption {
 	return func(o *serverOptions) {
 		o.connManager = cm
+	}
+}
+
+// WithTunnelRouter sets the tunnel router for handling tunnel data.
+func WithTunnelRouter(tr *TunnelRouter) ServerOption {
+	return func(o *serverOptions) {
+		o.tunnelRouter = tr
 	}
 }
 
@@ -163,6 +171,9 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 		}
 		if srvOpts.sessionManager != nil {
 			routerOpts = append(routerOpts, WithMRSessionManager(srvOpts.sessionManager))
+		}
+		if srvOpts.tunnelRouter != nil {
+			routerOpts = append(routerOpts, WithMRTunnelRouter(srvOpts.tunnelRouter))
 		}
 		router := NewMessageRouter(logger, runnerManager, routerOpts...)
 
