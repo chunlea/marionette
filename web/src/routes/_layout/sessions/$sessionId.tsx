@@ -3,6 +3,7 @@ import { useSession, useTasks } from '@/api/hooks'
 import { Card, CardHeader, CardBody } from '@/components/Card'
 import { Badge } from '@/components/Badge'
 import { Button } from '@/components/Button'
+import { DesktopStreamCard } from '@/components/DesktopStreamCard'
 import {
   Table,
   TableHeader,
@@ -160,6 +161,13 @@ function SessionDetailPage() {
             )}
           </CardBody>
         </Card>
+
+        {/* Desktop Stream */}
+        <DesktopStreamCard
+          sessionId={session.id}
+          sessionStatus={session.status}
+          runnerId={session.runner_id}
+        />
       </div>
 
       {/* Session Actions */}
