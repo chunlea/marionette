@@ -41,6 +41,7 @@ type TunnelInfo struct {
 	Type      string
 	RunnerID  string
 	SessionID string
+	IsPublic  bool
 	ExpiresAt time.Time
 }
 
@@ -103,17 +104,7 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.String("path", r.URL.Path),
 	)
 
-	// Authenticate the request
-	if err := h.authenticate(r, tunnelID); err != nil {
-		h.logger.Warn("tunnel proxy authentication failed",
-			zap.String("tunnel_id", tunnelID),
-			zap.Error(err),
-		)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Validate tunnel exists and is not expired
+	// Validate tunnel exists and is not expired first
 	ctx := r.Context()
 	info, err := h.service.ValidateTunnel(ctx, tunnelID)
 	if err != nil {
@@ -123,6 +114,20 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		)
 		http.Error(w, "tunnel not found or expired", http.StatusNotFound)
 		return
+	}
+
+	// Authenticate the request (skip for public tunnels)
+	if !info.IsPublic {
+		if err := h.authenticate(r, tunnelID); err != nil {
+			h.logger.Warn("tunnel proxy authentication failed",
+				zap.String("tunnel_id", tunnelID),
+				zap.Error(err),
+			)
+			// Return 401 with WWW-Authenticate header for Basic Auth prompt
+			w.Header().Set("WWW-Authenticate", `Basic realm="Marionette Tunnel"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	// Check if tunnel is expired
@@ -164,6 +169,9 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.RequestURI += "?" + r.URL.RawQuery
 		}
 	}
+
+	// Sanitize request: remove tunnel authentication info before forwarding
+	h.sanitizeRequest(r)
 
 	h.logger.Debug("proxying request",
 		zap.String("tunnel_id", tunnelID),
@@ -272,7 +280,7 @@ processResponse:
 }
 
 // authenticate validates the request has proper authentication.
-// Supports both tunnel token and API key authentication.
+// Supports tunnel token (header, query param, Basic Auth) and API key authentication.
 func (h *TunnelProxyHandler) authenticate(r *http.Request, tunnelID string) error {
 	// Try tunnel token first
 	token := h.extractTunnelToken(r)
@@ -301,22 +309,51 @@ func (h *TunnelProxyHandler) authenticate(r *http.Request, tunnelID string) erro
 }
 
 // extractTunnelToken extracts the tunnel token from the request.
-// Checks Authorization header and query parameter.
+// Checks (in order):
+//  1. X-Marionette-Tunnel-Token header
+//  2. marionette_token query parameter
+//  3. HTTP Basic Auth (password field)
 func (h *TunnelProxyHandler) extractTunnelToken(r *http.Request) string {
-	// Check Authorization header: "Bearer ttok_xxx"
-	auth := r.Header.Get("Authorization")
-	if strings.HasPrefix(auth, "Bearer ") {
-		token := strings.TrimPrefix(auth, "Bearer ")
-		if strings.HasPrefix(token, "ttok_") {
-			return token
-		}
-	}
-
-	// Check query parameter: ?token=ttok_xxx
-	token := r.URL.Query().Get("token")
-	if strings.HasPrefix(token, "ttok_") {
+	// Check X-Marionette-Tunnel-Token header
+	if token := r.Header.Get("X-Marionette-Tunnel-Token"); strings.HasPrefix(token, "ttok_") {
 		return token
 	}
 
+	// Check marionette_token query parameter
+	if token := r.URL.Query().Get("marionette_token"); strings.HasPrefix(token, "ttok_") {
+		return token
+	}
+
+	// Check HTTP Basic Auth (password = token, username ignored)
+	if _, password, ok := r.BasicAuth(); ok && strings.HasPrefix(password, "ttok_") {
+		return password
+	}
+
 	return ""
+}
+
+// sanitizeRequest removes tunnel authentication info from the request
+// before forwarding it to the backend service.
+// This prevents leaking tunnel tokens to the proxied service.
+func (h *TunnelProxyHandler) sanitizeRequest(r *http.Request) {
+	// Remove Marionette-specific headers
+	r.Header.Del("X-Marionette-Tunnel-Token")
+	r.Header.Del("X-Marionette-API-Key")
+
+	// Remove Basic Auth if it contains a tunnel token
+	if _, password, ok := r.BasicAuth(); ok && strings.HasPrefix(password, "ttok_") {
+		r.Header.Del("Authorization")
+	}
+
+	// Remove marionette_token query parameter
+	query := r.URL.Query()
+	if query.Has("marionette_token") {
+		query.Del("marionette_token")
+		r.URL.RawQuery = query.Encode()
+		// Update RequestURI as well
+		r.RequestURI = r.URL.Path
+		if r.URL.RawQuery != "" {
+			r.RequestURI += "?" + r.URL.RawQuery
+		}
+	}
 }

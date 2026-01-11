@@ -85,6 +85,16 @@ func TestTunnelProxyHandler_Unauthorized_NoToken(t *testing.T) {
 		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
 			return false, nil
 		},
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				IsPublic:  false, // Private tunnel requires auth
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
 	}
 
 	h := NewTunnelProxyHandler(
@@ -102,6 +112,8 @@ func TestTunnelProxyHandler_Unauthorized_NoToken(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	// Should return WWW-Authenticate header for Basic Auth prompt
+	assert.Contains(t, w.Header().Get("WWW-Authenticate"), "Basic realm=")
 }
 
 func TestTunnelProxyHandler_ValidTunnelToken(t *testing.T) {
@@ -139,7 +151,7 @@ func TestTunnelProxyHandler_ValidTunnelToken(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
-	req.Header.Set("Authorization", "Bearer ttok_valid123")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid123")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -181,12 +193,97 @@ func TestTunnelProxyHandler_TokenInQuery(t *testing.T) {
 	r := chi.NewRouter()
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
-	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo?token=ttok_querytoken", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo?marionette_token=ttok_querytoken", nil)
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestTunnelProxyHandler_PublicTunnel(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	responseCh := make(chan []byte, 1)
+	responseCh <- []byte("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\npublic")
+	close(responseCh)
+
+	mockSvc := &mockTunnelProxyService{
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				IsPublic:  true, // Public tunnel - no auth required
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			return responseCh, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	r := chi.NewRouter()
+	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
+
+	// No authentication provided - should still work for public tunnel
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_public123/foo", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "public", w.Body.String())
+}
+
+func TestTunnelProxyHandler_BasicAuth(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	responseCh := make(chan []byte, 1)
+	responseCh <- []byte("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nbasic")
+	close(responseCh)
+
+	mockSvc := &mockTunnelProxyService{
+		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
+			return token == "ttok_basictoken", nil
+		},
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			return responseCh, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	r := chi.NewRouter()
+	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
+
+	// Use HTTP Basic Auth with tunnel token as password
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
+	req.SetBasicAuth("", "ttok_basictoken") // Username empty, password is the token
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "basic", w.Body.String())
 }
 
 func TestTunnelProxyHandler_ExpiredTunnel(t *testing.T) {
@@ -216,7 +313,7 @@ func TestTunnelProxyHandler_ExpiredTunnel(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
-	req.Header.Set("Authorization", "Bearer ttok_valid")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -251,7 +348,7 @@ func TestTunnelProxyHandler_UnsupportedTunnelType(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
-	req.Header.Set("Authorization", "Bearer ttok_valid")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -297,7 +394,7 @@ func TestTunnelProxyHandler_PathRewriting(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/api/endpoint", nil)
-	req.Header.Set("Authorization", "Bearer ttok_valid")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -338,7 +435,7 @@ func TestTunnelProxyHandler_SendRequestError(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
-	req.Header.Set("Authorization", "Bearer ttok_valid")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -379,7 +476,7 @@ func TestTunnelProxyHandler_EmptyResponse(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
-	req.Header.Set("Authorization", "Bearer ttok_valid")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -421,7 +518,7 @@ func TestTunnelProxyHandler_InvalidResponse(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
-	req.Header.Set("Authorization", "Bearer ttok_valid")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -450,7 +547,7 @@ func TestTunnelProxyHandler_TunnelNotFound(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
-	req.Header.Set("Authorization", "Bearer ttok_valid")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -462,6 +559,15 @@ func TestTunnelProxyHandler_AuthTokenError(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	mockSvc := &mockTunnelProxyService{
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
 		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
 			return false, errors.New("token validation error")
 		},
@@ -476,7 +582,7 @@ func TestTunnelProxyHandler_AuthTokenError(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
-	req.Header.Set("Authorization", "Bearer ttok_test")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_test")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -488,6 +594,15 @@ func TestTunnelProxyHandler_APIKeyAuthError(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	mockSvc := &mockTunnelProxyService{
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
 		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
 			return false, nil // Token validation fails
 		},
@@ -508,7 +623,7 @@ func TestTunnelProxyHandler_APIKeyAuthError(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
-	req.Header.Set("X-API-Key", "mk_test")
+	req.Header.Set("X-Marionette-API-Key", "mk_test")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -541,9 +656,9 @@ func TestTunnelProxyHandler_APIKeyAuth(t *testing.T) {
 		},
 	}
 
-	// API key auth function
+	// API key auth function using X-Marionette-API-Key header
 	apiKeyAuth := func(r *http.Request) (bool, error) {
-		return r.Header.Get("X-API-Key") == "mk_valid_key", nil
+		return r.Header.Get("X-Marionette-API-Key") == "mk_valid_key", nil
 	}
 
 	h := NewTunnelProxyHandler(
@@ -556,7 +671,7 @@ func TestTunnelProxyHandler_APIKeyAuth(t *testing.T) {
 	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/foo", nil)
-	req.Header.Set("X-API-Key", "mk_valid_key")
+	req.Header.Set("X-Marionette-API-Key", "mk_valid_key")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -568,36 +683,59 @@ func TestExtractTunnelToken(t *testing.T) {
 	h := NewTunnelProxyHandler()
 
 	tests := []struct {
-		name     string
-		header   string
-		query    string
-		expected string
+		name      string
+		header    string // X-Marionette-Tunnel-Token header
+		query     string // marionette_token query param
+		basicAuth string // Basic Auth password (username ignored)
+		expected  string
 	}{
 		{
-			name:     "bearer token",
-			header:   "Bearer ttok_abc123",
+			name:     "X-Marionette-Tunnel-Token header",
+			header:   "ttok_abc123",
 			expected: "ttok_abc123",
 		},
 		{
-			name:     "query param",
+			name:     "marionette_token query param",
 			query:    "ttok_xyz789",
 			expected: "ttok_xyz789",
 		},
 		{
-			name:     "bearer token takes precedence",
-			header:   "Bearer ttok_header",
+			name:      "HTTP Basic Auth password",
+			basicAuth: "ttok_basicauth",
+			expected:  "ttok_basicauth",
+		},
+		{
+			name:     "header takes precedence over query",
+			header:   "ttok_header",
 			query:    "ttok_query",
 			expected: "ttok_header",
 		},
 		{
-			name:     "non-tunnel bearer token ignored",
-			header:   "Bearer mk_apikey",
+			name:      "header takes precedence over basic auth",
+			header:    "ttok_header",
+			basicAuth: "ttok_basic",
+			expected:  "ttok_header",
+		},
+		{
+			name:      "query takes precedence over basic auth",
+			query:     "ttok_query",
+			basicAuth: "ttok_basic",
+			expected:  "ttok_query",
+		},
+		{
+			name:     "non-tunnel header ignored",
+			header:   "mk_apikey",
 			expected: "",
 		},
 		{
 			name:     "non-tunnel query param ignored",
 			query:    "apikey123",
 			expected: "",
+		},
+		{
+			name:      "non-tunnel basic auth password ignored",
+			basicAuth: "regularpassword",
+			expected:  "",
 		},
 		{
 			name:     "empty",
@@ -609,11 +747,14 @@ func TestExtractTunnelToken(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			url := "/test"
 			if tc.query != "" {
-				url += "?token=" + tc.query
+				url += "?marionette_token=" + tc.query
 			}
 			req := httptest.NewRequest(http.MethodGet, url, nil)
 			if tc.header != "" {
-				req.Header.Set("Authorization", tc.header)
+				req.Header.Set("X-Marionette-Tunnel-Token", tc.header)
+			}
+			if tc.basicAuth != "" {
+				req.SetBasicAuth("", tc.basicAuth)
 			}
 
 			token := h.extractTunnelToken(req)
@@ -986,7 +1127,7 @@ func TestTunnelProxyHandler_RootPath(t *testing.T) {
 
 	// Test root path - /tunnels/tun_test123 should become /
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/", nil)
-	req.Header.Set("Authorization", "Bearer ttok_valid")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -1033,7 +1174,7 @@ func TestTunnelProxyHandler_PathWithQueryString(t *testing.T) {
 
 	// Test path with query string - should preserve query string
 	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/api?param=value", nil)
-	req.Header.Set("Authorization", "Bearer ttok_valid")
+	req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
@@ -1041,6 +1182,151 @@ func TestTunnelProxyHandler_PathWithQueryString(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	// The serialized request should contain the path with query string
 	assert.Contains(t, capturedData, "/api?param=value")
+}
+
+func TestTunnelProxyHandler_SanitizeRequest(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	var capturedData string
+	responseCh := make(chan []byte, 1)
+	responseCh <- []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+	close(responseCh)
+
+	mockSvc := &mockTunnelProxyService{
+		validateTokenFn: func(ctx context.Context, tunnelID, token string) (bool, error) {
+			return token == "ttok_valid", nil
+		},
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			capturedData = string(data)
+			return responseCh, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	r := chi.NewRouter()
+	r.HandleFunc("/tunnels/{tunnelID}/*", h.ServeHTTP)
+
+	t.Run("removes token query parameter", func(t *testing.T) {
+		capturedData = ""
+		responseCh := make(chan []byte, 1)
+		responseCh <- []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+		close(responseCh)
+		mockSvc.sendRequestFn = func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			capturedData = string(data)
+			return responseCh, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/api?marionette_token=ttok_valid&other=value", nil)
+		w := httptest.NewRecorder()
+
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		// Token should be removed, other params preserved
+		assert.Contains(t, capturedData, "/api?other=value")
+		assert.NotContains(t, capturedData, "ttok_valid")
+	})
+
+	t.Run("removes tunnel token from Authorization header", func(t *testing.T) {
+		capturedData = ""
+		responseCh := make(chan []byte, 1)
+		responseCh <- []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+		close(responseCh)
+		mockSvc.sendRequestFn = func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			capturedData = string(data)
+			return responseCh, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/api", nil)
+		req.Header.Set("X-Marionette-Tunnel-Token", "ttok_valid")
+		w := httptest.NewRecorder()
+
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		// Authorization header with tunnel token should be removed
+		assert.NotContains(t, capturedData, "X-Marionette-Tunnel-Token: ttok_valid")
+	})
+
+	t.Run("removes X-Marionette-API-Key header", func(t *testing.T) {
+		capturedData = ""
+		responseCh := make(chan []byte, 1)
+		responseCh <- []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+		close(responseCh)
+		mockSvc.sendRequestFn = func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			capturedData = string(data)
+			return responseCh, nil
+		}
+
+		// Create API key auth that validates via X-Marionette-API-Key header
+		h2 := NewTunnelProxyHandler(
+			WithTPLogger(logger),
+			WithTPService(mockSvc),
+			WithTPAPIKeyAuth(func(r *http.Request) (bool, error) {
+				return r.Header.Get("X-Marionette-API-Key") == "mk_test", nil
+			}),
+		)
+
+		r2 := chi.NewRouter()
+		r2.HandleFunc("/tunnels/{tunnelID}/*", h2.ServeHTTP)
+
+		req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/api", nil)
+		req.Header.Set("X-Marionette-API-Key", "mk_test")
+		w := httptest.NewRecorder()
+
+		r2.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		// X-Marionette-API-Key header should be removed before forwarding
+		assert.NotContains(t, capturedData, "X-Marionette-API-Key")
+		assert.NotContains(t, capturedData, "mk_test")
+	})
+
+	t.Run("preserves non-tunnel Authorization headers", func(t *testing.T) {
+		capturedData = ""
+		responseCh := make(chan []byte, 1)
+		responseCh <- []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+		close(responseCh)
+		mockSvc.sendRequestFn = func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			capturedData = string(data)
+			return responseCh, nil
+		}
+
+		// Create API key auth to allow the request
+		h2 := NewTunnelProxyHandler(
+			WithTPLogger(logger),
+			WithTPService(mockSvc),
+			WithTPAPIKeyAuth(func(r *http.Request) (bool, error) {
+				return r.Header.Get("X-Marionette-API-Key") == "mk_test", nil
+			}),
+		)
+
+		r2 := chi.NewRouter()
+		r2.HandleFunc("/tunnels/{tunnelID}/*", h2.ServeHTTP)
+
+		req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/api", nil)
+		req.Header.Set("X-Marionette-API-Key", "mk_test")
+		req.Header.Set("Authorization", "Basic dXNlcjpwYXNz") // Basic auth for backend (non-tunnel)
+		w := httptest.NewRecorder()
+
+		r2.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		// Non-tunnel Basic auth should be preserved (password doesn't start with ttok_)
+		assert.Contains(t, capturedData, "Authorization: Basic dXNlcjpwYXNz")
+	})
 }
 
 // mockTunnelRouter implements TunnelRouter for testing.
@@ -1070,4 +1356,8 @@ func (m *mockTunnelRouter) RegisterTunnel(tunnelID, runnerID string) {
 
 func (m *mockTunnelRouter) UnregisterTunnel(tunnelID string) {
 	m.unregisterTunnelCalled = true
+}
+
+func (m *mockTunnelRouter) NotifyTunnelCreated(tunnelID, runnerID, tunnelType string, localPort int32, direction string) error {
+	return nil
 }
