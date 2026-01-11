@@ -784,6 +784,10 @@ CREATE TABLE tunnels (
     local_port INT NOT NULL,
     public_url TEXT,
 
+    -- Public access (no token required)
+    -- When true, tunnel can be accessed without authentication
+    is_public BOOLEAN NOT NULL DEFAULT FALSE,
+
     -- Token authentication (hashed for security)
     -- See docs/auth.md for token design
     token_hash TEXT NOT NULL,           -- SHA-256 hex (64 chars)

@@ -178,6 +178,7 @@ func (m *TunnelManager) Create(ctx context.Context, opts CreateTunnelOptions) (*
 		Type:      opts.Type,
 		Direction: opts.Direction(),
 		LocalPort: opts.LocalPort,
+		IsPublic:  opts.Public,
 		Token:     token, // Only available during creation
 		ExpiresAt: now.Add(ttl),
 		CreatedAt: now,

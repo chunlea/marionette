@@ -17,6 +17,7 @@ type TunnelRouter interface {
 	CloseConnection(connectionID string)
 	RegisterTunnel(tunnelID, runnerID string)
 	UnregisterTunnel(tunnelID string)
+	NotifyTunnelCreated(tunnelID, runnerID, tunnelType string, localPort int32, direction string) error
 }
 
 // TunnelProxyAdapter implements TunnelProxyService by integrating with
@@ -82,6 +83,7 @@ func (a *TunnelProxyAdapter) ValidateTunnel(ctx context.Context, tunnelID string
 		Type:      t.Type,
 		RunnerID:  t.RunnerID,
 		SessionID: t.SessionID,
+		IsPublic:  t.IsPublic,
 		ExpiresAt: t.ExpiresAt,
 	}, nil
 }
