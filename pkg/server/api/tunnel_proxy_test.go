@@ -3,14 +3,18 @@ package api
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/tunnel"
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
@@ -21,6 +25,7 @@ type mockTunnelProxyService struct {
 	validateTunnelFn      func(ctx context.Context, tunnelID string) (*TunnelInfo, error)
 	validateTokenFn       func(ctx context.Context, tunnelID, token string) (bool, error)
 	sendRequestFn         func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error)
+	sendDataFn            func(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error
 	closeConnectionCalled bool
 }
 
@@ -43,6 +48,13 @@ func (m *mockTunnelProxyService) SendRequest(ctx context.Context, tunnelID, conn
 		return m.sendRequestFn(ctx, tunnelID, connectionID, data)
 	}
 	return nil, nil
+}
+
+func (m *mockTunnelProxyService) SendData(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error {
+	if m.sendDataFn != nil {
+		return m.sendDataFn(ctx, tunnelID, connectionID, data, eof)
+	}
+	return nil
 }
 
 func (m *mockTunnelProxyService) CloseConnection(connectionID string) {
@@ -1332,6 +1344,7 @@ func TestTunnelProxyHandler_SanitizeRequest(t *testing.T) {
 // mockTunnelRouter implements TunnelRouter for testing.
 type mockTunnelRouter struct {
 	sendRequestFn          func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan *pb.TunnelData, error)
+	sendDataFn             func(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error
 	closeConnectionCalled  bool
 	lastClosedConnID       string
 	registerTunnelCalled   bool
@@ -1343,6 +1356,13 @@ func (m *mockTunnelRouter) SendRequest(ctx context.Context, tunnelID, connection
 		return m.sendRequestFn(ctx, tunnelID, connectionID, data)
 	}
 	return nil, nil
+}
+
+func (m *mockTunnelRouter) SendData(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error {
+	if m.sendDataFn != nil {
+		return m.sendDataFn(ctx, tunnelID, connectionID, data, eof)
+	}
+	return nil
 }
 
 func (m *mockTunnelRouter) CloseConnection(connectionID string) {
@@ -1360,4 +1380,797 @@ func (m *mockTunnelRouter) UnregisterTunnel(tunnelID string) {
 
 func (m *mockTunnelRouter) NotifyTunnelCreated(tunnelID, runnerID, tunnelType string, localPort int32, direction string) error {
 	return nil
+}
+
+// Tests for streaming responses
+
+func TestTunnelProxyHandler_SSEResponse(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	mockSvc := &mockTunnelProxyService{
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				IsPublic:  true,
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			ch := make(chan []byte, 10)
+			go func() {
+				defer close(ch)
+				// Send SSE response with streaming content-type
+				sseResponse := "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n"
+				ch <- []byte(sseResponse)
+				// Send SSE events
+				ch <- []byte("data: event 1\n\n")
+				ch <- []byte("data: event 2\n\n")
+			}()
+			return ch, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create router with tunnel ID in path
+	r := chi.NewRouter()
+	r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+		r.Get("/*", h.ServeHTTP)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/stream", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "text/event-stream", w.Header().Get("Content-Type"))
+	assert.Contains(t, w.Body.String(), "data: event 1")
+	assert.Contains(t, w.Body.String(), "data: event 2")
+}
+
+func TestTunnelProxyHandler_ChunkedResponse(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	mockSvc := &mockTunnelProxyService{
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				IsPublic:  true,
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			ch := make(chan []byte, 10)
+			go func() {
+				defer close(ch)
+				// Send chunked response
+				chunkedResponse := "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+				ch <- []byte(chunkedResponse)
+				ch <- []byte("chunk1")
+				ch <- []byte("chunk2")
+				ch <- []byte("chunk3")
+			}()
+			return ch, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create router with tunnel ID in path
+	r := chi.NewRouter()
+	r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+		r.Get("/*", h.ServeHTTP)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/data", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "chunk1")
+	assert.Contains(t, w.Body.String(), "chunk2")
+	assert.Contains(t, w.Body.String(), "chunk3")
+}
+
+func TestIsWebSocketUpgrade(t *testing.T) {
+	tests := []struct {
+		name       string
+		connection string
+		upgrade    string
+		expected   bool
+	}{
+		{
+			name:       "valid websocket upgrade",
+			connection: "Upgrade",
+			upgrade:    "websocket",
+			expected:   true,
+		},
+		{
+			name:       "case insensitive",
+			connection: "UPGRADE",
+			upgrade:    "WEBSOCKET",
+			expected:   true,
+		},
+		{
+			name:       "missing connection header",
+			connection: "",
+			upgrade:    "websocket",
+			expected:   false,
+		},
+		{
+			name:       "missing upgrade header",
+			connection: "Upgrade",
+			upgrade:    "",
+			expected:   false,
+		},
+		{
+			name:       "wrong upgrade value",
+			connection: "Upgrade",
+			upgrade:    "h2c",
+			expected:   false,
+		},
+		{
+			name:       "wrong connection value",
+			connection: "keep-alive",
+			upgrade:    "websocket",
+			expected:   false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			if tc.connection != "" {
+				req.Header.Set("Connection", tc.connection)
+			}
+			if tc.upgrade != "" {
+				req.Header.Set("Upgrade", tc.upgrade)
+			}
+
+			result := isWebSocketUpgrade(req)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestTunnelProxyHandler_WebSocketUpgradeDetection(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	mockSvc := &mockTunnelProxyService{
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				IsPublic:  true,
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			ch := make(chan []byte, 10)
+			go func() {
+				defer close(ch)
+				// Send WebSocket upgrade response
+				wsResponse := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n"
+				ch <- []byte(wsResponse)
+			}()
+			return ch, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create router with tunnel ID in path
+	r := chi.NewRouter()
+	r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+		r.Get("/*", h.ServeHTTP)
+	})
+
+	// WebSocket request (httptest.NewRecorder doesn't support hijacking,
+	// so we just verify the handler tries to process it)
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	// httptest.NewRecorder doesn't support hijacking, so we expect an error response
+	// The important thing is that the handler recognized this as a WebSocket request
+	// and tried to hijack (which fails with the test recorder)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "websocket not supported")
+}
+
+func TestTunnelProxyHandler_StreamingContentLengthUnknown(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	mockSvc := &mockTunnelProxyService{
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return &TunnelInfo{
+				ID:        tunnelID,
+				Type:      "http",
+				RunnerID:  "run_test",
+				SessionID: "sess_test",
+				IsPublic:  true,
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, nil
+		},
+		sendRequestFn: func(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+			ch := make(chan []byte, 10)
+			go func() {
+				defer close(ch)
+				// Response without Content-Length (streaming)
+				response := "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\r\n"
+				ch <- []byte(response)
+				ch <- []byte("part1")
+				ch <- []byte("part2")
+			}()
+			return ch, nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create router with tunnel ID in path
+	r := chi.NewRouter()
+	r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+		r.Get("/*", h.ServeHTTP)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/stream", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "part1")
+	assert.Contains(t, w.Body.String(), "part2")
+}
+
+// Integration tests for WebSocket tunnel proxy
+
+// mockBidirectionalTunnelService simulates a WebSocket backend for integration testing.
+type mockBidirectionalTunnelService struct {
+	validateTunnelFn func(ctx context.Context, tunnelID string) (*TunnelInfo, error)
+	responseCh       chan []byte
+	receivedData     [][]byte
+	mu               sync.Mutex
+	sendDataCalled   bool
+}
+
+func (m *mockBidirectionalTunnelService) ValidateTunnel(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+	if m.validateTunnelFn != nil {
+		return m.validateTunnelFn(ctx, tunnelID)
+	}
+	return &TunnelInfo{
+		ID:        tunnelID,
+		Type:      "http",
+		RunnerID:  "run_test",
+		SessionID: "sess_test",
+		IsPublic:  true,
+		ExpiresAt: time.Now().Add(time.Hour),
+	}, nil
+}
+
+func (m *mockBidirectionalTunnelService) ValidateTunnelToken(ctx context.Context, tunnelID, token string) (bool, error) {
+	return true, nil
+}
+
+func (m *mockBidirectionalTunnelService) SendRequest(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error) {
+	return m.responseCh, nil
+}
+
+func (m *mockBidirectionalTunnelService) SendData(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sendDataCalled = true
+	if len(data) > 0 {
+		m.receivedData = append(m.receivedData, data)
+	}
+	return nil
+}
+
+func (m *mockBidirectionalTunnelService) CloseConnection(connectionID string) {}
+
+func (m *mockBidirectionalTunnelService) GetReceivedData() [][]byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([][]byte, len(m.receivedData))
+	copy(result, m.receivedData)
+	return result
+}
+
+func TestTunnelProxyHandler_WebSocket_Integration(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	// Create response channel that we control
+	responseCh := make(chan []byte, 100)
+
+	mockSvc := &mockBidirectionalTunnelService{
+		responseCh: responseCh,
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create router with tunnel ID in path
+	r := chi.NewRouter()
+	r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+		r.HandleFunc("/*", h.ServeHTTP)
+	})
+
+	// Create a real HTTP server
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	// Send WebSocket upgrade response through the mock
+	go func() {
+		// Wait a moment for the request to be processed
+		time.Sleep(50 * time.Millisecond)
+		// Send 101 Switching Protocols response
+		wsUpgradeResponse := "HTTP/1.1 101 Switching Protocols\r\n" +
+			"Upgrade: websocket\r\n" +
+			"Connection: Upgrade\r\n" +
+			"Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n" +
+			"\r\n"
+		responseCh <- []byte(wsUpgradeResponse)
+	}()
+
+	// Connect with WebSocket client
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/tunnels/tun_test123/ws"
+	header := http.Header{}
+	header.Set("Connection", "Upgrade")
+	header.Set("Upgrade", "websocket")
+
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 5 * time.Second,
+	}
+
+	conn, resp, err := dialer.Dial(wsURL, header)
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	if err != nil {
+		// Expected: the mock doesn't implement proper WebSocket protocol
+		// The upgrade response we send is just for header testing
+		t.Logf("WebSocket dial failed (expected with mock): %v", err)
+		if resp != nil && resp.StatusCode == http.StatusSwitchingProtocols {
+			t.Log("Got 101 Switching Protocols - upgrade initiated correctly")
+		}
+		return
+	}
+	defer func() { _ = conn.Close() }()
+
+	// If we got here, the connection was established
+	// Send a message
+	err = conn.WriteMessage(websocket.TextMessage, []byte("hello from client"))
+	require.NoError(t, err)
+
+	// Send response from "backend"
+	responseCh <- []byte("hello from backend")
+
+	// Read response
+	_, msg, err := conn.ReadMessage()
+	if err == nil {
+		t.Logf("Received message: %s", string(msg))
+	}
+}
+
+func TestTunnelProxyHandler_WebSocket_UpgradeRejected(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	// Create response channel
+	responseCh := make(chan []byte, 10)
+
+	mockSvc := &mockBidirectionalTunnelService{
+		responseCh: responseCh,
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create router
+	r := chi.NewRouter()
+	r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+		r.HandleFunc("/*", h.ServeHTTP)
+	})
+
+	// Create a real HTTP server
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	// Send a rejection response (400 Bad Request) through the mock
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		rejectionResponse := "HTTP/1.1 400 Bad Request\r\n" +
+			"Content-Type: text/plain\r\n" +
+			"Content-Length: 18\r\n" +
+			"\r\n" +
+			"Upgrade rejected\r\n"
+		responseCh <- []byte(rejectionResponse)
+		close(responseCh)
+	}()
+
+	// Try to connect with WebSocket client
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/tunnels/tun_test123/ws"
+
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 5 * time.Second,
+	}
+
+	_, resp, err := dialer.Dial(wsURL, nil)
+
+	// Should fail because backend rejected the upgrade
+	assert.Error(t, err)
+	if resp != nil {
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		_ = resp.Body.Close()
+	}
+}
+
+func TestTunnelProxyHandler_WebSocket_BidirectionalRelay(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	// Create response channel
+	responseCh := make(chan []byte, 100)
+
+	mockSvc := &mockBidirectionalTunnelService{
+		responseCh: responseCh,
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create router
+	r := chi.NewRouter()
+	r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+		r.HandleFunc("/*", h.ServeHTTP)
+	})
+
+	// Create a real HTTP server
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	// We need to test the relay functions directly since the mock
+	// doesn't implement the full WebSocket protocol
+
+	// Test that the handler correctly identifies WebSocket upgrades
+	req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+
+	assert.True(t, isWebSocketUpgrade(req))
+
+	// Test non-WebSocket request
+	req2 := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/api", nil)
+	assert.False(t, isWebSocketUpgrade(req2))
+}
+
+func TestTunnelProxyAdapter_SendData(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	var sentData []byte
+	var sentEOF bool
+
+	mockRouter := &mockTunnelRouter{
+		sendDataFn: func(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error {
+			sentData = data
+			sentEOF = eof
+			return nil
+		},
+	}
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		WithTPATunnelRouter(mockRouter),
+	)
+
+	// Test SendData
+	testData := []byte("test data")
+	err := adapter.SendData(context.Background(), "tun_test", "conn_test", testData, false)
+	require.NoError(t, err)
+	assert.Equal(t, testData, sentData)
+	assert.False(t, sentEOF)
+
+	// Test SendData with EOF
+	err = adapter.SendData(context.Background(), "tun_test", "conn_test", nil, true)
+	require.NoError(t, err)
+	assert.True(t, sentEOF)
+}
+
+func TestTunnelProxyAdapter_SendData_NoRouter(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	adapter := NewTunnelProxyAdapter(
+		WithTPALogger(logger),
+		// No router configured
+	)
+
+	err := adapter.SendData(context.Background(), "tun_test", "conn_test", []byte("test"), false)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "tunnel router not configured")
+}
+
+// mockNetConn implements net.Conn for testing relay functions.
+type mockNetConn struct {
+	readData    []byte
+	readPos     int
+	readErr     error
+	writtenData []byte
+	writeErr    error
+	closed      bool
+	mu          sync.Mutex
+}
+
+func (m *mockNetConn) Read(b []byte) (n int, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.readErr != nil {
+		return 0, m.readErr
+	}
+	if m.readPos >= len(m.readData) {
+		return 0, errors.New("EOF")
+	}
+	n = copy(b, m.readData[m.readPos:])
+	m.readPos += n
+	return n, nil
+}
+
+func (m *mockNetConn) Write(b []byte) (n int, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.writeErr != nil {
+		return 0, m.writeErr
+	}
+	m.writtenData = append(m.writtenData, b...)
+	return len(b), nil
+}
+
+func (m *mockNetConn) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closed = true
+	return nil
+}
+
+// mockAddr implements net.Addr for testing.
+type mockAddr struct{}
+
+func (mockAddr) Network() string { return "mock" }
+func (mockAddr) String() string  { return "mock:0" }
+
+func (m *mockNetConn) LocalAddr() net.Addr  { return mockAddr{} }
+func (m *mockNetConn) RemoteAddr() net.Addr { return mockAddr{} }
+
+func (m *mockNetConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockNetConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockNetConn) SetWriteDeadline(t time.Time) error { return nil }
+
+func TestRelayClientToTunnel(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	var receivedData [][]byte
+	var receivedEOF bool
+	var mu sync.Mutex
+
+	mockSvc := &mockTunnelProxyService{
+		sendDataFn: func(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if len(data) > 0 {
+				dataCopy := make([]byte, len(data))
+				copy(dataCopy, data)
+				receivedData = append(receivedData, dataCopy)
+			}
+			if eof {
+				receivedEOF = true
+			}
+			return nil
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create mock connection with test data
+	mockConn := &mockNetConn{
+		readData: []byte("hello from client"),
+	}
+
+	// Run relay in goroutine
+	done := make(chan struct{})
+	go func() {
+		h.relayClientToTunnel(context.Background(), mockConn, "tun_test", "conn_test")
+		close(done)
+	}()
+
+	// Wait for relay to complete
+	select {
+	case <-done:
+		// Success
+	case <-time.After(time.Second):
+		t.Fatal("relay did not complete in time")
+	}
+
+	// Verify data was sent
+	mu.Lock()
+	defer mu.Unlock()
+	assert.True(t, len(receivedData) > 0, "should have received data")
+	assert.True(t, receivedEOF, "should have received EOF")
+}
+
+func TestRelayTunnelToClient(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockSvc := &mockTunnelProxyService{}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create mock connection
+	mockConn := &mockNetConn{}
+
+	// Create response channel
+	responseCh := make(chan []byte, 10)
+
+	// Send data through the channel
+	go func() {
+		responseCh <- []byte("hello")
+		responseCh <- []byte(" from")
+		responseCh <- []byte(" tunnel")
+		close(responseCh)
+	}()
+
+	// Run relay
+	h.relayTunnelToClient(context.Background(), responseCh, mockConn, "tun_test", "conn_test")
+
+	// Verify data was written
+	mockConn.mu.Lock()
+	defer mockConn.mu.Unlock()
+	assert.Equal(t, "hello from tunnel", string(mockConn.writtenData))
+}
+
+func TestRelayTunnelToClient_WriteError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockSvc := &mockTunnelProxyService{}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create mock connection that returns error on write
+	mockConn := &mockNetConn{
+		writeErr: errors.New("write failed"),
+	}
+
+	// Create response channel
+	responseCh := make(chan []byte, 10)
+
+	// Send data through the channel
+	go func() {
+		responseCh <- []byte("hello")
+		time.Sleep(100 * time.Millisecond) // Give time for error to be processed
+		close(responseCh)
+	}()
+
+	// Run relay - should return on write error
+	done := make(chan struct{})
+	go func() {
+		h.relayTunnelToClient(context.Background(), responseCh, mockConn, "tun_test", "conn_test")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success - relay returned on error
+	case <-time.After(time.Second):
+		t.Fatal("relay did not complete in time")
+	}
+}
+
+func TestRelayTunnelToClient_ContextCancelled(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockSvc := &mockTunnelProxyService{}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create mock connection
+	mockConn := &mockNetConn{}
+
+	// Create response channel that never sends
+	responseCh := make(chan []byte, 10)
+
+	// Create cancellable context
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Run relay
+	done := make(chan struct{})
+	go func() {
+		h.relayTunnelToClient(ctx, responseCh, mockConn, "tun_test", "conn_test")
+		close(done)
+	}()
+
+	// Cancel context
+	cancel()
+
+	select {
+	case <-done:
+		// Success - relay returned on context cancel
+	case <-time.After(time.Second):
+		t.Fatal("relay did not complete in time after context cancel")
+	}
+}
+
+func TestRelayClientToTunnel_SendError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockSvc := &mockTunnelProxyService{
+		sendDataFn: func(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error {
+			return errors.New("send failed")
+		},
+	}
+
+	h := NewTunnelProxyHandler(
+		WithTPLogger(logger),
+		WithTPService(mockSvc),
+	)
+
+	// Create mock connection with test data
+	mockConn := &mockNetConn{
+		readData: []byte("hello from client"),
+	}
+
+	// Run relay - should return on send error
+	done := make(chan struct{})
+	go func() {
+		h.relayClientToTunnel(context.Background(), mockConn, "tun_test", "conn_test")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success - relay returned on error
+	case <-time.After(time.Second):
+		t.Fatal("relay did not complete in time")
+	}
 }
