@@ -31,6 +31,9 @@ type TunnelProxyService interface {
 	// Returns a channel for receiving response data.
 	SendRequest(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan []byte, error)
 
+	// SendData sends data to the tunnel (for bidirectional streaming).
+	SendData(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error
+
 	// CloseConnection closes a tunnel connection.
 	CloseConnection(connectionID string)
 }

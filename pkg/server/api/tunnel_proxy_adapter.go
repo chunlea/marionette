@@ -14,6 +14,7 @@ import (
 // This is implemented by grpc.TunnelRouter.
 type TunnelRouter interface {
 	SendRequest(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan *pb.TunnelData, error)
+	SendData(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error
 	CloseConnection(connectionID string)
 	RegisterTunnel(tunnelID, runnerID string)
 	UnregisterTunnel(tunnelID string)
@@ -137,6 +138,14 @@ func (a *TunnelProxyAdapter) SendRequest(ctx context.Context, tunnelID, connecti
 	}()
 
 	return bytesCh, nil
+}
+
+// SendData sends data to the tunnel (for bidirectional streaming like WebSocket).
+func (a *TunnelProxyAdapter) SendData(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error {
+	if a.tunnelRouter == nil {
+		return errors.New("tunnel router not configured")
+	}
+	return a.tunnelRouter.SendData(ctx, tunnelID, connectionID, data, eof)
 }
 
 // CloseConnection closes a tunnel connection.

@@ -245,6 +245,44 @@ func (r *TunnelRouter) SendEOF(tunnelID, connectionID string) error {
 	return r.connManager.SendCommand(runnerID, cmd)
 }
 
+// SendData sends data through the tunnel for bidirectional streaming (e.g., WebSocket).
+// This is used to send data from the HTTP handler back to the runner.
+func (r *TunnelRouter) SendData(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error {
+	runnerID, ok := r.GetRunnerForTunnel(tunnelID)
+	if !ok {
+		return errors.New("tunnel not found")
+	}
+
+	if r.connManager == nil {
+		return errors.New("connection manager not configured")
+	}
+
+	cmd := &pb.ServerCommand{
+		Payload: &pb.ServerCommand_TunnelData{
+			TunnelData: &pb.TunnelData{
+				TunnelId:     tunnelID,
+				ConnectionId: connectionID,
+				Data:         data,
+				Eof:          eof,
+			},
+		},
+	}
+
+	if err := r.connManager.SendCommand(runnerID, cmd); err != nil {
+		return err
+	}
+
+	r.logger.Debug("sent data to tunnel",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+		zap.String("runner_id", runnerID),
+		zap.Int("data_len", len(data)),
+		zap.Bool("eof", eof),
+	)
+
+	return nil
+}
+
 // HandleTunnelData handles incoming TunnelData from a runner.
 // Routes the data to the appropriate HTTP response handler.
 func (r *TunnelRouter) HandleTunnelData(ctx context.Context, runnerID string, data *pb.TunnelData) error {
