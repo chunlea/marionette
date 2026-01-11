@@ -490,7 +490,7 @@ func TestManager_StartStream_Closed(t *testing.T) {
 	m, _, _ := createTestManager(t)
 
 	ctx := context.Background()
-	m.Stop(ctx)
+	_ = m.Stop(ctx)
 
 	_, err := m.StartStream(ctx, streaming.StreamOptions{
 		SessionID: "sess_test123",
@@ -566,7 +566,7 @@ func TestManager_StopStream_Closed(t *testing.T) {
 	require.NoError(t, err)
 
 	// Close manager
-	m.Stop(ctx)
+	_ = m.Stop(ctx)
 
 	// Try to stop stream
 	err = m.StopStream(ctx, stream.ID)
@@ -678,7 +678,7 @@ func TestManager_Stats_Closed(t *testing.T) {
 	m, _, _ := createTestManager(t)
 
 	ctx := context.Background()
-	m.Stop(ctx)
+	_ = m.Stop(ctx)
 
 	stats := m.Stats()
 	assert.True(t, stats.IsClosed)
@@ -974,7 +974,7 @@ func TestManager_CleanupError(t *testing.T) {
 	// Manager should still be running
 	assert.False(t, m.isClosed())
 
-	m.Stop(ctx)
+	_ = m.Stop(ctx)
 }
 
 func TestManager_StopWithTimeout(t *testing.T) {

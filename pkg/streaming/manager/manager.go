@@ -155,6 +155,7 @@ func (m *Manager) StartStream(ctx context.Context, opts streaming.StreamOptions)
 
 	// Get provider
 	var provider streaming.StreamProvider
+	var stream *streaming.Stream
 	var err error
 	if m.config.DefaultProvider != "" {
 		var ok bool
@@ -190,7 +191,7 @@ func (m *Manager) StartStream(ctx context.Context, opts streaming.StreamOptions)
 		ExpiresAt:    opts.ExpiresAt,
 	}
 
-	_, err := m.store.CreateStream(ctx, createParams)
+	_, err = m.store.CreateStream(ctx, createParams)
 	if err != nil {
 		return nil, err
 	}
