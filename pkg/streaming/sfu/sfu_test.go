@@ -10,12 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest"
 )
 
 func TestNew(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -41,7 +40,7 @@ func TestNew_WithICEServers(t *testing.T) {
 	cfg.ICEServers = []webrtc.ICEServer{
 		{URLs: []string{"stun:stun.l.google.com:19302"}},
 	}
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -52,7 +51,7 @@ func TestNew_WithICEServers(t *testing.T) {
 
 func TestSFU_CreateRoom(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -68,7 +67,7 @@ func TestSFU_CreateRoom(t *testing.T) {
 
 func TestSFU_CreateRoom_Duplicate(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -83,7 +82,7 @@ func TestSFU_CreateRoom_Duplicate(t *testing.T) {
 
 func TestSFU_GetRoom(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -100,7 +99,7 @@ func TestSFU_GetRoom(t *testing.T) {
 
 func TestSFU_GetRoom_NotFound(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -113,7 +112,7 @@ func TestSFU_GetRoom_NotFound(t *testing.T) {
 
 func TestSFU_GetOrCreateRoom_New(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -129,7 +128,7 @@ func TestSFU_GetOrCreateRoom_New(t *testing.T) {
 
 func TestSFU_GetOrCreateRoom_Existing(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -147,7 +146,7 @@ func TestSFU_GetOrCreateRoom_Existing(t *testing.T) {
 
 func TestSFU_RemoveRoom(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -166,7 +165,7 @@ func TestSFU_RemoveRoom(t *testing.T) {
 
 func TestSFU_RemoveRoom_NotFound(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -179,7 +178,7 @@ func TestSFU_RemoveRoom_NotFound(t *testing.T) {
 
 func TestSFU_ListRooms(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -203,7 +202,7 @@ func TestSFU_ListRooms(t *testing.T) {
 
 func TestSFU_ListRooms_Empty(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -215,7 +214,7 @@ func TestSFU_ListRooms_Empty(t *testing.T) {
 
 func TestSFU_RoomCount(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -236,7 +235,7 @@ func TestSFU_RoomCount(t *testing.T) {
 
 func TestSFU_Close(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -253,7 +252,7 @@ func TestSFU_Close(t *testing.T) {
 
 func TestSFU_Close_Empty(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -265,7 +264,7 @@ func TestSFU_Close_Empty(t *testing.T) {
 
 func TestSFU_GetStats(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -279,7 +278,7 @@ func TestSFU_GetStats(t *testing.T) {
 
 func TestSFU_GetStats_WithRooms(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -300,7 +299,7 @@ func TestSFU_GetStats_WithRooms(t *testing.T) {
 
 func TestSFU_GetStats_MultipleRooms(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -338,7 +337,7 @@ func TestStats_Struct(t *testing.T) {
 func TestSFU_Config(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.PLIInterval = 2000
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -350,7 +349,7 @@ func TestSFU_Config(t *testing.T) {
 
 func TestSFU_ConcurrentCreateRoom(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -377,7 +376,7 @@ func TestSFU_ConcurrentCreateRoom(t *testing.T) {
 
 func TestSFU_ConcurrentGetRoom(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -401,7 +400,7 @@ func TestSFU_ConcurrentGetRoom(t *testing.T) {
 
 func TestSFU_ConcurrentGetOrCreateRoom(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -437,7 +436,7 @@ func TestSFU_ConcurrentGetOrCreateRoom(t *testing.T) {
 
 func TestSFU_ConcurrentMixedOperations(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -471,7 +470,7 @@ func TestSFU_ConcurrentMixedOperations(t *testing.T) {
 
 func TestSFU_ContextTimeout(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -485,7 +484,7 @@ func TestSFU_ContextTimeout(t *testing.T) {
 
 func TestSFU_API(t *testing.T) {
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -574,7 +573,7 @@ func BenchmarkSFU_ConcurrentGetRoom(b *testing.B) {
 func TestSFU_WithPLIInterval(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.PLIInterval = 500
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -586,7 +585,7 @@ func TestSFU_WithPLIInterval(t *testing.T) {
 func TestSFU_WithZeroPLIInterval(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.PLIInterval = 0
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)

@@ -417,6 +417,25 @@ func (s *integrationTestStore) BeginTx(_ context.Context) (store.Tx, error) { re
 func (s *integrationTestStore) Ping(_ context.Context) error                { return nil }
 func (s *integrationTestStore) Close() error                                { return nil }
 
+// Stream methods (stub)
+func (s *integrationTestStore) CreateStream(_ context.Context, _ *store.Stream) error { return nil }
+func (s *integrationTestStore) GetStream(_ context.Context, _ string) (*store.Stream, error) {
+	return nil, store.ErrNotFound
+}
+func (s *integrationTestStore) GetStreamBySessionAndType(_ context.Context, _, _ string, _ bool) (*store.Stream, error) {
+	return nil, store.ErrNotFound
+}
+func (s *integrationTestStore) ListStreams(_ context.Context, _ store.ListStreamsOptions) (*store.ListResult[store.Stream], error) {
+	return &store.ListResult[store.Stream]{}, nil
+}
+func (s *integrationTestStore) UpdateStream(_ context.Context, _ string, _ store.StreamUpdates) error {
+	return nil
+}
+func (s *integrationTestStore) DeleteStream(_ context.Context, _ string) error { return nil }
+func (s *integrationTestStore) CleanupExpiredStreams(_ context.Context) (int, error) {
+	return 0, nil
+}
+
 // integrationTestSetup holds all test components.
 type integrationTestSetup struct {
 	server      *grpc.Server

@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest"
 )
 
 // createTestSFU creates an SFU for testing.
@@ -17,7 +16,7 @@ func createTestSFU(t *testing.T) *SFU {
 	t.Helper()
 
 	cfg := DefaultConfig()
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	sfu, err := New(cfg, logger)
 	require.NoError(t, err)
@@ -42,7 +41,7 @@ func createTestRoom(t *testing.T) *Room {
 
 func TestNewRoom(t *testing.T) {
 	sfu := createTestSFU(t)
-	logger := zaptest.NewLogger(t)
+	logger := zap.NewNop()
 
 	room := newRoom("test-stream", sfu, logger)
 
