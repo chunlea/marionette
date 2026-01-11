@@ -43,11 +43,12 @@ type ServerOption func(*serverOptions)
 
 // serverOptions holds optional dependencies for the gRPC server.
 type serverOptions struct {
-	permissionManager core.PermissionManagerInterface
-	sessionManager    core.SessionManagerInterface
-	taskManager       core.TaskManagerInterface
-	connManager       *ConnectionManager
-	tunnelRouter      *TunnelRouter
+	permissionManager    core.PermissionManagerInterface
+	sessionManager       core.SessionManagerInterface
+	taskManager          core.TaskManagerInterface
+	connManager          *ConnectionManager
+	tunnelRouter         *TunnelRouter
+	browserStreamHandler BrowserStreamHandlerInterface
 }
 
 // WithPermissionManager sets the permission manager for handling permission requests from runners.
@@ -83,6 +84,13 @@ func WithConnManager(cm *ConnectionManager) ServerOption {
 func WithTunnelRouter(tr *TunnelRouter) ServerOption {
 	return func(o *serverOptions) {
 		o.tunnelRouter = tr
+	}
+}
+
+// WithBrowserStream sets the browser stream handler for browser frame streaming.
+func WithBrowserStream(bsh BrowserStreamHandlerInterface) ServerOption {
+	return func(o *serverOptions) {
+		o.browserStreamHandler = bsh
 	}
 }
 
@@ -188,6 +196,12 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 		logger.Info("runner lifecycle services initialized")
 	} else {
 		logger.Warn("store not configured - runner registration will not work")
+	}
+
+	// Add browser stream handler if configured
+	if srvOpts.browserStreamHandler != nil {
+		svcOpts = append(svcOpts, WithBrowserStreamHandler(srvOpts.browserStreamHandler))
+		logger.Info("browser stream handler configured")
 	}
 
 	// Register the RunnerService

@@ -33,8 +33,9 @@ type Server struct {
 	tunnels TunnelService
 
 	// Streaming services
-	logStream   LogStreamService
-	eventStream EventStreamService
+	logStream     LogStreamService
+	eventStream   EventStreamService
+	browserStream BrowserStreamService
 
 	// Tunnel proxy
 	tunnelProxy *TunnelProxyHandler
@@ -105,6 +106,13 @@ func WithLogStreamService(s LogStreamService) Option {
 func WithEventStreamService(s EventStreamService) Option {
 	return func(srv *Server) {
 		srv.eventStream = s
+	}
+}
+
+// WithBrowserStreamService sets the browser stream service for browser frame streaming.
+func WithBrowserStreamService(s BrowserStreamService) Option {
+	return func(srv *Server) {
+		srv.browserStream = s
 	}
 }
 
@@ -247,6 +255,13 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 		})
 
 		r.With(RequireScope("events:read")).Get("/events", srv.handleEventStream)
+
+		// Browser streaming WebSocket endpoint
+		r.Route("/streams", func(r chi.Router) {
+			// WebSocket endpoint for browser frame streaming
+			// Token-based auth is handled in the handler (query param ?token=xxx)
+			r.With(RequireScope("streams:read")).Get("/{streamID}/ws", srv.handleBrowserStreamWS)
+		})
 	})
 
 	srv.server = &http.Server{
