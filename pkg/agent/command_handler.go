@@ -31,6 +31,12 @@ type CommandHandler interface {
 
 	// HandleDetachSession handles a session detach command.
 	HandleDetachSession(ctx context.Context, cmd *pb.DetachSession) (*pb.RunnerMessage, error)
+
+	// HandleStartDesktopStream handles a desktop stream start command.
+	HandleStartDesktopStream(ctx context.Context, cmd *pb.StartDesktopStream) (*pb.RunnerMessage, error)
+
+	// HandleStopDesktopStream handles a desktop stream stop command.
+	HandleStopDesktopStream(ctx context.Context, cmd *pb.StopDesktopStream) (*pb.RunnerMessage, error)
 }
 
 // SessionState holds the state of an attached session.
@@ -59,6 +65,10 @@ type DefaultCommandHandler struct {
 	OnCreateTunnel      func(tunnelID, tunnelType string, localPort int) error
 	OnTunnelData        func(ctx context.Context, cmd *pb.TunnelData) error
 	OnDetachSession     func(sessionID string) error
+
+	// Desktop streaming callbacks
+	OnStartDesktopStream func(ctx context.Context, cmd *pb.StartDesktopStream) (*pb.RunnerMessage, error)
+	OnStopDesktopStream  func(ctx context.Context, cmd *pb.StopDesktopStream) (*pb.RunnerMessage, error)
 }
 
 // NewDefaultCommandHandler creates a new default command handler.
@@ -341,6 +351,78 @@ func (h *DefaultCommandHandler) HandleDetachSession(_ context.Context, cmd *pb.D
 				WorkspaceSynced:   workspaceSynced,
 				Success:           true,
 				SuspendedAtUnixMs: time.Now().UnixMilli(),
+			},
+		},
+	}, nil
+}
+
+// HandleStartDesktopStream handles a desktop stream start command.
+func (h *DefaultCommandHandler) HandleStartDesktopStream(ctx context.Context, cmd *pb.StartDesktopStream) (*pb.RunnerMessage, error) {
+	h.logger.Info("received start desktop stream command",
+		zap.String("stream_id", cmd.StreamId),
+		zap.String("session_id", cmd.SessionId),
+	)
+
+	// Check if session is attached
+	h.sessionsMu.RLock()
+	_, exists := h.sessions[cmd.SessionId]
+	h.sessionsMu.RUnlock()
+
+	if !exists {
+		h.logger.Warn("desktop stream for unattached session", zap.String("session_id", cmd.SessionId))
+		return &pb.RunnerMessage{
+			Payload: &pb.RunnerMessage_DesktopStreamError{
+				DesktopStreamError: &pb.DesktopStreamError{
+					StreamId:         cmd.StreamId,
+					SessionId:        cmd.SessionId,
+					Error:            "session not attached",
+					ErrorCode:        "session_not_attached",
+					Recoverable:      false,
+					OccurredAtUnixMs: time.Now().UnixMilli(),
+				},
+			},
+		}, nil
+	}
+
+	// Delegate to callback if set
+	if h.OnStartDesktopStream != nil {
+		return h.OnStartDesktopStream(ctx, cmd)
+	}
+
+	// Default: return error indicating no provider
+	return &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_DesktopStreamError{
+			DesktopStreamError: &pb.DesktopStreamError{
+				StreamId:         cmd.StreamId,
+				SessionId:        cmd.SessionId,
+				Error:            "no desktop streaming provider configured",
+				ErrorCode:        "provider_unavailable",
+				Recoverable:      false,
+				OccurredAtUnixMs: time.Now().UnixMilli(),
+			},
+		},
+	}, nil
+}
+
+// HandleStopDesktopStream handles a desktop stream stop command.
+func (h *DefaultCommandHandler) HandleStopDesktopStream(ctx context.Context, cmd *pb.StopDesktopStream) (*pb.RunnerMessage, error) {
+	h.logger.Info("received stop desktop stream command",
+		zap.String("stream_id", cmd.StreamId),
+		zap.String("reason", cmd.Reason),
+	)
+
+	// Delegate to callback if set
+	if h.OnStopDesktopStream != nil {
+		return h.OnStopDesktopStream(ctx, cmd)
+	}
+
+	// Default: return stopped confirmation
+	return &pb.RunnerMessage{
+		Payload: &pb.RunnerMessage_DesktopStreamStopped{
+			DesktopStreamStopped: &pb.DesktopStreamStopped{
+				StreamId:        cmd.StreamId,
+				Reason:          cmd.Reason,
+				StoppedAtUnixMs: time.Now().UnixMilli(),
 			},
 		},
 	}, nil
