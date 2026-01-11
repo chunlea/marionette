@@ -405,6 +405,25 @@ func (w *testStoreWrapper) GetLatestManifest(_ context.Context, _ string) (*stor
 }
 func (w *testStoreWrapper) DeleteManifest(_ context.Context, _ string) error { return nil }
 
+// Stream methods (stub)
+func (w *testStoreWrapper) CreateStream(_ context.Context, _ *store.Stream) error { return nil }
+func (w *testStoreWrapper) GetStream(_ context.Context, _ string) (*store.Stream, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetStreamBySessionAndType(_ context.Context, _, _ string, _ bool) (*store.Stream, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListStreams(_ context.Context, _ store.ListStreamsOptions) (*store.ListResult[store.Stream], error) {
+	return &store.ListResult[store.Stream]{}, nil
+}
+func (w *testStoreWrapper) UpdateStream(_ context.Context, _ string, _ store.StreamUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteStream(_ context.Context, _ string) error { return nil }
+func (w *testStoreWrapper) CleanupExpiredStreams(_ context.Context) (int, error) {
+	return 0, nil
+}
+
 func (w *testStoreWrapper) BeginTx(_ context.Context) (store.Tx, error) { return nil, nil }
 func (w *testStoreWrapper) Ping(_ context.Context) error                { return nil }
 func (w *testStoreWrapper) Close() error                                { return nil }

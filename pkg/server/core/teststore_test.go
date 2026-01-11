@@ -576,3 +576,22 @@ func (s *testStore) Close() error {
 func (s *testStore) DeleteDataKey(_ context.Context, _ string) error {
 	return nil
 }
+
+// Stream methods (stub)
+func (s *testStore) CreateStream(_ context.Context, _ *store.Stream) error { return nil }
+func (s *testStore) GetStream(_ context.Context, _ string) (*store.Stream, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testStore) GetStreamBySessionAndType(_ context.Context, _, _ string, _ bool) (*store.Stream, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testStore) ListStreams(_ context.Context, _ store.ListStreamsOptions) (*store.ListResult[store.Stream], error) {
+	return &store.ListResult[store.Stream]{}, nil
+}
+func (s *testStore) UpdateStream(_ context.Context, _ string, _ store.StreamUpdates) error {
+	return nil
+}
+func (s *testStore) DeleteStream(_ context.Context, _ string) error { return nil }
+func (s *testStore) CleanupExpiredStreams(_ context.Context) (int, error) {
+	return 0, nil
+}
