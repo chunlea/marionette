@@ -190,6 +190,10 @@ func TestCommandType(t *testing.T) {
 			expected: "CreateTunnel",
 		},
 		{
+			cmd:      &pb.ServerCommand{Payload: &pb.ServerCommand_TunnelData{}},
+			expected: "TunnelData",
+		},
+		{
 			cmd:      &pb.ServerCommand{Payload: &pb.ServerCommand_AttachSession{}},
 			expected: "AttachSession",
 		},
@@ -217,6 +221,7 @@ type MockCommandHandler struct {
 	ApprovePermissionCalls []*pb.ApprovePermission
 	KillTaskCalls          []*pb.KillTask
 	CreateTunnelCalls      []*pb.CreateTunnel
+	TunnelDataCalls        []*pb.TunnelData
 	AttachSessionCalls     []*pb.AttachSession
 	DetachSessionCalls     []*pb.DetachSession
 }
@@ -254,6 +259,13 @@ func (m *MockCommandHandler) HandleCreateTunnel(_ context.Context, cmd *pb.Creat
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.CreateTunnelCalls = append(m.CreateTunnelCalls, cmd)
+	return nil, nil
+}
+
+func (m *MockCommandHandler) HandleTunnelData(_ context.Context, cmd *pb.TunnelData) (*pb.RunnerMessage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.TunnelDataCalls = append(m.TunnelDataCalls, cmd)
 	return nil, nil
 }
 

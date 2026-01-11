@@ -74,10 +74,11 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(sessionsCmd)
 	rootCmd.AddCommand(tasksCmd)
+	rootCmd.AddCommand(tunnelsCmd)
+	rootCmd.AddCommand(adminCmd)
 	// TODO: Add these commands when implemented
 	// rootCmd.AddCommand(runnersCmd)
 	// rootCmd.AddCommand(permissionsCmd)
-	// rootCmd.AddCommand(adminCmd)
 }
 
 // getOutput returns the output writer for commands (allows testing).

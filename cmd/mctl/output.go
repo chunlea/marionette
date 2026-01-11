@@ -243,6 +243,65 @@ func permissionToRow(perm *client.PermissionRequest) []string {
 	}
 }
 
+// PrintTunnel outputs a single tunnel.
+func (p *Printer) PrintTunnel(t *client.Tunnel) error {
+	if p.format == OutputTable {
+		// For single tunnel, show detailed info including token if present
+		headers := []string{"ID", "SESSION", "TYPE", "PORT", "PUBLIC", "PUBLIC_URL", "EXPIRES"}
+		rows := [][]string{tunnelToRow(t)}
+		if err := p.PrintTable(headers, rows); err != nil {
+			return err
+		}
+		// Show access info
+		if t.IsPublic {
+			_, _ = fmt.Fprintf(p.writer, "\nAccess the tunnel (public, no auth required):\n")
+			_, _ = fmt.Fprintf(p.writer, "  curl %s/\n", t.PublicURL)
+		} else if t.Token != "" {
+			_, _ = fmt.Fprintf(p.writer, "\nAccess the tunnel:\n")
+			_, _ = fmt.Fprintf(p.writer, "  curl -H \"X-Marionette-Tunnel-Token: %s\" %s/\n", t.Token, t.PublicURL)
+			_, _ = fmt.Fprintf(p.writer, "\nOr open in browser (will prompt for password):\n")
+			_, _ = fmt.Fprintf(p.writer, "  %s/\n", t.PublicURL)
+			_, _ = fmt.Fprintf(p.writer, "  (leave username empty, enter token as password)\n")
+		}
+		return nil
+	}
+	return p.Print(t)
+}
+
+// PrintTunnelList outputs a list of tunnels.
+func (p *Printer) PrintTunnelList(tunnels []*client.Tunnel) error {
+	if p.format == OutputTable {
+		headers := []string{"ID", "SESSION", "TYPE", "PORT", "PUBLIC", "PUBLIC_URL", "EXPIRES"}
+		rows := make([][]string, len(tunnels))
+		for i, t := range tunnels {
+			rows[i] = tunnelToRow(t)
+		}
+		return p.PrintTable(headers, rows)
+	}
+	return p.Print(tunnels)
+}
+
+// tunnelToRow converts a tunnel to a table row.
+func tunnelToRow(t *client.Tunnel) []string {
+	expires := t.ExpiresAt
+	if expires == "" {
+		expires = "-"
+	}
+	isPublic := "no"
+	if t.IsPublic {
+		isPublic = "yes"
+	}
+	return []string{
+		t.ID,
+		t.SessionID,
+		t.Type,
+		fmt.Sprintf("%d", t.LocalPort),
+		isPublic,
+		t.PublicURL,
+		expires,
+	}
+}
+
 // formatTime formats a time value for display.
 func formatTime(t time.Time) string {
 	duration := time.Since(t)

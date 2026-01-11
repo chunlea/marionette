@@ -34,6 +34,11 @@ type MockClient struct {
 	ListPermissionsFunc   func(ctx context.Context, opts ListPermissionsOptions) (*ListResult[PermissionRequest], error)
 	ApprovePermissionFunc func(ctx context.Context, id string, reason string) error
 	DenyPermissionFunc    func(ctx context.Context, id string, reason string) error
+
+	CreateTunnelFunc func(ctx context.Context, opts CreateTunnelOptions) (*Tunnel, error)
+	GetTunnelFunc    func(ctx context.Context, id string) (*Tunnel, error)
+	ListTunnelsFunc  func(ctx context.Context, opts ListTunnelsOptions) (*ListResult[Tunnel], error)
+	CloseTunnelFunc  func(ctx context.Context, id string) error
 }
 
 // MockCall represents a recorded method call.
@@ -217,6 +222,42 @@ func (m *MockClient) DenyPermission(ctx context.Context, id string, reason strin
 	m.recordCall("DenyPermission", id, reason)
 	if m.DenyPermissionFunc != nil {
 		return m.DenyPermissionFunc(ctx, id, reason)
+	}
+	return nil
+}
+
+// CreateTunnel implements Client.
+func (m *MockClient) CreateTunnel(ctx context.Context, opts CreateTunnelOptions) (*Tunnel, error) {
+	m.recordCall("CreateTunnel", opts)
+	if m.CreateTunnelFunc != nil {
+		return m.CreateTunnelFunc(ctx, opts)
+	}
+	return nil, ErrNotFound
+}
+
+// GetTunnel implements Client.
+func (m *MockClient) GetTunnel(ctx context.Context, id string) (*Tunnel, error) {
+	m.recordCall("GetTunnel", id)
+	if m.GetTunnelFunc != nil {
+		return m.GetTunnelFunc(ctx, id)
+	}
+	return nil, ErrNotFound
+}
+
+// ListTunnels implements Client.
+func (m *MockClient) ListTunnels(ctx context.Context, opts ListTunnelsOptions) (*ListResult[Tunnel], error) {
+	m.recordCall("ListTunnels", opts)
+	if m.ListTunnelsFunc != nil {
+		return m.ListTunnelsFunc(ctx, opts)
+	}
+	return &ListResult[Tunnel]{Items: []*Tunnel{}}, nil
+}
+
+// CloseTunnel implements Client.
+func (m *MockClient) CloseTunnel(ctx context.Context, id string) error {
+	m.recordCall("CloseTunnel", id)
+	if m.CloseTunnelFunc != nil {
+		return m.CloseTunnelFunc(ctx, id)
 	}
 	return nil
 }

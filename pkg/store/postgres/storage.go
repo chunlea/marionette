@@ -19,7 +19,7 @@ const snapshotColumns = `id, runner_id, name, provider_snapshot_id, storage_key,
 // Tunnel column list for SELECT queries.
 //
 //nolint:gosec // G101: This is a column list, not hardcoded credentials
-const tunnelColumns = `id, session_id, runner_id, type, direction, local_port, public_url,
+const tunnelColumns = `id, session_id, runner_id, type, direction, local_port, public_url, is_public,
 	token_hash, token_prefix, hash_version, tenant_id, created_at, updated_at, expires_at, closed_at`
 
 // DataKey column list for SELECT queries.
@@ -316,16 +316,16 @@ func createTunnel(ctx context.Context, q querier, tunnel *store.Tunnel) error {
 
 	query := `
 		INSERT INTO tunnels (
-			id, session_id, runner_id, type, direction, local_port, public_url,
+			id, session_id, runner_id, type, direction, local_port, public_url, is_public,
 			token_hash, token_prefix, hash_version, tenant_id, created_at, updated_at, expires_at, closed_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW(), $13, $14
 		)
 		RETURNING created_at, updated_at`
 
 	err := q.QueryRow(ctx, query,
 		tunnel.ID, tunnel.SessionID, tunnel.RunnerID, tunnel.Type, tunnel.Direction,
-		tunnel.LocalPort, tunnel.PublicURL, tunnel.TokenHash, tunnel.TokenPrefix,
+		tunnel.LocalPort, tunnel.PublicURL, tunnel.IsPublic, tunnel.TokenHash, tunnel.TokenPrefix,
 		tunnel.HashVersion, tunnel.TenantID, tunnel.ExpiresAt, tunnel.ClosedAt,
 	).Scan(&tunnel.CreatedAt, &tunnel.UpdatedAt)
 
@@ -545,7 +545,7 @@ func deleteTunnel(ctx context.Context, q querier, tunnelID string) error {
 func scanTunnel(row pgx.Row, identifier string) (*store.Tunnel, error) {
 	var t store.Tunnel
 	err := row.Scan(
-		&t.ID, &t.SessionID, &t.RunnerID, &t.Type, &t.Direction, &t.LocalPort, &t.PublicURL,
+		&t.ID, &t.SessionID, &t.RunnerID, &t.Type, &t.Direction, &t.LocalPort, &t.PublicURL, &t.IsPublic,
 		&t.TokenHash, &t.TokenPrefix, &t.HashVersion, &t.TenantID, &t.CreatedAt, &t.UpdatedAt,
 		&t.ExpiresAt, &t.ClosedAt,
 	)
@@ -561,7 +561,7 @@ func scanTunnel(row pgx.Row, identifier string) (*store.Tunnel, error) {
 func scanTunnelFromRows(rows pgx.Rows) (*store.Tunnel, error) {
 	var t store.Tunnel
 	err := rows.Scan(
-		&t.ID, &t.SessionID, &t.RunnerID, &t.Type, &t.Direction, &t.LocalPort, &t.PublicURL,
+		&t.ID, &t.SessionID, &t.RunnerID, &t.Type, &t.Direction, &t.LocalPort, &t.PublicURL, &t.IsPublic,
 		&t.TokenHash, &t.TokenPrefix, &t.HashVersion, &t.TenantID, &t.CreatedAt, &t.UpdatedAt,
 		&t.ExpiresAt, &t.ClosedAt,
 	)

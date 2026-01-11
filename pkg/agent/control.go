@@ -161,6 +161,8 @@ func (c *ControlChannel) handleCommand(ctx context.Context, cmd *pb.ServerComman
 		response, err = c.handler.HandleKillTask(ctx, payload.KillTask)
 	case *pb.ServerCommand_CreateTunnel:
 		response, err = c.handler.HandleCreateTunnel(ctx, payload.CreateTunnel)
+	case *pb.ServerCommand_TunnelData:
+		response, err = c.handler.HandleTunnelData(ctx, payload.TunnelData)
 	case *pb.ServerCommand_AttachSession:
 		response, err = c.handler.HandleAttachSession(ctx, payload.AttachSession)
 	case *pb.ServerCommand_DetachSession:
@@ -231,6 +233,8 @@ func commandType(cmd *pb.ServerCommand) string {
 		return "KillTask"
 	case *pb.ServerCommand_CreateTunnel:
 		return "CreateTunnel"
+	case *pb.ServerCommand_TunnelData:
+		return "TunnelData"
 	case *pb.ServerCommand_AttachSession:
 		return "AttachSession"
 	case *pb.ServerCommand_DetachSession:

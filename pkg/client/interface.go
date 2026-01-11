@@ -51,6 +51,12 @@ type Client interface {
 	ListPermissions(ctx context.Context, opts ListPermissionsOptions) (*ListResult[PermissionRequest], error)
 	ApprovePermission(ctx context.Context, id string, reason string) error
 	DenyPermission(ctx context.Context, id string, reason string) error
+
+	// Tunnels
+	CreateTunnel(ctx context.Context, opts CreateTunnelOptions) (*Tunnel, error)
+	GetTunnel(ctx context.Context, id string) (*Tunnel, error)
+	ListTunnels(ctx context.Context, opts ListTunnelsOptions) (*ListResult[Tunnel], error)
+	CloseTunnel(ctx context.Context, id string) error
 }
 
 // LogIterator allows iterating over log entries.

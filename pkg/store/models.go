@@ -471,7 +471,8 @@ type Tunnel struct {
 	Direction   string     `json:"direction"` // inbound, outbound
 	LocalPort   int        `json:"local_port"`
 	PublicURL   *string    `json:"public_url,omitempty"`
-	TokenHash   string     `json:"-"` // Never expose in JSON
+	IsPublic    bool       `json:"is_public"` // If true, no authentication required
+	TokenHash   string     `json:"-"`         // Never expose in JSON
 	TokenPrefix string     `json:"token_prefix"`
 	HashVersion int        `json:"hash_version"`
 	TenantID    *string    `json:"tenant_id,omitempty"`

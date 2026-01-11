@@ -1632,3 +1632,52 @@ func TestWorkspaceScopeMiddleware(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, rec.Code)
 	})
 }
+
+func TestTunnelProxyRedirect(t *testing.T) {
+	// Create a mock tunnel proxy service that returns 404 for all tunnels
+	mockSvc := &mockTunnelProxyService{
+		validateTunnelFn: func(ctx context.Context, tunnelID string) (*TunnelInfo, error) {
+			return nil, errors.New("tunnel not found")
+		},
+	}
+
+	// Create a tunnel proxy handler with the mock service
+	tunnelProxy := NewTunnelProxyHandler(
+		WithTPLogger(zap.NewNop()),
+		WithTPService(mockSvc),
+	)
+
+	srv, _, _ := testServer(t, WithTunnelProxy(tunnelProxy))
+
+	t.Run("redirects tunnel path without trailing slash", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123", nil)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusMovedPermanently, rec.Code)
+		assert.Equal(t, "/tunnels/tun_test123/", rec.Header().Get("Location"))
+	})
+
+	t.Run("does not redirect tunnel path with trailing slash", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/", nil)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		// Should not be a redirect, should go to tunnel proxy (which returns 404 because mock says tunnel not found)
+		assert.NotEqual(t, http.StatusMovedPermanently, rec.Code)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("does not redirect subpaths", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/tunnels/tun_test123/some/path", nil)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+
+		// Should not be a redirect, should go to tunnel proxy (which returns 404 because mock says tunnel not found)
+		assert.NotEqual(t, http.StatusMovedPermanently, rec.Code)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+}

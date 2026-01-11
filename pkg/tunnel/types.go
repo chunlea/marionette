@@ -79,17 +79,18 @@ var (
 
 // Tunnel represents an active tunnel instance.
 type Tunnel struct {
-	ID        string
-	SessionID string
-	RunnerID  string
-	Type      string
-	Direction string
-	LocalPort int
-	PublicURL string
-	Token     string // Only set during creation, not stored
-	ExpiresAt time.Time
-	CreatedAt time.Time
-	ClosedAt  *time.Time
+	ID        string     `json:"id"`
+	SessionID string     `json:"session_id"`
+	RunnerID  string     `json:"runner_id"`
+	Type      string     `json:"type"`
+	Direction string     `json:"direction"`
+	LocalPort int        `json:"local_port"`
+	PublicURL string     `json:"public_url"`
+	IsPublic  bool       `json:"is_public"`       // If true, no authentication required
+	Token     string     `json:"token,omitempty"` // Only set during creation, not stored
+	ExpiresAt time.Time  `json:"expires_at"`
+	CreatedAt time.Time  `json:"created_at"`
+	ClosedAt  *time.Time `json:"closed_at,omitempty"`
 }
 
 // IsExpired returns true if the tunnel has expired.
@@ -114,6 +115,7 @@ type CreateTunnelOptions struct {
 	Type      string        // Required: tunnel type (http, tcp, etc.)
 	LocalPort int           // Required: local port in the container
 	TTL       time.Duration // Optional: time-to-live (default: 1 hour)
+	Public    bool          // Optional: if true, no authentication required
 }
 
 // Validate validates the create options.

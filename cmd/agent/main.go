@@ -88,6 +88,12 @@ func main() {
 	// Create Claude executor
 	claudeExec := claude.New()
 
+	// Create tunnel manager (uses controlChannel for sending messages)
+	tunnelMgr := agent.NewTunnelManager(
+		agent.WithTMLogger(logger),
+		agent.WithTMSender(controlChannel),
+	)
+
 	// Start heartbeat loop (created early so TaskRunner can update status)
 	hbLoop := agent.NewHeartbeatLoop(client, cfg.Heartbeat, logger)
 
@@ -103,6 +109,8 @@ func main() {
 		return taskRunner.HandlePermissionResponse(ctx, cmd)
 	}
 	cmdHandler.OnDetachSession = taskRunner.CancelTask
+	cmdHandler.OnCreateTunnel = tunnelMgr.HandleCreateTunnel
+	cmdHandler.OnTunnelData = tunnelMgr.HandleTunnelData
 
 	// Start control channel
 	if err := controlChannel.Start(ctx); err != nil {

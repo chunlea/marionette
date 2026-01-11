@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -28,9 +29,15 @@ type Server struct {
 	permissions PermissionService
 	workspaces  WorkspaceService
 
+	// Tunnel service
+	tunnels TunnelService
+
 	// Streaming services
 	logStream   LogStreamService
 	eventStream EventStreamService
+
+	// Tunnel proxy
+	tunnelProxy *TunnelProxyHandler
 
 	// Auth
 	apiKeyService *auth.APIKeyService
@@ -101,6 +108,20 @@ func WithEventStreamService(s EventStreamService) Option {
 	}
 }
 
+// WithTunnelService sets the tunnel service.
+func WithTunnelService(s TunnelService) Option {
+	return func(srv *Server) {
+		srv.tunnels = s
+	}
+}
+
+// WithTunnelProxy sets the tunnel proxy handler.
+func WithTunnelProxy(h *TunnelProxyHandler) Option {
+	return func(srv *Server) {
+		srv.tunnelProxy = h
+	}
+}
+
 // New creates a new public API server.
 func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	srv := &Server{
@@ -141,6 +162,26 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	r.Get("/docs", srv.handleSwaggerUI)
 	r.Get("/openapi.yaml", srv.handleOpenAPISpec)
 
+	// Tunnel proxy (auth handled by handler - supports tunnel token or API key)
+	if srv.tunnelProxy != nil {
+		r.Route("/tunnels/{tunnelID}", func(r chi.Router) {
+			// Handle root path: redirect if no trailing slash, otherwise proxy
+			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+				// Check if original request URL has trailing slash
+				// req.RequestURI preserves the original path before chi routing
+				path := strings.Split(req.RequestURI, "?")[0]
+				if !strings.HasSuffix(path, "/") {
+					// Redirect /tunnels/{tunnelID} to /tunnels/{tunnelID}/ for proper relative links
+					tunnelID := chi.URLParam(req, "tunnelID")
+					http.Redirect(w, req, "/tunnels/"+tunnelID+"/", http.StatusMovedPermanently)
+					return
+				}
+				srv.tunnelProxy.ServeHTTP(w, req)
+			})
+			r.HandleFunc("/*", srv.tunnelProxy.ServeHTTP)
+		})
+	}
+
 	// API v1 routes (auth required)
 	r.Route("/api/v1", func(r chi.Router) {
 		// Apply authentication middleware
@@ -154,6 +195,10 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.With(RequireScope("sessions:write")).Post("/{sessionID}/suspend", srv.handleSuspendSession)
 			r.With(RequireScope("sessions:write")).Post("/{sessionID}/resume", srv.handleResumeSession)
 			r.With(RequireScope("sessions:write")).Delete("/{sessionID}", srv.handleTerminateSession)
+
+			// Session tunnels
+			r.With(RequireScope("tunnels:write")).Post("/{sessionID}/tunnels", srv.handleCreateTunnel)
+			r.With(RequireScope("tunnels:read")).Get("/{sessionID}/tunnels", srv.handleListTunnels)
 		})
 
 		// Tasks
@@ -171,6 +216,12 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 		r.Route("/runners", func(r chi.Router) {
 			r.With(RequireScope("runners:read")).Get("/", srv.handleListRunners)
 			r.With(RequireScope("runners:read")).Get("/{runnerID}", srv.handleGetRunner)
+		})
+
+		// Tunnels (get/close by ID)
+		r.Route("/tunnels", func(r chi.Router) {
+			r.With(RequireScope("tunnels:read")).Get("/{tunnelID}", srv.handleGetTunnel)
+			r.With(RequireScope("tunnels:write")).Delete("/{tunnelID}", srv.handleCloseTunnel)
 		})
 
 		// Permissions

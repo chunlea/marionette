@@ -131,3 +131,38 @@ type ListPermissionsOptions struct {
 	// RiskLevel filters permissions by risk level.
 	RiskLevel []string
 }
+
+// CreateTunnelOptions contains options for creating a tunnel.
+type CreateTunnelOptions struct {
+	// SessionID is the ID of the session to create the tunnel for.
+	SessionID string
+
+	// Type is the tunnel type ("http" or "tcp").
+	Type string
+
+	// LocalPort is the port on the runner to tunnel.
+	LocalPort int
+
+	// Public indicates if the tunnel should be publicly accessible without authentication.
+	Public bool
+}
+
+// ListTunnelsOptions contains options for listing tunnels.
+type ListTunnelsOptions struct {
+	// SessionID filters tunnels by session.
+	SessionID string
+}
+
+// Tunnel represents a tunnel.
+type Tunnel struct {
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	RunnerID  string `json:"runner_id"`
+	Type      string `json:"type"`
+	LocalPort int    `json:"local_port"`
+	IsPublic  bool   `json:"is_public"`
+	Token     string `json:"token,omitempty"`
+	PublicURL string `json:"public_url"`
+	ExpiresAt string `json:"expires_at"`
+	CreatedAt string `json:"created_at"`
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,6 +24,7 @@ import (
 	grpcserver "github.com/chunlea/marionette/pkg/server/grpc"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/store/postgres"
+	"github.com/chunlea/marionette/pkg/tunnel"
 	"go.uber.org/zap"
 )
 
@@ -129,12 +131,72 @@ func main() {
 			api.WithAPIKeyService(apiKeySvc),
 		)
 
+		// Create tunnel manager for HTTP tunnel proxy
+		baseURL := fmt.Sprintf("http://%s:%d", cfg.Server.API.Host, cfg.Server.API.Port)
+		if cfg.Server.API.Host == "" || cfg.Server.API.Host == "0.0.0.0" {
+			baseURL = fmt.Sprintf("http://localhost:%d", cfg.Server.API.Port)
+		}
+		tunnelMgr := tunnel.NewTunnelManager(
+			tunnel.WithLogger(logger),
+			tunnel.WithBaseURL(baseURL),
+		)
+
+		// Create tunnel router
+		tunnelRouter := grpcserver.NewTunnelRouter(
+			grpcserver.WithTRLogger(logger),
+			grpcserver.WithTRConnectionManager(connManager),
+			grpcserver.WithTRTunnelManager(tunnelMgr),
+		)
+
+		// Create tunnel proxy adapter and handler
+		tunnelProxyAdapter := api.NewTunnelProxyAdapter(
+			api.WithTPALogger(logger),
+			api.WithTPATunnelManager(tunnelMgr),
+			api.WithTPATunnelRouter(tunnelRouter),
+		)
+
+		tunnelProxyHandler := api.NewTunnelProxyHandler(
+			api.WithTPLogger(logger),
+			api.WithTPService(tunnelProxyAdapter),
+			api.WithTPAPIKeyAuth(func(r *http.Request) (bool, error) {
+				// Extract and validate API key
+				// Check X-Marionette-API-Key first (brand-prefixed header)
+				key := r.Header.Get("X-Marionette-API-Key")
+				if key == "" {
+					// Fallback to X-API-Key for backwards compatibility
+					key = r.Header.Get("X-API-Key")
+				}
+				if key == "" {
+					return false, nil
+				}
+				_, err := apiKeySvc.Validate(r.Context(), key)
+				return err == nil, nil
+			}),
+		)
+
+		// Create tunnel adapter for tunnel API endpoints
+		tunnelAdapter := api.NewTunnelAdapter(
+			api.WithTALogger(logger),
+			api.WithTATunnelManager(tunnelMgr),
+			api.WithTATunnelRouter(tunnelRouter),
+			api.WithTAStore(dbStore),
+		)
+
+		apiOpts = append(apiOpts,
+			api.WithTunnelProxy(tunnelProxyHandler),
+			api.WithTunnelService(tunnelAdapter),
+		)
+		logger.Info("tunnel proxy handler wired to API",
+			zap.String("base_url", baseURL),
+		)
+
 		// Wire gRPC server options
 		grpcOpts = append(grpcOpts,
 			grpcserver.WithConnManager(connManager),
 			grpcserver.WithPermissionManager(permMgr),
 			grpcserver.WithTaskManager(taskMgr),
 			grpcserver.WithSessionManager(sessionMgr),
+			grpcserver.WithTunnelRouter(tunnelRouter),
 		)
 
 		logger.Info("core services initialized and wired to API")

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"sync"
 	"time"
 
@@ -232,13 +234,17 @@ func (m *TunnelManager) CreateTunnel(ctx context.Context, params *CreateTunnelPa
 			zap.Time("expires_at", info.ExpiresAt),
 		)
 
-		// Start relay connection to local port
-		if err := m.startRelay(resp.TunnelId, params.LocalPort); err != nil {
-			m.logger.Warn("failed to start relay",
-				zap.String("tunnel_id", resp.TunnelId),
-				zap.Error(err),
-			)
-			// Don't fail - the tunnel is created, relay can be retried
+		// For HTTP tunnels, we don't start a persistent relay connection.
+		// Each HTTP request is handled independently in handleHTTPRequest.
+		// For TCP tunnels, we need a persistent relay connection.
+		if tunnelType != "http" {
+			if err := m.startRelay(resp.TunnelId, params.LocalPort); err != nil {
+				m.logger.Warn("failed to start relay",
+					zap.String("tunnel_id", resp.TunnelId),
+					zap.Error(err),
+				)
+				// Don't fail - the tunnel is created, relay can be retried
+			}
 		}
 
 		return &CreateTunnelResult{
@@ -282,24 +288,212 @@ func (m *TunnelManager) HandleCreateTunnelResponse(resp *pb.CreateTunnelResponse
 
 // HandleTunnelData handles incoming tunnel data from the server.
 func (m *TunnelManager) HandleTunnelData(ctx context.Context, data *pb.TunnelData) error {
+	tunnelID := data.GetTunnelId()
+	connectionID := data.GetConnectionId()
+
 	m.logger.Debug("received tunnel data",
-		zap.String("tunnel_id", data.GetTunnelId()),
-		zap.String("connection_id", data.GetConnectionId()),
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
 		zap.Int("data_len", len(data.GetData())),
 		zap.Bool("eof", data.GetEof()),
 	)
 
-	// Route to relay manager
+	// Get tunnel info
+	m.tunnelsMu.RLock()
+	info, exists := m.tunnels[tunnelID]
+	m.tunnelsMu.RUnlock()
+
+	if !exists {
+		return errors.New("tunnel not found")
+	}
+
+	// For HTTP tunnels, handle request-response pattern
+	// Each connection_id represents a separate HTTP request
+	if info.Type == "http" {
+		go m.handleHTTPRequest(ctx, tunnelID, connectionID, info.LocalPort, data.GetData())
+		return nil
+	}
+
+	// For TCP tunnels, use the relay manager (persistent connection)
 	return m.relayManager.HandleFrame(&tunnel.Frame{
 		Type:     tunnel.FrameTypeData,
-		TunnelID: data.GetTunnelId(),
+		TunnelID: tunnelID,
 		Payload:  data.GetData(),
 	})
+}
+
+// handleHTTPRequest handles a single HTTP request-response cycle.
+// Each HTTP request gets a fresh connection to the local service.
+func (m *TunnelManager) handleHTTPRequest(ctx context.Context, tunnelID, connectionID string, localPort int, requestData []byte) {
+	localAddr := fmt.Sprintf("localhost:%d", localPort)
+
+	m.logger.Debug("handling HTTP request",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+		zap.String("local_addr", localAddr),
+		zap.Int("request_len", len(requestData)),
+	)
+
+	// Connect to local service
+	conn, err := net.DialTimeout("tcp", localAddr, 5*time.Second)
+	if err != nil {
+		m.logger.Error("failed to connect to local service",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.String("local_addr", localAddr),
+			zap.Error(err),
+		)
+		m.sendHTTPErrorResponse(tunnelID, connectionID, err)
+		return
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Set deadline for the entire operation
+	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		m.logger.Error("failed to set deadline", zap.Error(err))
+		m.sendHTTPErrorResponse(tunnelID, connectionID, err)
+		return
+	}
+
+	// Forward request to local service
+	if _, err := conn.Write(requestData); err != nil {
+		m.logger.Error("failed to write request to local service",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.Error(err),
+		)
+		m.sendHTTPErrorResponse(tunnelID, connectionID, err)
+		return
+	}
+
+	// Read response from local service
+	// For HTTP, we read the complete response
+	var responseData []byte
+	buf := make([]byte, 64*1024)
+	for {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			responseData = append(responseData, buf[:n]...)
+		}
+		if err != nil {
+			if err != io.EOF {
+				// Check if it's a timeout or expected close
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					break
+				}
+			}
+			break
+		}
+	}
+
+	if len(responseData) == 0 {
+		m.logger.Warn("empty response from local service",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+		)
+		m.sendHTTPErrorResponse(tunnelID, connectionID, errors.New("empty response from local service"))
+		return
+	}
+
+	m.logger.Debug("sending HTTP response",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+		zap.Int("response_len", len(responseData)),
+	)
+
+	// Send response back to server with connection_id
+	if m.sender != nil {
+		msg := &pb.RunnerMessage{
+			Payload: &pb.RunnerMessage_TunnelData{
+				TunnelData: &pb.TunnelData{
+					TunnelId:     tunnelID,
+					ConnectionId: connectionID,
+					Data:         responseData,
+					Eof:          true,
+				},
+			},
+		}
+		m.sender.Send(msg)
+	}
+}
+
+// sendHTTPErrorResponse sends an HTTP 502 error response back to the server.
+func (m *TunnelManager) sendHTTPErrorResponse(tunnelID, connectionID string, err error) {
+	errMsg := "Bad Gateway"
+	if err != nil {
+		errMsg = err.Error()
+	}
+	body := fmt.Sprintf("Error: %s", errMsg)
+	response := fmt.Sprintf("HTTP/1.1 502 Bad Gateway\r\n"+
+		"Content-Type: text/plain\r\n"+
+		"Content-Length: %d\r\n"+
+		"\r\n"+
+		"%s", len(body), body)
+
+	if m.sender != nil {
+		msg := &pb.RunnerMessage{
+			Payload: &pb.RunnerMessage_TunnelData{
+				TunnelData: &pb.TunnelData{
+					TunnelId:     tunnelID,
+					ConnectionId: connectionID,
+					Data:         []byte(response),
+					Eof:          true,
+				},
+			},
+		}
+		m.sender.Send(msg)
+	}
 }
 
 // startRelay starts the relay connection to the local port.
 func (m *TunnelManager) startRelay(tunnelID string, localPort int) error {
 	return m.relayManager.HandleConnect(tunnelID, localPort)
+}
+
+// HandleCreateTunnel handles a tunnel creation command from the server.
+// This is used when the server initiates tunnel creation (e.g., via API).
+func (m *TunnelManager) HandleCreateTunnel(tunnelID, tunnelType string, localPort int) error {
+	m.logger.Info("handling create tunnel from server",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("type", tunnelType),
+		zap.Int("local_port", localPort),
+	)
+
+	// Store tunnel info (note: we don't have token/public_url for server-initiated tunnels)
+	info := &TunnelInfo{
+		ID:        tunnelID,
+		Type:      tunnelType,
+		LocalPort: localPort,
+		CreatedAt: time.Now(),
+	}
+
+	m.tunnelsMu.Lock()
+	m.tunnels[tunnelID] = info
+	m.tunnelsMu.Unlock()
+
+	// For HTTP tunnels, we don't start a persistent relay connection.
+	// Each HTTP request is handled independently in handleHTTPRequest.
+	// For TCP tunnels, we need a persistent relay connection.
+	if tunnelType != "http" {
+		if err := m.startRelay(tunnelID, localPort); err != nil {
+			// Clean up on failure
+			m.tunnelsMu.Lock()
+			delete(m.tunnels, tunnelID)
+			m.tunnelsMu.Unlock()
+			return err
+		}
+		m.logger.Info("tunnel relay started",
+			zap.String("tunnel_id", tunnelID),
+			zap.Int("local_port", localPort),
+		)
+	} else {
+		m.logger.Info("HTTP tunnel ready for requests",
+			zap.String("tunnel_id", tunnelID),
+			zap.Int("local_port", localPort),
+		)
+	}
+
+	return nil
 }
 
 // GetTunnel returns information about an active tunnel.

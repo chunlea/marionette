@@ -88,6 +88,43 @@ func (r *TunnelRouter) RegisterTunnel(tunnelID, runnerID string) {
 	)
 }
 
+// NotifyTunnelCreated sends a CreateTunnel command to the runner.
+// This is called after a tunnel is created via API to tell the runner to start the relay.
+func (r *TunnelRouter) NotifyTunnelCreated(tunnelID, runnerID, tunnelType string, localPort int32, direction string) error {
+	if r.connManager == nil {
+		return errors.New("connection manager not configured")
+	}
+
+	cmd := &pb.ServerCommand{
+		Payload: &pb.ServerCommand_CreateTunnel{
+			CreateTunnel: &pb.CreateTunnel{
+				TunnelId:  tunnelID,
+				Type:      tunnelType,
+				LocalPort: localPort,
+				Direction: direction,
+			},
+		},
+	}
+
+	if err := r.connManager.SendCommand(runnerID, cmd); err != nil {
+		r.logger.Error("failed to send CreateTunnel command to runner",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	r.logger.Debug("sent CreateTunnel command to runner",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("runner_id", runnerID),
+		zap.String("type", tunnelType),
+		zap.Int32("local_port", localPort),
+	)
+
+	return nil
+}
+
 // UnregisterTunnel removes a tunnel registration.
 func (r *TunnelRouter) UnregisterTunnel(tunnelID string) {
 	r.tunnelRunnersMu.Lock()
