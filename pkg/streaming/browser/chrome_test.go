@@ -181,13 +181,13 @@ func TestFindChromeBinary_EnvVar(t *testing.T) {
 	// Create a temp file to act as a "binary"
 	tmpFile, err := os.CreateTemp("", "chrome-test-*")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-	tmpFile.Close()
+	t.Cleanup(func() { _ = os.Remove(tmpFile.Name()) })
+	require.NoError(t, tmpFile.Close())
 
 	// Set CHROME_PATH
 	originalPath := os.Getenv("CHROME_PATH")
-	os.Setenv("CHROME_PATH", tmpFile.Name())
-	defer os.Setenv("CHROME_PATH", originalPath)
+	require.NoError(t, os.Setenv("CHROME_PATH", tmpFile.Name()))
+	t.Cleanup(func() { _ = os.Setenv("CHROME_PATH", originalPath) })
 
 	path, err := findChromeBinary()
 
@@ -198,8 +198,8 @@ func TestFindChromeBinary_EnvVar(t *testing.T) {
 func TestFindChromeBinary_EnvVarNotExist(t *testing.T) {
 	// Set CHROME_PATH to non-existent file
 	originalPath := os.Getenv("CHROME_PATH")
-	os.Setenv("CHROME_PATH", "/nonexistent/chrome/binary")
-	defer os.Setenv("CHROME_PATH", originalPath)
+	require.NoError(t, os.Setenv("CHROME_PATH", "/nonexistent/chrome/binary"))
+	t.Cleanup(func() { _ = os.Setenv("CHROME_PATH", originalPath) })
 
 	// If no system Chrome is found, it should error
 	// This test depends on whether Chrome is installed on the system
@@ -213,8 +213,8 @@ func TestFindChromeBinary_EnvVarNotExist(t *testing.T) {
 func TestFindChromeBinary_PlatformPaths(t *testing.T) {
 	// Clear CHROME_PATH to test platform detection
 	originalPath := os.Getenv("CHROME_PATH")
-	os.Setenv("CHROME_PATH", "")
-	defer os.Setenv("CHROME_PATH", originalPath)
+	require.NoError(t, os.Setenv("CHROME_PATH", ""))
+	t.Cleanup(func() { _ = os.Setenv("CHROME_PATH", originalPath) })
 
 	// This test verifies that findChromeBinary doesn't panic
 	// and returns an appropriate result based on what's installed

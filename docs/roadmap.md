@@ -1489,10 +1489,15 @@
   - [ ] Browser viewer component
   - [ ] Keyboard/mouse input forwarding
   - [ ] Clipboard sync
-- [ ] Browser streaming (headless Chrome):
-  - [ ] Chrome DevTools Protocol integration
-  - [ ] Page capture to video stream
-  - [ ] Input forwarding
+- [x] Browser streaming (headless Chrome) - CDP-based frame streaming:
+  - [x] Chrome DevTools Protocol integration (`pkg/streaming/browser/`)
+  - [x] BrowserStreamProvider implementing StreamProvider interface
+  - [x] CDPProvider for Chrome connection and screencast
+  - [x] FrameHub for pub/sub frame distribution
+  - [x] Frame buffer with configurable drop policy
+  - [x] Input event forwarding (mouse, keyboard)
+  - [x] Navigation and tab management
+  - [x] Proto messages: BrowserFrame, BrowserStreamInit, etc.
 - [ ] Android emulator streaming:
   - [ ] scrcpy integration
   - [ ] H.264 to WebRTC transcoding
