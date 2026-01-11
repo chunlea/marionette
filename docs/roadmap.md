@@ -1461,6 +1461,16 @@
 
 ### 10.2 Desktop/Browser Streaming
 
+- [x] SFU Core Infrastructure:
+  - [x] Streaming base types (`Stream`, `StreamOptions`, `Provider` interface)
+  - [x] Stream store (PostgreSQL persistence with `streams` table)
+  - [x] SFU implementation (pion/webrtc v4)
+  - [x] Room abstraction (1 publisher + N subscribers model)
+  - [x] Peer connection wrapper with state management
+  - [x] TrackRouter for RTP forwarding
+  - [x] InputChannel for DataChannel forwarding
+  - [ ] SFU signaling (WebSocket handler)
+  - [ ] Streaming manager (lifecycle management)
 - [ ] Desktop streaming (Linux/macOS):
   - [ ] Selkies GStreamer integration
   - [ ] WebRTC signaling server
