@@ -1505,12 +1505,13 @@
   - [x] Input event types (mouse move, button, scroll, key)
   - [x] Provider error types with error chaining
   - [x] Test coverage: 73.7% (process management code excluded)
-- [ ] Desktop streaming integration (in progress - PR #104):
-  - [ ] Server-side stream management
-  - [ ] WebSocket signaling handler
-  - [ ] Agent-side desktop stream handler
-  - [ ] React desktop viewer component
-  - [ ] Session page integration
+- [x] Desktop streaming integration (PR #104):
+  - [x] Server-side stream management (`pkg/server/core/stream_manager.go`)
+  - [x] WebSocket signaling handler (`pkg/server/admin/signaling_handler.go`)
+  - [x] HTTP stream handlers (`pkg/server/admin/streams_handler.go`)
+  - [x] Agent-side desktop stream handler (`pkg/agent/desktop_stream.go`)
+  - [x] React desktop viewer component (`web/src/components/DesktopViewer.tsx`)
+  - [x] Session page integration (`web/src/routes/_layout/sessions/$sessionId.tsx`)
 - [ ] Desktop streaming enhancements (future):
   - [ ] Keyboard/mouse input forwarding
   - [ ] Clipboard sync
