@@ -160,12 +160,11 @@ func main() {
 			api.WithTPService(tunnelProxyAdapter),
 			api.WithTPAPIKeyAuth(func(r *http.Request) (bool, error) {
 				// Extract and validate API key
-				key := r.Header.Get("X-API-Key")
+				// Check X-Marionette-API-Key first (brand-prefixed header)
+				key := r.Header.Get("X-Marionette-API-Key")
 				if key == "" {
-					key = r.Header.Get("Authorization")
-					if len(key) > 7 && key[:7] == "Bearer " {
-						key = key[7:]
-					}
+					// Fallback to X-API-Key for backwards compatibility
+					key = r.Header.Get("X-API-Key")
 				}
 				if key == "" {
 					return false, nil
