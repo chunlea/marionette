@@ -67,9 +67,9 @@ func TestMain(m *testing.M) {
 
 func runMigrations(ctx context.Context, s *pgstore.Store) error {
 	// Read and execute all migration files in order
+	// Note: All migrations have been consolidated into 001_initial.up.sql
 	migrationFiles := []string{
 		"../../../migrations/001_initial.up.sql",
-		"../../../migrations/002_add_original_request_id.up.sql",
 	}
 
 	for _, file := range migrationFiles {
