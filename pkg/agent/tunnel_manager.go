@@ -36,9 +36,22 @@ type TunnelManager struct {
 	tunnels   map[string]*TunnelInfo
 	tunnelsMu sync.RWMutex
 
+	// Persistent connections for WebSocket/bidirectional streams
+	// Key: connectionID, Value: connection to local service
+	persistentConns   map[string]*persistentConn
+	persistentConnsMu sync.RWMutex
+
 	// Current session ID (set when session is attached)
 	sessionID   string
 	sessionIDMu sync.RWMutex
+}
+
+// persistentConn represents a persistent connection to a local service.
+type persistentConn struct {
+	conn      net.Conn
+	tunnelID  string
+	localPort int
+	cancel    context.CancelFunc
 }
 
 // Note: MessageSender is defined in task_runner.go
@@ -77,6 +90,7 @@ func NewTunnelManager(opts ...TunnelManagerOption) *TunnelManager {
 		logger:          zap.NewNop(),
 		pendingRequests: make(map[string]chan *pb.CreateTunnelResponse),
 		tunnels:         make(map[string]*TunnelInfo),
+		persistentConns: make(map[string]*persistentConn),
 	}
 
 	for _, opt := range opts {
@@ -302,6 +316,30 @@ func (m *TunnelManager) HandleTunnelData(ctx context.Context, data *pb.TunnelDat
 		zap.Bool("eof", data.GetEof()),
 	)
 
+	// Handle EOF - close persistent connection if exists
+	if data.GetEof() {
+		m.closePersistentConn(connectionID)
+		return nil
+	}
+
+	// Check for existing persistent connection (WebSocket, etc.)
+	m.persistentConnsMu.RLock()
+	pc, hasPersistent := m.persistentConns[connectionID]
+	m.persistentConnsMu.RUnlock()
+
+	if hasPersistent {
+		// Forward data to existing persistent connection
+		if _, err := pc.conn.Write(data.GetData()); err != nil {
+			m.logger.Error("failed to write to persistent connection",
+				zap.String("connection_id", connectionID),
+				zap.Error(err),
+			)
+			m.closePersistentConn(connectionID)
+			return err
+		}
+		return nil
+	}
+
 	// Get tunnel info
 	m.tunnelsMu.RLock()
 	info, exists := m.tunnels[tunnelID]
@@ -329,14 +367,19 @@ func (m *TunnelManager) HandleTunnelData(ctx context.Context, data *pb.TunnelDat
 // handleHTTPRequest handles a single HTTP request-response cycle.
 // Each HTTP request gets a fresh connection to the local service.
 // Supports streaming responses (SSE, chunked) by forwarding data as it arrives.
+// Supports WebSocket upgrade by establishing a persistent bidirectional connection.
 func (m *TunnelManager) handleHTTPRequest(ctx context.Context, tunnelID, connectionID string, localPort int, requestData []byte) {
 	localAddr := fmt.Sprintf("localhost:%d", localPort)
+
+	// Check if this is a WebSocket upgrade request
+	isWebSocket := m.isWebSocketUpgrade(requestData)
 
 	m.logger.Debug("handling HTTP request",
 		zap.String("tunnel_id", tunnelID),
 		zap.String("connection_id", connectionID),
 		zap.String("local_addr", localAddr),
 		zap.Int("request_len", len(requestData)),
+		zap.Bool("is_websocket", isWebSocket),
 	)
 
 	// Connect to local service
@@ -351,6 +394,13 @@ func (m *TunnelManager) handleHTTPRequest(ctx context.Context, tunnelID, connect
 		m.sendHTTPErrorResponse(tunnelID, connectionID, err)
 		return
 	}
+
+	// For WebSocket, handle separately and don't close the connection
+	if isWebSocket {
+		m.handleWebSocketUpgrade(ctx, tunnelID, connectionID, localPort, conn, requestData)
+		return
+	}
+
 	defer func() { _ = conn.Close() }()
 
 	// Forward request to local service
@@ -705,4 +755,183 @@ func (m *TunnelManager) CloseTunnel(tunnelID string, reason string) error {
 	)
 
 	return nil
+}
+
+// isWebSocketUpgrade checks if the request data is a WebSocket upgrade request.
+func (m *TunnelManager) isWebSocketUpgrade(requestData []byte) bool {
+	// Check for WebSocket upgrade headers
+	// Quick check for "Upgrade: websocket" header (case-insensitive)
+	lower := strings.ToLower(string(requestData))
+	return strings.Contains(lower, "upgrade: websocket") &&
+		strings.Contains(lower, "connection:") &&
+		strings.Contains(lower, "upgrade")
+}
+
+// handleWebSocketUpgrade handles a WebSocket upgrade request.
+// It establishes a persistent bidirectional connection.
+func (m *TunnelManager) handleWebSocketUpgrade(ctx context.Context, tunnelID, connectionID string, localPort int, conn net.Conn, requestData []byte) {
+	m.logger.Info("handling WebSocket upgrade",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+		zap.Int("local_port", localPort),
+	)
+
+	// Forward the upgrade request to local service
+	if _, err := conn.Write(requestData); err != nil {
+		m.logger.Error("failed to write WebSocket upgrade request",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.Error(err),
+		)
+		m.sendHTTPErrorResponse(tunnelID, connectionID, err)
+		_ = conn.Close()
+		return
+	}
+
+	// Read the response from local service
+	// Set a reasonable deadline for the upgrade response
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		m.logger.Error("failed to set read deadline", zap.Error(err))
+		m.sendHTTPErrorResponse(tunnelID, connectionID, err)
+		_ = conn.Close()
+		return
+	}
+
+	// Read until we get the complete headers
+	var headerBuf bytes.Buffer
+	reader := bufio.NewReader(conn)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			m.logger.Error("failed to read WebSocket upgrade response",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+				zap.Error(err),
+			)
+			m.sendHTTPErrorResponse(tunnelID, connectionID, err)
+			_ = conn.Close()
+			return
+		}
+		headerBuf.Write(line)
+		// Check for end of headers
+		if bytes.Equal(line, []byte("\r\n")) || bytes.Equal(line, []byte("\n")) {
+			break
+		}
+	}
+
+	// Check if upgrade was successful (HTTP 101 Switching Protocols)
+	headerBytes := headerBuf.Bytes()
+	if !bytes.HasPrefix(headerBytes, []byte("HTTP/1.1 101")) {
+		m.logger.Warn("WebSocket upgrade failed",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.String("response", string(headerBytes)),
+		)
+		// Send whatever response we got
+		m.sendTunnelData(tunnelID, connectionID, headerBytes, true)
+		_ = conn.Close()
+		return
+	}
+
+	m.logger.Info("WebSocket upgrade successful",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+	)
+
+	// Send the upgrade response to client
+	m.sendTunnelData(tunnelID, connectionID, headerBytes, false)
+
+	// Clear read deadline for ongoing bidirectional communication
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		m.logger.Error("failed to clear read deadline", zap.Error(err))
+	}
+
+	// Create a cancellable context for this connection
+	connCtx, cancel := context.WithCancel(ctx)
+
+	// Store the persistent connection
+	pc := &persistentConn{
+		conn:      conn,
+		tunnelID:  tunnelID,
+		localPort: localPort,
+		cancel:    cancel,
+	}
+
+	m.persistentConnsMu.Lock()
+	m.persistentConns[connectionID] = pc
+	m.persistentConnsMu.Unlock()
+
+	// Start a goroutine to read from local service and forward to server
+	go m.relayFromLocalService(connCtx, tunnelID, connectionID, conn, reader)
+}
+
+// relayFromLocalService reads data from the local service and forwards to the server.
+// This is used for persistent connections like WebSocket.
+func (m *TunnelManager) relayFromLocalService(ctx context.Context, tunnelID, connectionID string, conn net.Conn, reader *bufio.Reader) {
+	defer func() {
+		m.closePersistentConn(connectionID)
+		m.sendTunnelData(tunnelID, connectionID, nil, true)
+	}()
+
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-ctx.Done():
+			m.logger.Debug("relay context cancelled",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+			)
+			return
+		default:
+		}
+
+		// Set a short read deadline to allow checking context
+		if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			m.logger.Error("failed to set read deadline", zap.Error(err))
+			return
+		}
+
+		n, err := reader.Read(buf)
+		if n > 0 {
+			m.sendTunnelData(tunnelID, connectionID, buf[:n], false)
+		}
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// Timeout is expected, continue
+				continue
+			}
+			if err == io.EOF {
+				m.logger.Debug("local service connection closed",
+					zap.String("tunnel_id", tunnelID),
+					zap.String("connection_id", connectionID),
+				)
+			} else {
+				m.logger.Error("error reading from local service",
+					zap.String("tunnel_id", tunnelID),
+					zap.String("connection_id", connectionID),
+					zap.Error(err),
+				)
+			}
+			return
+		}
+	}
+}
+
+// closePersistentConn closes and removes a persistent connection.
+func (m *TunnelManager) closePersistentConn(connectionID string) {
+	m.persistentConnsMu.Lock()
+	pc, exists := m.persistentConns[connectionID]
+	if exists {
+		delete(m.persistentConns, connectionID)
+	}
+	m.persistentConnsMu.Unlock()
+
+	if exists && pc != nil {
+		m.logger.Debug("closing persistent connection",
+			zap.String("connection_id", connectionID),
+			zap.String("tunnel_id", pc.tunnelID),
+		)
+		pc.cancel()
+		_ = pc.conn.Close()
+	}
 }
