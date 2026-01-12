@@ -23,6 +23,7 @@ type Server struct {
 	agentConfigs     AgentConfigService
 	providerConfigs  ProviderConfigService
 	runners          RunnerAdminService
+	runnerTokens     RunnerTokenAdminService
 	sessionActivator SessionActivator
 	actionLogs       ActionLogService
 
@@ -81,6 +82,13 @@ func WithSessionActivator(s SessionActivator) Option {
 func WithActionLogService(s ActionLogService) Option {
 	return func(srv *Server) {
 		srv.actionLogs = s
+	}
+}
+
+// WithRunnerTokenAdminService sets the runner token admin service.
+func WithRunnerTokenAdminService(s RunnerTokenAdminService) Option {
+	return func(srv *Server) {
+		srv.runnerTokens = s
 	}
 }
 
@@ -156,6 +164,15 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.Get("/", srv.handleListRunners)
 			r.Get("/{runnerID}", srv.handleGetRunner)
 			r.Delete("/{runnerID}", srv.handleDestroyRunner)
+		})
+
+		// Runner Tokens
+		r.Route("/runner-tokens", func(r chi.Router) {
+			r.Post("/", srv.handleCreateRunnerToken)
+			r.Get("/", srv.handleListRunnerTokens)
+			r.Get("/{tokenID}", srv.handleGetRunnerToken)
+			r.Delete("/{tokenID}", srv.handleRevokeRunnerToken)
+			r.Post("/{tokenID}/rotate", srv.handleRotateRunnerToken)
 		})
 
 		// Sessions (for testing)
