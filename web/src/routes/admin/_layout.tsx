@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useNavigate, Link, useRouterState } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { isAdminAuthenticated, clearAdminCredentials } from '@/api/admin'
-import { Key, Cpu, Network, LogOut, Settings } from 'lucide-react'
+import { Key, Cpu, Network, LogOut, Settings, KeyRound } from 'lucide-react'
 
 export const Route = createFileRoute('/admin/_layout')({
   component: AdminLayout,
@@ -55,6 +55,7 @@ function AdminLayout() {
           {/* Navigation */}
           <nav className="flex-1 space-y-1 p-4">
             <NavItem to="/admin/api-keys" icon={Key} label="API Keys" />
+            <NavItem to="/admin/runner-tokens" icon={KeyRound} label="Runner Tokens" />
             <NavItem to="/admin/agent-configs" icon={Cpu} label="Agent Configs" />
             <NavItem to="/admin/provider-configs" icon={Network} label="Provider Configs" />
             <NavItem to="/admin/settings" icon={Settings} label="Settings" />

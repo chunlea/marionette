@@ -737,8 +737,14 @@
 - [x] Runners (`/admin/api/v1/runners`):
   - [x] `POST /spawn` - Spawn new runner
   - [x] `DELETE /:id` - Destroy runner
+- [x] Runner Tokens (`/admin/api/v1/runner-tokens`):
+  - [x] `POST /` - Create runner token
+  - [x] `GET /` - List runner tokens
+  - [x] `GET /:id` - Get runner token
+  - [x] `DELETE /:id` - Revoke runner token
+  - [x] `POST /:id/rotate` - Rotate runner token
 - [x] Basic Auth middleware for Admin API
-- [x] Admin API tests (79% coverage)
+- [x] Admin API tests (85% coverage)
 
 ### 4.6 WebSocket Support ✓
 
@@ -790,6 +796,11 @@
   - [x] `mctl admin agent-configs list`
   - [x] `mctl admin runners spawn --provider <provider>`
   - [x] `mctl admin runners destroy <id>`
+  - [x] `mctl admin runner-tokens create --pool-name <name>`
+  - [x] `mctl admin runner-tokens list`
+  - [x] `mctl admin runner-tokens get <id>`
+  - [x] `mctl admin runner-tokens revoke <id>`
+  - [x] `mctl admin runner-tokens rotate <id>`
 - [x] Real HTTP client implementation:
   - [x] `pkg/client/http.go` - HTTPClient for public API
   - [x] `pkg/client/admin.go` - HTTPAdminClient for admin API

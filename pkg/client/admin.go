@@ -41,6 +41,13 @@ type AdminClient interface {
 	SpawnRunner(ctx context.Context, opts SpawnRunnerOptions) (*store.Runner, error)
 	DestroyRunner(ctx context.Context, id string) error
 
+	// Runner Tokens
+	CreateRunnerToken(ctx context.Context, opts CreateRunnerTokenOptions) (*RunnerTokenWithSecret, error)
+	GetRunnerToken(ctx context.Context, id string) (*store.RunnerToken, error)
+	ListRunnerTokens(ctx context.Context, opts ListRunnerTokensOptions) (*ListResult[store.RunnerToken], error)
+	RevokeRunnerToken(ctx context.Context, id string, reason string) error
+	RotateRunnerToken(ctx context.Context, id string) (*RunnerTokenWithSecret, error)
+
 	// Sessions (admin operations)
 	ActivateSession(ctx context.Context, sessionID, runnerID string) error
 	SuspendSession(ctx context.Context, sessionID, strategy string) error
@@ -128,6 +135,29 @@ type SpawnRunnerOptions struct {
 	ProviderConfigID string            `json:"provider_config_id,omitempty"`
 	ProfileID        string            `json:"profile_id,omitempty"`
 	Labels           map[string]string `json:"labels,omitempty"`
+}
+
+// RunnerTokenWithSecret includes the raw token (only returned on creation/rotation).
+type RunnerTokenWithSecret struct {
+	store.RunnerToken
+	RawToken string `json:"raw_token"`
+}
+
+// CreateRunnerTokenOptions contains options for creating a runner token.
+type CreateRunnerTokenOptions struct {
+	PoolName  string            `json:"pool_name"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	ExpiresAt *time.Time        `json:"expires_at,omitempty"`
+}
+
+// ListRunnerTokensOptions contains options for listing runner tokens.
+type ListRunnerTokensOptions struct {
+	Limit          int               `json:"limit,omitempty"`
+	Cursor         string            `json:"cursor,omitempty"`
+	PoolName       string            `json:"pool_name,omitempty"`
+	Status         []string          `json:"status,omitempty"`
+	IncludeRevoked bool              `json:"include_revoked,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
 }
 
 // HTTPAdminClient implements the AdminClient interface using HTTP requests.
@@ -430,6 +460,78 @@ func (c *HTTPAdminClient) SuspendSession(ctx context.Context, sessionID, strateg
 		body = map[string]string{"strategy": strategy}
 	}
 	return c.doRequest(ctx, http.MethodPost, "/admin/api/v1/sessions/"+sessionID+"/suspend", body, nil)
+}
+
+// Runner Tokens
+
+// CreateRunnerToken creates a new runner token.
+func (c *HTTPAdminClient) CreateRunnerToken(ctx context.Context, opts CreateRunnerTokenOptions) (*RunnerTokenWithSecret, error) {
+	var result RunnerTokenWithSecret
+	if err := c.doRequest(ctx, http.MethodPost, "/admin/api/v1/runner-tokens", opts, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetRunnerToken retrieves a runner token by ID.
+func (c *HTTPAdminClient) GetRunnerToken(ctx context.Context, id string) (*store.RunnerToken, error) {
+	var result store.RunnerToken
+	if err := c.doRequest(ctx, http.MethodGet, "/admin/api/v1/runner-tokens/"+id, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListRunnerTokens lists runner tokens with optional filtering.
+func (c *HTTPAdminClient) ListRunnerTokens(ctx context.Context, opts ListRunnerTokensOptions) (*ListResult[store.RunnerToken], error) {
+	params := url.Values{}
+	if opts.Limit > 0 {
+		params.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Cursor != "" {
+		params.Set("cursor", opts.Cursor)
+	}
+	if opts.PoolName != "" {
+		params.Set("pool_name", opts.PoolName)
+	}
+	if len(opts.Status) > 0 {
+		params.Set("status", strings.Join(opts.Status, ","))
+	}
+	if opts.IncludeRevoked {
+		params.Set("include_revoked", "true")
+	}
+	for k, v := range opts.Labels {
+		params.Set("labels["+k+"]", v)
+	}
+
+	path := "/admin/api/v1/runner-tokens"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	var result ListResult[store.RunnerToken]
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// RevokeRunnerToken revokes a runner token.
+func (c *HTTPAdminClient) RevokeRunnerToken(ctx context.Context, id string, reason string) error {
+	var body any
+	if reason != "" {
+		body = map[string]string{"reason": reason}
+	}
+	return c.doRequest(ctx, http.MethodDelete, "/admin/api/v1/runner-tokens/"+id, body, nil)
+}
+
+// RotateRunnerToken rotates a runner token and returns the new token.
+func (c *HTTPAdminClient) RotateRunnerToken(ctx context.Context, id string) (*RunnerTokenWithSecret, error) {
+	var result RunnerTokenWithSecret
+	if err := c.doRequest(ctx, http.MethodPost, "/admin/api/v1/runner-tokens/"+id+"/rotate", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // Ensure HTTPAdminClient implements AdminClient interface.

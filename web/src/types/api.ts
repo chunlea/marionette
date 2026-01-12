@@ -309,6 +309,49 @@ export interface PermissionsQueryParams extends PaginationParams {
   risk_level?: RiskLevel[]
 }
 
+// Runner Token types
+export type RunnerTokenStatus = 'active' | 'rotating' | 'revoked' | 'expired'
+
+export interface RunnerToken {
+  id: string
+  token_prefix: string
+  runner_id?: string
+  pool_name: string
+  status: RunnerTokenStatus
+  rotation_deadline?: string
+  tenant_id?: string
+  labels: Labels
+  created_at: string
+  created_by?: string
+  last_used_at?: string
+  expires_at?: string
+  revoked_at?: string
+  revoke_reason?: string
+}
+
+export interface RunnerTokenList {
+  items: RunnerToken[]
+  next_cursor?: string
+  total_count?: number
+}
+
+export interface CreateRunnerTokenRequest {
+  pool_name: string
+  labels?: Labels
+  expires_at?: string
+}
+
+export interface CreateRunnerTokenResponse {
+  token: RunnerToken
+  raw_token: string
+}
+
+export interface RunnerTokensQueryParams extends PaginationParams {
+  pool_name?: string
+  status?: RunnerTokenStatus[]
+  include_revoked?: boolean
+}
+
 // Android Stream types
 export type AndroidStreamState = 'starting' | 'active' | 'paused' | 'closing' | 'closed' | 'failed'
 

@@ -221,3 +221,38 @@ type ListActionLogsOptions struct {
 	From *time.Time `json:"from,omitempty"` // created_at >= from
 	To   *time.Time `json:"to,omitempty"`   // created_at <= to
 }
+
+// RunnerTokenAdminService defines the interface for runner token management.
+type RunnerTokenAdminService interface {
+	// Create creates a new runner token and returns the token and plaintext secret.
+	Create(ctx context.Context, opts CreateRunnerTokenOptions) (*store.RunnerToken, string, error)
+
+	// Get retrieves a runner token by ID.
+	Get(ctx context.Context, id string) (*store.RunnerToken, error)
+
+	// List returns runner tokens matching the given options.
+	List(ctx context.Context, opts ListRunnerTokensOptions) (*ListResult[store.RunnerToken], error)
+
+	// Revoke revokes a runner token with an optional reason.
+	Revoke(ctx context.Context, id, reason string) error
+
+	// Rotate rotates a runner token and returns the new plaintext secret.
+	Rotate(ctx context.Context, id string) (*store.RunnerToken, string, error)
+}
+
+// CreateRunnerTokenOptions defines options for creating a runner token.
+type CreateRunnerTokenOptions struct {
+	PoolName  string            `json:"pool_name"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	ExpiresAt *time.Time        `json:"expires_at,omitempty"`
+}
+
+// ListRunnerTokensOptions defines options for listing runner tokens.
+type ListRunnerTokensOptions struct {
+	Limit          int               `json:"limit,omitempty"`
+	Cursor         string            `json:"cursor,omitempty"`
+	PoolName       string            `json:"pool_name,omitempty"`
+	Status         []string          `json:"status,omitempty"`
+	IncludeRevoked bool              `json:"include_revoked,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+}
