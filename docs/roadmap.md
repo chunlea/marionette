@@ -1517,10 +1517,11 @@
     - [x] WebSocket endpoint `/api/v1/streams/{streamID}/ws`
     - [x] BrowserStreamAdapter for service wiring
     - [x] Input event forwarding from WebSocket to agent
-  - [ ] WebUI StreamViewer component:
-    - [ ] React component for browser frame display
-    - [ ] WebSocket connection management
-    - [ ] Mouse/keyboard event capture and forwarding
+  - [x] WebUI StreamViewer component:
+    - [x] React component for browser frame display (`web/src/components/StreamViewer/`)
+    - [x] WebSocket connection management (`useStreamConnection` hook)
+    - [x] Mouse/keyboard event capture and forwarding
+    - [x] Comprehensive test coverage (99%+)
 - [ ] Android emulator streaming:
   - [ ] scrcpy integration
   - [ ] H.264 to WebRTC transcoding
