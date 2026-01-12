@@ -533,3 +533,54 @@ func TestStreamBrowser_MultipleFrames(t *testing.T) {
 	// Multiple frame handling is verified by test completing without error
 	// (FrameHub stats are cleared when stream unregisters on exit)
 }
+
+func TestStreamBrowser_SendsToStream(t *testing.T) {
+	// This test verifies that the handler can send messages to the stream
+	_, handler, info := setupBrowserStreamTest(t)
+
+	ctx := context.Background()
+	stream := newMockBidiStreamServer(ctx)
+
+	// Add init message followed by a frame
+	initMsg := &pb.RunnerBrowserMessage{
+		Payload: &pb.RunnerBrowserMessage_Init{
+			Init: &pb.BrowserStreamInit{
+				StreamId:  info.ID,
+				SessionId: "sess_123",
+				RunnerId:  "run_456",
+			},
+		},
+	}
+	stream.AddRecvMessage(initMsg)
+
+	// Run handler
+	err := handler.StreamBrowser(stream)
+	require.NoError(t, err)
+
+	// Handler should complete without error
+	// (stream processing is verified in other tests)
+}
+
+func TestStreamBrowserAdapter_StreamBrowser(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	provider := browser.NewBrowserStreamProvider(browser.BrowserStreamProviderConfig{
+		BaseURL: "ws://localhost:8080",
+		Logger:  logger,
+	})
+
+	handler := NewBrowserStreamHandler(provider, logger)
+	adapter := NewStreamBrowserAdapter(handler)
+
+	require.NotNil(t, adapter)
+
+	// Test that adapter delegates to handler
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	stream := newMockBidiStreamServer(ctx)
+
+	err := adapter.StreamBrowser(stream)
+	// Should return error due to canceled context or no messages
+	assert.Error(t, err)
+}

@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/streaming"
 	"github.com/chunlea/marionette/pkg/streaming/browser"
 )
 
@@ -446,4 +447,197 @@ func TestConvertModifiersToProto(t *testing.T) {
 			assert.Equal(t, tt.want.Shift, result.Shift)
 		})
 	}
+}
+
+func TestNewBrowserStreamAdapter(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	provider := browser.NewBrowserStreamProvider(browser.BrowserStreamProviderConfig{
+		BaseURL: "ws://localhost:8080",
+		Logger:  logger,
+	})
+
+	adapter := NewBrowserStreamAdapter(provider)
+
+	require.NotNil(t, adapter)
+	assert.NotNil(t, adapter.GetFrameHub())
+}
+
+func TestBrowserStreamAdapter_GetFrameHub(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	provider := browser.NewBrowserStreamProvider(browser.BrowserStreamProviderConfig{
+		BaseURL: "ws://localhost:8080",
+		Logger:  logger,
+	})
+
+	adapter := NewBrowserStreamAdapter(provider)
+	hub := adapter.GetFrameHub()
+
+	require.NotNil(t, hub)
+	// FrameHub should be the same instance from provider
+	assert.Equal(t, provider.FrameHub(), hub)
+}
+
+func TestBrowserStreamAdapter_ValidateStreamAccess(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	provider := browser.NewBrowserStreamProvider(browser.BrowserStreamProviderConfig{
+		BaseURL: "ws://localhost:8080",
+		Logger:  logger,
+	})
+	adapter := NewBrowserStreamAdapter(provider)
+
+	ctx := context.Background()
+
+	t.Run("stream not found", func(t *testing.T) {
+		err := adapter.ValidateStreamAccess(ctx, "bstr_nonexistent", "token")
+		assert.Error(t, err)
+	})
+
+	t.Run("stream exists", func(t *testing.T) {
+		// Start a stream first
+		info, err := provider.Start(ctx, streaming.StreamOptions{
+			SessionID: "sess_test",
+			RunnerID:  "run_test",
+			Type:      streaming.StreamTypeBrowser,
+		})
+		require.NoError(t, err)
+		defer func() { _ = provider.Stop(ctx, info.ID) }()
+
+		// Should pass validation
+		err = adapter.ValidateStreamAccess(ctx, info.ID, "token")
+		assert.NoError(t, err)
+	})
+}
+
+func TestHandleBrowserStreamWS_InvalidJSON(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockService := newMockBrowserStreamService(logger)
+	streamID := "bstr_test123"
+
+	srv := New(
+		Config{Host: "localhost", Port: 8080},
+		logger,
+		WithBrowserStreamService(mockService),
+	)
+
+	// Create router with URL parameter
+	r := chi.NewRouter()
+	r.Get("/api/v1/streams/{streamID}/ws", srv.handleBrowserStreamWS)
+
+	// Create test server
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	// Register a mock stream in FrameHub
+	_, _ = mockService.frameHub.RegisterStream(streamID, "run_123", "sess_123", nil, nil)
+	defer mockService.frameHub.UnregisterStream(streamID)
+
+	// Connect WebSocket
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/streams/" + streamID + "/ws?token=test"
+	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	if resp != nil && resp.Body != nil {
+		t.Cleanup(func() { _ = resp.Body.Close() })
+	}
+	t.Cleanup(func() { _ = ws.Close() })
+
+	// Send invalid JSON - should be handled gracefully
+	err = ws.WriteMessage(websocket.TextMessage, []byte("not valid json"))
+	require.NoError(t, err)
+
+	// Send a valid message after invalid one to verify connection still works
+	inputMsg := BrowserInputMessage{
+		Type:  BrowserMsgTypeInput,
+		Event: "mouseMove",
+		Mouse: &MouseEventData{X: 50, Y: 50},
+	}
+	err = ws.WriteJSON(inputMsg)
+	require.NoError(t, err)
+}
+
+func TestHandleBrowserStreamWS_NonInputMessage(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockService := newMockBrowserStreamService(logger)
+	streamID := "bstr_test123"
+
+	srv := New(
+		Config{Host: "localhost", Port: 8080},
+		logger,
+		WithBrowserStreamService(mockService),
+	)
+
+	// Create router with URL parameter
+	r := chi.NewRouter()
+	r.Get("/api/v1/streams/{streamID}/ws", srv.handleBrowserStreamWS)
+
+	// Create test server
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	// Register a mock stream in FrameHub
+	_, _ = mockService.frameHub.RegisterStream(streamID, "run_123", "sess_123", nil, nil)
+	defer mockService.frameHub.UnregisterStream(streamID)
+
+	// Connect WebSocket
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/streams/" + streamID + "/ws?token=test"
+	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	if resp != nil && resp.Body != nil {
+		t.Cleanup(func() { _ = resp.Body.Close() })
+	}
+	t.Cleanup(func() { _ = ws.Close() })
+
+	// Send a message with wrong type - should be ignored
+	msg := BrowserInputMessage{
+		Type:  "unknown_type",
+		Event: "mouseMove",
+		Mouse: &MouseEventData{X: 50, Y: 50},
+	}
+	err = ws.WriteJSON(msg)
+	require.NoError(t, err)
+
+	// Connection should still work
+	time.Sleep(10 * time.Millisecond)
+}
+
+func TestHandleBrowserStreamWS_ContextCancellation(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	mockService := newMockBrowserStreamService(logger)
+	streamID := "bstr_test123"
+
+	srv := New(
+		Config{Host: "localhost", Port: 8080},
+		logger,
+		WithBrowserStreamService(mockService),
+	)
+
+	// Create router with URL parameter
+	r := chi.NewRouter()
+	r.Get("/api/v1/streams/{streamID}/ws", srv.handleBrowserStreamWS)
+
+	// Create test server
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	// Register a mock stream in FrameHub
+	_, _ = mockService.frameHub.RegisterStream(streamID, "run_123", "sess_123", nil, nil)
+
+	// Connect WebSocket
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/streams/" + streamID + "/ws?token=test"
+	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	if resp != nil && resp.Body != nil {
+		t.Cleanup(func() { _ = resp.Body.Close() })
+	}
+
+	// Close the stream to trigger context cancellation
+	mockService.frameHub.UnregisterStream(streamID)
+
+	// Give time for the handler to notice
+	time.Sleep(50 * time.Millisecond)
+
+	// Close WebSocket
+	_ = ws.Close()
 }
