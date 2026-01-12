@@ -34,6 +34,10 @@ type ADBClient interface {
 	// Forward sets up port forwarding from local to remote.
 	Forward(ctx context.Context, serial string, localPort, remotePort int) error
 
+	// ForwardToSocket sets up port forwarding from local TCP port to a device abstract socket.
+	// This is used by scrcpy which creates abstract Unix sockets on the device.
+	ForwardToSocket(ctx context.Context, serial string, localPort int, socketName string) error
+
 	// RemoveForward removes port forwarding.
 	RemoveForward(ctx context.Context, serial string, localPort int) error
 
@@ -277,6 +281,13 @@ func (c *adbClient) Pull(ctx context.Context, serial, remote, local string) erro
 func (c *adbClient) Forward(ctx context.Context, serial string, localPort, remotePort int) error {
 	local := fmt.Sprintf("tcp:%d", localPort)
 	remote := fmt.Sprintf("tcp:%d", remotePort)
+	_, err := c.execDevice(ctx, serial, "forward", local, remote)
+	return err
+}
+
+func (c *adbClient) ForwardToSocket(ctx context.Context, serial string, localPort int, socketName string) error {
+	local := fmt.Sprintf("tcp:%d", localPort)
+	remote := fmt.Sprintf("localabstract:%s", socketName)
 	_, err := c.execDevice(ctx, serial, "forward", local, remote)
 	return err
 }

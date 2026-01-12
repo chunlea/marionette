@@ -252,6 +252,7 @@ type MockADBClient struct {
 	PushFunc             func(ctx context.Context, serial, local, remote string) error
 	PullFunc             func(ctx context.Context, serial, remote, local string) error
 	ForwardFunc          func(ctx context.Context, serial string, localPort, remotePort int) error
+	ForwardToSocketFunc  func(ctx context.Context, serial string, localPort int, socketName string) error
 	RemoveForwardFunc    func(ctx context.Context, serial string, localPort int) error
 	InputTapFunc         func(ctx context.Context, serial string, x, y int) error
 	InputSwipeFunc       func(ctx context.Context, serial string, x1, y1, x2, y2, durationMs int) error
@@ -302,6 +303,13 @@ func (m *MockADBClient) Pull(ctx context.Context, serial, remote, local string) 
 func (m *MockADBClient) Forward(ctx context.Context, serial string, localPort, remotePort int) error {
 	if m.ForwardFunc != nil {
 		return m.ForwardFunc(ctx, serial, localPort, remotePort)
+	}
+	return nil
+}
+
+func (m *MockADBClient) ForwardToSocket(ctx context.Context, serial string, localPort int, socketName string) error {
+	if m.ForwardToSocketFunc != nil {
+		return m.ForwardToSocketFunc(ctx, serial, localPort, socketName)
 	}
 	return nil
 }

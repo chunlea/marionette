@@ -17,6 +17,12 @@ import (
 	"github.com/chunlea/marionette/pkg/streaming/android"
 )
 
+// streamReaderI is an interface implemented by both StreamReader and StreamReaderV2.
+type streamReaderI interface {
+	Start() error
+	Close() error
+}
+
 // Process manages a scrcpy server process and its video/audio streams.
 type Process struct {
 	deviceSerial string
@@ -34,8 +40,16 @@ type Process struct {
 	audioPort  int
 	forwardSet bool
 
-	// Stream reader
-	streamReader *StreamReader
+	// Connection from waitForServer to be reused by connectVideo
+	// scrcpy only sends the dummy byte once per connection, so we must reuse it
+	pendingConn   net.Conn
+	dummyByteRead bool
+
+	// Stream reader - interface to support both v1 and v2 readers
+	streamReader streamReaderI
+
+	// For accessing video/audio config
+	streamReaderBase *StreamReader
 
 	// Video sink for callbacks
 	sink android.VideoSink
@@ -179,24 +193,24 @@ func (p *Process) LocalPort() int {
 
 // VideoConfig returns the video configuration after stream starts.
 func (p *Process) VideoConfig() *android.VideoConfig {
-	if p.streamReader != nil {
-		return p.streamReader.VideoConfig()
+	if p.streamReaderBase != nil {
+		return p.streamReaderBase.VideoConfig()
 	}
 	return nil
 }
 
 // AudioConfig returns the audio configuration if audio is enabled.
 func (p *Process) AudioConfig() *android.AudioConfig {
-	if p.streamReader != nil {
-		return p.streamReader.AudioConfig()
+	if p.streamReaderBase != nil {
+		return p.streamReaderBase.AudioConfig()
 	}
 	return nil
 }
 
 // Stats returns current streaming statistics.
 func (p *Process) Stats() *android.StreamStats {
-	if p.streamReader != nil {
-		return p.streamReader.Stats()
+	if p.streamReaderBase != nil {
+		return p.streamReaderBase.Stats()
 	}
 	return nil
 }
@@ -207,15 +221,22 @@ func (p *Process) Done() <-chan struct{} {
 }
 
 // setupForwarding sets up ADB port forwarding for the scrcpy server.
+// scrcpy uses Unix abstract sockets, so we use ForwardToSocket instead of Forward.
+// The socket name format is "scrcpy_{scid}" where scid is the port in hex (matching the scid arg).
 func (p *Process) setupForwarding(ctx context.Context) error {
-	// Forward video port
-	if err := p.adb.Forward(ctx, p.deviceSerial, p.localPort, p.localPort); err != nil {
+	// Forward video port to scrcpy's abstract socket
+	// Socket name matches the scid format used in buildServerArgs: scid=%08x
+	socketName := fmt.Sprintf("scrcpy_%08x", p.localPort)
+	if err := p.adb.ForwardToSocket(ctx, p.deviceSerial, p.localPort, socketName); err != nil {
 		return fmt.Errorf("failed to forward video port: %w", err)
 	}
 
 	// Forward audio port if enabled
+	// Note: Audio uses the same socket in scrcpy 2.x+, but separate in older versions
+	// For simplicity, we set up a separate forward in case it's needed
 	if p.options.AudioEnabled && p.audioPort > 0 {
-		if err := p.adb.Forward(ctx, p.deviceSerial, p.audioPort, p.audioPort); err != nil {
+		audioSocketName := fmt.Sprintf("scrcpy_%08x", p.audioPort)
+		if err := p.adb.ForwardToSocket(ctx, p.deviceSerial, p.audioPort, audioSocketName); err != nil {
 			// Cleanup video forward
 			_ = p.adb.RemoveForward(ctx, p.deviceSerial, p.localPort)
 			return fmt.Errorf("failed to forward audio port: %w", err)
@@ -267,17 +288,30 @@ func (p *Process) startServer(ctx context.Context) error {
 	// Build server arguments
 	args := p.buildServerArgs()
 
+	// Determine server version
+	serverVersion := p.config.ScrcpyServerVersion
+	if serverVersion == "" {
+		// Default to a recent version if not specified
+		serverVersion = "3.3"
+	}
+
 	// Use adb shell to start the server
 	// Format: adb -s SERIAL shell CLASSPATH=/data/local/tmp/scrcpy-server app_process / com.genymobile.scrcpy.Server <version> <args...>
 	shellCmd := fmt.Sprintf(
-		"CLASSPATH=%s app_process / com.genymobile.scrcpy.Server 2.4 %s",
+		"CLASSPATH=%s app_process / com.genymobile.scrcpy.Server %s %s",
 		serverPath,
+		serverVersion,
 		strings.Join(args, " "),
 	)
 
 	cmd := exec.CommandContext(ctx, "adb", "-s", p.deviceSerial, "shell", shellCmd)
 	cmd.Stdout = nil // Ignore stdout
 	cmd.Stderr = nil // Ignore stderr
+
+	p.logger.Debug("starting scrcpy server command",
+		zap.String("device", p.deviceSerial),
+		zap.String("shell_cmd", shellCmd),
+	)
 
 	// Start in background
 	if err := cmd.Start(); err != nil {
@@ -371,15 +405,17 @@ func (p *Process) buildServerArgs() []string {
 	}
 
 	// Scid (stream connection ID) for tunnel mode
+	// The scrcpy server uses this to create an abstract socket named "scrcpy_{scid}"
 	args = append(args, fmt.Sprintf("scid=%08x", p.localPort))
-
-	// Local socket name
-	args = append(args, fmt.Sprintf("local_socket_name=scrcpy_%d", p.localPort))
 
 	return args
 }
 
 // waitForServer waits for the scrcpy server to be ready.
+// In tunnel_forward mode, the server creates an abstract socket and waits for connections.
+// We verify readiness by reading the dummy byte (0x00) that scrcpy sends first.
+// IMPORTANT: scrcpy only sends the dummy byte once per connection, so we keep the
+// connection open in p.pendingConn for connectVideo to reuse.
 func (p *Process) waitForServer(ctx context.Context) error {
 	deadline := time.Now().Add(p.config.ServerStartTimeout)
 
@@ -393,53 +429,119 @@ func (p *Process) waitForServer(ctx context.Context) error {
 		}
 
 		// Try to connect to the server
+		// In tunnel_forward mode, the abstract socket only exists after the server starts
 		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", p.localPort), time.Second)
-		if err == nil {
+		if err != nil {
+			// Connection failed - server not ready yet
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		// Connection succeeded - but we need to verify it's not just adb accepting
+		// and then closing because the socket doesn't exist.
+		// Set a short read deadline to check for the dummy byte.
+		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		probe := make([]byte, 1)
+		n, err := conn.Read(probe)
+
+		if err != nil {
 			_ = conn.Close()
+			if err.Error() == "EOF" || !isTimeoutError(err) {
+				// Immediate EOF or non-timeout error - socket doesn't exist yet
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			// Timeout means connection is alive, but no data yet
+			// This shouldn't happen with scrcpy - it sends dummy byte immediately
+			// Retry in case server is still initializing
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		if n == 1 && probe[0] == 0x00 {
+			// Got the dummy byte - server is ready!
+			// Keep the connection for connectVideo to reuse
+			// Clear any deadline for normal operation
+			_ = conn.SetReadDeadline(time.Time{})
+			p.mu.Lock()
+			p.pendingConn = conn
+			p.dummyByteRead = true
+			p.mu.Unlock()
 			return nil
 		}
 
+		// Got unexpected data - close and retry
+		_ = conn.Close()
 		time.Sleep(100 * time.Millisecond)
 	}
 
 	return fmt.Errorf("timeout waiting for scrcpy server to start")
 }
 
-// connectVideo establishes the video stream connection.
-func (p *Process) connectVideo(ctx context.Context) error {
-	deadline := time.Now().Add(p.config.ConnectionTimeout)
-
-	var conn net.Conn
-	var err error
-
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-p.doneCh:
-			return fmt.Errorf("process stopped")
-		default:
-		}
-
-		conn, err = net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", p.localPort), time.Second)
-		if err == nil {
-			break
-		}
-
-		time.Sleep(100 * time.Millisecond)
+// isTimeoutError checks if an error is a network timeout
+func isTimeoutError(err error) bool {
+	if netErr, ok := err.(net.Error); ok {
+		return netErr.Timeout()
 	}
+	return false
+}
 
+// connectVideo establishes the video stream connection.
+// If waitForServer already established a connection (stored in pendingConn),
+// we reuse it instead of opening a new one.
+func (p *Process) connectVideo(ctx context.Context) error {
+	var conn net.Conn
+
+	// Check if we already have a connection from waitForServer
+	p.mu.Lock()
+	if p.pendingConn != nil {
+		conn = p.pendingConn
+		p.pendingConn = nil
+	}
+	dummyByteAlreadyRead := p.dummyByteRead
+	p.mu.Unlock()
+
+	// If no pending connection, open a new one
 	if conn == nil {
-		return fmt.Errorf("failed to connect to video stream: %w", err)
+		deadline := time.Now().Add(p.config.ConnectionTimeout)
+		var err error
+
+		for time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-p.doneCh:
+				return fmt.Errorf("process stopped")
+			default:
+			}
+
+			conn, err = net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", p.localPort), time.Second)
+			if err == nil {
+				break
+			}
+
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		if conn == nil {
+			return fmt.Errorf("failed to connect to video stream: %w", err)
+		}
 	}
 
 	p.videoConn = conn
 
-	// Create stream reader
+	// Create stream reader - use V2 for audio support
+	// Pass dummyByteAlreadyRead to skip reading it again if we already consumed it
 	if p.options.AudioEnabled {
-		p.streamReader = NewStreamReaderV2(conn, p.sink, true).StreamReader
+		v2Reader := NewStreamReaderV2(conn, p.sink, true)
+		v2Reader.dummyByteRead = dummyByteAlreadyRead
+		p.streamReader = v2Reader
+		p.streamReaderBase = v2Reader.StreamReader
 	} else {
-		p.streamReader = NewStreamReader(conn, p.sink)
+		v1Reader := NewStreamReader(conn, p.sink)
+		v1Reader.dummyByteRead = dummyByteAlreadyRead
+		p.streamReader = v1Reader
+		p.streamReaderBase = v1Reader
 	}
 
 	return nil

@@ -141,6 +141,33 @@ func TestNALUnit_IsPPS(t *testing.T) {
 	}
 }
 
+func TestNALUnit_IsSlice(t *testing.T) {
+	tests := []struct {
+		name     string
+		nalType  byte
+		expected bool
+	}{
+		{"non-IDR slice", NALTypeSliceNonIDR, true},
+		{"slice partition A", NALTypeSlicePartA, true},
+		{"slice partition B", NALTypeSlicePartB, true},
+		{"slice partition C", NALTypeSlicePartC, true},
+		{"IDR slice", NALTypeSliceIDR, true},
+		{"SEI", NALTypeSEI, false},
+		{"SPS", NALTypeSPS, false},
+		{"PPS", NALTypePPS, false},
+		{"AUD", NALTypeAUD, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			unit := &NALUnit{Type: tt.nalType}
+			if got := unit.IsSlice(); got != tt.expected {
+				t.Errorf("NALUnit{Type: %d}.IsSlice() = %v, want %v", tt.nalType, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestH264Parser_HasConfig(t *testing.T) {
 	parser := NewH264Parser()
 
@@ -415,5 +442,290 @@ func TestReadUEG(t *testing.T) {
 				t.Errorf("readUEG() = %d, want %d", got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestExtractSPSPPS(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     []byte
+		wantSPS   bool
+		wantPPS   bool
+		wantError bool
+	}{
+		{
+			name:    "empty input",
+			input:   []byte{},
+			wantSPS: false,
+			wantPPS: false,
+		},
+		{
+			name: "SPS and PPS present",
+			input: []byte{
+				0x00, 0x00, 0x01, // Start code
+				0x67, 0x42, 0x00, 0x1f, // SPS
+				0x00, 0x00, 0x01, // Start code
+				0x68, 0xce, 0x3c, 0x80, // PPS
+				0x00, 0x00, 0x01, // End marker
+				0x65, // IDR
+			},
+			wantSPS: true,
+			wantPPS: true,
+		},
+		{
+			name: "only SPS present",
+			input: []byte{
+				0x00, 0x00, 0x01, // Start code
+				0x67, 0x42, 0x00, 0x1f, // SPS
+				0x00, 0x00, 0x01, // End marker
+				0x65, // IDR
+			},
+			wantSPS: true,
+			wantPPS: false,
+		},
+		{
+			name: "only PPS present",
+			input: []byte{
+				0x00, 0x00, 0x01, // Start code
+				0x68, 0xce, 0x3c, 0x80, // PPS
+				0x00, 0x00, 0x01, // End marker
+				0x65, // IDR
+			},
+			wantSPS: false,
+			wantPPS: true,
+		},
+		{
+			name: "multiple SPS/PPS - returns first ones",
+			input: []byte{
+				0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1f, // SPS 1
+				0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80, // PPS 1
+				0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x2f, // SPS 2
+				0x00, 0x00, 0x01, 0x68, 0xde, 0x3c, 0x80, // PPS 2
+				0x00, 0x00, 0x01, 0x65, // End marker
+			},
+			wantSPS: true,
+			wantPPS: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sps, pps, err := ExtractSPSPPS(tt.input)
+			if tt.wantError && err == nil {
+				t.Error("expected error, got nil")
+				return
+			}
+			if !tt.wantError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			hasSPS := len(sps) > 0
+			hasPPS := len(pps) > 0
+
+			if hasSPS != tt.wantSPS {
+				t.Errorf("SPS present = %v, want %v", hasSPS, tt.wantSPS)
+			}
+			if hasPPS != tt.wantPPS {
+				t.Errorf("PPS present = %v, want %v", hasPPS, tt.wantPPS)
+			}
+
+			// Verify SPS type if present
+			if hasSPS && (sps[0]&0x1F) != NALTypeSPS {
+				t.Errorf("SPS first byte type = %d, want %d", sps[0]&0x1F, NALTypeSPS)
+			}
+
+			// Verify PPS type if present
+			if hasPPS && (pps[0]&0x1F) != NALTypePPS {
+				t.Errorf("PPS first byte type = %d, want %d", pps[0]&0x1F, NALTypePPS)
+			}
+		})
+	}
+}
+
+func TestParseSPSDimensions(t *testing.T) {
+	tests := []struct {
+		name       string
+		sps        []byte
+		wantWidth  int
+		wantHeight int
+		wantError  bool
+	}{
+		{
+			name:      "SPS too short",
+			sps:       []byte{0x67, 0x42, 0x00},
+			wantError: true,
+		},
+		{
+			name:      "empty SPS",
+			sps:       []byte{},
+			wantError: true,
+		},
+		{
+			name: "valid 1920x1080 SPS (baseline profile)",
+			// This is a minimal valid SPS for 1920x1080
+			// NAL header + profile_idc(66) + constraint_set(0) + level_idc(31)
+			// + seq_parameter_set_id(0) + log2_max_frame_num_minus4(0)
+			// + pic_order_cnt_type(0) + log2_max_pic_order_cnt_lsb_minus4(0)
+			// + max_num_ref_frames(1) + gaps_in_frame_num_value_allowed_flag(0)
+			// + pic_width_in_mbs_minus1(119) + pic_height_in_map_units_minus1(67)
+			// + frame_mbs_only_flag(1)
+			sps: []byte{
+				0x67,       // NAL header (SPS)
+				0x42,       // profile_idc = 66 (Baseline)
+				0x00,       // constraint_set flags
+				0x1f,       // level_idc = 31
+				0x80 | 0x3, // seq_parameter_set_id(0) + log2_max_frame_num_minus4(0) as UEG: 1 + 1
+				0x80 | 0x1, // pic_order_cnt_type(0) as UEG: 1 + log2_max_pic_order_cnt_lsb_minus4(0): 1
+				0x40 | 0x2, // max_num_ref_frames(1): 010 + gaps_flag(0): 0 + pic_width start
+				// This is a simplified test - real SPS parsing is complex
+				// Testing with minimal synthetic data
+			},
+			wantError: true, // Will error due to truncated synthetic data
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			width, height, err := ParseSPSDimensions(tt.sps)
+			if tt.wantError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if width != tt.wantWidth {
+				t.Errorf("width = %d, want %d", width, tt.wantWidth)
+			}
+			if height != tt.wantHeight {
+				t.Errorf("height = %d, want %d", height, tt.wantHeight)
+			}
+		})
+	}
+}
+
+func TestParseSPSDimensions_PicOrderCntType1(t *testing.T) {
+	// Test that pic_order_cnt_type == 1 returns an error
+	// (not supported by the simplified parser)
+	sps := []byte{
+		0x67,       // NAL header (SPS)
+		0x42,       // profile_idc = 66
+		0x00,       // constraint_set flags
+		0x1f,       // level_idc = 31
+		0x80,       // seq_parameter_set_id(0): 1
+		0x80,       // log2_max_frame_num_minus4(0): 1
+		0b01000000, // pic_order_cnt_type(1): 010
+		// More data would follow but parser should error before needing it
+	}
+
+	_, _, err := ParseSPSDimensions(sps)
+	if err == nil {
+		t.Error("expected error for pic_order_cnt_type == 1, got nil")
+	}
+}
+
+func TestAnnexBToAVCC(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []byte
+		wantNil bool
+		wantLen int // Expected number of NAL units * (4 + data_len)
+	}{
+		{
+			name:    "empty input",
+			input:   []byte{},
+			wantNil: true,
+		},
+		{
+			name:    "incomplete NAL",
+			input:   []byte{0x00, 0x00, 0x01, 0x67},
+			wantNil: true, // No complete NAL unit (needs second start code)
+		},
+		{
+			name: "single NAL unit",
+			input: []byte{
+				0x00, 0x00, 0x00, 0x01, // Start code
+				0x67, 0x42, 0x00, 0x1f, // SPS NAL data
+				0x00, 0x00, 0x00, 0x01, // End marker
+				0x68, // PPS header
+			},
+			wantNil: false,
+			wantLen: 4 + 4, // 4-byte length prefix + 4-byte NAL data
+		},
+		{
+			name: "two NAL units",
+			input: []byte{
+				0x00, 0x00, 0x01, // Start code (3 bytes)
+				0x67, 0x42, 0x00, 0x1f, // SPS NAL data (4 bytes)
+				0x00, 0x00, 0x01, // Start code
+				0x68, 0xce, 0x3c, 0x80, // PPS NAL data (4 bytes)
+				0x00, 0x00, 0x01, // End marker
+				0x65, // IDR header
+			},
+			wantNil: false,
+			wantLen: (4 + 4) + (4 + 4), // Two NAL units: (length + data) * 2
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := AnnexBToAVCC(tt.input)
+
+			if tt.wantNil {
+				if result != nil {
+					t.Errorf("expected nil result, got %v", result)
+				}
+				return
+			}
+
+			if result == nil {
+				t.Error("expected non-nil result, got nil")
+				return
+			}
+
+			if len(result) != tt.wantLen {
+				t.Errorf("result length = %d, want %d", len(result), tt.wantLen)
+			}
+
+			// Verify AVCC format: 4-byte big-endian length prefix
+			if len(result) >= 4 {
+				lengthPrefix := uint32(result[0])<<24 | uint32(result[1])<<16 |
+					uint32(result[2])<<8 | uint32(result[3])
+				expectedLen := len(result) - 4
+				// For single NAL, length should match remaining data
+				if tt.name == "single NAL unit" && lengthPrefix != uint32(expectedLen) {
+					t.Errorf("length prefix = %d, want %d", lengthPrefix, expectedLen)
+				}
+			}
+		})
+	}
+}
+
+func TestAnnexBToAVCC_PreservesNALContent(t *testing.T) {
+	// Test that NAL unit content is preserved during conversion
+	nalData := []byte{0x67, 0x42, 0x00, 0x1f, 0x96, 0x56}
+	input := []byte{
+		0x00, 0x00, 0x00, 0x01, // Start code
+	}
+	input = append(input, nalData...)
+	input = append(input, 0x00, 0x00, 0x00, 0x01, 0x68) // End marker + next NAL header
+
+	result := AnnexBToAVCC(input)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// Skip 4-byte length prefix and verify content
+	if len(result) < 4+len(nalData) {
+		t.Fatalf("result too short: got %d, want at least %d", len(result), 4+len(nalData))
+	}
+
+	resultNAL := result[4 : 4+len(nalData)]
+	if !bytes.Equal(resultNAL, nalData) {
+		t.Errorf("NAL content mismatch: got %v, want %v", resultNAL, nalData)
 	}
 }

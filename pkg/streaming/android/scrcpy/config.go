@@ -17,6 +17,10 @@ type Config struct {
 	// If empty, attempts to find it in standard locations or download it.
 	ScrcpyServerPath string
 
+	// ScrcpyServerVersion is the version of the scrcpy-server.
+	// If empty, will be auto-detected from the binary.
+	ScrcpyServerVersion string
+
 	// ADBPath is the path to the adb binary.
 	// If empty, uses "adb" from PATH.
 	ADBPath string

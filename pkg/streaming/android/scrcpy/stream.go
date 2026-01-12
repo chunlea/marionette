@@ -35,6 +35,10 @@ type StreamReader struct {
 	statsMu   sync.RWMutex
 	startTime time.Time
 
+	// dummyByteRead indicates that the dummy byte was already consumed
+	// by the caller (e.g., waitForServer) and should not be read again.
+	dummyByteRead bool
+
 	// Control
 	closed  int32
 	closeCh chan struct{}
@@ -108,12 +112,22 @@ func (s *StreamReader) Stats() *android.StreamStats {
 }
 
 // readHeader reads and parses the scrcpy metadata header.
-// Format (scrcpy 2.0+):
+// Format (scrcpy with tunnel_forward=true):
+// - Dummy byte: 1 byte (0x00) - confirms connection in tunnel_forward mode
 // - Device name: 64 bytes (null-padded)
 // - Codec: 4 bytes (ASCII)
 // - Initial width: 4 bytes (big endian)
 // - Initial height: 4 bytes (big endian)
 func (s *StreamReader) readHeader() error {
+	// Dummy byte (tunnel_forward mode sends this to confirm connection)
+	// Skip reading if it was already consumed by the caller (e.g., waitForServer)
+	if !s.dummyByteRead {
+		dummyByte := make([]byte, 1)
+		if _, err := io.ReadFull(s.reader, dummyByte); err != nil {
+			return fmt.Errorf("failed to read dummy byte: %w", err)
+		}
+	}
+
 	// Device name (64 bytes)
 	deviceName := make([]byte, 64)
 	if _, err := io.ReadFull(s.reader, deviceName); err != nil {
