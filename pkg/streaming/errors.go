@@ -35,6 +35,12 @@ var (
 	ErrNoProviderForType = errors.New("no provider supports this stream type")
 )
 
+// Device errors.
+var (
+	// ErrDeviceNotFound is returned when a device is not found.
+	ErrDeviceNotFound = errors.New("device not found")
+)
+
 // Session errors.
 var (
 	// ErrSessionRequired is returned when a session ID is required but not provided.
