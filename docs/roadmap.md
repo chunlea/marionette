@@ -1522,10 +1522,15 @@
     - [x] WebSocket connection management (`useStreamConnection` hook)
     - [x] Mouse/keyboard event capture and forwarding
     - [x] Comprehensive test coverage (99%+)
-- [ ] Android emulator streaming:
-  - [ ] scrcpy integration
-  - [ ] H.264 to WebRTC transcoding
-  - [ ] Touch input forwarding via ADB
+- [x] Android device streaming (PRs #99, #101, #102):
+  - [x] scrcpy integration (`pkg/streaming/android/scrcpy/`)
+  - [x] ADB device management (`pkg/streaming/android/adb.go`)
+  - [x] H.264 NAL unit parsing (`pkg/streaming/android/scrcpy/h264.go`)
+  - [x] Agent integration (`pkg/agent/android_stream.go`)
+  - [x] Proto messages (`AndroidStreamStarted`, `AndroidStreamData`, `AndroidStreamStopped`)
+  - [x] WebUI components (`web/src/components/android/`)
+  - [x] WebRTC hooks (`useAndroidWebRTC`, `useAndroidInput`)
+  - [x] Touch input forwarding via ADB
 - [ ] iOS Simulator streaming:
   - [ ] macOS screen capture (simctl)
   - [ ] Selkies for video encoding
