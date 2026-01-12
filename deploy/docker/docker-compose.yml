@@ -12,7 +12,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
       # Auto-run schema.sql on first startup
       - ../../docs/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-    # Port not exposed to host - services connect via internal network
+    # Expose port for local token generation
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U marionette"]
       interval: 10s

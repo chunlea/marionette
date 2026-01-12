@@ -1,0 +1,32 @@
+# Docker Compose for Desktop Streaming Testing
+# Usage:
+#   1. Start services: docker compose -f docker-compose.yml -f docker-compose.desktop.yml up -d
+#   2. Create runner token via Admin API
+#   3. Start desktop agent: MARIONETTE_RUNNER_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.desktop.yml --profile desktop up -d
+
+services:
+  # Desktop agent with Selkies GStreamer
+  agent-desktop:
+    profiles:
+      - desktop
+    image: marionette-agent-desktop:latest
+    depends_on:
+      - server
+    environment:
+      MARIONETTE_SERVER_ADDRESS: server:9090
+      MARIONETTE_RUNNER_TOKEN: ${MARIONETTE_RUNNER_TOKEN}
+      MARIONETTE_SANDBOX_MODE: runner-is-sandbox
+      MARIONETTE_POOL_NAME: desktop-pool
+      MARIONETTE_DESKTOP_STREAMING_ENABLED: "true"
+      DISPLAY: ":99"
+    volumes:
+      - desktop_workspace:/workspace
+    # For hardware acceleration (optional)
+    # devices:
+    #   - /dev/dri:/dev/dri
+    restart: unless-stopped
+    # Share host network for easier WebRTC connectivity (dev only)
+    # network_mode: host
+
+volumes:
+  desktop_workspace:

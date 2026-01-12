@@ -167,6 +167,10 @@ func (c *ControlChannel) handleCommand(ctx context.Context, cmd *pb.ServerComman
 		response, err = c.handler.HandleAttachSession(ctx, payload.AttachSession)
 	case *pb.ServerCommand_DetachSession:
 		response, err = c.handler.HandleDetachSession(ctx, payload.DetachSession)
+	case *pb.ServerCommand_StartDesktopStream:
+		response, err = c.handler.HandleStartDesktopStream(ctx, payload.StartDesktopStream)
+	case *pb.ServerCommand_StopDesktopStream:
+		response, err = c.handler.HandleStopDesktopStream(ctx, payload.StopDesktopStream)
 	default:
 		c.logger.Warn("unknown command type", zap.Any("payload", cmd.Payload))
 		return
@@ -239,6 +243,10 @@ func commandType(cmd *pb.ServerCommand) string {
 		return "AttachSession"
 	case *pb.ServerCommand_DetachSession:
 		return "DetachSession"
+	case *pb.ServerCommand_StartDesktopStream:
+		return "StartDesktopStream"
+	case *pb.ServerCommand_StopDesktopStream:
+		return "StopDesktopStream"
 	default:
 		return "Unknown"
 	}

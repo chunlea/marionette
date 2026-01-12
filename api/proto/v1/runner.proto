@@ -66,6 +66,11 @@ message RunnerMessage {
     AndroidStreamStarted android_stream_started = 13;
     AndroidStreamData android_stream_data = 14;
     AndroidStreamStopped android_stream_stopped = 15;
+
+    // Desktop streaming responses
+    DesktopStreamStarted desktop_stream_started = 16;
+    DesktopStreamStopped desktop_stream_stopped = 17;
+    DesktopStreamError desktop_stream_error = 18;
   }
 }
 
@@ -239,6 +244,10 @@ message ServerCommand {
     // Tunnel messages
     CreateTunnelResponse create_tunnel_response = 7;
     TunnelData tunnel_data = 8;
+
+    // Desktop streaming commands
+    StartDesktopStream start_desktop_stream = 9;
+    StopDesktopStream stop_desktop_stream = 10;
   }
 }
 
@@ -403,6 +412,83 @@ message AndroidStreamStopped {
   string tunnel_id = 1;       // Tunnel ID
   string reason = 2;          // "closed", "error", "device_disconnected"
   string error = 3;           // Error message if reason is "error"
+}
+
+//------------------------------------------------------------------------------
+// Desktop Streaming Messages
+//------------------------------------------------------------------------------
+
+// StartDesktopStream tells the runner to start desktop streaming.
+// The runner should initialize the streaming provider (e.g., Selkies)
+// and begin capturing the desktop.
+message StartDesktopStream {
+  string stream_id = 1;           // Server-assigned stream ID
+  string session_id = 2;          // Session this stream belongs to
+  StreamConfig config = 3;        // Streaming configuration
+  repeated ICEServer ice_servers = 4;  // STUN/TURN servers for WebRTC
+}
+
+// StopDesktopStream tells the runner to stop desktop streaming.
+message StopDesktopStream {
+  string stream_id = 1;
+  string reason = 2;              // Optional reason for stopping
+}
+
+// StreamConfig contains desktop streaming configuration.
+message StreamConfig {
+  int32 width = 1;                // Target width (0 = auto)
+  int32 height = 2;               // Target height (0 = auto)
+  int32 frame_rate = 3;           // Target frame rate (default: 30)
+  int32 bitrate = 4;              // Target bitrate in kbps (default: 2000)
+  string video_codec = 5;         // Preferred codec: "vp8", "vp9", "h264"
+  string audio_codec = 6;         // Preferred audio codec: "opus"
+  bool audio_enabled = 7;         // Enable audio streaming
+  bool input_enabled = 8;         // Enable remote input (keyboard/mouse)
+  string display = 9;             // Display to capture (e.g., ":0", "DISPLAY1")
+}
+
+// ICEServer represents a STUN/TURN server for WebRTC.
+message ICEServer {
+  repeated string urls = 1;       // Server URLs (stun: or turn:)
+  string username = 2;            // Username for TURN authentication
+  string credential = 3;          // Credential for TURN authentication
+}
+
+// DesktopStreamStarted is sent by the runner when streaming has started.
+message DesktopStreamStarted {
+  string stream_id = 1;
+  string session_id = 2;
+
+  // Actual streaming parameters (may differ from requested)
+  int32 width = 3;
+  int32 height = 4;
+  int32 frame_rate = 5;
+  string video_codec = 6;
+  string audio_codec = 7;
+
+  // Provider information
+  string provider_name = 8;       // e.g., "selkies"
+  string provider_stream_id = 9;  // Provider's internal stream ID
+
+  int64 started_at_unix_ms = 10;
+}
+
+// DesktopStreamStopped is sent by the runner when streaming has stopped.
+message DesktopStreamStopped {
+  string stream_id = 1;
+  string session_id = 2;
+  string reason = 3;              // Reason for stopping
+  int64 stopped_at_unix_ms = 4;
+}
+
+// DesktopStreamError is sent by the runner when a streaming error occurs.
+message DesktopStreamError {
+  string stream_id = 1;
+  string session_id = 2;
+  string error = 3;               // Error message
+  string error_code = 4;          // Error code (e.g., "provider_unavailable")
+  bool recoverable = 5;           // Whether the error is recoverable
+  int64 occurred_at_unix_ms = 6;
 }
 
 //------------------------------------------------------------------------------
