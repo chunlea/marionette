@@ -24,6 +24,7 @@ import (
 	grpcserver "github.com/chunlea/marionette/pkg/server/grpc"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/store/postgres"
+	"github.com/chunlea/marionette/pkg/streaming"
 	"github.com/chunlea/marionette/pkg/streaming/browser"
 	"github.com/chunlea/marionette/pkg/tunnel"
 	"go.uber.org/zap"
@@ -94,6 +95,9 @@ func main() {
 	if dbStore != nil {
 		// Create API key service (needed for both public and admin APIs)
 		apiKeySvc = auth.NewAPIKeyService(dbStore, id.APIKey)
+
+		// Note: RunnerTokenService is created internally by the gRPC server
+		// when Store is provided (see pkg/server/grpc/server.go)
 
 		// Create connection manager first (needed by PermissionManager)
 		connManager = grpcserver.NewConnectionManager(logger)
@@ -221,6 +225,37 @@ func main() {
 		logger.Info("core services initialized and wired to API")
 	}
 
+	// Create stream manager (for desktop streaming)
+	var streamMgr *core.StreamManager
+	if dbStore != nil {
+		var err error
+		streamMgr, err = core.NewStreamManager(core.DefaultStreamManagerConfig(), dbStore, logger)
+		if err != nil {
+			logger.Error("failed to create stream manager", zap.Error(err))
+		} else {
+			// Register SFU provider for desktop streaming
+			signalingBaseURL := fmt.Sprintf("ws://%s:%d/admin/api/v1/signaling",
+				cfg.Server.Admin.Host, cfg.Server.Admin.Port)
+			if cfg.Server.Admin.Host == "" || cfg.Server.Admin.Host == "0.0.0.0" {
+				signalingBaseURL = fmt.Sprintf("ws://localhost:%d/admin/api/v1/signaling",
+					cfg.Server.Admin.Port)
+			}
+
+			sfuProvider := streaming.NewSFUProvider(streaming.SFUProviderConfig{
+				SignalingBaseURL: signalingBaseURL,
+			})
+			if err := streamMgr.RegisterProvider(sfuProvider); err != nil {
+				logger.Error("failed to register SFU provider", zap.Error(err))
+			} else {
+				logger.Info("SFU provider registered",
+					zap.String("signaling_url", signalingBaseURL),
+				)
+			}
+
+			logger.Info("stream manager created")
+		}
+	}
+
 	// Create servers
 	apiServer := api.New(api.Config{
 		Host: cfg.Server.API.Host,
@@ -244,6 +279,25 @@ func main() {
 		actionLogAdapter := admin.NewActionLogStoreAdapter(dbStore)
 		adminOpts = append(adminOpts, admin.WithActionLogService(actionLogAdapter))
 		logger.Info("Action log service wired to Admin API")
+	}
+	if streamMgr != nil {
+		// Create streams handler for admin API
+		// Pass connManager to enable sending StartDesktopStream commands to agents
+		streamsHandler := admin.NewStreamsHandler(streamMgr, connManager, logger)
+		adminOpts = append(adminOpts, admin.WithStreamsHandler(streamsHandler))
+		logger.Info("Streams handler wired to Admin API")
+
+		// Create signaling handler for WebRTC
+		sfuHandler := streamMgr.GetSignalingHandler()
+		if sfuHandler != nil {
+			signalingHandler := admin.NewSignalingHandler(
+				sfuHandler,
+				admin.DefaultSignalingConfig(),
+				logger,
+			)
+			adminOpts = append(adminOpts, admin.WithSignalingHandler(signalingHandler))
+			logger.Info("Signaling handler wired to Admin API")
+		}
 	}
 
 	adminServer := admin.New(admin.Config{
@@ -299,6 +353,15 @@ func main() {
 		logger.Info("permission timeout enforcer started")
 	}
 
+	// Start stream manager if available
+	if streamMgr != nil {
+		if err := streamMgr.Start(context.Background()); err != nil {
+			logger.Error("failed to start stream manager", zap.Error(err))
+		} else {
+			logger.Info("stream manager started")
+		}
+	}
+
 	// Wait for interrupt signal or server error
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -318,6 +381,15 @@ func main() {
 	// Stop permission timeout enforcer first
 	if permEnforcer != nil {
 		permEnforcer.Stop()
+	}
+
+	// Stop stream manager
+	if streamMgr != nil {
+		if err := streamMgr.Stop(ctx); err != nil {
+			logger.Error("stream manager stop error", zap.Error(err))
+		} else {
+			logger.Info("stream manager stopped")
+		}
 	}
 
 	// Shutdown all servers

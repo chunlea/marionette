@@ -36,13 +36,14 @@ export function DesktopStreamCard({
     try {
       await startStream.mutateAsync({
         sessionId,
+        runnerId,
         config: {
-          config: {
+          resolution: {
             width: 1920,
             height: 1080,
-            frame_rate: 30,
-            input_enabled: true,
           },
+          frame_rate: 30,
+          input_enabled: true,
         },
       })
     } catch (error) {

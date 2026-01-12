@@ -94,6 +94,12 @@ func main() {
 		agent.WithTMSender(controlChannel),
 	)
 
+	// Create desktop stream manager
+	desktopStreamMgr := agent.NewDesktopStreamManager(
+		agent.DefaultDesktopStreamConfig(),
+		logger,
+	)
+
 	// Start heartbeat loop (created early so TaskRunner can update status)
 	hbLoop := agent.NewHeartbeatLoop(client, cfg.Heartbeat, logger)
 
@@ -103,6 +109,12 @@ func main() {
 	// Create task runner (uses controlChannel to send messages, hbLoop for status updates, logStreamer for logs)
 	taskRunner := agent.NewTaskRunner(controlChannel, claudeExec, workspaceMgr, cmdHandler, hbLoop, logStreamer, logger)
 
+	// Wire up desktop stream manager (needs control channel for sending messages)
+	desktopStreamMgr.SetSendFunc(func(msg *pb.RunnerMessage) error {
+		controlChannel.Send(msg)
+		return nil
+	})
+
 	// Wire up callbacks
 	cmdHandler.OnExecuteTask = taskRunner.Execute
 	cmdHandler.OnApprovePermission = func(ctx context.Context, cmd *pb.ApprovePermission) error {
@@ -111,6 +123,8 @@ func main() {
 	cmdHandler.OnDetachSession = taskRunner.CancelTask
 	cmdHandler.OnCreateTunnel = tunnelMgr.HandleCreateTunnel
 	cmdHandler.OnTunnelData = tunnelMgr.HandleTunnelData
+	cmdHandler.OnStartDesktopStream = desktopStreamMgr.HandleStartDesktopStream
+	cmdHandler.OnStopDesktopStream = desktopStreamMgr.HandleStopDesktopStream
 
 	// Start control channel
 	if err := controlChannel.Start(ctx); err != nil {

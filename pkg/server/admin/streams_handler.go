@@ -7,13 +7,22 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 
+	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/streaming"
 )
+
+// StreamCommandSender sends stream commands to runners.
+type StreamCommandSender interface {
+	SendCommand(runnerID string, cmd *pb.ServerCommand) error
+}
 
 // StreamsHandler handles stream-related HTTP requests.
 type StreamsHandler struct {
 	streamManager StreamManager
+	cmdSender     StreamCommandSender
+	logger        *zap.Logger
 }
 
 // StreamManager interface for stream operations.
@@ -27,8 +36,15 @@ type StreamManager interface {
 }
 
 // NewStreamsHandler creates a new StreamsHandler.
-func NewStreamsHandler(mgr StreamManager) *StreamsHandler {
-	return &StreamsHandler{streamManager: mgr}
+func NewStreamsHandler(mgr StreamManager, cmdSender StreamCommandSender, logger *zap.Logger) *StreamsHandler {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	return &StreamsHandler{
+		streamManager: mgr,
+		cmdSender:     cmdSender,
+		logger:        logger.Named("streams_handler"),
+	}
 }
 
 // Routes returns the handler's routes.
@@ -203,6 +219,42 @@ func (h *StreamsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Send StartDesktopStream command to the runner
+	if h.cmdSender != nil && req.RunnerID != "" && req.Type == streaming.StreamTypeDesktop {
+		cmd := &pb.ServerCommand{
+			Payload: &pb.ServerCommand_StartDesktopStream{
+				StartDesktopStream: &pb.StartDesktopStream{
+					StreamId:  stream.ID,
+					SessionId: stream.SessionID,
+					Config: &pb.StreamConfig{
+						Width:        int32(stream.Resolution.Width),
+						Height:       int32(stream.Resolution.Height),
+						FrameRate:    int32(stream.FrameRate),
+						Bitrate:      int32(stream.BitRate),
+						AudioEnabled: stream.AudioEnabled,
+						InputEnabled: stream.InputEnabled,
+					},
+					// TODO: Add ICE servers configuration
+				},
+			},
+		}
+
+		if err := h.cmdSender.SendCommand(req.RunnerID, cmd); err != nil {
+			h.logger.Error("failed to send StartDesktopStream command",
+				zap.String("stream_id", stream.ID),
+				zap.String("runner_id", req.RunnerID),
+				zap.Error(err),
+			)
+			// Don't fail the request, the stream is created but the agent might not be ready
+			// The agent can be notified later when it reconnects
+		} else {
+			h.logger.Info("sent StartDesktopStream command",
+				zap.String("stream_id", stream.ID),
+				zap.String("runner_id", req.RunnerID),
+			)
+		}
+	}
+
 	WriteJSON(w, http.StatusCreated, streamToResponse(stream))
 }
 
@@ -228,6 +280,43 @@ func (h *StreamsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *StreamsHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	streamID := chi.URLParam(r, "streamID")
+
+	// Get stream info before stopping so we know the runner ID
+	stream, err := h.streamManager.GetStream(ctx, streamID)
+	if err != nil {
+		if err == streaming.ErrStreamNotFound {
+			WriteError(w, http.StatusNotFound, "not_found", "stream not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+
+	// Send StopDesktopStream command to the runner
+	if h.cmdSender != nil && stream.RunnerID != "" && stream.Type == streaming.StreamTypeDesktop {
+		cmd := &pb.ServerCommand{
+			Payload: &pb.ServerCommand_StopDesktopStream{
+				StopDesktopStream: &pb.StopDesktopStream{
+					StreamId: stream.ID,
+					Reason:   "user_requested",
+				},
+			},
+		}
+
+		if err := h.cmdSender.SendCommand(stream.RunnerID, cmd); err != nil {
+			h.logger.Error("failed to send StopDesktopStream command",
+				zap.String("stream_id", stream.ID),
+				zap.String("runner_id", stream.RunnerID),
+				zap.Error(err),
+			)
+			// Don't fail the request, the stream will be stopped in DB
+		} else {
+			h.logger.Info("sent StopDesktopStream command",
+				zap.String("stream_id", stream.ID),
+				zap.String("runner_id", stream.RunnerID),
+			)
+		}
+	}
 
 	if err := h.streamManager.StopStream(ctx, streamID); err != nil {
 		if err == streaming.ErrStreamNotFound {

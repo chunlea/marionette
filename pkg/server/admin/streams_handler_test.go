@@ -71,14 +71,14 @@ func (m *mockStreamManager) ListSessionStreams(ctx context.Context, sessionID st
 
 func TestNewStreamsHandler(t *testing.T) {
 	mgr := &mockStreamManager{}
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	assert.NotNil(t, handler)
 }
 
 func TestStreamsHandler_Routes(t *testing.T) {
 	mgr := &mockStreamManager{}
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	routes := handler.Routes()
 	assert.NotNil(t, routes)
@@ -105,7 +105,7 @@ func TestStreamsHandler_List(t *testing.T) {
 		},
 	}
 
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -149,7 +149,7 @@ func TestStreamsHandler_List_WithFilters(t *testing.T) {
 		},
 	}
 
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/?session_id=sess_filter&runner_id=run_filter&type=desktop&state=active&active_only=true&limit=10&offset=5", nil)
 	w := httptest.NewRecorder()
@@ -169,7 +169,7 @@ func TestStreamsHandler_List_Error(t *testing.T) {
 		},
 	}
 
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -207,7 +207,7 @@ func TestStreamsHandler_Create(t *testing.T) {
 		},
 	}
 
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	body := StreamRequest{
 		SessionID: "sess_123",
@@ -242,7 +242,7 @@ func TestStreamsHandler_Create(t *testing.T) {
 
 func TestStreamsHandler_Create_InvalidBody(t *testing.T) {
 	mgr := &mockStreamManager{}
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -258,7 +258,7 @@ func TestStreamsHandler_Create_InvalidBody(t *testing.T) {
 
 func TestStreamsHandler_Create_MissingSessionID(t *testing.T) {
 	mgr := &mockStreamManager{}
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	body := StreamRequest{
 		Type: streaming.StreamTypeDesktop,
@@ -279,7 +279,7 @@ func TestStreamsHandler_Create_MissingSessionID(t *testing.T) {
 
 func TestStreamsHandler_Create_InvalidType(t *testing.T) {
 	mgr := &mockStreamManager{}
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	body := StreamRequest{
 		SessionID: "sess_123",
@@ -340,7 +340,7 @@ func TestStreamsHandler_Create_StartStreamErrors(t *testing.T) {
 				},
 			}
 
-			handler := NewStreamsHandler(mgr)
+			handler := NewStreamsHandler(mgr, nil, nil)
 
 			body := StreamRequest{
 				SessionID: "sess_123",
@@ -381,7 +381,7 @@ func TestStreamsHandler_Get(t *testing.T) {
 		},
 	}
 
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	// Create a chi router context with URL param
 	r := chi.NewRouter()
@@ -412,7 +412,7 @@ func TestStreamsHandler_Get_NotFound(t *testing.T) {
 		},
 	}
 
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	r := chi.NewRouter()
 	r.Get("/{streamID}", handler.Get)
@@ -435,7 +435,7 @@ func TestStreamsHandler_Get_Error(t *testing.T) {
 		},
 	}
 
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	r := chi.NewRouter()
 	r.Get("/{streamID}", handler.Get)
@@ -453,13 +453,22 @@ func TestStreamsHandler_Get_Error(t *testing.T) {
 
 func TestStreamsHandler_Stop(t *testing.T) {
 	mgr := &mockStreamManager{
+		getStreamFn: func(_ context.Context, streamID string) (*streaming.Stream, error) {
+			return &streaming.Stream{
+				ID:        streamID,
+				SessionID: "sess_123",
+				RunnerID:  "run_123",
+				Type:      streaming.StreamTypeDesktop,
+				State:     streaming.StreamStateActive,
+			}, nil
+		},
 		stopStreamFn: func(_ context.Context, streamID string) error {
 			assert.Equal(t, "stream_123", streamID)
 			return nil
 		},
 	}
 
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	r := chi.NewRouter()
 	r.Delete("/{streamID}", handler.Stop)
@@ -477,12 +486,12 @@ func TestStreamsHandler_Stop(t *testing.T) {
 
 func TestStreamsHandler_Stop_NotFound(t *testing.T) {
 	mgr := &mockStreamManager{
-		stopStreamFn: func(_ context.Context, _ string) error {
-			return streaming.ErrStreamNotFound
+		getStreamFn: func(_ context.Context, _ string) (*streaming.Stream, error) {
+			return nil, streaming.ErrStreamNotFound
 		},
 	}
 
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	r := chi.NewRouter()
 	r.Delete("/{streamID}", handler.Stop)
@@ -500,12 +509,12 @@ func TestStreamsHandler_Stop_NotFound(t *testing.T) {
 
 func TestStreamsHandler_Stop_Error(t *testing.T) {
 	mgr := &mockStreamManager{
-		stopStreamFn: func(_ context.Context, _ string) error {
-			return errors.New("internal error")
+		getStreamFn: func(_ context.Context, _ string) (*streaming.Stream, error) {
+			return nil, errors.New("internal error")
 		},
 	}
 
-	handler := NewStreamsHandler(mgr)
+	handler := NewStreamsHandler(mgr, nil, nil)
 
 	r := chi.NewRouter()
 	r.Delete("/{streamID}", handler.Stop)

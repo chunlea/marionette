@@ -27,6 +27,10 @@ type Server struct {
 	sessionActivator SessionActivator
 	actionLogs       ActionLogService
 
+	// Streaming handlers
+	streamsHandler   *StreamsHandler
+	signalingHandler *SignalingHandler
+
 	// Basic auth credentials
 	username string
 	password string
@@ -89,6 +93,20 @@ func WithActionLogService(s ActionLogService) Option {
 func WithRunnerTokenAdminService(s RunnerTokenAdminService) Option {
 	return func(srv *Server) {
 		srv.runnerTokens = s
+	}
+}
+
+// WithStreamsHandler sets the streams handler.
+func WithStreamsHandler(h *StreamsHandler) Option {
+	return func(srv *Server) {
+		srv.streamsHandler = h
+	}
+}
+
+// WithSignalingHandler sets the signaling handler.
+func WithSignalingHandler(h *SignalingHandler) Option {
+	return func(srv *Server) {
+		srv.signalingHandler = h
 	}
 }
 
@@ -186,6 +204,16 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.Get("/", srv.handleListActionLogs)
 			r.Get("/{logID}", srv.handleGetActionLog)
 		})
+
+		// Streams (desktop streaming)
+		if srv.streamsHandler != nil {
+			r.Mount("/streams", srv.streamsHandler.Routes())
+		}
+
+		// WebRTC Signaling (WebSocket)
+		if srv.signalingHandler != nil {
+			r.Get("/signaling", srv.signalingHandler.ServeHTTP)
+		}
 	})
 
 	// Serve embedded frontend for all other routes

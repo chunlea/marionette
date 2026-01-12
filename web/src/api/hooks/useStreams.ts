@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiClient } from '../client'
+import { adminClient } from '../admin'
 import type { Stream, StreamList, StartStreamRequest } from '@/types/stream'
 
 // Query keys for caching
@@ -16,7 +16,7 @@ export function useStream(streamId: string | undefined) {
   return useQuery({
     queryKey: streamKeys.detail(streamId ?? ''),
     queryFn: async () => {
-      const { data } = await apiClient.get<Stream>(`/admin/api/v1/streams/${streamId}`)
+      const { data } = await adminClient.get<Stream>(`/streams/${streamId}`)
       return data
     },
     enabled: !!streamId,
@@ -36,8 +36,8 @@ export function useSessionStreams(sessionId: string | undefined) {
   return useQuery({
     queryKey: streamKeys.list(sessionId ?? ''),
     queryFn: async () => {
-      const { data } = await apiClient.get<StreamList>(
-        `/admin/api/v1/sessions/${sessionId}/streams`
+      const { data } = await adminClient.get<StreamList>(
+        `/streams?session_id=${sessionId}`
       )
       return data
     },
@@ -52,14 +52,21 @@ export function useStartDesktopStream() {
   return useMutation({
     mutationFn: async ({
       sessionId,
+      runnerId,
       config,
     }: {
       sessionId: string
+      runnerId?: string
       config?: StartStreamRequest
     }) => {
-      const { data } = await apiClient.post<Stream>(
-        `/admin/api/v1/sessions/${sessionId}/streams/desktop`,
-        config ?? {}
+      const { data } = await adminClient.post<Stream>(
+        `/streams`,
+        {
+          session_id: sessionId,
+          runner_id: runnerId,
+          type: 'desktop',
+          ...config,
+        }
       )
       return data
     },
@@ -80,7 +87,7 @@ export function useStopDesktopStream() {
 
   return useMutation({
     mutationFn: async (streamId: string) => {
-      await apiClient.delete(`/admin/api/v1/streams/${streamId}`)
+      await adminClient.delete(`/streams/${streamId}`)
     },
     onSuccess: (_, streamId) => {
       // Invalidate stream detail
