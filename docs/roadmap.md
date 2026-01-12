@@ -1512,6 +1512,15 @@
   - [x] Input event forwarding (mouse, keyboard)
   - [x] Navigation and tab management
   - [x] Proto messages: BrowserFrame, BrowserStreamInit, etc.
+  - [x] Server integration (`pkg/server/`):
+    - [x] gRPC StreamBrowser handler for agent frame forwarding
+    - [x] WebSocket endpoint `/api/v1/streams/{streamID}/ws`
+    - [x] BrowserStreamAdapter for service wiring
+    - [x] Input event forwarding from WebSocket to agent
+  - [ ] WebUI StreamViewer component:
+    - [ ] React component for browser frame display
+    - [ ] WebSocket connection management
+    - [ ] Mouse/keyboard event capture and forwarding
 - [ ] Android emulator streaming:
   - [ ] scrcpy integration
   - [ ] H.264 to WebRTC transcoding

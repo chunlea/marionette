@@ -105,7 +105,7 @@ func TestHandleBrowserStreamWS_AccessDenied(t *testing.T) {
 	// Make request
 	resp, err := http.Get(ts.URL + "/api/v1/streams/bstr_test123/ws?token=invalid")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 }
@@ -140,7 +140,10 @@ func TestHandleBrowserStreamWS_WebSocketUpgrade(t *testing.T) {
 	// Connect WebSocket
 	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
-	defer ws.Close()
+	if resp != nil && resp.Body != nil {
+		t.Cleanup(func() { _ = resp.Body.Close() })
+	}
+	t.Cleanup(func() { _ = ws.Close() })
 
 	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
 }
@@ -171,9 +174,12 @@ func TestHandleBrowserStreamWS_ReceiveFrames(t *testing.T) {
 
 	// Connect WebSocket
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/streams/" + streamID + "/ws?token=test"
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
-	defer ws.Close()
+	if resp != nil && resp.Body != nil {
+		t.Cleanup(func() { _ = resp.Body.Close() })
+	}
+	t.Cleanup(func() { _ = ws.Close() })
 
 	// Wait for subscriber to be registered
 	time.Sleep(50 * time.Millisecond)
@@ -188,7 +194,7 @@ func TestHandleBrowserStreamWS_ReceiveFrames(t *testing.T) {
 	})
 
 	// Read message from WebSocket with timeout
-	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	require.NoError(t, ws.SetReadDeadline(time.Now().Add(2*time.Second)))
 	_, data, err := ws.ReadMessage()
 	require.NoError(t, err)
 
@@ -238,9 +244,12 @@ func TestHandleBrowserStreamWS_SendInput(t *testing.T) {
 
 	// Connect WebSocket
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/streams/" + streamID + "/ws?token=test"
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
-	defer ws.Close()
+	if resp != nil && resp.Body != nil {
+		t.Cleanup(func() { _ = resp.Body.Close() })
+	}
+	t.Cleanup(func() { _ = ws.Close() })
 
 	// Send input event
 	inputMsg := BrowserInputMessage{

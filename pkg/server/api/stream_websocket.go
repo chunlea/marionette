@@ -55,20 +55,20 @@ type BrowserInputMessage struct {
 
 // MouseEventData contains mouse event data.
 type MouseEventData struct {
-	X          float64 `json:"x"`
-	Y          float64 `json:"y"`
-	Button     string  `json:"button,omitempty"`
-	ClickCount int     `json:"click_count,omitempty"`
-	DeltaX     float64 `json:"delta_x,omitempty"`
-	DeltaY     float64 `json:"delta_y,omitempty"`
+	X          float64       `json:"x"`
+	Y          float64       `json:"y"`
+	Button     string        `json:"button,omitempty"`
+	ClickCount int           `json:"click_count,omitempty"`
+	DeltaX     float64       `json:"delta_x,omitempty"`
+	DeltaY     float64       `json:"delta_y,omitempty"`
 	Modifiers  *ModifierData `json:"modifiers,omitempty"`
 }
 
 // KeyEventData contains keyboard event data.
 type KeyEventData struct {
-	Key       string `json:"key"`
-	Code      string `json:"code,omitempty"`
-	Text      string `json:"text,omitempty"`
+	Key       string        `json:"key"`
+	Code      string        `json:"code,omitempty"`
+	Text      string        `json:"text,omitempty"`
 	Modifiers *ModifierData `json:"modifiers,omitempty"`
 }
 
