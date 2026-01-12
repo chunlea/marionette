@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
 	"github.com/chunlea/marionette/pkg/streaming/sfu"
@@ -57,7 +58,8 @@ func TestNewSignalingHandler_NilLogger(t *testing.T) {
 }
 
 func TestSignalingHandler_ServeHTTP_MissingParams(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	// Use nop logger to avoid data race with test cleanup
+	logger := zap.NewNop()
 	config := DefaultSignalingConfig()
 
 	sfuConfig := sfu.DefaultConfig()
@@ -83,10 +85,14 @@ func TestSignalingHandler_ServeHTTP_MissingParams(t *testing.T) {
 	} else if resp != nil {
 		defer func() { _ = resp.Body.Close() }()
 	}
+
+	// Give time for server goroutines to finish
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestSignalingHandler_ServeHTTP_Connection(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	// Use nop logger to avoid data race with test cleanup
+	logger := zap.NewNop()
 	config := DefaultSignalingConfig()
 
 	sfuConfig := sfu.DefaultConfig()
@@ -124,10 +130,14 @@ func TestSignalingHandler_ServeHTTP_Connection(t *testing.T) {
 
 	// Close connection
 	_ = conn.Close()
+
+	// Give time for server goroutines to finish
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestSignalingHandler_Close(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	// Use nop logger to avoid data race with test cleanup
+	logger := zap.NewNop()
 	config := DefaultSignalingConfig()
 
 	sfuConfig := sfu.DefaultConfig()
@@ -163,10 +173,14 @@ func TestSignalingHandler_Close(t *testing.T) {
 		assert.Error(t, err)
 		_ = conn.Close()
 	}
+
+	// Give time for server goroutines to finish
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestSignalingHandler_SendMessage(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	// Use nop logger to avoid data race with test cleanup
+	logger := zap.NewNop()
 	config := DefaultSignalingConfig()
 
 	sfuConfig := sfu.DefaultConfig()
@@ -208,10 +222,14 @@ func TestSignalingHandler_SendMessage(t *testing.T) {
 
 	assert.Equal(t, sfu.SignalingTypeAnswer, received.Type)
 	assert.Equal(t, "test answer", received.SDP)
+
+	// Give time for server goroutines to finish
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestSignalingHandler_SendMessage_PeerNotFound(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	// Use nop logger to avoid data race with test cleanup
+	logger := zap.NewNop()
 	config := DefaultSignalingConfig()
 
 	sfuConfig := sfu.DefaultConfig()
@@ -283,7 +301,8 @@ func TestSignalingHandler_CheckOrigin(t *testing.T) {
 }
 
 func TestSignalingHandler_ConcurrentConnections(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	// Use nop logger to avoid data race with test cleanup
+	logger := zap.NewNop()
 	config := DefaultSignalingConfig()
 
 	sfuConfig := sfu.DefaultConfig()
@@ -332,4 +351,7 @@ func TestSignalingHandler_ConcurrentConnections(t *testing.T) {
 
 	// Close handler
 	handler.Close()
+
+	// Give time for server goroutines to finish
+	time.Sleep(50 * time.Millisecond)
 }

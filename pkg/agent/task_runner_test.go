@@ -11,6 +11,7 @@ import (
 	"github.com/chunlea/marionette/pkg/agent/executor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -568,13 +569,16 @@ func TestTaskRunner_HandlePermissionResponse_UnknownRequest(t *testing.T) {
 }
 
 func TestTaskRunner_HandlePermissionResponse_ChannelFull(t *testing.T) {
-	logger := zaptest.NewLogger(t)
+	// Use nop logger to avoid data race with test cleanup
+	logger := zap.NewNop()
 	sender := &mockMessageSender{}
 
 	// Create a channel to signal when permission request is made
 	permRequestMade := make(chan struct{})
 	// Create a channel to signal when we should return from executor
 	returnSignal := make(chan struct{})
+	// Create a channel to signal when execution is done
+	execDone := make(chan struct{})
 
 	exec := &mockExecutor{
 		executeFunc: func(ctx context.Context, task *executor.Task, config *executor.AgentConfig, handler executor.OutputHandler) (*executor.Result, error) {
@@ -615,6 +619,7 @@ func TestTaskRunner_HandlePermissionResponse_ChannelFull(t *testing.T) {
 	// Start execution in goroutine
 	go func() {
 		_, _ = runner.Execute(context.Background(), cmd)
+		close(execDone)
 	}()
 
 	// Wait for permission request to be registered
@@ -637,6 +642,9 @@ func TestTaskRunner_HandlePermissionResponse_ChannelFull(t *testing.T) {
 	assert.NoError(t, err)
 
 	close(returnSignal)
+
+	// Wait for execution goroutine to complete before test ends
+	<-execDone
 }
 
 func TestTaskRunner_HandlePermissionRequest_GeneratesID(t *testing.T) {
