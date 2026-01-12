@@ -351,3 +351,63 @@ export interface RunnerTokensQueryParams extends PaginationParams {
   status?: RunnerTokenStatus[]
   include_revoked?: boolean
 }
+
+// Android Stream types
+export type AndroidStreamState = 'starting' | 'active' | 'paused' | 'closing' | 'closed' | 'failed'
+
+export interface AndroidStream {
+  id: string
+  session_id: string
+  runner_id?: string
+  device_serial: string
+  state: AndroidStreamState
+  width?: number
+  height?: number
+  video_codec?: string
+  audio_codec?: string
+  error_message?: string
+  created_at: string
+  started_at?: string
+  closed_at?: string
+}
+
+export interface AndroidStreamList {
+  items: AndroidStream[]
+  next_cursor?: string
+}
+
+export interface CreateAndroidStreamRequest {
+  device_serial: string
+  max_width?: number
+  max_height?: number
+  max_fps?: number
+  bitrate?: number
+  audio_enabled?: boolean
+}
+
+export interface AndroidDevice {
+  serial: string
+  state: string
+  product?: string
+  model?: string
+  device?: string
+}
+
+export interface AndroidDeviceList {
+  items: AndroidDevice[]
+}
+
+export interface AndroidInputEvent {
+  type: 'touch' | 'key' | 'text'
+  action?: 'down' | 'up' | 'move'
+  x?: number
+  y?: number
+  key_code?: number
+  key_action?: 'down' | 'up'
+  text?: string
+}
+
+export interface AndroidStreamsQueryParams extends PaginationParams {
+  state?: AndroidStreamState[]
+  include_closed?: boolean
+}

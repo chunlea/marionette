@@ -30,6 +30,12 @@ service RunnerService {
   // First message must be StreamLogsInit, subsequent are LogEntry
   rpc StreamLogs(stream StreamLogsMessage) returns (StreamLogsResponse);
 
+  // Browser streaming bidirectional stream (runner <-> server)
+  // Auth: x-runner-token, x-runner-id in metadata
+  // First message from runner MUST be BrowserStreamInit
+  // Server sends input events and control commands, runner sends frames
+  rpc StreamBrowser(stream RunnerBrowserMessage) returns (stream ServerBrowserMessage);
+
   // Unary RPCs
   rpc RegisterRunner(RegisterRunnerRequest) returns (RegisterRunnerResponse);
   rpc GetRunnerStatus(GetRunnerStatusRequest) returns (RunnerStatus);
@@ -55,6 +61,11 @@ message RunnerMessage {
     CreateTunnelRequest create_tunnel_request = 10;
     TunnelData tunnel_data = 11;
     CloseTunnel close_tunnel = 12;
+
+    // Android streaming messages
+    AndroidStreamStarted android_stream_started = 13;
+    AndroidStreamData android_stream_data = 14;
+    AndroidStreamStopped android_stream_stopped = 15;
   }
 }
 
@@ -351,6 +362,47 @@ message CreateTunnel {
 
   // Expiration time (Unix milliseconds)
   int64 expires_at_unix_ms = 6;
+
+  // Android-specific options (only used when type = "android")
+  AndroidStreamOptions android_options = 7;
+}
+
+// AndroidStreamOptions configures Android screen streaming via scrcpy
+message AndroidStreamOptions {
+  string device_serial = 1;   // ADB device serial
+  int32 max_width = 2;        // Max video width (0 = original)
+  int32 max_height = 3;       // Max video height (0 = original)
+  int32 max_fps = 4;          // Max frame rate (0 = 60)
+  int32 bitrate = 5;          // Video bitrate in bits/s (0 = 8Mbps)
+  bool audio_enabled = 6;     // Enable audio streaming (requires Android 11+)
+}
+
+// AndroidStreamStarted is sent when scrcpy stream is ready
+message AndroidStreamStarted {
+  string tunnel_id = 1;       // Tunnel ID from CreateTunnel
+  string device_serial = 2;   // Device being streamed
+  int32 width = 3;            // Actual video width
+  int32 height = 4;           // Actual video height
+  string video_codec = 5;     // "h264" or "h265"
+  string audio_codec = 6;     // "opus" or "aac" (empty if no audio)
+  bytes video_config = 7;     // H.264 SPS/PPS or H.265 VPS/SPS/PPS
+  bytes audio_config = 8;     // Audio config (codec-specific)
+}
+
+// AndroidStreamData contains video or audio frame data
+message AndroidStreamData {
+  string tunnel_id = 1;       // Tunnel ID
+  bool is_video = 2;          // true = video, false = audio
+  bytes data = 3;             // H.264/H.265 NAL units or audio data
+  int64 pts_us = 4;           // Presentation timestamp in microseconds
+  bool is_keyframe = 5;       // true if this is a keyframe (for video)
+}
+
+// AndroidStreamStopped is sent when stream ends
+message AndroidStreamStopped {
+  string tunnel_id = 1;       // Tunnel ID
+  string reason = 2;          // "closed", "error", "device_disconnected"
+  string error = 3;           // Error message if reason is "error"
 }
 
 //------------------------------------------------------------------------------
@@ -469,4 +521,157 @@ message LogEntry {
   // Runner context
   // Server validates this matches the authenticated runner_id
   string runner_id = 11;
+}
+
+//------------------------------------------------------------------------------
+// Browser Streaming Messages
+//------------------------------------------------------------------------------
+
+// RunnerBrowserMessage is sent from runner to server during browser streaming.
+// First message MUST be init, subsequent messages are frame/state/stats updates.
+message RunnerBrowserMessage {
+  oneof payload {
+    BrowserStreamInit init = 1;
+    BrowserFrame frame = 2;
+    BrowserStreamState state = 3;
+    BrowserStreamStats stats = 4;
+  }
+}
+
+// ServerBrowserMessage is sent from server to runner during browser streaming.
+// Server sends input events and control commands, runner sends frames.
+message ServerBrowserMessage {
+  oneof payload {
+    BrowserStreamStart start = 1;
+    bool stop = 2;
+    BrowserInputEvent input = 3;
+    BrowserStreamControl control = 4;
+  }
+}
+
+// BrowserStreamInit initializes a browser stream session.
+// Sent as the first message from runner when starting a browser stream.
+message BrowserStreamInit {
+  string stream_id = 1;        // Stream ID from streaming.Manager
+  string session_id = 2;       // Associated session
+  string runner_id = 3;        // Sending runner
+
+  // Browser info
+  string browser_product = 4;  // e.g., "Chrome/120.0.0.0"
+  string cdp_version = 5;      // CDP protocol version
+
+  // Initial viewport dimensions
+  int32 viewport_width = 6;
+  int32 viewport_height = 7;
+}
+
+// BrowserFrame represents a single captured browser frame.
+message BrowserFrame {
+  bytes data = 1;              // Encoded image data (JPEG/PNG/WebP)
+  string format = 2;           // "jpeg", "png", "webp"
+  int32 width = 3;
+  int32 height = 4;
+  uint64 sequence = 5;         // Monotonic frame number
+  int64 timestamp_unix_ms = 6; // Capture timestamp
+
+  // Optional metadata (e.g., page URL, title)
+  map<string, string> metadata = 7;
+}
+
+// BrowserStreamState represents stream state changes.
+message BrowserStreamState {
+  // State values: "idle", "starting", "active", "paused", "stopping", "stopped", "error"
+  string state = 1;
+  string error = 2;            // Error message if state is "error"
+  int64 timestamp_unix_ms = 3;
+}
+
+// BrowserStreamStats contains streaming statistics.
+message BrowserStreamStats {
+  uint64 frames_sent = 1;
+  uint64 frames_dropped = 2;
+  uint64 bytes_sent = 3;
+  double average_fps = 4;
+  double current_fps = 5;
+  int32 average_latency_ms = 6;
+  int64 started_at_unix_ms = 7;
+}
+
+// BrowserStreamStart tells the runner to start streaming with the given options.
+message BrowserStreamStart {
+  BrowserStreamOptions options = 1;
+  string target_url = 2;       // Optional URL to navigate to before streaming
+}
+
+// BrowserStreamOptions configures stream parameters.
+message BrowserStreamOptions {
+  int32 quality = 1;           // JPEG quality 1-100 (default: 80)
+  int32 max_fps = 2;           // Max frames per second (default: 30)
+  string format = 3;           // "jpeg", "png", "webp" (default: "jpeg")
+  int32 max_width = 4;         // Max frame width (0 = no limit)
+  int32 max_height = 5;        // Max frame height (0 = no limit)
+  int32 every_nth_frame = 6;   // Capture every Nth frame (default: 1)
+}
+
+// BrowserStreamControl contains control commands for the stream.
+message BrowserStreamControl {
+  oneof command {
+    bool pause = 1;                          // true = pause, false = resume
+    BrowserNavigateRequest navigate = 2;     // Navigate to URL
+    string switch_tab = 3;                   // Tab ID to switch to
+    BrowserStreamOptions update_options = 4; // Update stream options
+  }
+}
+
+// BrowserNavigateRequest requests browser navigation.
+message BrowserNavigateRequest {
+  string url = 1;
+  string referrer = 2;
+}
+
+// BrowserInputEvent represents input from client to browser.
+message BrowserInputEvent {
+  // Event type: "mouseMove", "mouseDown", "mouseUp", "mouseWheel", "keyDown", "keyUp"
+  string type = 1;
+  int64 timestamp_unix_ms = 2;
+
+  oneof event {
+    BrowserMouseEvent mouse = 3;
+    BrowserKeyboardEvent keyboard = 4;
+  }
+}
+
+// BrowserMouseEvent represents mouse input.
+message BrowserMouseEvent {
+  double x = 1;              // Viewport X coordinate
+  double y = 2;              // Viewport Y coordinate
+  string button = 3;         // "left", "middle", "right", "none"
+  int32 click_count = 4;     // 1 = single, 2 = double, 3 = triple
+  double delta_x = 5;        // Wheel scroll X
+  double delta_y = 6;        // Wheel scroll Y
+  BrowserModifiers modifiers = 7;
+}
+
+// BrowserKeyboardEvent represents keyboard input.
+message BrowserKeyboardEvent {
+  string key = 1;            // Key value, e.g., "a", "Enter", "Escape"
+  string code = 2;           // Physical key code, e.g., "KeyA", "Enter"
+  string text = 3;           // Generated text (for keypress)
+  BrowserModifiers modifiers = 4;
+}
+
+// BrowserModifiers represents keyboard modifier states.
+message BrowserModifiers {
+  bool alt = 1;
+  bool ctrl = 2;
+  bool meta = 3;
+  bool shift = 4;
+}
+
+// BrowserTabInfo provides information about a browser tab.
+message BrowserTabInfo {
+  string id = 1;
+  string title = 2;
+  string url = 3;
+  string type = 4;           // "page", "background_page", "service_worker", etc.
 }

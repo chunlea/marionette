@@ -37,6 +37,12 @@ type MessageRouterInterface interface {
 	HandleMessage(ctx context.Context, runnerID string, msg *pb.RunnerMessage) error
 }
 
+// BrowserStreamHandlerInterface defines the interface for browser stream handling.
+type BrowserStreamHandlerInterface interface {
+	// StreamBrowser handles the bidirectional stream for browser frames and input.
+	StreamBrowser(stream grpc.BidiStreamingServer[pb.RunnerBrowserMessage, pb.ServerBrowserMessage]) error
+}
+
 // Default log batch configuration.
 const (
 	DefaultLogBatchSize = 100
@@ -45,14 +51,15 @@ const (
 // RunnerService implements the RunnerServiceServer interface.
 type RunnerService struct {
 	pb.UnimplementedRunnerServiceServer
-	logger           *zap.Logger
-	store            store.Store
-	tokenSvc         *auth.RunnerTokenService
-	connManager      *ConnectionManager
-	runnerManager    RunnerManagerInterface
-	router           MessageRouterInterface
-	registry         *core.RunnerRegistry
-	logSubscriberMgr core.LogSubscriberManagerInterface
+	logger               *zap.Logger
+	store                store.Store
+	tokenSvc             *auth.RunnerTokenService
+	connManager          *ConnectionManager
+	runnerManager        RunnerManagerInterface
+	router               MessageRouterInterface
+	registry             *core.RunnerRegistry
+	logSubscriberMgr     core.LogSubscriberManagerInterface
+	browserStreamHandler BrowserStreamHandlerInterface
 }
 
 // RunnerServiceOption is a functional option for RunnerService.
@@ -115,6 +122,13 @@ func WithRegistry(reg *core.RunnerRegistry) RunnerServiceOption {
 func WithLogSubscriberManager(lsm core.LogSubscriberManagerInterface) RunnerServiceOption {
 	return func(svc *RunnerService) {
 		svc.logSubscriberMgr = lsm
+	}
+}
+
+// WithBrowserStreamHandler sets the browser stream handler for the RunnerService.
+func WithBrowserStreamHandler(bsh BrowserStreamHandlerInterface) RunnerServiceOption {
+	return func(svc *RunnerService) {
+		svc.browserStreamHandler = bsh
 	}
 }
 
@@ -373,4 +387,14 @@ func stringPtrOrNil(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// StreamBrowser handles the bidirectional stream for browser frames and input.
+// This RPC is called by agents to stream browser content to the server.
+func (s *RunnerService) StreamBrowser(stream grpc.BidiStreamingServer[pb.RunnerBrowserMessage, pb.ServerBrowserMessage]) error {
+	if s.browserStreamHandler == nil {
+		s.logger.Warn("StreamBrowser called but browser stream handler not configured")
+		return status.Error(codes.Unimplemented, "browser streaming not configured")
+	}
+	return s.browserStreamHandler.StreamBrowser(stream)
 }

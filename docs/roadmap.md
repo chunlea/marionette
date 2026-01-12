@@ -1492,22 +1492,56 @@
   - [x] Peer connection wrapper with state management
   - [x] TrackRouter for RTP forwarding
   - [x] InputChannel for DataChannel forwarding
-  - [ ] SFU signaling (WebSocket handler)
-  - [ ] Streaming manager (lifecycle management)
-- [ ] Desktop streaming (Linux/macOS):
-  - [ ] Selkies GStreamer integration
-  - [ ] WebRTC signaling server
-  - [ ] Browser viewer component
+  - [x] SFU signaling handler (`pkg/streaming/sfu/handler.go`)
+  - [x] Streaming manager (`pkg/streaming/manager/`)
+- [x] Selkies Desktop Streaming Provider (`pkg/streaming/desktop/`):
+  - [x] `DesktopProvider` interface extending `StreamProvider`
+  - [x] `SelkiesProvider` implementation with Selkies GStreamer
+  - [x] Process lifecycle management (start, stop, monitor)
+  - [x] Hardware acceleration detection (VAAPI, NVENC, QSV)
+  - [x] Display info and multi-display support
+  - [x] Configuration merging (resolution, framerate, bitrate)
+  - [x] ICE server configuration
+  - [x] Input event types (mouse move, button, scroll, key)
+  - [x] Provider error types with error chaining
+  - [x] Test coverage: 73.7% (process management code excluded)
+- [ ] Desktop streaming integration (in progress - PR #104):
+  - [ ] Server-side stream management
+  - [ ] WebSocket signaling handler
+  - [ ] Agent-side desktop stream handler
+  - [ ] React desktop viewer component
+  - [ ] Session page integration
+- [ ] Desktop streaming enhancements (future):
   - [ ] Keyboard/mouse input forwarding
   - [ ] Clipboard sync
-- [ ] Browser streaming (headless Chrome):
-  - [ ] Chrome DevTools Protocol integration
-  - [ ] Page capture to video stream
-  - [ ] Input forwarding
-- [ ] Android emulator streaming:
-  - [ ] scrcpy integration
-  - [ ] H.264 to WebRTC transcoding
-  - [ ] Touch input forwarding via ADB
+- [x] Browser streaming (headless Chrome) - CDP-based frame streaming:
+  - [x] Chrome DevTools Protocol integration (`pkg/streaming/browser/`)
+  - [x] BrowserStreamProvider implementing StreamProvider interface
+  - [x] CDPProvider for Chrome connection and screencast
+  - [x] FrameHub for pub/sub frame distribution
+  - [x] Frame buffer with configurable drop policy
+  - [x] Input event forwarding (mouse, keyboard)
+  - [x] Navigation and tab management
+  - [x] Proto messages: BrowserFrame, BrowserStreamInit, etc.
+  - [x] Server integration (`pkg/server/`):
+    - [x] gRPC StreamBrowser handler for agent frame forwarding
+    - [x] WebSocket endpoint `/api/v1/streams/{streamID}/ws`
+    - [x] BrowserStreamAdapter for service wiring
+    - [x] Input event forwarding from WebSocket to agent
+  - [x] WebUI StreamViewer component:
+    - [x] React component for browser frame display (`web/src/components/StreamViewer/`)
+    - [x] WebSocket connection management (`useStreamConnection` hook)
+    - [x] Mouse/keyboard event capture and forwarding
+    - [x] Comprehensive test coverage (99%+)
+- [x] Android device streaming (PRs #99, #101, #102):
+  - [x] scrcpy integration (`pkg/streaming/android/scrcpy/`)
+  - [x] ADB device management (`pkg/streaming/android/adb.go`)
+  - [x] H.264 NAL unit parsing (`pkg/streaming/android/scrcpy/h264.go`)
+  - [x] Agent integration (`pkg/agent/android_stream.go`)
+  - [x] Proto messages (`AndroidStreamStarted`, `AndroidStreamData`, `AndroidStreamStopped`)
+  - [x] WebUI components (`web/src/components/android/`)
+  - [x] WebRTC hooks (`useAndroidWebRTC`, `useAndroidInput`)
+  - [x] Touch input forwarding via ADB
 - [ ] iOS Simulator streaming:
   - [ ] macOS screen capture (simctl)
   - [ ] Selkies for video encoding

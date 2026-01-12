@@ -243,6 +243,26 @@ type Stream struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
+// DeviceInfo represents a discoverable device for streaming.
+// This is used by providers that support device enumeration
+// (e.g., Android devices, iOS simulators).
+type DeviceInfo struct {
+	// ID is the unique device identifier (e.g., serial number).
+	ID string `json:"id"`
+
+	// Name is the human-readable device name.
+	Name string `json:"name"`
+
+	// Type is the stream type this device supports.
+	Type StreamType `json:"type"`
+
+	// State is the device connection state.
+	State string `json:"state"`
+
+	// Metadata is device-specific metadata.
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
 // StreamInfo is returned by providers when a stream is started or queried.
 type StreamInfo struct {
 	// ID is the provider's stream ID.
