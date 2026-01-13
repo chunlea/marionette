@@ -707,11 +707,19 @@ Examples:
 
 ### Creating Pull Requests
 
-Use `gh` CLI to create pull requests with proper formatting:
+Use `gh` CLI to create pull requests with proper formatting.
+
+**Recommended: Use `--body-file` with Write tool** (sandbox compatible):
 
 ```bash
-# Create PR with multiline body using HEREDOC
-# Use single-quoted 'EOF' to prevent variable expansion issues
+# 1. Use Write tool to create .claude/tmp/pr-body.md with PR content
+# 2. Then create PR
+gh pr create --title "feat: add new feature" --body-file .claude/tmp/pr-body.md
+```
+
+**Alternative: HEREDOC** (may fail in sandbox mode due to temp file restrictions):
+
+```bash
 gh pr create --title "feat: add new feature" --body "$(cat <<'EOF'
 ## Summary
 - Brief description of changes
@@ -723,17 +731,9 @@ gh pr create --title "feat: add new feature" --body "$(cat <<'EOF'
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )"
-
-# For complex descriptions, use --body-file
-mkdir -p .claude/tmp
-cat > .claude/tmp/pr-body.md <<'EOF'
-## Summary
-...
-EOF
-gh pr create --title "feat: add new feature" --body-file .claude/tmp/pr-body.md
 ```
 
-**Important:** Always use single-quoted `'EOF'` (not `EOF`) to prevent shell variable expansion issues in the PR body.
+**Note:** HEREDOC requires creating temp files, which sandbox mode may block. If you see "can't create temp file for here document" errors, use the `--body-file` approach instead.
 
 ### Merge Workflow (Stacked PRs)
 

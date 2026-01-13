@@ -37,8 +37,10 @@ vendor/
 .air/
 tmp/
 
-# Claude Code temporary files
+# Claude Code
 .claude/tmp/
+.claude/current-task.md
+.claude/settings.local.json
 
 # macOS
 .DS_Store
