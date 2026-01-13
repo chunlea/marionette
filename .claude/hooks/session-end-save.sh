@@ -2,7 +2,8 @@
 # Auto-save task state when session ends
 # Hook type: SessionEnd
 
-set -euo pipefail
+# Don't use set -e, we want to continue even if commands fail
+set -uo pipefail
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 

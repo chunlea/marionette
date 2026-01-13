@@ -2,11 +2,17 @@
 # Run lint check before PR creation
 # Hook type: PreToolUse (Bash)
 
-set -euo pipefail
+# Don't use set -e, we want to continue even if commands fail
+set -uo pipefail
 
-# Read JSON input from stdin
-read -r INPUT
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+# Read JSON input from stdin (handle empty input gracefully)
+INPUT=$(cat) || INPUT=""
+if [[ -z "$INPUT" ]]; then
+  echo '{"decision": "allow"}'
+  exit 0
+fi
+
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) || COMMAND=""
 
 # Only process gh pr create commands
 if ! echo "$COMMAND" | grep -qE "^gh pr create"; then

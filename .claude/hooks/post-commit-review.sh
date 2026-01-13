@@ -2,12 +2,17 @@
 # Check for TODOs after successful git commit
 # Hook type: PostToolUse (Bash)
 
-set -euo pipefail
+# Don't use set -e, we want to continue even if commands fail
+set -uo pipefail
 
-# Read JSON input from stdin
-read -r INPUT
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-STDOUT=$(echo "$INPUT" | jq -r '.tool_result.stdout // empty')
+# Read JSON input from stdin (handle empty input gracefully)
+INPUT=$(cat) || INPUT=""
+if [[ -z "$INPUT" ]]; then
+  exit 0
+fi
+
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) || COMMAND=""
+STDOUT=$(echo "$INPUT" | jq -r '.tool_result.stdout // empty' 2>/dev/null) || STDOUT=""
 
 # Only process git commit commands
 if ! echo "$COMMAND" | grep -qE "^git commit"; then
