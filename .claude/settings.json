@@ -7,7 +7,9 @@
       "Bash(go mod:*)",
       "Bash(go vet:*)",
       "Bash(go install:*)",
+      "Bash(go run:*)",
       "Bash(make:*)",
+      "Bash(buf:*)",
       "Bash(pnpm install)",
       "Bash(pnpm build:*)",
       "Bash(pnpm test:*)",
@@ -33,14 +35,91 @@
     "deny": [
       "Read(./.env)",
       "Read(./.env.*)",
-      "Read(./secrets/**)"
-    ]
+      "Read(./secrets/**)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)"
+    ],
+    "defaultMode": "acceptEdits"
   },
   "sandbox": {
     "enabled": true,
     "autoAllowBashIfSandboxed": true,
     "excludedCommands": [
       "docker"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-context.sh",
+            "timeout": 5,
+            "statusMessage": "Loading context..."
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-end-save.sh",
+            "timeout": 10,
+            "statusMessage": "Saving task state..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-dangerous.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-pr-lint.sh",
+            "timeout": 60,
+            "statusMessage": "Running lint check..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-format.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-commit-review.sh",
+            "timeout": 10
+          },
+          {
+            "type": "agent",
+            "prompt": "A git commit was just made. Review the commit by running 'git diff HEAD~1' and 'git show HEAD'. Check for: 1) Logic errors, 2) Missing error handling, 3) Edge cases not covered, 4) Code style issues. If issues found, report them briefly. If the code looks good, just say 'Commit looks good'. Be concise.",
+            "timeout": 120,
+            "model": "claude-sonnet-4-5-20250929",
+            "statusMessage": "Self-reviewing commit..."
+          }
+        ]
+      }
     ]
   }
 }
