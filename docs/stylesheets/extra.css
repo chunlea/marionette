@@ -1,3 +1,16 @@
+/* ASCII diagram styling - ensure proper monospace rendering */
+pre code {
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", "Roboto Mono", "Source Code Pro", Consolas, Monaco, "Courier New", monospace !important;
+  font-variant-ligatures: none;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+/* Fix for ASCII box drawing characters alignment */
+.md-typeset pre > code {
+  font-feature-settings: "calt" 0, "liga" 0;
+}
+
 /* Mermaid diagram styling */
 .mermaid {
   text-align: center;

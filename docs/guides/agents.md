@@ -53,31 +53,48 @@ You can integrate custom agents by implementing the agent protocol.
 
 The agent binary receives tasks via stdin and outputs to stdout/stderr:
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      Agent Protocol                                 │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   marionette-agent          Agent Binary                            │
-│   ───────────────          ─────────────                            │
-│         │                        │                                  │
-│         │───── Task JSON ───────►│                                  │
-│         │      (stdin)           │                                  │
-│         │                        │                                  │
-│         │◄──── Logs ─────────────│                                  │
-│         │      (stdout/stderr)   │                                  │
-│         │                        │                                  │
-│         │◄──── Permission Req ───│                                  │
-│         │      (stdout, JSON)    │                                  │
-│         │                        │                                  │
-│         │───── Permission Resp ──►│                                  │
-│         │      (stdin, JSON)     │                                  │
-│         │                        │                                  │
-│         │◄──── Result ───────────│                                  │
-│         │      (exit code)       │                                  │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    sequenceDiagram
+        participant MA as marionette-agent
+        participant AB as Agent Binary
+
+        MA->>AB: Task JSON (stdin)
+        AB-->>MA: Logs (stdout/stderr)
+        AB->>MA: Permission Request (JSON)
+        MA->>AB: Permission Response (stdin)
+        AB-->>MA: More Logs
+        AB->>MA: Exit Code (result)
+    ```
+
+=== "Text"
+
+    ```
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                      Agent Protocol                                 │
+    ├─────────────────────────────────────────────────────────────────────┤
+    │                                                                     │
+    │   marionette-agent          Agent Binary                            │
+    │   ───────────────          ─────────────                            │
+    │         │                        │                                  │
+    │         │───── Task JSON ───────►│                                  │
+    │         │      (stdin)           │                                  │
+    │         │                        │                                  │
+    │         │◄──── Logs ─────────────│                                  │
+    │         │      (stdout/stderr)   │                                  │
+    │         │                        │                                  │
+    │         │◄──── Permission Req ───│                                  │
+    │         │      (stdout, JSON)    │                                  │
+    │         │                        │                                  │
+    │         │───── Permission Resp ──►│                                  │
+    │         │      (stdin, JSON)     │                                  │
+    │         │                        │                                  │
+    │         │◄──── Result ───────────│                                  │
+    │         │      (exit code)       │                                  │
+    │                                                                     │
+    └─────────────────────────────────────────────────────────────────────┘
+    ```
 
 ### Custom Agent Example
 
