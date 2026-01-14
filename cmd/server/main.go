@@ -18,6 +18,7 @@ import (
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/observability/health"
 	"github.com/chunlea/marionette/pkg/observability/metrics"
+	"github.com/chunlea/marionette/pkg/observability/trace"
 	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/provider/docker"
 	"github.com/chunlea/marionette/pkg/server/admin"
@@ -56,7 +57,25 @@ func main() {
 		zap.String("config", *configPath),
 		zap.String("log_level", cfg.Logging.Level),
 		zap.Bool("metrics_enabled", cfg.Observability.Metrics.Enabled),
+		zap.Bool("tracing_enabled", cfg.Observability.Tracing.Enabled),
 	)
+
+	// Initialize tracing (if enabled)
+	var tracerProvider *trace.Provider
+	if cfg.Observability.Tracing.Enabled {
+		var err error
+		tracerProvider, err = trace.NewProvider(context.Background(), trace.Config{
+			Enabled:     cfg.Observability.Tracing.Enabled,
+			Exporter:    cfg.Observability.Tracing.Exporter,
+			Endpoint:    cfg.Observability.Tracing.Endpoint,
+			ServiceName: cfg.Observability.Tracing.ServiceName,
+			SampleRate:  cfg.Observability.Tracing.SampleRate,
+			Insecure:    cfg.Observability.Tracing.Insecure,
+		}, logger)
+		if err != nil {
+			logger.Fatal("failed to initialize tracing", zap.Error(err))
+		}
+	}
 
 	// Load secrets (optional in development mode)
 	secrets := config.LoadSecretsOptional()
@@ -248,6 +267,21 @@ func main() {
 		)
 	}
 
+	// Add tracing middleware (if enabled)
+	if tracerProvider != nil && tracerProvider.IsEnabled() {
+		apiOpts = append(apiOpts, api.WithMiddleware(trace.HTTPMiddleware(cfg.Observability.Tracing.ServiceName)))
+
+		grpcOpts = append(grpcOpts,
+			grpcserver.WithUnaryInterceptor(trace.UnaryServerInterceptor()),
+			grpcserver.WithStreamInterceptor(trace.StreamServerInterceptor()),
+		)
+
+		logger.Info("tracing middleware configured",
+			zap.String("service_name", cfg.Observability.Tracing.ServiceName),
+			zap.Float64("sample_rate", cfg.Observability.Tracing.SampleRate),
+		)
+	}
+
 	// Create stream manager (for desktop streaming)
 	var streamMgr *core.StreamManager
 	if dbStore != nil {
@@ -305,6 +339,11 @@ func main() {
 	// Add metrics middleware to admin server (if enabled)
 	if metricsRegistry != nil {
 		adminOpts = append(adminOpts, admin.WithMiddleware(metrics.HTTPMiddleware(metricsRegistry)))
+	}
+
+	// Add tracing middleware to admin server (if enabled)
+	if tracerProvider != nil && tracerProvider.IsEnabled() {
+		adminOpts = append(adminOpts, admin.WithMiddleware(trace.HTTPMiddleware(cfg.Observability.Tracing.ServiceName)))
 	}
 
 	if apiKeySvc != nil {
@@ -473,6 +512,13 @@ func main() {
 	if metricsServer != nil {
 		if err := metricsServer.Shutdown(ctx); err != nil {
 			logger.Error("metrics server shutdown error", zap.Error(err))
+		}
+	}
+
+	// Shutdown tracer provider
+	if tracerProvider != nil {
+		if err := tracerProvider.Shutdown(ctx); err != nil {
+			logger.Error("tracer provider shutdown error", zap.Error(err))
 		}
 	}
 

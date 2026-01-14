@@ -116,4 +116,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("observability.metrics.path", "/metrics")
 	v.SetDefault("observability.metrics.namespace", "marionette")
 	v.SetDefault("observability.health.enabled", true)
+
+	// Tracing defaults
+	v.SetDefault("observability.tracing.enabled", false)
+	v.SetDefault("observability.tracing.exporter", "otlp")
+	v.SetDefault("observability.tracing.endpoint", "localhost:4317")
+	v.SetDefault("observability.tracing.service_name", "marionette-server")
+	v.SetDefault("observability.tracing.sample_rate", 0.1)
+	v.SetDefault("observability.tracing.insecure", true)
 }

@@ -1267,10 +1267,10 @@
   - [x] `/health/live` - Liveness probe
   - [x] `/health/ready` - Readiness probe
   - [x] Database connectivity check
-- [ ] OpenTelemetry traces (optional):
-  - [ ] Trace context propagation
-  - [ ] Span creation for key operations
-  - [ ] Export to Jaeger/Zipkin
+- [x] OpenTelemetry traces:
+  - [x] Trace context propagation
+  - [x] Span creation for key operations
+  - [x] Export to Jaeger/Zipkin/OTLP
 
 ### 8.4 Performance Testing
 
