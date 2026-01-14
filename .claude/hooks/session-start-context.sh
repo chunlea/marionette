@@ -2,7 +2,8 @@
 # Display context at session start
 # Hook type: SessionStart
 
-set -euo pipefail
+# Don't use set -e, we want to continue even if commands fail
+set -uo pipefail
 
 # Get current directory info
 CURRENT_DIR=$(pwd)

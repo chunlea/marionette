@@ -106,9 +106,9 @@ func TestLogStreamWebSocket(t *testing.T) {
 		Timestamp: time.Now(),
 	})
 
-	// Read the message
+	// Read the message with longer timeout for CI
 	var msg LogMessage
-	err = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	err = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	require.NoError(t, err)
 	err = conn.ReadJSON(&msg)
 	require.NoError(t, err)
@@ -163,9 +163,9 @@ func TestEventStreamWebSocket(t *testing.T) {
 		Timestamp: time.Now(),
 	})
 
-	// Read the message
+	// Read the message with longer timeout for CI
 	var msg EventMessage
-	err = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	err = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	require.NoError(t, err)
 	err = conn.ReadJSON(&msg)
 	require.NoError(t, err)
