@@ -1,5 +1,6 @@
 // Package trace provides OpenTelemetry tracing for the Marionette server.
-// It supports OTLP, Jaeger, and Zipkin exporters for distributed tracing.
+// It supports OTLP, stdout, and noop exporters for distributed tracing.
+// OTLP can export to any OpenTelemetry-compatible backend (Jaeger, Zipkin, etc.).
 package trace
 
 import (
@@ -116,8 +117,10 @@ func NewProvider(ctx context.Context, cfg Config, logger *zap.Logger) (*Provider
 		exporter = exp
 
 	case "noop", "":
-		// No exporter, traces are discarded
-		logger.Info("tracing enabled but no exporter configured")
+		// No exporter, traces are sampled but discarded (useful for testing overhead)
+		logger.Info("tracing enabled with noop exporter (traces will be discarded)",
+			zap.String("exporter", cfg.Exporter),
+		)
 
 	default:
 		return nil, fmt.Errorf("unknown exporter type: %s", cfg.Exporter)

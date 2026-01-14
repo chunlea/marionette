@@ -1,7 +1,9 @@
 package trace
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -22,6 +24,7 @@ const (
 )
 
 // HTTPMiddleware returns a chi middleware that creates spans for HTTP requests.
+// The serviceName parameter is recorded as a span attribute for filtering.
 func HTTPMiddleware(serviceName string) func(http.Handler) http.Handler {
 	tracer := otel.Tracer(tracerName)
 	propagator := otel.GetTextMapPropagator()
@@ -35,6 +38,7 @@ func HTTPMiddleware(serviceName string) func(http.Handler) http.Handler {
 			ctx, span := tracer.Start(ctx, r.URL.Path,
 				trace.WithSpanKind(trace.SpanKindServer),
 				trace.WithAttributes(
+					semconv.ServiceName(serviceName),
 					semconv.HTTPRequestMethodKey.String(r.Method),
 					semconv.URLPath(r.URL.Path),
 					semconv.URLScheme(r.URL.Scheme),
@@ -70,6 +74,8 @@ func HTTPMiddleware(serviceName string) func(http.Handler) http.Handler {
 }
 
 // responseWriter wraps http.ResponseWriter to capture the status code.
+// It also implements http.Flusher and http.Hijacker by delegating to the
+// underlying ResponseWriter if it supports those interfaces.
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -78,6 +84,23 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Flush implements http.Flusher. It delegates to the underlying ResponseWriter
+// if it implements http.Flusher, which is needed for SSE and streaming responses.
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack implements http.Hijacker. It delegates to the underlying ResponseWriter
+// if it implements http.Hijacker, which is needed for WebSocket upgrades.
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
 }
 
 // UnaryServerInterceptor returns a gRPC unary server interceptor for tracing.

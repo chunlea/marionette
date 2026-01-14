@@ -438,3 +438,50 @@ func TestProvider_Tracer_Enabled(t *testing.T) {
 	err = provider.Shutdown(context.Background())
 	require.NoError(t, err)
 }
+
+func TestResponseWriter_Flush(t *testing.T) {
+	t.Run("delegates to underlying flusher", func(t *testing.T) {
+		flushed := false
+		underlying := &mockFlusher{
+			ResponseWriter: httptest.NewRecorder(),
+			onFlush:        func() { flushed = true },
+		}
+
+		rw := &responseWriter{ResponseWriter: underlying, statusCode: http.StatusOK}
+		rw.Flush()
+
+		assert.True(t, flushed)
+	})
+
+	t.Run("no-op if underlying does not implement Flusher", func(t *testing.T) {
+		underlying := httptest.NewRecorder()
+		rw := &responseWriter{ResponseWriter: underlying, statusCode: http.StatusOK}
+
+		// Should not panic
+		rw.Flush()
+	})
+}
+
+func TestResponseWriter_Hijack(t *testing.T) {
+	t.Run("returns error if underlying does not implement Hijacker", func(t *testing.T) {
+		underlying := httptest.NewRecorder()
+		rw := &responseWriter{ResponseWriter: underlying, statusCode: http.StatusOK}
+
+		conn, buf, err := rw.Hijack()
+		assert.Nil(t, conn)
+		assert.Nil(t, buf)
+		assert.Equal(t, http.ErrNotSupported, err)
+	})
+}
+
+// mockFlusher implements http.Flusher for testing
+type mockFlusher struct {
+	http.ResponseWriter
+	onFlush func()
+}
+
+func (m *mockFlusher) Flush() {
+	if m.onFlush != nil {
+		m.onFlush()
+	}
+}
