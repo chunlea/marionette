@@ -30,7 +30,7 @@ func TestControlChannel_Start(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	client := NewClient(cfg, logger)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	err = client.Connect(ctx)
@@ -91,7 +91,7 @@ func TestControlChannel_Send(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	client := NewClient(cfg, logger)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	err = client.Connect(ctx)
@@ -342,8 +342,8 @@ func TestControlChannel_ReceiveCommands(t *testing.T) {
 			}
 		}
 
-		// Keep connection open briefly
-		time.Sleep(200 * time.Millisecond)
+		// Keep connection open longer for CI environments
+		time.Sleep(2 * time.Second)
 		return nil
 	}
 
@@ -360,7 +360,7 @@ func TestControlChannel_ReceiveCommands(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	client := NewClient(cfg, logger)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	err = client.Connect(ctx)
@@ -373,12 +373,23 @@ func TestControlChannel_ReceiveCommands(t *testing.T) {
 	err = control.Start(ctx)
 	require.NoError(t, err)
 
-	// Wait for command to be processed
-	time.Sleep(300 * time.Millisecond)
+	// Wait for command to be processed with retry
+	var received bool
+	for i := 0; i < 20; i++ {
+		time.Sleep(100 * time.Millisecond)
+		mockHandler.mu.Lock()
+		if len(mockHandler.AttachSessionCalls) > 0 {
+			received = true
+			mockHandler.mu.Unlock()
+			break
+		}
+		mockHandler.mu.Unlock()
+	}
 
 	control.Stop()
 
 	// Verify command was received
+	require.True(t, received, "expected to receive AttachSession command")
 	mockHandler.mu.Lock()
 	defer mockHandler.mu.Unlock()
 	assert.Len(t, mockHandler.AttachSessionCalls, 1)

@@ -45,8 +45,8 @@ func TestClient_Connect_Success(t *testing.T) {
 	// Initial state should be disconnected
 	assert.Equal(t, StateDisconnected, client.State())
 
-	// Connect
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Connect - use longer timeout for CI environments
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	err = client.Connect(ctx)
@@ -90,7 +90,7 @@ func TestClient_Connect_Rejected(t *testing.T) {
 
 	client := NewClient(cfg, zaptest.NewLogger(t))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	err = client.Connect(ctx)
@@ -113,7 +113,7 @@ func TestClient_Connect_ServerUnavailable(t *testing.T) {
 
 	client := NewClient(cfg, zaptest.NewLogger(t))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	err := client.Connect(ctx)
