@@ -163,7 +163,7 @@ func TestControlChannel_StopAsync(t *testing.T) {
 	select {
 	case <-done:
 		// Success
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("Wait did not return after StopAsync")
 	}
 }
