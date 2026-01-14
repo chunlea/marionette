@@ -4,43 +4,113 @@ Marionette uses PostgreSQL for persistent storage.
 
 ## Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      Database Schema                                │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  Core Tables                    Configuration Tables                │
-│  ───────────                    ────────────────────                │
-│  ┌───────────┐                  ┌─────────────────┐                 │
-│  │  runners  │                  │ provider_configs│                 │
-│  └─────┬─────┘                  └─────────────────┘                 │
-│        │                        ┌─────────────────┐                 │
-│  ┌─────▼─────┐                  │  agent_configs  │                 │
-│  │ sessions  │                  └─────────────────┘                 │
-│  └─────┬─────┘                  ┌─────────────────┐                 │
-│        │                        │    profiles     │                 │
-│  ┌─────▼─────┐                  └─────────────────┘                 │
-│  │   tasks   │                                                      │
-│  └─────┬─────┘                  Auth Tables                         │
-│        │                        ────────────                        │
-│  ┌─────▼─────┐                  ┌─────────────────┐                 │
-│  │ task_runs │                  │    api_keys     │                 │
-│  └───────────┘                  └─────────────────┘                 │
-│                                 ┌─────────────────┐                 │
-│  ┌───────────┐                  │  runner_tokens  │                 │
-│  │permissions│                  └─────────────────┘                 │
-│  └───────────┘                                                      │
-│                                 Storage Tables                      │
-│  ┌───────────┐                  ──────────────────                  │
-│  │workspaces │                  ┌─────────────────┐                 │
-│  └───────────┘                  │     chunks      │                 │
-│                                 └─────────────────┘                 │
-│  ┌───────────┐                  ┌─────────────────┐                 │
-│  │  tunnels  │                  │    manifests    │                 │
-│  └───────────┘                  └─────────────────┘                 │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    erDiagram
+        runners ||--o{ sessions : "hosts"
+        sessions ||--o{ tasks : "contains"
+        sessions ||--o{ permission_requests : "has"
+        sessions ||--o{ tunnels : "creates"
+        sessions }o--|| workspaces : "uses"
+        tasks ||--o{ task_runs : "attempts"
+        tasks ||--o{ permission_requests : "triggers"
+
+        runners {
+            text id PK "run_xxx"
+            text name
+            text status "offline|idle|busy|paused"
+            text pool_name
+        }
+
+        sessions {
+            text id PK "sess_xxx"
+            text name
+            text status "pending|active|suspended|terminated"
+            text runner_id FK
+            text workspace_id FK
+            text agent
+        }
+
+        tasks {
+            text id PK "task_xxx"
+            text session_id FK
+            text prompt
+            text status "pending|running|completed|failed"
+            int timeout_seconds
+        }
+
+        task_runs {
+            text id PK "trun_xxx"
+            text task_id FK
+            int attempt
+            text status
+            int exit_code
+        }
+
+        permission_requests {
+            text id PK "perm_xxx"
+            text session_id FK
+            text task_id FK
+            text tool
+            text action
+            text status "pending|approved|denied"
+        }
+
+        workspaces {
+            text id PK "ws_xxx"
+            text name
+            text storage_type
+            boolean persist
+        }
+
+        tunnels {
+            text id PK "tun_xxx"
+            text session_id FK
+            text type "http|tcp|desktop"
+            int local_port
+        }
+    ```
+
+=== "Text"
+
+    ```
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                      Database Schema                                │
+    ├─────────────────────────────────────────────────────────────────────┤
+    │                                                                     │
+    │  Core Tables                    Configuration Tables                │
+    │  ───────────                    ────────────────────                │
+    │  ┌───────────┐                  ┌─────────────────┐                 │
+    │  │  runners  │                  │ provider_configs│                 │
+    │  └─────┬─────┘                  └─────────────────┘                 │
+    │        │                        ┌─────────────────┐                 │
+    │  ┌─────▼─────┐                  │  agent_configs  │                 │
+    │  │ sessions  │                  └─────────────────┘                 │
+    │  └─────┬─────┘                  ┌─────────────────┐                 │
+    │        │                        │    profiles     │                 │
+    │  ┌─────▼─────┐                  └─────────────────┘                 │
+    │  │   tasks   │                                                      │
+    │  └─────┬─────┘                  Auth Tables                         │
+    │        │                        ────────────                        │
+    │  ┌─────▼─────┐                  ┌─────────────────┐                 │
+    │  │ task_runs │                  │    api_keys     │                 │
+    │  └───────────┘                  └─────────────────┘                 │
+    │                                 ┌─────────────────┐                 │
+    │  ┌───────────┐                  │  runner_tokens  │                 │
+    │  │permissions│                  └─────────────────┘                 │
+    │  └───────────┘                                                      │
+    │                                 Storage Tables                      │
+    │  ┌───────────┐                  ──────────────────                  │
+    │  │workspaces │                  ┌─────────────────┐                 │
+    │  └───────────┘                  │     chunks      │                 │
+    │                                 └─────────────────┘                 │
+    │  ┌───────────┐                  ┌─────────────────┐                 │
+    │  │  tunnels  │                  │    manifests    │                 │
+    │  └───────────┘                  └─────────────────┘                 │
+    │                                                                     │
+    └─────────────────────────────────────────────────────────────────────┘
+    ```
 
 ## Core Tables
 
