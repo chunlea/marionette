@@ -22,32 +22,61 @@ Every session has a workspace mounted at `/workspace`. This directory:
 
 CAS provides efficient, deduplicated storage:
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Content-Addressable Storage                      │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   Workspace                    Chunks (deduplicated)                │
-│   ─────────                    ──────                               │
-│   /workspace/                  ┌─────────────────────────────┐      │
-│   ├── src/                     │ Chunk Store (S3/GCS/Local)  │      │
-│   │   ├── main.go ─────────────┤ ┌───────┐ ┌───────┐         │      │
-│   │   └── utils.go ────────────┤ │ abc123│ │ def456│         │      │
-│   ├── go.mod ──────────────────┤ │ (4KB) │ │ (8KB) │         │      │
-│   └── README.md ───────────────┤ └───────┘ └───────┘         │      │
-│                                │ ┌───────┐ ┌───────┐         │      │
-│   Manifest                     │ │ ghi789│ │ jkl012│         │      │
-│   ────────                     │ │ (2KB) │ │ (16KB)│         │      │
-│   {                            │ └───────┘ └───────┘         │      │
-│     "files": [                 └─────────────────────────────┘      │
-│       {"path": "src/main.go",                                       │
-│        "chunks": ["abc123"]},                                       │
-│       ...                                                           │
-│     ]                                                               │
-│   }                                                                 │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart LR
+        subgraph Workspace["/workspace"]
+            src["src/"]
+            main["main.go"]
+            utils["utils.go"]
+            mod["go.mod"]
+            readme["README.md"]
+            src --> main
+            src --> utils
+        end
+
+        subgraph ChunkStore["Chunk Store (S3/Local)"]
+            c1["abc123<br/>4KB"]
+            c2["def456<br/>8KB"]
+            c3["ghi789<br/>2KB"]
+            c4["jkl012<br/>16KB"]
+        end
+
+        main --> c1
+        utils --> c2
+        mod --> c3
+        readme --> c4
+    ```
+
+=== "Text"
+
+    ```
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                    Content-Addressable Storage                      │
+    ├─────────────────────────────────────────────────────────────────────┤
+    │                                                                     │
+    │   Workspace                    Chunks (deduplicated)                │
+    │   ─────────                    ──────                               │
+    │   /workspace/                  ┌─────────────────────────────┐      │
+    │   ├── src/                     │ Chunk Store (S3/GCS/Local)  │      │
+    │   │   ├── main.go ─────────────┤ ┌───────┐ ┌───────┐         │      │
+    │   │   └── utils.go ────────────┤ │ abc123│ │ def456│         │      │
+    │   ├── go.mod ──────────────────┤ │ (4KB) │ │ (8KB) │         │      │
+    │   └── README.md ───────────────┤ └───────┘ └───────┘         │      │
+    │                                │ ┌───────┐ ┌───────┐         │      │
+    │   Manifest                     │ │ ghi789│ │ jkl012│         │      │
+    │   ────────                     │ │ (2KB) │ │ (16KB)│         │      │
+    │   {                            │ └───────┘ └───────┘         │      │
+    │     "files": [                 └─────────────────────────────┘      │
+    │       {"path": "src/main.go",                                       │
+    │        "chunks": ["abc123"]},                                       │
+    │       ...                                                           │
+    │     ]                                                               │
+    │   }                                                                 │
+    │                                                                     │
+    └─────────────────────────────────────────────────────────────────────┘
+    ```
 
 ### Benefits
 
@@ -113,32 +142,49 @@ mctl sessions create \
 
 ## Workspace Lifecycle
 
-```
-Session Created
-      │
-      ▼
-Workspace Created (empty /workspace)
-      │
-      ▼
-Tasks Execute (files created/modified)
-      │
-      ├──► Session Suspended
-      │         │
-      │         ▼
-      │    Workspace Synced (if object_sync)
-      │         │
-      │         ▼
-      │    Session Resumed
-      │         │
-      │         ▼
-      │    Workspace Restored
-      │
-      ▼
-Session Terminated
-      │
-      ▼
-Workspace Cleanup (configurable retention)
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart TD
+        A[Session Created] --> B[Workspace Created]
+        B --> C[Tasks Execute]
+        C --> D{Session State}
+        D -->|Suspend| E[Workspace Synced]
+        E --> F[Session Resumed]
+        F --> G[Workspace Restored]
+        G --> C
+        D -->|Terminate| H[Session Terminated]
+        H --> I[Workspace Cleanup]
+    ```
+
+=== "Text"
+
+    ```
+    Session Created
+          │
+          ▼
+    Workspace Created (empty /workspace)
+          │
+          ▼
+    Tasks Execute (files created/modified)
+          │
+          ├──► Session Suspended
+          │         │
+          │         ▼
+          │    Workspace Synced (if object_sync)
+          │         │
+          │         ▼
+          │    Session Resumed
+          │         │
+          │         ▼
+          │    Workspace Restored
+          │
+          ▼
+    Session Terminated
+          │
+          ▼
+    Workspace Cleanup (configurable retention)
+    ```
 
 ## Data Retention
 

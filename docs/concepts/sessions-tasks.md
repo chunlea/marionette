@@ -13,21 +13,35 @@ A **Session** is a long-lived work context that:
 
 ### Session Lifecycle
 
-```
-┌─────────┐     assign      ┌─────────┐
-│ pending │────────────────►│ active  │
-└─────────┘                 └────┬────┘
-                                 │
-                    ┌────────────┼────────────┐
-                    │            │            │
-                    ▼            │            ▼
-              ┌───────────┐     │      ┌────────────┐
-              │ suspended │     │      │ terminated │
-              └─────┬─────┘     │      └────────────┘
-                    │           │
-                    │  resume   │
-                    └───────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    stateDiagram-v2
+        [*] --> pending
+        pending --> active: assign runner
+        active --> suspended: suspend
+        active --> terminated: terminate
+        suspended --> active: resume
+        terminated --> [*]
+    ```
+
+=== "Text"
+
+    ```
+    ┌─────────┐     assign      ┌─────────┐
+    │ pending │────────────────►│ active  │
+    └─────────┘                 └────┬────┘
+                                     │
+                        ┌────────────┼────────────┐
+                        │            │            │
+                        ▼            │            ▼
+                  ┌───────────┐     │      ┌────────────┐
+                  │ suspended │     │      │ terminated │
+                  └─────┬─────┘     │      └────────────┘
+                        │           │
+                        │  resume   │
+                        └───────────┘
+    ```
 
 | State | Description |
 |-------|-------------|
@@ -42,15 +56,39 @@ A **Session** is a long-lived work context that:
     Sessions **outlive** runners. A session can have 0 or 1 runner at any time.
     Runners can be attached/detached without losing session state.
 
-```
-Session                     Runner
-─────────                   ──────
-pending     ←───────────    (no runner)
-active      ←───────────►   idle/busy
-suspended   ←───────────    (released)
-resuming    ←───────────    (acquiring)
-active      ←───────────►   idle/busy
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart LR
+        subgraph Session
+            pending
+            active
+            suspended
+            resuming
+        end
+        subgraph Runner
+            none["(no runner)"]
+            idle["idle/busy"]
+            released["(released)"]
+            acquiring["(acquiring)"]
+        end
+        pending --- none
+        active <--> idle
+        suspended --- released
+        resuming --- acquiring
+    ```
+
+=== "Text"
+
+    ```
+    Session                     Runner
+    ─────────                   ──────
+    pending     ←───────────    (no runner)
+    active      ←───────────►   idle/busy
+    suspended   ←───────────    (released)
+    resuming    ←───────────    (acquiring)
+    active      ←───────────►   idle/busy
+    ```
 
 ### What Persists Across Runner Changes
 
@@ -79,18 +117,36 @@ A **Task** is a unit of work (a prompt) submitted to a session.
 
 ### Task Lifecycle
 
-```
-┌─────────┐    assign     ┌─────────┐    start    ┌─────────┐
-│ pending │──────────────►│ running │────────────►│completed│
-└─────────┘               └────┬────┘             └─────────┘
-                               │
-                    ┌──────────┼──────────┐
-                    │          │          │
-                    ▼          ▼          ▼
-              ┌────────┐ ┌────────┐ ┌──────────┐
-              │ failed │ │canceled│ │ timeout  │
-              └────────┘ └────────┘ └──────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    stateDiagram-v2
+        [*] --> pending
+        pending --> running: assign
+        running --> completed: success
+        running --> failed: error
+        running --> canceled: cancel
+        running --> timeout: timeout
+        completed --> [*]
+        failed --> [*]
+        canceled --> [*]
+        timeout --> [*]
+    ```
+
+=== "Text"
+
+    ```
+    ┌─────────┐    assign     ┌─────────┐    start    ┌─────────┐
+    │ pending │──────────────►│ running │────────────►│completed│
+    └─────────┘               └────┬────┘             └─────────┘
+                                   │
+                        ┌──────────┼──────────┐
+                        │          │          │
+                        ▼          ▼          ▼
+                  ┌────────┐ ┌────────┐ ┌──────────┐
+                  │ failed │ │canceled│ │ timeout  │
+                  └────────┘ └────────┘ └──────────┘
+    ```
 
 | State | Description |
 |-------|-------------|
@@ -105,12 +161,23 @@ A **Task** is a unit of work (a prompt) submitted to a session.
 
 Each task can have multiple **runs** (execution attempts):
 
-```
-Task
-├── Run 1 (attempt=1): failed (timeout)
-├── Run 2 (attempt=2): failed (error)
-└── Run 3 (attempt=3): completed ✓
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart LR
+        Task --> R1["Run 1 ❌<br/>timeout"]
+        Task --> R2["Run 2 ❌<br/>error"]
+        Task --> R3["Run 3 ✅<br/>completed"]
+    ```
+
+=== "Text"
+
+    ```
+    Task
+    ├── Run 1 (attempt=1): failed (timeout)
+    ├── Run 2 (attempt=2): failed (error)
+    └── Run 3 (attempt=3): completed ✓
+    ```
 
 Configure retries:
 
@@ -126,27 +193,44 @@ mctl tasks create \
 
 When an agent needs approval for sensitive operations:
 
-```
-Agent requests permission
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  PermissionRequest (status: pending)    │
-│  Runner blocks, waiting for approval    │
-└────────────────────┬────────────────────┘
-                     │
-     ┌───────────────┼───────────────┐
-     ▼               ▼               ▼
-  Approved        Denied       No response
-     │               │         (30 min)
-     ▼               ▼               │
-  Continue      Handle          Session
-  with action   gracefully      suspended
-                                     │
-                                     ▼
-                              User resumes +
-                              responds later
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart TD
+        A[Agent requests permission] --> P["PermissionRequest<br/>(status: pending)"]
+        P --> Approved
+        P --> Denied
+        P --> NoResponse["No response (30 min)"]
+
+        Approved --> Continue["Continue with action"]
+        Denied --> Handle["Handle gracefully"]
+        NoResponse --> Suspend["Session suspended"]
+        Suspend --> Resume["User resumes +<br/>responds later"]
+    ```
+
+=== "Text"
+
+    ```
+    Agent requests permission
+             │
+             ▼
+    ┌─────────────────────────────────────────┐
+    │  PermissionRequest (status: pending)    │
+    │  Runner blocks, waiting for approval    │
+    └────────────────────┬────────────────────┘
+                         │
+         ┌───────────────┼───────────────┐
+         ▼               ▼               ▼
+      Approved        Denied       No response
+         │               │         (30 min)
+         ▼               ▼               │
+      Continue      Handle          Session
+      with action   gracefully      suspended
+                                         │
+                                         ▼
+                                  User resumes +
+                                  responds later
+    ```
 
 !!! note "No Auto-Deny"
     Permission requests stay pending until explicit user response.

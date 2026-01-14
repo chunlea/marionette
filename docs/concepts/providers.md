@@ -12,28 +12,56 @@ Marionette supports three provider modes:
 | **Pool** | Runners join a pool, server assigns work | macOS Pool, GPU Pool, Bare Metal |
 | **External** | Manual one-off registration | Self-hosted runners |
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      Provider Types                                 │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  Managed (lifecycle controlled by server)                           │
-│  ┌────────┐ ┌────────────┐ ┌─────┐ ┌───────────┐                    │
-│  │ Docker │ │ Kubernetes │ │ E2B │ │Firecracker│                    │
-│  └────────┘ └────────────┘ └─────┘ └───────────┘                    │
-│                                                                     │
-│  Pool (runners join, server assigns)                                │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                    │
-│  │ macOS Pool  │ │  GPU Pool   │ │ Metal Pool  │                    │
-│  └─────────────┘ └─────────────┘ └─────────────┘                    │
-│                                                                     │
-│  External (manual registration)                                     │
-│  ┌─────────────────────────────────────────────┐                    │
-│  │         Self-hosted runners                 │                    │
-│  └─────────────────────────────────────────────┘                    │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart TB
+        subgraph Managed["Managed (server controls lifecycle)"]
+            Docker
+            K8s[Kubernetes]
+            E2B
+            FC[Firecracker]
+        end
+
+        subgraph Pool["Pool (runners join, server assigns)"]
+            macOS[macOS Pool]
+            GPU[GPU Pool]
+            Metal[Metal Pool]
+        end
+
+        subgraph External["External (manual registration)"]
+            Self[Self-hosted runners]
+        end
+
+        Server[Marionette Server] --> Managed
+        Server --> Pool
+        Server --> External
+    ```
+
+=== "Text"
+
+    ```
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                      Provider Types                                 │
+    ├─────────────────────────────────────────────────────────────────────┤
+    │                                                                     │
+    │  Managed (lifecycle controlled by server)                           │
+    │  ┌────────┐ ┌────────────┐ ┌─────┐ ┌───────────┐                    │
+    │  │ Docker │ │ Kubernetes │ │ E2B │ │Firecracker│                    │
+    │  └────────┘ └────────────┘ └─────┘ └───────────┘                    │
+    │                                                                     │
+    │  Pool (runners join, server assigns)                                │
+    │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                    │
+    │  │ macOS Pool  │ │  GPU Pool   │ │ Metal Pool  │                    │
+    │  └─────────────┘ └─────────────┘ └─────────────┘                    │
+    │                                                                     │
+    │  External (manual registration)                                     │
+    │  ┌─────────────────────────────────────────────┐                    │
+    │  │         Self-hosted runners                 │                    │
+    │  └─────────────────────────────────────────────┘                    │
+    │                                                                     │
+    └─────────────────────────────────────────────────────────────────────┘
+    ```
 
 ## Managed Providers
 
@@ -88,28 +116,55 @@ Pool providers allow pre-provisioned machines to join and receive work.
 
 ### How Pools Work
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Pool Provider                             │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌─────────────────┐      ┌─────────────────────────────────┐    │
-│  │     Server      │      │           Pool: macos           │    │
-│  │                 │      │  ┌───────┐ ┌───────┐ ┌───────┐  │    │
-│  │  ┌───────────┐  │      │  │Runner1│ │Runner2│ │Runner3│  │    │
-│  │  │  Matcher  │◄─┼──────┼──┤ idle  │ │ busy  │ │ idle  │  │    │
-│  │  └───────────┘  │      │  └───────┘ └───────┘ └───────┘  │    │
-│  │       │         │      └─────────────────────────────────┘    │
-│  │       ▼         │                                             │
-│  │  ┌───────────┐  │      ┌─────────────────────────────────┐    │
-│  │  │ Assigner  │──┼─────►│           Pool: gpu             │    │
-│  │  └───────────┘  │      │  ┌───────┐ ┌───────┐            │    │
-│  │                 │      │  │Runner4│ │Runner5│            │    │
-│  └─────────────────┘      │  │ idle  │ │ idle  │            │    │
-│                           │  └───────┘ └───────┘            │    │
-│                           └─────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart LR
+        subgraph Server
+            Matcher
+            Assigner
+            Matcher --> Assigner
+        end
+
+        subgraph macOS["Pool: macos"]
+            R1["Runner1<br/>idle"]
+            R2["Runner2<br/>busy"]
+            R3["Runner3<br/>idle"]
+        end
+
+        subgraph GPU["Pool: gpu"]
+            R4["Runner4<br/>idle"]
+            R5["Runner5<br/>idle"]
+        end
+
+        macOS <--> Matcher
+        GPU <--> Assigner
+    ```
+
+=== "Text"
+
+    ```
+    ┌──────────────────────────────────────────────────────────────────┐
+    │                        Pool Provider                             │
+    ├──────────────────────────────────────────────────────────────────┤
+    │                                                                  │
+    │  ┌─────────────────┐      ┌─────────────────────────────────┐    │
+    │  │     Server      │      │           Pool: macos           │    │
+    │  │                 │      │  ┌───────┐ ┌───────┐ ┌───────┐  │    │
+    │  │  ┌───────────┐  │      │  │Runner1│ │Runner2│ │Runner3│  │    │
+    │  │  │  Matcher  │◄─┼──────┼──┤ idle  │ │ busy  │ │ idle  │  │    │
+    │  │  └───────────┘  │      │  └───────┘ └───────┘ └───────┘  │    │
+    │  │       │         │      └─────────────────────────────────┘    │
+    │  │       ▼         │                                             │
+    │  │  ┌───────────┐  │      ┌─────────────────────────────────┐    │
+    │  │  │ Assigner  │──┼─────►│           Pool: gpu             │    │
+    │  │  └───────────┘  │      │  ┌───────┐ ┌───────┐            │    │
+    │  │                 │      │  │Runner4│ │Runner5│            │    │
+    │  └─────────────────┘      │  │ idle  │ │ idle  │            │    │
+    │                           │  └───────┘ └───────┘            │    │
+    │                           └─────────────────────────────────┘    │
+    └──────────────────────────────────────────────────────────────────┘
+    ```
 
 ### Pool Configuration
 

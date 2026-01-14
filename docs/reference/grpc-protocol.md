@@ -6,20 +6,36 @@ The agent-to-server communication protocol.
 
 Agents communicate with the server using bidirectional gRPC streaming:
 
-```
-┌──────────────────┐                    ┌──────────────────┐
-│      Agent       │                    │      Server      │
-│                  │                    │                  │
-│  ┌────────────┐  │     Connect()      │  ┌────────────┐  │
-│  │ gRPC Client├──┼───────────────────►│  │ gRPC Server│  │
-│  └────────────┘  │                    │  └────────────┘  │
-│                  │◄─── Control ───────│                  │
-│                  │     (commands)     │                  │
-│                  │                    │                  │
-│                  │──── Events ───────►│                  │
-│                  │     (logs, etc)    │                  │
-└──────────────────┘                    └──────────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    sequenceDiagram
+        participant Agent as Agent (gRPC Client)
+        participant Server as Server (gRPC Server)
+
+        Agent->>Server: Connect()
+        loop Bidirectional Streaming
+            Server-->>Agent: Control (commands)
+            Agent-->>Server: Events (logs, etc)
+        end
+    ```
+
+=== "Text"
+
+    ```
+    ┌──────────────────┐                    ┌──────────────────┐
+    │      Agent       │                    │      Server      │
+    │                  │                    │                  │
+    │  ┌────────────┐  │     Connect()      │  ┌────────────┐  │
+    │  │ gRPC Client├──┼───────────────────►│  │ gRPC Server│  │
+    │  └────────────┘  │                    │  └────────────┘  │
+    │                  │◄─── Control ───────│                  │
+    │                  │     (commands)     │                  │
+    │                  │                    │                  │
+    │                  │──── Events ───────►│                  │
+    │                  │     (logs, etc)    │                  │
+    └──────────────────┘                    └──────────────────┘
+    ```
 
 ## Service Definition
 

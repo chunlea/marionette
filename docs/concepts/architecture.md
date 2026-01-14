@@ -4,38 +4,83 @@ Marionette is designed as a modular, scalable platform for orchestrating AI codi
 
 ## System Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Server (Go)                                    │
-│  ┌────────────────────────────────────────────────────────────────────┐     │
-│  │                            Core                                    │     │
-│  │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐       │     │
-│  │  │ SessionMgr │ │  TaskMgr   │ │ RunnerMgr  │ │ TunnelMgr  │       │     │
-│  │  └────────────┘ └────────────┘ └────────────┘ └────────────┘       │     │
-│  │  ┌────────────┐ ┌────────────┐ ┌────────────┐                      │     │
-│  │  │ ProviderMgr│ │WorkspaceMgr│ │ SandboxMgr │                      │     │
-│  │  └─────┬──────┘ └─────┬──────┘ └────────────┘                      │     │
-│  └────────┼──────────────┼────────────────────────────────────────────┘     │
-│           │              │                                                  │
-│  ┌────────▼──────────────▼────────────────────────────────────────────┐     │
-│  │                    Provider Registry                               │     │
-│  │  ┌────────┐ ┌────────────┐ ┌─────┐ ┌───────────┐ ┌──────┐          │     │
-│  │  │ Docker │ │ Kubernetes │ │ E2B │ │Firecracker│ │ Pool │          │     │
-│  │  └────────┘ └────────────┘ └─────┘ └───────────┘ └──────┘          │     │
-│  └────────────────────────────────────────────────────────────────────┘     │
-│           │                                                                 │
-│  ┌────────▼───────────────────────────────────────────────────────────┐     │
-│  │  :9090 gRPC   |<---- marionette-agent (mTLS)                       │     │
-│  │  :8080 Public |<---- CLI / External Apps (API Key)                 │     │
-│  │  :8081 Admin  |<---- Admin WebUI (Basic Auth)                      │     │
-│  └────────────────────────────────────────────────────────────────────┘     │
-│           │                                                                 │
-│  ┌────────▼──────┐                                                          │
-│  │    Store      │                                                          │
-│  │  PostgreSQL   │                                                          │
-│  └───────────────┘                                                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart TB
+        subgraph Server["Server (Go)"]
+            subgraph Core["Core Services"]
+                SM[SessionMgr]
+                TM[TaskMgr]
+                RM[RunnerMgr]
+                TuM[TunnelMgr]
+                PM[ProviderMgr]
+                WM[WorkspaceMgr]
+                SaM[SandboxMgr]
+            end
+
+            subgraph Providers["Provider Registry"]
+                Docker
+                K8s[Kubernetes]
+                E2B
+                FC[Firecracker]
+                Pool
+            end
+
+            Core --> Providers
+
+            subgraph Endpoints["API Endpoints"]
+                GRPC[":9090 gRPC<br/>marionette-agent (mTLS)"]
+                API[":8080 Public<br/>CLI / Apps (API Key)"]
+                Admin[":8081 Admin<br/>WebUI (Basic Auth)"]
+            end
+
+            Providers --> Endpoints
+
+            DB[(PostgreSQL)]
+            Endpoints --> DB
+        end
+
+        Agent1[marionette-agent] <-.->|mTLS| GRPC
+        Agent2[marionette-agent] <-.->|mTLS| GRPC
+        CLI[CLI / External Apps] <-.->|API Key| API
+        WebUI[Admin WebUI] <-.->|Basic Auth| Admin
+    ```
+
+=== "Text"
+
+    ```
+    ┌─────────────────────────────────────────────────────────────────────────────┐
+    │                              Server (Go)                                    │
+    │  ┌────────────────────────────────────────────────────────────────────┐     │
+    │  │                            Core                                    │     │
+    │  │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐       │     │
+    │  │  │ SessionMgr │ │  TaskMgr   │ │ RunnerMgr  │ │ TunnelMgr  │       │     │
+    │  │  └────────────┘ └────────────┘ └────────────┘ └────────────┘       │     │
+    │  │  ┌────────────┐ ┌────────────┐ ┌────────────┐                      │     │
+    │  │  │ ProviderMgr│ │WorkspaceMgr│ │ SandboxMgr │                      │     │
+    │  │  └─────┬──────┘ └─────┬──────┘ └────────────┘                      │     │
+    │  └────────┼──────────────┼────────────────────────────────────────────┘     │
+    │           │              │                                                  │
+    │  ┌────────▼──────────────▼────────────────────────────────────────────┐     │
+    │  │                    Provider Registry                               │     │
+    │  │  ┌────────┐ ┌────────────┐ ┌─────┐ ┌───────────┐ ┌──────┐          │     │
+    │  │  │ Docker │ │ Kubernetes │ │ E2B │ │Firecracker│ │ Pool │          │     │
+    │  │  └────────┘ └────────────┘ └─────┘ └───────────┘ └──────┘          │     │
+    │  └────────────────────────────────────────────────────────────────────┘     │
+    │           │                                                                 │
+    │  ┌────────▼───────────────────────────────────────────────────────────┐     │
+    │  │  :9090 gRPC   |<---- marionette-agent (mTLS)                       │     │
+    │  │  :8080 Public |<---- CLI / External Apps (API Key)                 │     │
+    │  │  :8081 Admin  |<---- Admin WebUI (Basic Auth)                      │     │
+    │  └────────────────────────────────────────────────────────────────────┘     │
+    │           │                                                                 │
+    │  ┌────────▼──────┐                                                          │
+    │  │    Store      │                                                          │
+    │  │  PostgreSQL   │                                                          │
+    │  └───────────────┘                                                          │
+    └─────────────────────────────────────────────────────────────────────────────┘
+    ```
 
 ## Components
 
@@ -85,20 +130,36 @@ Command-line interface for:
 
 Agents **initiate** connections to the server (not the reverse):
 
-```
-┌──────────────────┐                    ┌──────────────────┐
-│      Agent       │                    │      Server      │
-│                  │                    │                  │
-│  ┌────────────┐  │     Connect()      │  ┌────────────┐  │
-│  │ gRPC Client├──┼───────────────────►│  │ gRPC Server│  │
-│  └────────────┘  │                    │  └────────────┘  │
-│                  │◄─── Control ───────│                  │
-│                  │     (tasks)        │                  │
-│                  │                    │                  │
-│                  │──── Events ───────►│                  │
-│                  │     (logs, perms)  │                  │
-└──────────────────┘                    └──────────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    sequenceDiagram
+        participant Agent as Agent (gRPC Client)
+        participant Server as Server (gRPC Server)
+
+        Agent->>Server: Connect()
+        activate Server
+        Server-->>Agent: Control Stream (tasks)
+        Agent-->>Server: Event Stream (logs, permissions)
+        deactivate Server
+    ```
+
+=== "Text"
+
+    ```
+    ┌──────────────────┐                    ┌──────────────────┐
+    │      Agent       │                    │      Server      │
+    │                  │                    │                  │
+    │  ┌────────────┐  │     Connect()      │  ┌────────────┐  │
+    │  │ gRPC Client├──┼───────────────────►│  │ gRPC Server│  │
+    │  └────────────┘  │                    │  └────────────┘  │
+    │                  │◄─── Control ───────│                  │
+    │                  │     (tasks)        │                  │
+    │                  │                    │                  │
+    │                  │──── Events ───────►│                  │
+    │                  │     (logs, perms)  │                  │
+    └──────────────────┘                    └──────────────────┘
+    ```
 
 This design:
 
@@ -187,32 +248,52 @@ See [Storage](../reference/storage.md) for details on content-addressable storag
 
 ### High Availability
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Load Balancer                        │
-└─────────────────────────┬───────────────────────────────┘
-                          │
-        ┌─────────────────┼─────────────────┐
-        │                 │                 │
-        ▼                 ▼                 ▼
-┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-│   Server 1    │ │   Server 2    │ │   Server 3    │
-└───────┬───────┘ └───────┬───────┘ └───────┬───────┘
-        │                 │                 │
-        └─────────────────┼─────────────────┘
-                          │
-                          ▼
-                ┌─────────────────┐
-                │   PostgreSQL    │
-                │   (Primary)     │
-                └────────┬────────┘
-                         │
-              ┌──────────┴──────────┐
-              ▼                     ▼
-      ┌─────────────┐       ┌─────────────┐
-      │   Replica   │       │   Replica   │
-      └─────────────┘       └─────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart TB
+        LB[Load Balancer]
+
+        LB --> S1[Server 1]
+        LB --> S2[Server 2]
+        LB --> S3[Server 3]
+
+        S1 --> PG[(PostgreSQL Primary)]
+        S2 --> PG
+        S3 --> PG
+
+        PG --> R1[(Replica 1)]
+        PG --> R2[(Replica 2)]
+    ```
+
+=== "Text"
+
+    ```
+    ┌─────────────────────────────────────────────────────────┐
+    │                    Load Balancer                        │
+    └─────────────────────────┬───────────────────────────────┘
+                              │
+            ┌─────────────────┼─────────────────┐
+            │                 │                 │
+            ▼                 ▼                 ▼
+    ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+    │   Server 1    │ │   Server 2    │ │   Server 3    │
+    └───────┬───────┘ └───────┬───────┘ └───────┬───────┘
+            │                 │                 │
+            └─────────────────┼─────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │   PostgreSQL    │
+                    │   (Primary)     │
+                    └────────┬────────┘
+                             │
+                  ┌──────────┴──────────┐
+                  ▼                     ▼
+          ┌─────────────┐       ┌─────────────┐
+          │   Replica   │       │   Replica   │
+          └─────────────┘       └─────────────┘
+    ```
 
 ## Next Steps
 

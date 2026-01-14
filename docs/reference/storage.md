@@ -8,66 +8,127 @@ CAS provides efficient, deduplicated storage for workspace files.
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Content-Addressable Storage                      │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   File                                                              │
-│   ────                                                              │
-│   main.go (12KB)                                                    │
-│      │                                                              │
-│      ▼                                                              │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │  Content-Defined Chunking (CDC)                             │   │
-│   │  ┌───────────┐ ┌───────────┐ ┌───────────┐                  │   │
-│   │  │ Chunk 1   │ │ Chunk 2   │ │ Chunk 3   │                  │   │
-│   │  │ (4KB)     │ │ (4KB)     │ │ (4KB)     │                  │   │
-│   │  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘                  │   │
-│   └────────┼─────────────┼─────────────┼────────────────────────┘   │
-│            │             │             │                            │
-│            ▼             ▼             ▼                            │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │  SHA-256 Hash                                               │   │
-│   │  abc123...    def456...    ghi789...                        │   │
-│   └─────────────────────────────────────────────────────────────┘   │
-│            │             │             │                            │
-│            ▼             ▼             ▼                            │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │  Compression (zstd)                                         │   │
-│   └─────────────────────────────────────────────────────────────┘   │
-│            │             │             │                            │
-│            ▼             ▼             ▼                            │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │  Encryption (AES-256-GCM, per-tenant keys)                  │   │
-│   └─────────────────────────────────────────────────────────────┘   │
-│            │             │             │                            │
-│            ▼             ▼             ▼                            │
-│   ┌─────────────────────────────────────────────────────────────┐   │
-│   │  Object Storage (S3/GCS/Local)                              │   │
-│   │  chunks/{tenant_id}/{hash}.zst.enc                          │   │
-│   └─────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart TD
+        F["File: main.go (12KB)"] --> CDC
+
+        subgraph CDC["Content-Defined Chunking"]
+            C1["Chunk 1<br/>4KB"]
+            C2["Chunk 2<br/>4KB"]
+            C3["Chunk 3<br/>4KB"]
+        end
+
+        C1 --> H1["SHA-256<br/>abc123..."]
+        C2 --> H2["SHA-256<br/>def456..."]
+        C3 --> H3["SHA-256<br/>ghi789..."]
+
+        H1 --> COMP[Compression zstd]
+        H2 --> COMP
+        H3 --> COMP
+
+        COMP --> ENC["Encryption<br/>AES-256-GCM"]
+
+        ENC --> S3["Object Storage<br/>chunks/{tenant_id}/{hash}.zst.enc"]
+    ```
+
+=== "Text"
+
+    ```
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                    Content-Addressable Storage                      │
+    ├─────────────────────────────────────────────────────────────────────┤
+    │                                                                     │
+    │   File                                                              │
+    │   ────                                                              │
+    │   main.go (12KB)                                                    │
+    │      │                                                              │
+    │      ▼                                                              │
+    │   ┌─────────────────────────────────────────────────────────────┐   │
+    │   │  Content-Defined Chunking (CDC)                             │   │
+    │   │  ┌───────────┐ ┌───────────┐ ┌───────────┐                  │   │
+    │   │  │ Chunk 1   │ │ Chunk 2   │ │ Chunk 3   │                  │   │
+    │   │  │ (4KB)     │ │ (4KB)     │ │ (4KB)     │                  │   │
+    │   │  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘                  │   │
+    │   └────────┼─────────────┼─────────────┼────────────────────────┘   │
+    │            │             │             │                            │
+    │            ▼             ▼             ▼                            │
+    │   ┌─────────────────────────────────────────────────────────────┐   │
+    │   │  SHA-256 Hash                                               │   │
+    │   │  abc123...    def456...    ghi789...                        │   │
+    │   └─────────────────────────────────────────────────────────────┘   │
+    │            │             │             │                            │
+    │            ▼             ▼             ▼                            │
+    │   ┌─────────────────────────────────────────────────────────────┐   │
+    │   │  Compression (zstd)                                         │   │
+    │   └─────────────────────────────────────────────────────────────┘   │
+    │            │             │             │                            │
+    │            ▼             ▼             ▼                            │
+    │   ┌─────────────────────────────────────────────────────────────┐   │
+    │   │  Encryption (AES-256-GCM, per-tenant keys)                  │   │
+    │   └─────────────────────────────────────────────────────────────┘   │
+    │            │             │             │                            │
+    │            ▼             ▼             ▼                            │
+    │   ┌─────────────────────────────────────────────────────────────┐   │
+    │   │  Object Storage (S3/GCS/Local)                              │   │
+    │   │  chunks/{tenant_id}/{hash}.zst.enc                          │   │
+    │   └─────────────────────────────────────────────────────────────┘   │
+    │                                                                     │
+    └─────────────────────────────────────────────────────────────────────┘
+    ```
 
 ### Deduplication
 
 Chunks are deduplicated within a tenant:
 
-```
-Workspace A:           Workspace B:
-├── main.go            ├── main.go (same)
-├── utils.go           ├── utils.go (modified)
-└── README.md          └── config.yaml
+=== "Diagram"
 
-Storage:
-├── chunk_abc123 (main.go - shared)
-├── chunk_def456 (utils.go v1)
-├── chunk_ghi789 (utils.go v2)
-├── chunk_jkl012 (README.md)
-└── chunk_mno345 (config.yaml)
-```
+    ```mermaid
+    flowchart LR
+        subgraph WA["Workspace A"]
+            A1["main.go"]
+            A2["utils.go"]
+            A3["README.md"]
+        end
+
+        subgraph WB["Workspace B"]
+            B1["main.go (same)"]
+            B2["utils.go (modified)"]
+            B3["config.yaml"]
+        end
+
+        subgraph Storage["Chunk Storage"]
+            S1["abc123<br/>main.go<br/>(shared)"]
+            S2["def456<br/>utils.go v1"]
+            S3["ghi789<br/>utils.go v2"]
+            S4["jkl012<br/>README.md"]
+            S5["mno345<br/>config.yaml"]
+        end
+
+        A1 --> S1
+        B1 --> S1
+        A2 --> S2
+        B2 --> S3
+        A3 --> S4
+        B3 --> S5
+    ```
+
+=== "Text"
+
+    ```
+    Workspace A:           Workspace B:
+    ├── main.go            ├── main.go (same)
+    ├── utils.go           ├── utils.go (modified)
+    └── README.md          └── config.yaml
+
+    Storage:
+    ├── chunk_abc123 (main.go - shared)
+    ├── chunk_def456 (utils.go v1)
+    ├── chunk_ghi789 (utils.go v2)
+    ├── chunk_jkl012 (README.md)
+    └── chunk_mno345 (config.yaml)
+    ```
 
 ### Manifests
 

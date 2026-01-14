@@ -53,33 +53,83 @@ Marionette enables you to deploy, manage, and observe AI coding agents (like Cla
 
 ## Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           Server (Go)                               │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐    │
-│  │ SessionMgr  │ │  TaskMgr    │ │ RunnerMgr   │ │ TunnelMgr   │    │
-│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘    │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  Provider Registry (Docker, K8s, E2B, Pool, ...)            │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-│                              │                                      │
-│  :9090 gRPC  │  :8080 Public API  │  :8081 Admin UI                 │
-└──────────────┼────────────────────┼─────────────────────────────────┘
-               │                    │
-               ▼                    ▼
-┌──────────────────────┐    ┌──────────────────────┐
-│  Runner (isolated)   │    │  Runner (pool)       │
-│  ┌────────────────┐  │    │  ┌────────────────┐  │
-│  │marionette-agent│  │    │  │marionette-agent│  │
-│  │ ┌────────────┐ │  │    │  └───────┬────────┘  │
-│  │ │Claude Code │ │  │    │          │           │
-│  │ └────────────┘ │  │    │  ┌───────▼────────┐  │
-│  │ ┌────────────┐ │  │    │  │Sandbox (gVisor)│  │
-│  │ │ /workspace │ │  │    │  │ Agent+Workspace│  │
-│  │ └────────────┘ │  │    │  └────────────────┘  │
-│  └────────────────┘  │    └──────────────────────┘
-└──────────────────────┘
-```
+=== "Diagram"
+
+    ```mermaid
+    flowchart TB
+        subgraph Server["Server (Go)"]
+            subgraph Core["Core Services"]
+                SM[SessionMgr]
+                TM[TaskMgr]
+                RM[RunnerMgr]
+                TuM[TunnelMgr]
+            end
+            subgraph Providers["Provider Registry"]
+                Docker
+                K8s[Kubernetes]
+                E2B
+                Pool
+            end
+            Core --> Providers
+            subgraph Endpoints["API Endpoints"]
+                GRPC[":9090 gRPC"]
+                API[":8080 Public API"]
+                Admin[":8081 Admin UI"]
+            end
+            Providers --> Endpoints
+            DB[(PostgreSQL)]
+            Endpoints --> DB
+        end
+
+        subgraph Runner1["Runner (Isolated)"]
+            Agent1[marionette-agent]
+            Claude[Claude Code]
+            WS1["/workspace"]
+            Agent1 --> Claude
+            Agent1 --> WS1
+        end
+
+        subgraph Runner2["Runner (Pool)"]
+            Agent2[marionette-agent]
+            Sandbox["Sandbox (gVisor)"]
+            Agent2 --> Sandbox
+        end
+
+        GRPC <--> Agent1
+        GRPC <--> Agent2
+        API <--> CLI[CLI / Apps]
+        Admin <--> WebUI[Admin WebUI]
+    ```
+
+=== "Text"
+
+    ```
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                           Server (Go)                               │
+    │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐    │
+    │  │ SessionMgr  │ │  TaskMgr    │ │ RunnerMgr   │ │ TunnelMgr   │    │
+    │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘    │
+    │  ┌─────────────────────────────────────────────────────────────┐    │
+    │  │  Provider Registry (Docker, K8s, E2B, Pool, ...)            │    │
+    │  └─────────────────────────────────────────────────────────────┘    │
+    │                              │                                      │
+    │  :9090 gRPC  │  :8080 Public API  │  :8081 Admin UI                 │
+    └──────────────┼────────────────────┼─────────────────────────────────┘
+                   │                    │
+                   ▼                    ▼
+    ┌──────────────────────┐    ┌──────────────────────┐
+    │  Runner (isolated)   │    │  Runner (pool)       │
+    │  ┌────────────────┐  │    │  ┌────────────────┐  │
+    │  │marionette-agent│  │    │  │marionette-agent│  │
+    │  │ ┌────────────┐ │  │    │  └───────┬────────┘  │
+    │  │ │Claude Code │ │  │    │          │           │
+    │  │ └────────────┘ │  │    │  ┌───────▼────────┐  │
+    │  │ ┌────────────┐ │  │    │  │Sandbox (gVisor)│  │
+    │  │ │ /workspace │ │  │    │  │ Agent+Workspace│  │
+    │  │ └────────────┘ │  │    │  └────────────────┘  │
+    │  └────────────────┘  │    └──────────────────────┘
+    └──────────────────────┘
+    ```
 
 ## Core Concepts
 
@@ -116,9 +166,10 @@ Marionette enables you to deploy, manage, and observe AI coding agents (like Cla
       -d '{"agent": "claude", "api_key": "sk-ant-xxx"}'
 
     # Submit a task
-    curl -X POST http://localhost:8080/api/v1/sessions/$SESSION_ID/tasks \
+    curl -X POST http://localhost:8080/api/v1/tasks \
       -H "Authorization: Bearer $API_KEY" \
-      -d '{"prompt": "Build a REST API"}'
+      -H "Content-Type: application/json" \
+      -d '{"session_id": "'$SESSION_ID'", "prompt": "Build a REST API"}'
     ```
 
 === "Docker Compose"
