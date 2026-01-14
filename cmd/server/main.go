@@ -18,9 +18,9 @@ import (
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/observability/health"
 	"github.com/chunlea/marionette/pkg/observability/metrics"
-	"github.com/chunlea/marionette/pkg/observability/trace"
 	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/provider/docker"
+	"github.com/chunlea/marionette/pkg/provider/pool"
 	"github.com/chunlea/marionette/pkg/server/admin"
 	"github.com/chunlea/marionette/pkg/server/api"
 	"github.com/chunlea/marionette/pkg/server/core"
@@ -57,25 +57,7 @@ func main() {
 		zap.String("config", *configPath),
 		zap.String("log_level", cfg.Logging.Level),
 		zap.Bool("metrics_enabled", cfg.Observability.Metrics.Enabled),
-		zap.Bool("tracing_enabled", cfg.Observability.Tracing.Enabled),
 	)
-
-	// Initialize tracing (if enabled)
-	var tracerProvider *trace.Provider
-	if cfg.Observability.Tracing.Enabled {
-		var err error
-		tracerProvider, err = trace.NewProvider(context.Background(), trace.Config{
-			Enabled:     cfg.Observability.Tracing.Enabled,
-			Exporter:    cfg.Observability.Tracing.Exporter,
-			Endpoint:    cfg.Observability.Tracing.Endpoint,
-			ServiceName: cfg.Observability.Tracing.ServiceName,
-			SampleRate:  cfg.Observability.Tracing.SampleRate,
-			Insecure:    cfg.Observability.Tracing.Insecure,
-		}, logger)
-		if err != nil {
-			logger.Fatal("failed to initialize tracing", zap.Error(err))
-		}
-	}
 
 	// Load secrets (optional in development mode)
 	secrets := config.LoadSecretsOptional()
@@ -267,21 +249,6 @@ func main() {
 		)
 	}
 
-	// Add tracing middleware (if enabled)
-	if tracerProvider != nil && tracerProvider.IsEnabled() {
-		apiOpts = append(apiOpts, api.WithMiddleware(trace.HTTPMiddleware(cfg.Observability.Tracing.ServiceName)))
-
-		grpcOpts = append(grpcOpts,
-			grpcserver.WithUnaryInterceptor(trace.UnaryServerInterceptor()),
-			grpcserver.WithStreamInterceptor(trace.StreamServerInterceptor()),
-		)
-
-		logger.Info("tracing middleware configured",
-			zap.String("service_name", cfg.Observability.Tracing.ServiceName),
-			zap.Float64("sample_rate", cfg.Observability.Tracing.SampleRate),
-		)
-	}
-
 	// Create stream manager (for desktop streaming)
 	var streamMgr *core.StreamManager
 	if dbStore != nil {
@@ -341,11 +308,6 @@ func main() {
 		adminOpts = append(adminOpts, admin.WithMiddleware(metrics.HTTPMiddleware(metricsRegistry)))
 	}
 
-	// Add tracing middleware to admin server (if enabled)
-	if tracerProvider != nil && tracerProvider.IsEnabled() {
-		adminOpts = append(adminOpts, admin.WithMiddleware(trace.HTTPMiddleware(cfg.Observability.Tracing.ServiceName)))
-	}
-
 	if apiKeySvc != nil {
 		// Create adapter for admin API using existing API key service
 		apiKeyAdapter := admin.NewAPIKeyAdapter(apiKeySvc)
@@ -361,6 +323,12 @@ func main() {
 		actionLogAdapter := admin.NewActionLogStoreAdapter(dbStore)
 		adminOpts = append(adminOpts, admin.WithActionLogService(actionLogAdapter))
 		logger.Info("Action log service wired to Admin API")
+
+		// Create runner token service for admin API
+		runnerTokenSvc := auth.NewRunnerTokenService(dbStore, id.RunnerToken)
+		runnerTokenAdapter := admin.NewRunnerTokenAdapter(runnerTokenSvc)
+		adminOpts = append(adminOpts, admin.WithRunnerTokenAdminService(runnerTokenAdapter))
+		logger.Info("Runner token service wired to Admin API")
 	}
 	if streamMgr != nil {
 		// Create streams handler for admin API
@@ -515,13 +483,6 @@ func main() {
 		}
 	}
 
-	// Shutdown tracer provider
-	if tracerProvider != nil {
-		if err := tracerProvider.Shutdown(ctx); err != nil {
-			logger.Error("tracer provider shutdown error", zap.Error(err))
-		}
-	}
-
 	// Close provider registry
 	if providerRegistry != nil {
 		if err := providerRegistry.Close(); err != nil {
@@ -552,6 +513,9 @@ func initProviderRegistry(s store.Store, cfg *config.Config, logger *zap.Logger)
 	registry.RegisterFactory("docker", func(cfg *store.ProviderConfig) (provider.Provider, error) {
 		return docker.New(cfg)
 	})
+
+	// Register Pool provider factory
+	registry.RegisterFactory("pool", pool.NewProviderFactory(s, logger))
 
 	// Load default Docker provider from YAML config if specified
 	if cfg.Providers.Default == "docker" && cfg.Providers.Docker != nil {

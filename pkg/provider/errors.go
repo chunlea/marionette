@@ -136,3 +136,14 @@ type ErrStrategyNotSupported struct {
 func (e *ErrStrategyNotSupported) Error() string {
 	return fmt.Sprintf("strategy %s not supported by provider %s", e.Strategy, e.Provider)
 }
+
+// ErrSpawnNotSupported is returned when a provider does not support spawning runners.
+// This is used by pool providers where runners join via token authentication.
+type ErrSpawnNotSupported struct {
+	Provider string
+	Reason   string
+}
+
+func (e *ErrSpawnNotSupported) Error() string {
+	return fmt.Sprintf("spawn not supported by provider %s: %s", e.Provider, e.Reason)
+}
