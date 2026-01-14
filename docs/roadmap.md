@@ -1267,10 +1267,10 @@
   - [x] `/health/live` - Liveness probe
   - [x] `/health/ready` - Readiness probe
   - [x] Database connectivity check
-- [x] OpenTelemetry traces:
-  - [x] Trace context propagation
-  - [x] Span creation for key operations
-  - [x] Export to Jaeger/Zipkin/OTLP
+- [ ] OpenTelemetry traces (optional):
+  - [ ] Trace context propagation
+  - [ ] Span creation for key operations
+  - [ ] Export to Jaeger/Zipkin
 
 ### 8.4 Performance Testing
 
@@ -1359,34 +1359,34 @@
 
 ### 9.4 Pool Provider
 
-- [ ] Pool registration:
-  - [ ] Runners connect to pool by name
-  - [ ] Validate runner token
-  - [ ] Check required labels
-- [ ] Runner matching:
-  - [ ] Label selector matching
-  - [ ] Capability requirements
-  - [ ] Prefer least recently used
-- [ ] Init/cleanup scripts:
-  - [ ] Execute init script on task start
-  - [ ] Execute cleanup script on task end
-  - [ ] Script timeout handling
-  - [ ] Safe environment variable passing
-- [ ] Watchdog implementation (`pkg/pool/watchdog.go`):
-  - [ ] Health check runners periodically
-  - [ ] Detect tainted runners
-  - [ ] Clean or destroy tainted runners
-  - [ ] Enforce scaling constraints
-- [ ] Taint mechanism:
-  - [ ] Detect crash, timeout, state pollution
-  - [ ] Mark runner as tainted
-  - [ ] Cleanup attempt
-  - [ ] Destroy if cleanup fails
-- [ ] Pool scaling:
-  - [ ] min_runners, max_runners configuration
+- [x] Pool registration:
+  - [x] Runners connect to pool by name
+  - [x] Validate runner token
+  - [x] Check required labels
+- [x] Runner matching:
+  - [x] Label selector matching
+  - [x] Capability requirements
+  - [x] Prefer least recently used
+- [x] Init/cleanup scripts:
+  - [x] Execute init script on task start
+  - [x] Execute cleanup script on task end
+  - [x] Script timeout handling
+  - [x] Safe environment variable passing
+- [x] Watchdog implementation (`pkg/provider/pool/watchdog.go`):
+  - [x] Health check runners periodically
+  - [x] Detect tainted runners
+  - [x] Clean or destroy tainted runners
+  - [x] Enforce scaling constraints
+- [x] Taint mechanism:
+  - [x] Detect crash, timeout, state pollution
+  - [x] Mark runner as tainted
+  - [x] Cleanup attempt
+  - [x] Destroy if cleanup fails
+- [x] Pool scaling:
+  - [x] min_runners, max_runners configuration
   - [ ] Scale up threshold
   - [ ] Scale down delay
-  - [ ] Max tasks per runner (recycle)
+  - [x] Max tasks per runner (recycle)
 
 ### 9.5 Profiles
 
