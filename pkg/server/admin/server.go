@@ -35,6 +35,9 @@ type Server struct {
 	// Basic auth credentials
 	username string
 	password string
+
+	// Middleware
+	middlewares []func(http.Handler) http.Handler
 }
 
 // Config holds configuration for the admin server.
@@ -118,6 +121,14 @@ func WithHealthService(hs HealthService) Option {
 	}
 }
 
+// WithMiddleware adds a middleware to the server.
+// Middlewares are applied in the order they are added.
+func WithMiddleware(m func(http.Handler) http.Handler) Option {
+	return func(srv *Server) {
+		srv.middlewares = append(srv.middlewares, m)
+	}
+}
+
 // New creates a new admin server.
 func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	srv := &Server{
@@ -139,6 +150,11 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
+
+	// Apply custom middlewares (e.g., metrics)
+	for _, m := range srv.middlewares {
+		r.Use(m)
+	}
 
 	// Health endpoints (no auth required)
 	r.Get("/health", healthHandler)

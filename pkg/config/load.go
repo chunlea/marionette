@@ -111,6 +111,9 @@ func setDefaults(v *viper.Viper) {
 
 	// Observability defaults
 	v.SetDefault("observability.metrics.enabled", false)
+	v.SetDefault("observability.metrics.host", "")
 	v.SetDefault("observability.metrics.port", 9091)
+	v.SetDefault("observability.metrics.path", "/metrics")
+	v.SetDefault("observability.metrics.namespace", "marionette")
 	v.SetDefault("observability.health.enabled", true)
 }

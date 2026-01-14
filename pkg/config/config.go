@@ -133,8 +133,11 @@ type ObservabilityConfig struct {
 
 // MetricsConfig holds metrics/prometheus configuration.
 type MetricsConfig struct {
-	Enabled bool `mapstructure:"enabled"`
-	Port    int  `mapstructure:"port"`
+	Enabled   bool   `mapstructure:"enabled"`
+	Host      string `mapstructure:"host"`
+	Port      int    `mapstructure:"port"`
+	Path      string `mapstructure:"path"`
+	Namespace string `mapstructure:"namespace"`
 }
 
 // HealthConfig holds health check configuration.

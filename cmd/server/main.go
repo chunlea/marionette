@@ -17,6 +17,7 @@ import (
 	"github.com/chunlea/marionette/pkg/config"
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/observability/health"
+	"github.com/chunlea/marionette/pkg/observability/metrics"
 	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/provider/docker"
 	"github.com/chunlea/marionette/pkg/server/admin"
@@ -54,6 +55,7 @@ func main() {
 	logger.Info("marionette server starting",
 		zap.String("config", *configPath),
 		zap.String("log_level", cfg.Logging.Level),
+		zap.Bool("metrics_enabled", cfg.Observability.Metrics.Enabled),
 	)
 
 	// Load secrets (optional in development mode)
@@ -226,6 +228,26 @@ func main() {
 		logger.Info("core services initialized and wired to API")
 	}
 
+	// Create metrics registry and middleware (if enabled)
+	var metricsRegistry *metrics.Registry
+	var metricsServer *metrics.Server
+	if cfg.Observability.Metrics.Enabled {
+		metricsRegistry = metrics.NewRegistry(cfg.Observability.Metrics.Namespace)
+
+		// Add metrics middleware to API and Admin servers
+		apiOpts = append(apiOpts, api.WithMiddleware(metrics.HTTPMiddleware(metricsRegistry)))
+
+		// Add gRPC metrics interceptors
+		grpcOpts = append(grpcOpts,
+			grpcserver.WithUnaryInterceptor(metrics.UnaryServerInterceptor(metricsRegistry)),
+			grpcserver.WithStreamInterceptor(metrics.StreamServerInterceptor(metricsRegistry)),
+		)
+
+		logger.Info("metrics middleware configured",
+			zap.String("namespace", cfg.Observability.Metrics.Namespace),
+		)
+	}
+
 	// Create stream manager (for desktop streaming)
 	var streamMgr *core.StreamManager
 	if dbStore != nil {
@@ -280,6 +302,11 @@ func main() {
 	var adminOpts []admin.Option
 	adminOpts = append(adminOpts, admin.WithHealthService(healthChecker))
 
+	// Add metrics middleware to admin server (if enabled)
+	if metricsRegistry != nil {
+		adminOpts = append(adminOpts, admin.WithMiddleware(metrics.HTTPMiddleware(metricsRegistry)))
+	}
+
 	if apiKeySvc != nil {
 		// Create adapter for admin API using existing API key service
 		apiKeyAdapter := admin.NewAPIKeyAdapter(apiKeySvc)
@@ -331,8 +358,17 @@ func main() {
 		logger.Fatal("failed to create gRPC server", zap.Error(err))
 	}
 
+	// Create metrics server (if enabled)
+	if metricsRegistry != nil {
+		metricsServer = metrics.NewServer(metricsRegistry, metrics.ServerConfig{
+			Host: cfg.Observability.Metrics.Host,
+			Port: cfg.Observability.Metrics.Port,
+			Path: cfg.Observability.Metrics.Path,
+		}, logger)
+	}
+
 	// Start servers in goroutines
-	errChan := make(chan error, 3)
+	errChan := make(chan error, 4) // 4 servers now (api, admin, grpc, metrics)
 
 	go func() {
 		if err := apiServer.Start(); err != nil {
@@ -352,16 +388,32 @@ func main() {
 		}
 	}()
 
+	// Start metrics server if enabled
+	if metricsServer != nil {
+		go func() {
+			if err := metricsServer.Start(); err != nil {
+				errChan <- fmt.Errorf("metrics server: %w", err)
+			}
+		}()
+	}
+
 	// Register service statuses
 	admin.Registry.Register("Public API", cfg.Server.API.Port, "ok", "Running")
 	admin.Registry.Register("Admin API", cfg.Server.Admin.Port, "ok", "Running")
 	admin.Registry.Register("gRPC", cfg.Server.GRPC.Port, "ok", "Running")
+	if metricsServer != nil {
+		admin.Registry.Register("Metrics", cfg.Observability.Metrics.Port, "ok", "Running")
+	}
 
-	logger.Info("all servers started",
+	logFields := []zap.Field{
 		zap.String("api_addr", fmt.Sprintf("%s:%d", cfg.Server.API.Host, cfg.Server.API.Port)),
 		zap.String("admin_addr", fmt.Sprintf("%s:%d", cfg.Server.Admin.Host, cfg.Server.Admin.Port)),
 		zap.String("grpc_addr", fmt.Sprintf("%s:%d", cfg.Server.GRPC.Host, cfg.Server.GRPC.Port)),
-	)
+	}
+	if metricsServer != nil {
+		logFields = append(logFields, zap.String("metrics_addr", metricsServer.Addr()))
+	}
+	logger.Info("all servers started", logFields...)
 
 	// Start permission timeout enforcer if available
 	if permEnforcer != nil {
@@ -417,6 +469,11 @@ func main() {
 	}
 	if err := grpcServer.Shutdown(ctx); err != nil {
 		logger.Error("grpc server shutdown error", zap.Error(err))
+	}
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(ctx); err != nil {
+			logger.Error("metrics server shutdown error", zap.Error(err))
+		}
 	}
 
 	// Close provider registry
