@@ -129,6 +129,7 @@ type DevelopmentConfig struct {
 type ObservabilityConfig struct {
 	Metrics MetricsConfig `mapstructure:"metrics"`
 	Health  HealthConfig  `mapstructure:"health"`
+	Tracing TracingConfig `mapstructure:"tracing"`
 }
 
 // MetricsConfig holds metrics/prometheus configuration.
@@ -143,4 +144,27 @@ type MetricsConfig struct {
 // HealthConfig holds health check configuration.
 type HealthConfig struct {
 	Enabled bool `mapstructure:"enabled"`
+}
+
+// TracingConfig holds OpenTelemetry tracing configuration.
+type TracingConfig struct {
+	// Enabled controls whether tracing is enabled.
+	Enabled bool `mapstructure:"enabled"`
+
+	// Exporter specifies the exporter type: "otlp", "stdout", or "noop".
+	Exporter string `mapstructure:"exporter"`
+
+	// Endpoint is the collector endpoint (for OTLP exporter).
+	// Example: "localhost:4317" for gRPC.
+	Endpoint string `mapstructure:"endpoint"`
+
+	// ServiceName is the name of the service for tracing.
+	ServiceName string `mapstructure:"service_name"`
+
+	// SampleRate is the sampling rate (0.0 to 1.0).
+	// 1.0 means all traces are sampled, 0.1 means 10% of traces.
+	SampleRate float64 `mapstructure:"sample_rate"`
+
+	// Insecure disables TLS for the OTLP exporter.
+	Insecure bool `mapstructure:"insecure"`
 }
