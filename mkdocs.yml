@@ -75,6 +75,12 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/chunlea/marionette
 
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mermaid-zoom.js
+
 copyright: Copyright &copy; 2024 Marionette
 
 nav:
