@@ -32,16 +32,18 @@ mctl sessions list -o json
 ### Create Session
 
 ```bash
-# Basic
-mctl sessions create --agent claude --api-key $ANTHROPIC_API_KEY
+# Basic (BYOK mode - Bring Your Own Key)
+mctl sessions create --agent claude --agent-api-key $ANTHROPIC_API_KEY
+
+# Using managed agent config
+mctl sessions create --agent claude --agent-config acfg_production
 
 # With options
 mctl sessions create \
   --agent claude \
-  --api-key $ANTHROPIC_API_KEY \
+  --agent-api-key $ANTHROPIC_API_KEY \
   --name "my-project" \
   --labels "user=alice,project=api" \
-  --provider docker \
   --lifecycle on_demand \
   --idle-timeout 1800
 ```
@@ -74,12 +76,21 @@ mctl sessions terminate $SESSION_ID
 # Basic
 mctl tasks create --session $SESSION_ID --prompt "Build a REST API"
 
+# Read prompt from file
+mctl tasks create --session $SESSION_ID --prompt-file task.md
+
 # With options
 mctl tasks create \
   --session $SESSION_ID \
   --prompt "Build a REST API" \
   --timeout 3600 \
   --max-retries 2
+
+# Wait for completion
+mctl tasks create --session $SESSION_ID --prompt "Run tests" --wait
+
+# Follow logs during execution
+mctl tasks create --session $SESSION_ID --prompt "Build API" --follow
 
 # Continue from previous task
 mctl tasks create \
@@ -105,10 +116,11 @@ mctl tasks get $TASK_ID -o json
 
 ```bash
 # Follow logs in real-time
-mctl tasks logs --follow $TASK_ID
+mctl tasks logs $TASK_ID --follow
+mctl tasks logs $TASK_ID -f
 
-# Get historical logs
-mctl tasks logs $TASK_ID --limit 100
+# Get last N lines
+mctl tasks logs $TASK_ID --tail 100
 ```
 
 ### Cancel Task
@@ -282,18 +294,18 @@ All commands support output format flags:
 # 1. Create a session
 SESSION_ID=$(mctl sessions create \
   --agent claude \
-  --api-key $ANTHROPIC_API_KEY \
+  --agent-api-key $ANTHROPIC_API_KEY \
   --name "api-project" \
   -o json | jq -r '.id')
 
-# 2. Submit a task
+# 2. Submit a task and follow logs
 TASK_ID=$(mctl tasks create \
   --session $SESSION_ID \
   --prompt "Create a Go REST API with CRUD endpoints" \
   -o json | jq -r '.id')
 
 # 3. Follow logs
-mctl tasks logs --follow $TASK_ID
+mctl tasks logs $TASK_ID --follow
 
 # 4. Handle permissions as they come
 mctl permissions list --session $SESSION_ID --status pending

@@ -174,20 +174,11 @@ storage:
   s3:
     bucket: "marionette-storage"
     region: "us-west-2"
-    prefix: "workspaces/"
     # Credentials from AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
 ```
 
-### GCS Storage
-
-```yaml
-storage:
-  provider: gcs
-  gcs:
-    bucket: "marionette-storage"
-    prefix: "workspaces/"
-    # Credentials from GOOGLE_APPLICATION_CREDENTIALS
-```
+!!! note "GCS Storage"
+    GCS storage support is planned for future releases.
 
 ## Observability Configuration
 
@@ -213,8 +204,6 @@ observability:
     exporter: otlp
     endpoint: localhost:4317
     service_name: marionette-server
-    service_version: "1.0.0"
-    environment: production
     sample_rate: 0.1  # 10% of traces
     insecure: false   # Use TLS
 ```
@@ -242,25 +231,15 @@ Endpoints:
 
 ### TLS
 
-```yaml
-server:
-  tls:
-    enabled: true
-    cert_file: "/path/to/cert.pem"
-    key_file: "/path/to/key.pem"
-```
-
-### mTLS for Agents
+TLS configuration is at the root level (applies to all endpoints):
 
 ```yaml
-server:
-  grpc:
-    tls:
-      enabled: true
-      cert_file: "/path/to/server-cert.pem"
-      key_file: "/path/to/server-key.pem"
-      ca_file: "/path/to/ca-cert.pem"
-      client_auth: require  # require, request, or none
+tls:
+  enabled: true
+  cert_file: "/path/to/cert.pem"
+  key_file: "/path/to/key.pem"
+  ca_file: "/path/to/ca-cert.pem"      # For client verification
+  verify_client: true                   # Enable mTLS for agents
 ```
 
 ## Example Configurations
@@ -300,13 +279,16 @@ server:
     host: "127.0.0.1"  # Internal only
   grpc:
     port: 9090
-  tls:
-    enabled: true
-    cert_file: "/etc/marionette/tls/cert.pem"
-    key_file: "/etc/marionette/tls/key.pem"
+
+tls:
+  enabled: true
+  cert_file: "/etc/marionette/tls/cert.pem"
+  key_file: "/etc/marionette/tls/key.pem"
+  ca_file: "/etc/marionette/tls/ca.pem"
+  verify_client: true
 
 providers:
-  default: kubernetes
+  default: docker
 
 storage:
   provider: s3

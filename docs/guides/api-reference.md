@@ -68,12 +68,6 @@ GET /api/v1/sessions?labels=user:alice
 GET /api/v1/sessions/{session_id}
 ```
 
-### Update Session
-
-```http
-PATCH /api/v1/sessions/{session_id}
-```
-
 ### Suspend Session
 
 ```http
@@ -97,13 +91,14 @@ DELETE /api/v1/sessions/{session_id}
 ### Create Task
 
 ```http
-POST /api/v1/sessions/{session_id}/tasks
+POST /api/v1/tasks
 ```
 
 **Request:**
 
 ```json
 {
+  "session_id": "sess_0002xK9mNpV1StGXR8",
   "prompt": "Build a REST API with authentication",
   "timeout_seconds": 3600,
   "max_retries": 2
@@ -125,8 +120,9 @@ POST /api/v1/sessions/{session_id}/tasks
 ### List Tasks
 
 ```http
-GET /api/v1/sessions/{session_id}/tasks
+GET /api/v1/tasks
 GET /api/v1/tasks?status=running
+GET /api/v1/tasks?session_id=sess_xxx
 ```
 
 ### Get Task
@@ -135,20 +131,31 @@ GET /api/v1/tasks?status=running
 GET /api/v1/tasks/{task_id}
 ```
 
-### Stream Task Logs
+### Get Task Logs
 
 ```http
-GET /api/v1/tasks/{task_id}/logs?follow=true
+GET /api/v1/tasks/{task_id}/logs
+GET /api/v1/tasks/{task_id}/logs?stream=stdout
 ```
 
-Returns Server-Sent Events (SSE):
+**Response:**
 
+```json
+{
+  "items": [
+    {"stream": "stdout", "content": "Creating main.go...", "sequence": 1, "created_at": "..."},
+    {"stream": "stdout", "content": "Writing code...", "sequence": 2, "created_at": "..."}
+  ],
+  "total": 2
+}
 ```
-event: log
-data: {"stream": "stdout", "content": "Creating main.go...", "timestamp": "..."}
 
-event: log
-data: {"stream": "stdout", "content": "Writing code...", "timestamp": "..."}
+### Execute Task
+
+Manually trigger execution of a pending task.
+
+```http
+POST /api/v1/tasks/{task_id}/execute
 ```
 
 ### Cancel Task
@@ -157,13 +164,22 @@ data: {"stream": "stdout", "content": "Writing code...", "timestamp": "..."}
 POST /api/v1/tasks/{task_id}/cancel
 ```
 
+### Retry Task
+
+Retry a failed task.
+
+```http
+POST /api/v1/tasks/{task_id}/retry
+```
+
 ## Permission Requests
 
 ### List Permissions
 
 ```http
-GET /api/v1/sessions/{session_id}/permissions
+GET /api/v1/permissions
 GET /api/v1/permissions?status=pending
+GET /api/v1/permissions?session_id=sess_xxx
 ```
 
 ### Get Permission
@@ -260,12 +276,71 @@ GET /api/v1/sessions/{session_id}/tunnels
 DELETE /api/v1/tunnels/{tunnel_id}
 ```
 
+## Workspaces
+
+### Create Workspace
+
+```http
+POST /api/v1/workspaces
+```
+
+**Request:**
+
+```json
+{
+  "name": "my-workspace",
+  "persist": true,
+  "storage_type": "volume",
+  "disk_quota_mb": 1024
+}
+```
+
+### List Workspaces
+
+```http
+GET /api/v1/workspaces
+```
+
+### Get Workspace
+
+```http
+GET /api/v1/workspaces/{workspace_id}
+```
+
+### Update Workspace
+
+```http
+PATCH /api/v1/workspaces/{workspace_id}
+```
+
+### Delete Workspace
+
+```http
+DELETE /api/v1/workspaces/{workspace_id}
+```
+
 ## WebSocket Endpoints
 
-### Session Events
+### Log Streaming
+
+Stream task logs in real-time via WebSocket.
 
 ```
-ws://localhost:8080/api/v1/sessions/{session_id}/events
+ws://localhost:8080/api/v1/logs/{task_id}/stream
+```
+
+Messages:
+
+```json
+{"stream": "stdout", "content": "Building...", "sequence": 42, "created_at": "..."}
+```
+
+### Event Stream
+
+Stream server events (sessions, tasks, permissions).
+
+```
+ws://localhost:8080/api/v1/events
 ```
 
 Events:
@@ -275,7 +350,14 @@ Events:
 - `task.status_changed`
 - `permission.requested`
 - `permission.responded`
-- `log.entry`
+
+### Browser/Desktop Streaming
+
+Stream browser or desktop frames via WebSocket.
+
+```
+ws://localhost:8080/api/v1/streams/{stream_id}/ws?token=ttok_xxx
+```
 
 ## Error Responses
 
