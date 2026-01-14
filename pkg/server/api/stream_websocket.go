@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -116,11 +117,11 @@ func (s *Server) handleBrowserStreamWS(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = conn.Close() }()
 
 	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
 
 	// Get FrameHub and create subscriber
 	frameHub := s.browserStream.GetFrameHub()
 	if frameHub == nil {
+		cancel()
 		s.logger.Error("frame hub not available")
 		writeWSError(conn, "frame hub not available")
 		return
@@ -151,7 +152,17 @@ func (s *Server) handleBrowserStreamWS(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Start goroutine to read input events from client
-	go s.handleBrowserWSInput(ctx, conn, streamID, frameHub, cancel)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.handleBrowserWSInput(ctx, conn, streamID, frameHub, cancel)
+	}()
+	// Ensure goroutine finishes before returning. Cancel context first to signal exit.
+	defer func() {
+		cancel()
+		wg.Wait()
+	}()
 
 	// Send frames to client
 	ticker := time.NewTicker(30 * time.Second)

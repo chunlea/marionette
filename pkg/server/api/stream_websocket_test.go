@@ -142,11 +142,15 @@ func TestHandleBrowserStreamWS_WebSocketUpgrade(t *testing.T) {
 	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
 	if resp != nil && resp.Body != nil {
-		t.Cleanup(func() { _ = resp.Body.Close() })
+		defer func() { _ = resp.Body.Close() }()
 	}
-	t.Cleanup(func() { _ = ws.Close() })
 
 	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+
+	// Close WebSocket gracefully and wait for handler to exit
+	_ = ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	_ = ws.Close()
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestHandleBrowserStreamWS_ReceiveFrames(t *testing.T) {
@@ -178,9 +182,8 @@ func TestHandleBrowserStreamWS_ReceiveFrames(t *testing.T) {
 	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
 	if resp != nil && resp.Body != nil {
-		t.Cleanup(func() { _ = resp.Body.Close() })
+		defer func() { _ = resp.Body.Close() }()
 	}
-	t.Cleanup(func() { _ = ws.Close() })
 
 	// Wait for subscriber to be registered
 	time.Sleep(50 * time.Millisecond)
@@ -210,6 +213,11 @@ func TestHandleBrowserStreamWS_ReceiveFrames(t *testing.T) {
 	assert.Equal(t, int32(1920), msg.Width)
 	assert.Equal(t, int32(1080), msg.Height)
 	assert.Equal(t, uint64(1), msg.Sequence)
+
+	// Close WebSocket gracefully and wait for handler to exit
+	_ = ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	_ = ws.Close()
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestHandleBrowserStreamWS_SendInput(t *testing.T) {
@@ -248,9 +256,8 @@ func TestHandleBrowserStreamWS_SendInput(t *testing.T) {
 	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
 	if resp != nil && resp.Body != nil {
-		t.Cleanup(func() { _ = resp.Body.Close() })
+		defer func() { _ = resp.Body.Close() }()
 	}
-	t.Cleanup(func() { _ = ws.Close() })
 
 	// Send input event
 	inputMsg := BrowserInputMessage{
@@ -275,6 +282,11 @@ func TestHandleBrowserStreamWS_SendInput(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for input event")
 	}
+
+	// Close WebSocket gracefully and wait for handler to exit
+	_ = ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	_ = ws.Close()
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestConvertInputToProto_MouseEvents(t *testing.T) {
@@ -537,9 +549,8 @@ func TestHandleBrowserStreamWS_InvalidJSON(t *testing.T) {
 	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
 	if resp != nil && resp.Body != nil {
-		t.Cleanup(func() { _ = resp.Body.Close() })
+		defer func() { _ = resp.Body.Close() }()
 	}
-	t.Cleanup(func() { _ = ws.Close() })
 
 	// Send invalid JSON - should be handled gracefully
 	err = ws.WriteMessage(websocket.TextMessage, []byte("not valid json"))
@@ -553,6 +564,11 @@ func TestHandleBrowserStreamWS_InvalidJSON(t *testing.T) {
 	}
 	err = ws.WriteJSON(inputMsg)
 	require.NoError(t, err)
+
+	// Close WebSocket gracefully and wait for handler to exit
+	_ = ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	_ = ws.Close()
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestHandleBrowserStreamWS_NonInputMessage(t *testing.T) {
@@ -584,9 +600,8 @@ func TestHandleBrowserStreamWS_NonInputMessage(t *testing.T) {
 	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
 	if resp != nil && resp.Body != nil {
-		t.Cleanup(func() { _ = resp.Body.Close() })
+		defer func() { _ = resp.Body.Close() }()
 	}
-	t.Cleanup(func() { _ = ws.Close() })
 
 	// Send a message with wrong type - should be ignored
 	msg := BrowserInputMessage{
@@ -599,6 +614,11 @@ func TestHandleBrowserStreamWS_NonInputMessage(t *testing.T) {
 
 	// Connection should still work
 	time.Sleep(10 * time.Millisecond)
+
+	// Close WebSocket gracefully and wait for handler to exit
+	_ = ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	_ = ws.Close()
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestHandleBrowserStreamWS_ContextCancellation(t *testing.T) {
@@ -629,15 +649,19 @@ func TestHandleBrowserStreamWS_ContextCancellation(t *testing.T) {
 	ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
 	if resp != nil && resp.Body != nil {
-		t.Cleanup(func() { _ = resp.Body.Close() })
+		defer func() { _ = resp.Body.Close() }()
 	}
 
 	// Close the stream to trigger context cancellation
 	mockService.frameHub.UnregisterStream(streamID)
 
-	// Give time for the handler to notice
-	time.Sleep(50 * time.Millisecond)
+	// Give time for the handler to notice and finish logging
+	time.Sleep(100 * time.Millisecond)
 
-	// Close WebSocket
+	// Close WebSocket gracefully
+	_ = ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	_ = ws.Close()
+
+	// Wait for handler to fully exit
+	time.Sleep(50 * time.Millisecond)
 }
