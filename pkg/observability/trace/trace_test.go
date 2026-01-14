@@ -1,7 +1,9 @@
 package trace
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	grpccodes "google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -472,6 +475,152 @@ func TestResponseWriter_Hijack(t *testing.T) {
 		assert.Nil(t, buf)
 		assert.Equal(t, http.ErrNotSupported, err)
 	})
+
+	t.Run("delegates to underlying hijacker", func(t *testing.T) {
+		hijacked := false
+		underlying := &mockHijacker{
+			ResponseWriter: httptest.NewRecorder(),
+			onHijack:       func() { hijacked = true },
+		}
+
+		rw := &responseWriter{ResponseWriter: underlying, statusCode: http.StatusOK}
+		_, _, _ = rw.Hijack()
+
+		assert.True(t, hijacked)
+	})
+}
+
+func TestTracedServerStream_Context(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "key", "value")
+	stream := &tracedServerStream{
+		ctx: ctx,
+	}
+
+	assert.Equal(t, ctx, stream.Context())
+	assert.Equal(t, "value", stream.Context().Value("key"))
+}
+
+func TestProvider_Tracer_Disabled(t *testing.T) {
+	logger := zap.NewNop()
+
+	provider, err := NewProvider(context.Background(), Config{
+		Enabled: false,
+	}, logger)
+
+	require.NoError(t, err)
+	require.NotNil(t, provider)
+	assert.False(t, provider.IsEnabled())
+
+	// Get tracer from disabled provider (should return global noop tracer)
+	tracer := provider.Tracer("test")
+	assert.NotNil(t, tracer)
+}
+
+func TestUnaryServerInterceptor_WithMetadata(t *testing.T) {
+	// Set up in-memory span exporter for testing
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSyncer(exporter),
+	)
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+
+	interceptor := UnaryServerInterceptor()
+
+	info := &grpc.UnaryServerInfo{
+		FullMethod: "/marionette.v1.RunnerService/Connect",
+	}
+
+	handler := func(ctx context.Context, req any) (any, error) {
+		return "response", nil
+	}
+
+	// Create context with gRPC metadata containing trace context
+	md := metadata.New(map[string]string{
+		"traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+	})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	resp, err := interceptor(ctx, "request", info, handler)
+	require.NoError(t, err)
+	assert.Equal(t, "response", resp)
+
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+
+	// Should propagate trace context from metadata
+	span := spans[0]
+	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", span.SpanContext.TraceID().String())
+}
+
+func TestStreamServerInterceptor_WithMetadata(t *testing.T) {
+	// Set up in-memory span exporter for testing
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSyncer(exporter),
+	)
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+
+	interceptor := StreamServerInterceptor()
+
+	info := &grpc.StreamServerInfo{
+		FullMethod:     "/marionette.v1.RunnerService/Control",
+		IsClientStream: true,
+		IsServerStream: true,
+	}
+
+	handler := func(srv any, stream grpc.ServerStream) error {
+		return nil
+	}
+
+	// Create mock stream with metadata in context
+	md := metadata.New(map[string]string{
+		"traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+	})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+	mockStream := &mockServerStream{ctx: ctx}
+
+	err := interceptor(nil, mockStream, info, handler)
+	require.NoError(t, err)
+
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+
+	// Should propagate trace context from metadata
+	span := spans[0]
+	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", span.SpanContext.TraceID().String())
+}
+
+func TestNewProvider_EmptyExporter(t *testing.T) {
+	logger := zap.NewNop()
+
+	// Empty exporter string should be treated as noop
+	provider, err := NewProvider(context.Background(), Config{
+		Enabled:     true,
+		Exporter:    "",
+		ServiceName: "test-service",
+		SampleRate:  1.0,
+	}, logger)
+
+	require.NoError(t, err)
+	require.NotNil(t, provider)
+	assert.True(t, provider.IsEnabled())
+
+	err = provider.Shutdown(context.Background())
+	require.NoError(t, err)
 }
 
 // mockFlusher implements http.Flusher for testing
@@ -484,4 +633,17 @@ func (m *mockFlusher) Flush() {
 	if m.onFlush != nil {
 		m.onFlush()
 	}
+}
+
+// mockHijacker implements http.Hijacker for testing
+type mockHijacker struct {
+	http.ResponseWriter
+	onHijack func()
+}
+
+func (m *mockHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if m.onHijack != nil {
+		m.onHijack()
+	}
+	return nil, nil, nil
 }
