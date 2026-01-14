@@ -1318,27 +1318,27 @@
 
 ### 9.2 Kubernetes Provider
 
-- [ ] Pod lifecycle management:
-  - [ ] Create Pod from template
-  - [ ] Wait for Pod ready
-  - [ ] Delete Pod on destroy
-- [ ] Configuration:
-  - [ ] Namespace
-  - [ ] Service account
-  - [ ] Resource limits/requests
-  - [ ] Node selectors
-  - [ ] Tolerations
-- [ ] Storage:
-  - [ ] PersistentVolumeClaim for workspace
-  - [ ] Storage class configuration
-  - [ ] Volume expansion
-- [ ] Suspend strategy:
-  - [ ] `terminate_preserve_storage`: Delete Pod, keep PVC
-  - [ ] Resume: Create new Pod with same PVC
-- [ ] NetworkPolicy integration:
-  - [ ] Create NetworkPolicy per session
-  - [ ] Egress rules from allowed_hosts
-  - [ ] Delete on session termination
+- [x] Pod lifecycle management:
+  - [x] Create Pod from template
+  - [x] Wait for Pod ready
+  - [x] Delete Pod on destroy
+- [x] Configuration:
+  - [x] Namespace
+  - [x] Service account
+  - [x] Resource limits/requests
+  - [x] Node selectors
+  - [x] Tolerations
+- [x] Storage:
+  - [x] PersistentVolumeClaim for workspace
+  - [x] Storage class configuration
+  - [x] Volume expansion
+- [x] Suspend strategy:
+  - [x] `terminate_preserve_storage`: Delete Pod, keep PVC
+  - [x] Resume: Create new Pod with same PVC
+- [x] NetworkPolicy integration:
+  - [x] Create NetworkPolicy per session
+  - [x] Egress rules from allowed_hosts
+  - [x] Delete on session termination
 
 ### 9.3 E2B Provider
 
