@@ -16,6 +16,7 @@ import (
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
 	"github.com/chunlea/marionette/pkg/id"
+	"github.com/chunlea/marionette/pkg/observability/health"
 	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/provider/docker"
 	"github.com/chunlea/marionette/pkg/server/admin"
@@ -262,8 +263,23 @@ func main() {
 		Port: cfg.Server.API.Port,
 	}, logger, apiOpts...)
 
+	// Create health checker
+	healthChecker := health.NewChecker()
+
+	// Register database health check if database is available
+	if dbStore != nil {
+		healthChecker.Register("database", health.DatabaseCheck(dbStore))
+	}
+
+	// Register connection manager health check if available
+	if connManager != nil {
+		healthChecker.Register("grpc_connections", health.ConnectionManagerCheck(connManager))
+	}
+
 	// Create admin server options
 	var adminOpts []admin.Option
+	adminOpts = append(adminOpts, admin.WithHealthService(healthChecker))
+
 	if apiKeySvc != nil {
 		// Create adapter for admin API using existing API key service
 		apiKeyAdapter := admin.NewAPIKeyAdapter(apiKeySvc)

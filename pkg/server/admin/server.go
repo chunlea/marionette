@@ -26,6 +26,7 @@ type Server struct {
 	runnerTokens     RunnerTokenAdminService
 	sessionActivator SessionActivator
 	actionLogs       ActionLogService
+	healthService    HealthService
 
 	// Streaming handlers
 	streamsHandler   *StreamsHandler
@@ -110,6 +111,13 @@ func WithSignalingHandler(h *SignalingHandler) Option {
 	}
 }
 
+// WithHealthService sets the health service for liveness/readiness probes.
+func WithHealthService(hs HealthService) Option {
+	return func(srv *Server) {
+		srv.healthService = hs
+	}
+}
+
 // New creates a new admin server.
 func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	srv := &Server{
@@ -135,6 +143,12 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	// Health endpoints (no auth required)
 	r.Get("/health", healthHandler)
 	r.Get("/healthz", healthHandler)
+
+	// Kubernetes-style health probes (no auth required)
+	if srv.healthService != nil {
+		r.Get("/health/live", livenessHandler(srv.healthService))
+		r.Get("/health/ready", readinessHandler(srv.healthService))
+	}
 
 	// Documentation endpoints (no auth required)
 	r.Get("/docs", srv.handleSwaggerUI)
