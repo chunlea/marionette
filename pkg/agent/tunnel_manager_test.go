@@ -1085,9 +1085,15 @@ func TestTunnelManager_RelayFromLocalService(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Track when goroutine exits
+	done := make(chan struct{})
+
 	// Start relay
 	reader := bufio.NewReader(server)
-	go tm.relayFromLocalService(ctx, "tun_test", "conn_123", server, reader)
+	go func() {
+		defer close(done)
+		tm.relayFromLocalService(ctx, "tun_test", "conn_123", server, reader)
+	}()
 
 	// Write data from "local service"
 	testData := []byte("hello from local service")
@@ -1097,9 +1103,18 @@ func TestTunnelManager_RelayFromLocalService(t *testing.T) {
 	// Wait for relay
 	time.Sleep(200 * time.Millisecond)
 
-	// Cancel to stop relay
+	// Cancel to stop relay and wait for goroutine to exit
 	cancel()
-	time.Sleep(100 * time.Millisecond)
+	// Close server connection to unblock Read
+	_ = server.Close()
+
+	// Wait for goroutine to finish before test ends
+	select {
+	case <-done:
+		// Goroutine exited cleanly
+	case <-time.After(2 * time.Second):
+		t.Fatal("relay goroutine did not exit in time")
+	}
 
 	// Check that data was forwarded
 	var receivedData []byte
