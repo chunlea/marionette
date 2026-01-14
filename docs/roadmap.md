@@ -1252,21 +1252,21 @@
 
 ### 8.3 Observability
 
-- [ ] Structured logging:
-  - [ ] JSON format in production
-  - [ ] Request ID correlation
-  - [ ] Log levels (debug, info, warn, error)
-  - [ ] zap or zerolog
-- [ ] Prometheus metrics:
-  - [ ] `/metrics` endpoint
-  - [ ] Request duration histograms
-  - [ ] Active connections gauge
-  - [ ] Task counts by status
-  - [ ] Error rates
-- [ ] Health endpoints:
-  - [ ] `/health/live` - Liveness probe
-  - [ ] `/health/ready` - Readiness probe
-  - [ ] Database connectivity check
+- [x] Structured logging:
+  - [x] JSON format in production
+  - [x] Request ID correlation
+  - [x] Log levels (debug, info, warn, error)
+  - [x] zap or zerolog
+- [x] Prometheus metrics:
+  - [x] `/metrics` endpoint (port 9091)
+  - [x] Request duration histograms
+  - [x] Active connections gauge
+  - [x] Task counts by status
+  - [x] Error rates
+- [x] Health endpoints:
+  - [x] `/health/live` - Liveness probe
+  - [x] `/health/ready` - Readiness probe
+  - [x] Database connectivity check
 - [ ] OpenTelemetry traces (optional):
   - [ ] Trace context propagation
   - [ ] Span creation for key operations

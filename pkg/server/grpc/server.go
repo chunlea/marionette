@@ -49,6 +49,10 @@ type serverOptions struct {
 	connManager          *ConnectionManager
 	tunnelRouter         *TunnelRouter
 	browserStreamHandler BrowserStreamHandlerInterface
+
+	// Interceptors for metrics, tracing, etc.
+	unaryInterceptors  []grpc.UnaryServerInterceptor
+	streamInterceptors []grpc.StreamServerInterceptor
 }
 
 // WithPermissionManager sets the permission manager for handling permission requests from runners.
@@ -94,6 +98,22 @@ func WithBrowserStream(bsh BrowserStreamHandlerInterface) ServerOption {
 	}
 }
 
+// WithUnaryInterceptor adds a unary server interceptor.
+// Interceptors are applied in the order they are added.
+func WithUnaryInterceptor(i grpc.UnaryServerInterceptor) ServerOption {
+	return func(o *serverOptions) {
+		o.unaryInterceptors = append(o.unaryInterceptors, i)
+	}
+}
+
+// WithStreamInterceptor adds a stream server interceptor.
+// Interceptors are applied in the order they are added.
+func WithStreamInterceptor(i grpc.StreamServerInterceptor) ServerOption {
+	return func(o *serverOptions) {
+		o.streamInterceptors = append(o.streamInterceptors, i)
+	}
+}
+
 // New creates a new gRPC server.
 func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) {
 	// Apply options
@@ -127,16 +147,22 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 		logger.Warn("TLS disabled for gRPC server - this is not recommended for production")
 	}
 
-	// Add interceptors (order: recovery first to catch panics, then logging)
+	// Build interceptor chains (order: recovery first to catch panics, then logging, then custom)
+	unaryInterceptors := []grpc.UnaryServerInterceptor{
+		RecoveryUnaryInterceptor(logger),
+		LoggingUnaryInterceptor(logger),
+	}
+	unaryInterceptors = append(unaryInterceptors, srvOpts.unaryInterceptors...)
+
+	streamInterceptors := []grpc.StreamServerInterceptor{
+		RecoveryStreamInterceptor(logger),
+		LoggingStreamInterceptor(logger),
+	}
+	streamInterceptors = append(streamInterceptors, srvOpts.streamInterceptors...)
+
 	grpcOpts = append(grpcOpts,
-		grpc.ChainUnaryInterceptor(
-			RecoveryUnaryInterceptor(logger),
-			LoggingUnaryInterceptor(logger),
-		),
-		grpc.ChainStreamInterceptor(
-			RecoveryStreamInterceptor(logger),
-			LoggingStreamInterceptor(logger),
-		),
+		grpc.ChainUnaryInterceptor(unaryInterceptors...),
+		grpc.ChainStreamInterceptor(streamInterceptors...),
 	)
 
 	s := grpc.NewServer(grpcOpts...)

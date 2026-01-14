@@ -42,6 +42,9 @@ type Server struct {
 
 	// Auth
 	apiKeyService *auth.APIKeyService
+
+	// Middleware
+	middlewares []func(http.Handler) http.Handler
 }
 
 // Config holds configuration for the public API server.
@@ -92,6 +95,14 @@ func WithWorkspaceService(s WorkspaceService) Option {
 func WithAPIKeyService(s *auth.APIKeyService) Option {
 	return func(srv *Server) {
 		srv.apiKeyService = s
+	}
+}
+
+// WithMiddleware adds a middleware to the server.
+// Middlewares are applied in the order they are added.
+func WithMiddleware(m func(http.Handler) http.Handler) Option {
+	return func(srv *Server) {
+		srv.middlewares = append(srv.middlewares, m)
 	}
 }
 
@@ -151,6 +162,11 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(RequestLogger(logger))
+
+	// Apply custom middlewares (e.g., metrics)
+	for _, m := range srv.middlewares {
+		r.Use(m)
+	}
 
 	// CORS
 	r.Use(cors.Handler(cors.Options{
