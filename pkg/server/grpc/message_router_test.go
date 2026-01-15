@@ -971,6 +971,14 @@ func (m *mockStoreForRouter) Ping(_ context.Context) error                    { 
 func (m *mockStoreForRouter) Close() error                                    { return nil }
 func (m *mockStoreForRouter) DeleteTaskRun(_ context.Context, _ string) error { return nil }
 
+func (m *mockStoreForRouter) GetDueScheduledSessions(_ context.Context, _ time.Time, _ int) ([]*store.Session, error) {
+	return nil, nil
+}
+
+func (m *mockStoreForRouter) GetDueScheduledTasks(_ context.Context, _ time.Time, _ int) ([]*store.ScheduledTask, error) {
+	return nil, nil
+}
+
 func TestMessageRouter_HandleMessage_PermissionRequest_WithManager(t *testing.T) {
 	logger := zap.NewNop()
 	pm := &mockPermissionManager{}

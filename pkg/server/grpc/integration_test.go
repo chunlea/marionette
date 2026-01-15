@@ -436,6 +436,14 @@ func (s *integrationTestStore) BeginTx(_ context.Context) (store.Tx, error) { re
 func (s *integrationTestStore) Ping(_ context.Context) error                { return nil }
 func (s *integrationTestStore) Close() error                                { return nil }
 
+func (s *integrationTestStore) GetDueScheduledSessions(_ context.Context, _ time.Time, _ int) ([]*store.Session, error) {
+	return nil, nil
+}
+
+func (s *integrationTestStore) GetDueScheduledTasks(_ context.Context, _ time.Time, _ int) ([]*store.ScheduledTask, error) {
+	return nil, nil
+}
+
 // integrationTestSetup holds all test components.
 type integrationTestSetup struct {
 	server      *grpc.Server

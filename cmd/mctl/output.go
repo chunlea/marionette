@@ -302,6 +302,54 @@ func tunnelToRow(t *client.Tunnel) []string {
 	}
 }
 
+// PrintScheduledTask outputs a single scheduled task.
+func (p *Printer) PrintScheduledTask(t *client.ScheduledTask) error {
+	if p.format == OutputTable {
+		headers := []string{"ID", "SESSION", "NAME", "STATUS", "CRON", "NEXT RUN", "CREATED"}
+		rows := [][]string{scheduledTaskToRow(t)}
+		return p.PrintTable(headers, rows)
+	}
+	return p.Print(t)
+}
+
+// PrintScheduledTaskList outputs a list of scheduled tasks.
+func (p *Printer) PrintScheduledTaskList(tasks []*client.ScheduledTask) error {
+	if p.format == OutputTable {
+		headers := []string{"ID", "SESSION", "NAME", "STATUS", "CRON", "NEXT RUN", "CREATED"}
+		rows := make([][]string, len(tasks))
+		for i, t := range tasks {
+			rows[i] = scheduledTaskToRow(t)
+		}
+		return p.PrintTable(headers, rows)
+	}
+	return p.Print(tasks)
+}
+
+// scheduledTaskToRow converts a scheduled task to a table row.
+func scheduledTaskToRow(t *client.ScheduledTask) []string {
+	nextRun := "-"
+	if t.NextRunAt != nil {
+		nextRun = formatTime(*t.NextRunAt)
+	}
+	name := t.Name
+	if len(name) > 20 {
+		name = name[:17] + "..."
+	}
+	cron := t.CronExpression
+	if len(cron) > 15 {
+		cron = cron[:12] + "..."
+	}
+	return []string{
+		t.ID,
+		t.SessionID,
+		name,
+		t.Status,
+		cron,
+		nextRun,
+		formatTime(t.CreatedAt),
+	}
+}
+
 // formatTime formats a time value for display.
 func formatTime(t time.Time) string {
 	duration := time.Since(t)

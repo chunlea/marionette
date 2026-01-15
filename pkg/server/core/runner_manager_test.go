@@ -428,6 +428,14 @@ func (w *testStoreWrapper) BeginTx(_ context.Context) (store.Tx, error) { return
 func (w *testStoreWrapper) Ping(_ context.Context) error                { return nil }
 func (w *testStoreWrapper) Close() error                                { return nil }
 
+func (w *testStoreWrapper) GetDueScheduledSessions(_ context.Context, _ time.Time, _ int) ([]*store.Session, error) {
+	return nil, nil
+}
+
+func (w *testStoreWrapper) GetDueScheduledTasks(_ context.Context, _ time.Time, _ int) ([]*store.ScheduledTask, error) {
+	return nil, nil
+}
+
 // Helper to create test setup with real RunnerManager
 func setupRunnerManagerTest() (*RunnerManager, *testRunnerStore) {
 	s := newTestRunnerStore()

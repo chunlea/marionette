@@ -1565,30 +1565,30 @@
   - [ ] Firewall rules use IPs not hostnames
   - [ ] Refresh interval for long tasks
 
-### 10.4 Scheduled Tasks
+### 10.4 Scheduled Tasks ✅
 
-- [ ] Scheduled task schema:
-  - [ ] Cron expression
-  - [ ] Timezone
-  - [ ] Prompt template
-  - [ ] Error handling policy
-- [ ] Scheduler implementation:
-  - [ ] Parse cron expressions
-  - [ ] Calculate next run time
-  - [ ] Trigger task creation
-- [ ] Session lifecycle modes:
-  - [ ] `on_demand`: Suspend when idle
-  - [ ] `always_on`: Never auto-suspend
-  - [ ] `scheduled`: Activate on schedule
-- [ ] Error handling:
-  - [ ] `continue`: Keep running
-  - [ ] `pause_on_failure`: Pause until manual resume
-  - [ ] `disable_on_failure`: Disable after N failures
-- [ ] CLI commands:
-  - [ ] `mctl scheduled-tasks create`
-  - [ ] `mctl scheduled-tasks list`
-  - [ ] `mctl scheduled-tasks pause/resume`
-  - [ ] `mctl scheduled-tasks trigger`
+- [x] Scheduled task schema:
+  - [x] Cron expression
+  - [x] Timezone
+  - [x] Prompt template
+  - [x] Error handling policy
+- [x] Scheduler implementation:
+  - [x] Parse cron expressions
+  - [x] Calculate next run time
+  - [x] Trigger task creation
+- [x] Session lifecycle modes:
+  - [x] `on_demand`: Suspend when idle
+  - [x] `always_on`: Never auto-suspend
+  - [x] `scheduled`: Activate on schedule
+- [x] Error handling:
+  - [x] `continue`: Keep running
+  - [x] `pause_on_failure`: Pause until manual resume
+  - [x] `disable_on_failure`: Disable after N failures
+- [x] CLI commands:
+  - [x] `mctl scheduled-tasks create`
+  - [x] `mctl scheduled-tasks list`
+  - [x] `mctl scheduled-tasks pause/resume`
+  - [x] `mctl scheduled-tasks trigger`
 
 ### 10.5 Integration Hooks
 

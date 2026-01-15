@@ -39,6 +39,15 @@ type MockClient struct {
 	GetTunnelFunc    func(ctx context.Context, id string) (*Tunnel, error)
 	ListTunnelsFunc  func(ctx context.Context, opts ListTunnelsOptions) (*ListResult[Tunnel], error)
 	CloseTunnelFunc  func(ctx context.Context, id string) error
+
+	CreateScheduledTaskFunc  func(ctx context.Context, opts CreateScheduledTaskOptions) (*ScheduledTask, error)
+	GetScheduledTaskFunc     func(ctx context.Context, id string) (*ScheduledTask, error)
+	ListScheduledTasksFunc   func(ctx context.Context, opts ListScheduledTasksOptions) (*ListResult[ScheduledTask], error)
+	UpdateScheduledTaskFunc  func(ctx context.Context, id string, opts UpdateScheduledTaskOptions) (*ScheduledTask, error)
+	DeleteScheduledTaskFunc  func(ctx context.Context, id string) error
+	PauseScheduledTaskFunc   func(ctx context.Context, id string) (*ScheduledTask, error)
+	ResumeScheduledTaskFunc  func(ctx context.Context, id string) (*ScheduledTask, error)
+	TriggerScheduledTaskFunc func(ctx context.Context, id string) (*Task, error)
 }
 
 // MockCall represents a recorded method call.
@@ -260,6 +269,78 @@ func (m *MockClient) CloseTunnel(ctx context.Context, id string) error {
 		return m.CloseTunnelFunc(ctx, id)
 	}
 	return nil
+}
+
+// CreateScheduledTask implements Client.
+func (m *MockClient) CreateScheduledTask(ctx context.Context, opts CreateScheduledTaskOptions) (*ScheduledTask, error) {
+	m.recordCall("CreateScheduledTask", opts)
+	if m.CreateScheduledTaskFunc != nil {
+		return m.CreateScheduledTaskFunc(ctx, opts)
+	}
+	return nil, ErrNotFound
+}
+
+// GetScheduledTask implements Client.
+func (m *MockClient) GetScheduledTask(ctx context.Context, id string) (*ScheduledTask, error) {
+	m.recordCall("GetScheduledTask", id)
+	if m.GetScheduledTaskFunc != nil {
+		return m.GetScheduledTaskFunc(ctx, id)
+	}
+	return nil, ErrNotFound
+}
+
+// ListScheduledTasks implements Client.
+func (m *MockClient) ListScheduledTasks(ctx context.Context, opts ListScheduledTasksOptions) (*ListResult[ScheduledTask], error) {
+	m.recordCall("ListScheduledTasks", opts)
+	if m.ListScheduledTasksFunc != nil {
+		return m.ListScheduledTasksFunc(ctx, opts)
+	}
+	return &ListResult[ScheduledTask]{Items: []*ScheduledTask{}}, nil
+}
+
+// UpdateScheduledTask implements Client.
+func (m *MockClient) UpdateScheduledTask(ctx context.Context, id string, opts UpdateScheduledTaskOptions) (*ScheduledTask, error) {
+	m.recordCall("UpdateScheduledTask", id, opts)
+	if m.UpdateScheduledTaskFunc != nil {
+		return m.UpdateScheduledTaskFunc(ctx, id, opts)
+	}
+	return nil, ErrNotFound
+}
+
+// DeleteScheduledTask implements Client.
+func (m *MockClient) DeleteScheduledTask(ctx context.Context, id string) error {
+	m.recordCall("DeleteScheduledTask", id)
+	if m.DeleteScheduledTaskFunc != nil {
+		return m.DeleteScheduledTaskFunc(ctx, id)
+	}
+	return nil
+}
+
+// PauseScheduledTask implements Client.
+func (m *MockClient) PauseScheduledTask(ctx context.Context, id string) (*ScheduledTask, error) {
+	m.recordCall("PauseScheduledTask", id)
+	if m.PauseScheduledTaskFunc != nil {
+		return m.PauseScheduledTaskFunc(ctx, id)
+	}
+	return nil, ErrNotFound
+}
+
+// ResumeScheduledTask implements Client.
+func (m *MockClient) ResumeScheduledTask(ctx context.Context, id string) (*ScheduledTask, error) {
+	m.recordCall("ResumeScheduledTask", id)
+	if m.ResumeScheduledTaskFunc != nil {
+		return m.ResumeScheduledTaskFunc(ctx, id)
+	}
+	return nil, ErrNotFound
+}
+
+// TriggerScheduledTask implements Client.
+func (m *MockClient) TriggerScheduledTask(ctx context.Context, id string) (*Task, error) {
+	m.recordCall("TriggerScheduledTask", id)
+	if m.TriggerScheduledTaskFunc != nil {
+		return m.TriggerScheduledTaskFunc(ctx, id)
+	}
+	return nil, ErrNotFound
 }
 
 // MockLogIterator is a mock implementation of LogIterator.

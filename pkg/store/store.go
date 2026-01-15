@@ -29,6 +29,7 @@ type Store interface {
 	ListSessions(ctx context.Context, opts ListSessionsOptions) (*ListResult[Session], error)
 	UpdateSession(ctx context.Context, id string, updates SessionUpdates) error
 	DeleteSession(ctx context.Context, id string) error
+	GetDueScheduledSessions(ctx context.Context, now time.Time, limit int) ([]*Session, error)
 
 	// Tasks
 	CreateTask(ctx context.Context, task *Task) error
@@ -50,6 +51,7 @@ type Store interface {
 	ListScheduledTasks(ctx context.Context, opts ListScheduledTasksOptions) (*ListResult[ScheduledTask], error)
 	UpdateScheduledTask(ctx context.Context, id string, updates ScheduledTaskUpdates) error
 	DeleteScheduledTask(ctx context.Context, id string) error
+	GetDueScheduledTasks(ctx context.Context, now time.Time, limit int) ([]*ScheduledTask, error)
 
 	// PermissionRequests
 	CreatePermissionRequest(ctx context.Context, req *PermissionRequest) error
@@ -200,6 +202,7 @@ type Tx interface {
 	ListSessions(ctx context.Context, opts ListSessionsOptions) (*ListResult[Session], error)
 	UpdateSession(ctx context.Context, id string, updates SessionUpdates) error
 	DeleteSession(ctx context.Context, id string) error
+	GetDueScheduledSessions(ctx context.Context, now time.Time, limit int) ([]*Session, error)
 
 	// Tasks
 	CreateTask(ctx context.Context, task *Task) error
@@ -221,6 +224,7 @@ type Tx interface {
 	ListScheduledTasks(ctx context.Context, opts ListScheduledTasksOptions) (*ListResult[ScheduledTask], error)
 	UpdateScheduledTask(ctx context.Context, id string, updates ScheduledTaskUpdates) error
 	DeleteScheduledTask(ctx context.Context, id string) error
+	GetDueScheduledTasks(ctx context.Context, now time.Time, limit int) ([]*ScheduledTask, error)
 
 	// PermissionRequests
 	CreatePermissionRequest(ctx context.Context, req *PermissionRequest) error
