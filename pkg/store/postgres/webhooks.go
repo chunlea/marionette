@@ -12,7 +12,7 @@ import (
 )
 
 // Webhook column list for SELECT queries.
-const webhookColumns = `id, name, url, events, secret_hash, secret_prefix,
+const webhookColumns = `id, name, url, events, secret_encrypted, secret_hash, secret_prefix,
 	is_active, max_retries, retry_delay_seconds, timeout_seconds,
 	headers, tenant_id, labels, annotations, created_at, updated_at`
 
@@ -38,17 +38,17 @@ func createWebhook(ctx context.Context, q querier, webhook *store.Webhook) error
 
 	query := `
 		INSERT INTO webhooks (
-			id, name, url, events, secret_hash, secret_prefix,
+			id, name, url, events, secret_encrypted, secret_hash, secret_prefix,
 			is_active, max_retries, retry_delay_seconds, timeout_seconds,
 			headers, tenant_id, labels, annotations, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW()
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW()
 		)
 		RETURNING created_at, updated_at`
 
 	err := q.QueryRow(ctx, query,
 		webhook.ID, webhook.Name, webhook.URL, webhook.Events,
-		webhook.SecretHash, webhook.SecretPrefix, webhook.IsActive,
+		webhook.SecretEncrypted, webhook.SecretHash, webhook.SecretPrefix, webhook.IsActive,
 		webhook.MaxRetries, webhook.RetryDelaySeconds, webhook.TimeoutSeconds,
 		emptyJSONObject(webhook.Headers), webhook.TenantID,
 		emptyJSONObject(webhook.Labels), emptyJSONObject(webhook.Annotations),
@@ -188,6 +188,11 @@ func updateWebhook(ctx context.Context, q querier, webhookID string, updates sto
 	if updates.Events != nil {
 		setClauses = append(setClauses, fmt.Sprintf("events = $%d", argNum))
 		args = append(args, updates.Events)
+		argNum++
+	}
+	if updates.SecretEncrypted != nil {
+		setClauses = append(setClauses, fmt.Sprintf("secret_encrypted = $%d", argNum))
+		args = append(args, *updates.SecretEncrypted)
 		argNum++
 	}
 	if updates.SecretHash != nil {
@@ -560,7 +565,7 @@ func scanWebhook(row pgx.Row, identifier string) (*store.Webhook, error) {
 	var webhook store.Webhook
 	err := row.Scan(
 		&webhook.ID, &webhook.Name, &webhook.URL, &webhook.Events,
-		&webhook.SecretHash, &webhook.SecretPrefix, &webhook.IsActive,
+		&webhook.SecretEncrypted, &webhook.SecretHash, &webhook.SecretPrefix, &webhook.IsActive,
 		&webhook.MaxRetries, &webhook.RetryDelaySeconds, &webhook.TimeoutSeconds,
 		&webhook.Headers, &webhook.TenantID, &webhook.Labels, &webhook.Annotations,
 		&webhook.CreatedAt, &webhook.UpdatedAt,
@@ -578,7 +583,7 @@ func scanWebhookRows(rows pgx.Rows) (*store.Webhook, error) {
 	var webhook store.Webhook
 	err := rows.Scan(
 		&webhook.ID, &webhook.Name, &webhook.URL, &webhook.Events,
-		&webhook.SecretHash, &webhook.SecretPrefix, &webhook.IsActive,
+		&webhook.SecretEncrypted, &webhook.SecretHash, &webhook.SecretPrefix, &webhook.IsActive,
 		&webhook.MaxRetries, &webhook.RetryDelaySeconds, &webhook.TimeoutSeconds,
 		&webhook.Headers, &webhook.TenantID, &webhook.Labels, &webhook.Annotations,
 		&webhook.CreatedAt, &webhook.UpdatedAt,

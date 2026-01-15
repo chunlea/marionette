@@ -18,10 +18,13 @@ CREATE TABLE webhooks (
     -- Event subscription (supports wildcards like "task.*")
     events TEXT[] NOT NULL DEFAULT '{}',
 
-    -- Secret for HMAC-SHA256 signature (stored as hash)
-    -- The plain secret is shown once on creation, then only hash stored
+    -- Secret for HMAC-SHA256 signature
+    -- secret_encrypted: AES-GCM encrypted secret (can be decrypted for signing)
+    -- secret_hash: SHA-256 hash for verification (not used for signing)
+    -- secret_prefix: First 8 chars for identification in UI
+    secret_encrypted TEXT NOT NULL,
     secret_hash TEXT NOT NULL,
-    secret_prefix TEXT NOT NULL,  -- First 8 chars for identification
+    secret_prefix TEXT NOT NULL,
 
     -- Configuration
     is_active BOOLEAN NOT NULL DEFAULT TRUE,

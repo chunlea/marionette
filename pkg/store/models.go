@@ -649,7 +649,8 @@ type Webhook struct {
 	Name              string          `json:"name"`
 	URL               string          `json:"url"`
 	Events            []string        `json:"events"`        // Event patterns (e.g., "task.*", "session.created")
-	SecretHash        string          `json:"-"`             // Never expose in JSON
+	SecretEncrypted   string          `json:"-"`             // AES-GCM encrypted secret (for signing)
+	SecretHash        string          `json:"-"`             // SHA-256 hash (never expose in JSON)
 	SecretPrefix      string          `json:"secret_prefix"` // First 8 chars for identification
 	IsActive          bool            `json:"is_active"`
 	MaxRetries        int             `json:"max_retries"`
@@ -668,6 +669,7 @@ type WebhookUpdates struct {
 	Name              *string
 	URL               *string
 	Events            []string
+	SecretEncrypted   *string
 	SecretHash        *string
 	SecretPrefix      *string
 	IsActive          *bool
