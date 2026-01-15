@@ -1342,20 +1342,21 @@
 
 ### 9.3 E2B Provider
 
-- [ ] E2B API integration:
-  - [ ] API client setup
-  - [ ] Authentication
-  - [ ] Sandbox creation
-- [ ] Sandbox lifecycle:
-  - [ ] Create sandbox from template
-  - [ ] Destroy sandbox
-  - [ ] Get sandbox status
-- [ ] Pause/Resume:
-  - [ ] Use E2B native suspend
-  - [ ] Instant resume
-- [ ] Snapshot support:
-  - [ ] Create sandbox snapshot
-  - [ ] Restore from snapshot
+- [x] E2B API integration:
+  - [x] API client setup
+  - [x] Authentication (API key)
+  - [x] Sandbox creation
+- [x] Sandbox lifecycle:
+  - [x] Create sandbox from template
+  - [x] Destroy sandbox
+  - [x] Get sandbox status
+  - [x] List sandboxes
+- [x] Pause/Resume:
+  - [x] Use E2B native suspend (beta)
+  - [x] Instant resume
+  - [x] Fallback to terminate strategy
+- [ ] Snapshot support (deferred):
+  - [ ] E2B pause preserves state; traditional snapshots not supported
 
 ### 9.4 Pool Provider
 

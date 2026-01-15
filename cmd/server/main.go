@@ -20,6 +20,7 @@ import (
 	"github.com/chunlea/marionette/pkg/observability/metrics"
 	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/provider/docker"
+	"github.com/chunlea/marionette/pkg/provider/e2b"
 	"github.com/chunlea/marionette/pkg/provider/pool"
 	"github.com/chunlea/marionette/pkg/server/admin"
 	"github.com/chunlea/marionette/pkg/server/api"
@@ -516,6 +517,9 @@ func initProviderRegistry(s store.Store, cfg *config.Config, logger *zap.Logger)
 
 	// Register Pool provider factory
 	registry.RegisterFactory("pool", pool.NewProviderFactory(s, logger))
+
+	// Register E2B provider factory
+	registry.RegisterFactory("e2b", e2b.NewProviderFactory())
 
 	// Load default Docker provider from YAML config if specified
 	if cfg.Providers.Default == "docker" && cfg.Providers.Docker != nil {
