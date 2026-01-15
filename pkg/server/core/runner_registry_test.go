@@ -384,6 +384,14 @@ func (m *mockRunnerStore) BeginTx(_ context.Context) (store.Tx, error) { return 
 func (m *mockRunnerStore) Ping(_ context.Context) error                { return nil }
 func (m *mockRunnerStore) Close() error                                { return nil }
 
+func (m *mockRunnerStore) GetDueScheduledSessions(_ context.Context, _ time.Time, _ int) ([]*store.Session, error) {
+	return nil, nil
+}
+
+func (m *mockRunnerStore) GetDueScheduledTasks(_ context.Context, _ time.Time, _ int) ([]*store.ScheduledTask, error) {
+	return nil, nil
+}
+
 func TestRunnerRegistry_Register_NoToken(t *testing.T) {
 	runnerStore := newMockRunnerStore()
 	tokenStore := mockstore.NewRunnerTokenStore()

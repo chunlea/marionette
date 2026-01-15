@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -843,6 +844,51 @@ func deleteScheduledTask(ctx context.Context, q querier, taskID string) error {
 	}
 
 	return nil
+}
+
+// GetDueScheduledTasks retrieves scheduled tasks that are due to run.
+// It selects tasks where status='active' and next_run_at <= now.
+func (s *Store) GetDueScheduledTasks(ctx context.Context, now time.Time, limit int) ([]*store.ScheduledTask, error) {
+	return getDueScheduledTasks(ctx, s.pool, now, limit)
+}
+
+// GetDueScheduledTasks retrieves due scheduled tasks within a transaction.
+func (t *Tx) GetDueScheduledTasks(ctx context.Context, now time.Time, limit int) ([]*store.ScheduledTask, error) {
+	return getDueScheduledTasks(ctx, t.tx, now, limit)
+}
+
+func getDueScheduledTasks(ctx context.Context, q querier, now time.Time, limit int) ([]*store.ScheduledTask, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s FROM scheduled_tasks
+		WHERE status = 'active' AND next_run_at IS NOT NULL AND next_run_at <= $1
+		ORDER BY next_run_at ASC
+		LIMIT $2
+	`, scheduledTaskColumns)
+
+	rows, err := q.Query(ctx, query, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying due scheduled_tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []*store.ScheduledTask
+	for rows.Next() {
+		task, err := scanScheduledTaskFromRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning scheduled_task: %w", err)
+		}
+		tasks = append(tasks, task)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating scheduled_tasks: %w", err)
+	}
+
+	return tasks, nil
 }
 
 func scanScheduledTask(row pgx.Row, identifier string) (*store.ScheduledTask, error) {

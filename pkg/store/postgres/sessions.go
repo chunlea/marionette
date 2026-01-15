@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -410,4 +411,52 @@ func scanSessionFromRows(rows pgx.Rows) (*store.Session, error) {
 		return nil, err
 	}
 	return &s, nil
+}
+
+// GetDueScheduledSessions retrieves sessions with lifecycle_mode='scheduled'
+// that are suspended and have next_scheduled_at <= now.
+func (s *Store) GetDueScheduledSessions(ctx context.Context, now time.Time, limit int) ([]*store.Session, error) {
+	return getDueScheduledSessions(ctx, s.pool, now, limit)
+}
+
+// GetDueScheduledSessions retrieves due scheduled sessions within a transaction.
+func (t *Tx) GetDueScheduledSessions(ctx context.Context, now time.Time, limit int) ([]*store.Session, error) {
+	return getDueScheduledSessions(ctx, t.tx, now, limit)
+}
+
+func getDueScheduledSessions(ctx context.Context, q querier, now time.Time, limit int) ([]*store.Session, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s FROM sessions
+		WHERE lifecycle_mode = 'scheduled'
+		  AND status = 'suspended'
+		  AND next_scheduled_at IS NOT NULL
+		  AND next_scheduled_at <= $1
+		ORDER BY next_scheduled_at ASC
+		LIMIT $2
+	`, sessionColumns)
+
+	rows, err := q.Query(ctx, query, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying due scheduled sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []*store.Session
+	for rows.Next() {
+		session, err := scanSessionFromRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning scheduled session: %w", err)
+		}
+		sessions = append(sessions, session)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating scheduled sessions: %w", err)
+	}
+
+	return sessions, nil
 }

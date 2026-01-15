@@ -22,6 +22,9 @@ type Runner = store.Runner
 // PermissionRequest is an alias for store.PermissionRequest.
 type PermissionRequest = store.PermissionRequest
 
+// ScheduledTask is an alias for store.ScheduledTask.
+type ScheduledTask = store.ScheduledTask
+
 // ListResult is an alias for store.ListResult.
 type ListResult[T any] = store.ListResult[T]
 
@@ -57,6 +60,16 @@ type Client interface {
 	GetTunnel(ctx context.Context, id string) (*Tunnel, error)
 	ListTunnels(ctx context.Context, opts ListTunnelsOptions) (*ListResult[Tunnel], error)
 	CloseTunnel(ctx context.Context, id string) error
+
+	// Scheduled Tasks
+	CreateScheduledTask(ctx context.Context, opts CreateScheduledTaskOptions) (*ScheduledTask, error)
+	GetScheduledTask(ctx context.Context, id string) (*ScheduledTask, error)
+	ListScheduledTasks(ctx context.Context, opts ListScheduledTasksOptions) (*ListResult[ScheduledTask], error)
+	UpdateScheduledTask(ctx context.Context, id string, opts UpdateScheduledTaskOptions) (*ScheduledTask, error)
+	DeleteScheduledTask(ctx context.Context, id string) error
+	PauseScheduledTask(ctx context.Context, id string) (*ScheduledTask, error)
+	ResumeScheduledTask(ctx context.Context, id string) (*ScheduledTask, error)
+	TriggerScheduledTask(ctx context.Context, id string) (*Task, error)
 }
 
 // LogIterator allows iterating over log entries.

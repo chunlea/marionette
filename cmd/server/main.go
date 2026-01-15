@@ -126,11 +126,15 @@ func main() {
 		// Create permission timeout enforcer
 		permEnforcer = core.NewPermissionTimeoutEnforcer(dbStore, sessionMgr, logger)
 
+		// Create scheduled task service
+		scheduledTaskSvc := core.NewScheduledTaskService(dbStore, taskMgr, auditLog, logger)
+
 		// Create adapters and add to API options
 		sessionAdapter := api.NewSessionAdapter(sessionMgr, workspaceMgr)
 		taskAdapter := api.NewTaskAdapter(taskMgr, dbStore)
 		permAdapter := api.NewPermissionAdapter(permMgr)
 		workspaceAdapter := api.NewWorkspaceAdapter(workspaceMgr)
+		scheduledTaskAdapter := api.NewScheduledTaskAdapter(scheduledTaskSvc)
 
 		apiOpts = append(apiOpts,
 			api.WithSessionService(sessionAdapter),
@@ -138,6 +142,7 @@ func main() {
 			api.WithPermissionService(permAdapter),
 			api.WithWorkspaceService(workspaceAdapter),
 			api.WithAPIKeyService(apiKeySvc),
+			api.WithScheduledTaskService(scheduledTaskAdapter),
 		)
 
 		// Create tunnel manager for HTTP tunnel proxy

@@ -474,5 +474,154 @@ func (c *HTTPClient) CloseTunnel(ctx context.Context, id string) error {
 	return c.doRequest(ctx, http.MethodDelete, "/api/v1/tunnels/"+id, nil, nil)
 }
 
+// Scheduled Tasks
+
+// CreateScheduledTask creates a new scheduled task.
+func (c *HTTPClient) CreateScheduledTask(ctx context.Context, opts CreateScheduledTaskOptions) (*ScheduledTask, error) {
+	reqBody := map[string]any{
+		"session_id":      opts.SessionID,
+		"name":            opts.Name,
+		"cron_expression": opts.CronExpression,
+		"prompt_template": opts.PromptTemplate,
+	}
+	if opts.Description != "" {
+		reqBody["description"] = opts.Description
+	}
+	if opts.Timezone != "" {
+		reqBody["timezone"] = opts.Timezone
+	}
+	if opts.TimeoutSeconds > 0 {
+		reqBody["timeout_seconds"] = opts.TimeoutSeconds
+	}
+	if opts.MaxRetries > 0 {
+		reqBody["max_retries"] = opts.MaxRetries
+	}
+	if opts.OnFailure != "" {
+		reqBody["on_failure"] = opts.OnFailure
+	}
+	if opts.MaxConsecutiveFailures != nil {
+		reqBody["max_consecutive_failures"] = *opts.MaxConsecutiveFailures
+	}
+	if len(opts.Labels) > 0 {
+		reqBody["labels"] = opts.Labels
+	}
+
+	var task ScheduledTask
+	if err := c.doRequest(ctx, http.MethodPost, "/api/v1/scheduled-tasks", reqBody, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+// GetScheduledTask retrieves a scheduled task by ID.
+func (c *HTTPClient) GetScheduledTask(ctx context.Context, id string) (*ScheduledTask, error) {
+	var task ScheduledTask
+	if err := c.doRequest(ctx, http.MethodGet, "/api/v1/scheduled-tasks/"+id, nil, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+// ListScheduledTasks lists scheduled tasks with optional filtering.
+func (c *HTTPClient) ListScheduledTasks(ctx context.Context, opts ListScheduledTasksOptions) (*ListResult[ScheduledTask], error) {
+	params := url.Values{}
+	if opts.Limit > 0 {
+		params.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Cursor != "" {
+		params.Set("cursor", opts.Cursor)
+	}
+	if opts.SessionID != "" {
+		params.Set("session_id", opts.SessionID)
+	}
+	for _, s := range opts.Status {
+		params.Add("status", s)
+	}
+
+	path := "/api/v1/scheduled-tasks"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	var result ListResult[ScheduledTask]
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateScheduledTask updates a scheduled task.
+func (c *HTTPClient) UpdateScheduledTask(ctx context.Context, id string, opts UpdateScheduledTaskOptions) (*ScheduledTask, error) {
+	reqBody := make(map[string]any)
+	if opts.Name != nil {
+		reqBody["name"] = *opts.Name
+	}
+	if opts.Description != nil {
+		reqBody["description"] = *opts.Description
+	}
+	if opts.CronExpression != nil {
+		reqBody["cron_expression"] = *opts.CronExpression
+	}
+	if opts.Timezone != nil {
+		reqBody["timezone"] = *opts.Timezone
+	}
+	if opts.PromptTemplate != nil {
+		reqBody["prompt_template"] = *opts.PromptTemplate
+	}
+	if opts.TimeoutSeconds != nil {
+		reqBody["timeout_seconds"] = *opts.TimeoutSeconds
+	}
+	if opts.MaxRetries != nil {
+		reqBody["max_retries"] = *opts.MaxRetries
+	}
+	if opts.OnFailure != nil {
+		reqBody["on_failure"] = *opts.OnFailure
+	}
+	if opts.MaxConsecutiveFailures != nil {
+		reqBody["max_consecutive_failures"] = *opts.MaxConsecutiveFailures
+	}
+	if opts.Labels != nil {
+		reqBody["labels"] = opts.Labels
+	}
+
+	var task ScheduledTask
+	if err := c.doRequest(ctx, http.MethodPatch, "/api/v1/scheduled-tasks/"+id, reqBody, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+// DeleteScheduledTask deletes a scheduled task.
+func (c *HTTPClient) DeleteScheduledTask(ctx context.Context, id string) error {
+	return c.doRequest(ctx, http.MethodDelete, "/api/v1/scheduled-tasks/"+id, nil, nil)
+}
+
+// PauseScheduledTask pauses a scheduled task.
+func (c *HTTPClient) PauseScheduledTask(ctx context.Context, id string) (*ScheduledTask, error) {
+	var task ScheduledTask
+	if err := c.doRequest(ctx, http.MethodPost, "/api/v1/scheduled-tasks/"+id+"/pause", nil, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+// ResumeScheduledTask resumes a paused scheduled task.
+func (c *HTTPClient) ResumeScheduledTask(ctx context.Context, id string) (*ScheduledTask, error) {
+	var task ScheduledTask
+	if err := c.doRequest(ctx, http.MethodPost, "/api/v1/scheduled-tasks/"+id+"/resume", nil, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+// TriggerScheduledTask manually triggers a scheduled task.
+func (c *HTTPClient) TriggerScheduledTask(ctx context.Context, id string) (*Task, error) {
+	var task Task
+	if err := c.doRequest(ctx, http.MethodPost, "/api/v1/scheduled-tasks/"+id+"/trigger", nil, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
 // Ensure HTTPClient implements Client interface.
 var _ Client = (*HTTPClient)(nil)

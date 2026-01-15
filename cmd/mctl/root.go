@@ -75,6 +75,7 @@ func init() {
 	rootCmd.AddCommand(sessionsCmd)
 	rootCmd.AddCommand(tasksCmd)
 	rootCmd.AddCommand(tunnelsCmd)
+	rootCmd.AddCommand(scheduledTasksCmd)
 	rootCmd.AddCommand(adminCmd)
 	// TODO: Add these commands when implemented
 	// rootCmd.AddCommand(runnersCmd)

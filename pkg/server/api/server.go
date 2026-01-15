@@ -23,11 +23,12 @@ type Server struct {
 	logger *zap.Logger
 
 	// Services
-	sessions    SessionService
-	tasks       TaskService
-	runners     RunnerService
-	permissions PermissionService
-	workspaces  WorkspaceService
+	sessions       SessionService
+	tasks          TaskService
+	runners        RunnerService
+	permissions    PermissionService
+	workspaces     WorkspaceService
+	scheduledTasks ScheduledTaskService
 
 	// Tunnel service
 	tunnels TunnelService
@@ -88,6 +89,13 @@ func WithPermissionService(s PermissionService) Option {
 func WithWorkspaceService(s WorkspaceService) Option {
 	return func(srv *Server) {
 		srv.workspaces = s
+	}
+}
+
+// WithScheduledTaskService sets the scheduled task service.
+func WithScheduledTaskService(s ScheduledTaskService) Option {
+	return func(srv *Server) {
+		srv.scheduledTasks = s
 	}
 }
 
@@ -263,6 +271,18 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.With(RequireScope("workspaces:read")).Get("/{workspaceID}", srv.handleGetWorkspace)
 			r.With(RequireScope("workspaces:write")).Patch("/{workspaceID}", srv.handleUpdateWorkspace)
 			r.With(RequireScope("workspaces:write")).Delete("/{workspaceID}", srv.handleDeleteWorkspace)
+		})
+
+		// Scheduled Tasks
+		r.Route("/scheduled-tasks", func(r chi.Router) {
+			r.With(RequireScope("scheduled-tasks:write")).Post("/", srv.handleCreateScheduledTask)
+			r.With(RequireScope("scheduled-tasks:read")).Get("/", srv.handleListScheduledTasks)
+			r.With(RequireScope("scheduled-tasks:read")).Get("/{scheduledTaskID}", srv.handleGetScheduledTask)
+			r.With(RequireScope("scheduled-tasks:write")).Patch("/{scheduledTaskID}", srv.handleUpdateScheduledTask)
+			r.With(RequireScope("scheduled-tasks:write")).Delete("/{scheduledTaskID}", srv.handleDeleteScheduledTask)
+			r.With(RequireScope("scheduled-tasks:write")).Post("/{scheduledTaskID}/pause", srv.handlePauseScheduledTask)
+			r.With(RequireScope("scheduled-tasks:write")).Post("/{scheduledTaskID}/resume", srv.handleResumeScheduledTask)
+			r.With(RequireScope("scheduled-tasks:write")).Post("/{scheduledTaskID}/trigger", srv.handleTriggerScheduledTask)
 		})
 
 		// WebSocket endpoints

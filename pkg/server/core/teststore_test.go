@@ -595,3 +595,11 @@ func (s *testStore) DeleteStream(_ context.Context, _ string) error { return nil
 func (s *testStore) CleanupExpiredStreams(_ context.Context) (int, error) {
 	return 0, nil
 }
+
+func (s *testStore) GetDueScheduledSessions(_ context.Context, _ time.Time, _ int) ([]*store.Session, error) {
+	return nil, nil
+}
+
+func (s *testStore) GetDueScheduledTasks(_ context.Context, _ time.Time, _ int) ([]*store.ScheduledTask, error) {
+	return nil, nil
+}
