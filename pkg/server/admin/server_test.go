@@ -2566,6 +2566,113 @@ func TestProfileInvalidJSONBody(t *testing.T) {
 	})
 }
 
+func TestProfileHandlersInternalErrors(t *testing.T) {
+	mockService := NewMockProfileService()
+	srv := newTestServer(WithProfileService(mockService))
+
+	t.Run("create profile internal error", func(t *testing.T) {
+		mockService.SetInternalError(errors.New("database error"))
+
+		body := CreateProfileRequest{Name: "test-profile"}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPost, "/admin/api/v1/profiles/", bytes.NewReader(bodyBytes))
+		req.SetBasicAuth("admin", "secret")
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusInternalServerError {
+			t.Errorf("expected status %d, got %d: %s", http.StatusInternalServerError, rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("list profiles internal error", func(t *testing.T) {
+		mockService.SetInternalError(errors.New("database error"))
+
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/profiles/", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusInternalServerError {
+			t.Errorf("expected status %d, got %d: %s", http.StatusInternalServerError, rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("get profile internal error", func(t *testing.T) {
+		mockService.AddProfile(&store.Profile{ID: "prof_internal", Name: "test"})
+		mockService.SetInternalError(errors.New("database error"))
+
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/profiles/prof_internal", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusInternalServerError {
+			t.Errorf("expected status %d, got %d: %s", http.StatusInternalServerError, rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("update profile internal error", func(t *testing.T) {
+		mockService.AddProfile(&store.Profile{ID: "prof_update_err", Name: "test"})
+		mockService.SetInternalError(errors.New("database error"))
+
+		newName := "updated"
+		body := UpdateProfileRequest{Name: &newName}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, "/admin/api/v1/profiles/prof_update_err", bytes.NewReader(bodyBytes))
+		req.SetBasicAuth("admin", "secret")
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusInternalServerError {
+			t.Errorf("expected status %d, got %d: %s", http.StatusInternalServerError, rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("update profile validation error", func(t *testing.T) {
+		mockService.AddProfile(&store.Profile{ID: "prof_valid_err", Name: "test"})
+		mockService.SetValidationError("name", "name already exists")
+
+		newName := "duplicate"
+		body := UpdateProfileRequest{Name: &newName}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, "/admin/api/v1/profiles/prof_valid_err", bytes.NewReader(bodyBytes))
+		req.SetBasicAuth("admin", "secret")
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected status %d, got %d: %s", http.StatusBadRequest, rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("delete profile internal error", func(t *testing.T) {
+		mockService.AddProfile(&store.Profile{ID: "prof_delete_err", Name: "test"})
+		mockService.SetInternalError(errors.New("database error"))
+
+		req := httptest.NewRequest(http.MethodDelete, "/admin/api/v1/profiles/prof_delete_err", nil)
+		req.SetBasicAuth("admin", "secret")
+
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusInternalServerError {
+			t.Errorf("expected status %d, got %d: %s", http.StatusInternalServerError, rr.Code, rr.Body.String())
+		}
+	})
+}
+
 func TestMockProfileService(t *testing.T) {
 	t.Run("MockProfileService filters by provider_config_id", func(t *testing.T) {
 		svc := NewMockProfileService()
@@ -2709,6 +2816,124 @@ func TestMockProfileService(t *testing.T) {
 		_, err := svc.Update(ctx, "prof1", UpdateProfileOptions{})
 		if !IsValidation(err) {
 			t.Errorf("expected validation error, got %v", err)
+		}
+	})
+
+	t.Run("MockProfileService ClearValidationError", func(t *testing.T) {
+		svc := NewMockProfileService()
+		ctx := context.Background()
+
+		svc.AddProfile(&store.Profile{ID: "prof_clear_valid", Name: "test"})
+		svc.SetValidationError("name", "name already exists")
+		svc.ClearValidationError()
+
+		newName := "new-name"
+		updated, err := svc.Update(ctx, "prof_clear_valid", UpdateProfileOptions{Name: &newName})
+		if err != nil {
+			t.Errorf("expected no error after ClearValidationError, got %v", err)
+		}
+		if updated.Name != "new-name" {
+			t.Errorf("expected name 'new-name', got %q", updated.Name)
+		}
+	})
+
+	t.Run("MockProfileService ClearInternalError", func(t *testing.T) {
+		svc := NewMockProfileService()
+		ctx := context.Background()
+
+		svc.SetInternalError(errors.New("database error"))
+		svc.ClearInternalError()
+
+		profile, err := svc.Create(ctx, CreateProfileOptions{Name: "test-clear"})
+		if err != nil {
+			t.Errorf("expected no error after ClearInternalError, got %v", err)
+		}
+		if profile == nil {
+			t.Error("expected profile to be created")
+		}
+	})
+
+	t.Run("MockProfileService Create with all optional fields", func(t *testing.T) {
+		svc := NewMockProfileService()
+		ctx := context.Background()
+
+		profile, err := svc.Create(ctx, CreateProfileOptions{
+			Name:             "full-profile",
+			Description:      "A full description",
+			ProviderConfigID: "pcfg_test",
+			Resources:        map[string]any{"cpu": "4"},
+			Network:          map[string]any{"policy": "allow_list"},
+			InitScript:       "echo init",
+			CleanupScript:    "echo cleanup",
+			Tunnels:          []map[string]any{{"type": "http"}},
+			Selector:         map[string]any{"region": "us-east"},
+			Labels:           map[string]string{"env": "prod"},
+			Annotations:      map[string]string{"note": "test"},
+		})
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+		if profile.Name != "full-profile" {
+			t.Errorf("expected name 'full-profile', got %q", profile.Name)
+		}
+		if profile.Description == nil || *profile.Description != "A full description" {
+			t.Error("expected description to be set")
+		}
+		if profile.ProviderConfigID == nil || *profile.ProviderConfigID != "pcfg_test" {
+			t.Error("expected provider_config_id to be set")
+		}
+		if profile.InitScript == nil || *profile.InitScript != "echo init" {
+			t.Error("expected init_script to be set")
+		}
+		if profile.CleanupScript == nil || *profile.CleanupScript != "echo cleanup" {
+			t.Error("expected cleanup_script to be set")
+		}
+	})
+
+	t.Run("MockProfileService Create duplicate name", func(t *testing.T) {
+		svc := NewMockProfileService()
+		ctx := context.Background()
+
+		_, err := svc.Create(ctx, CreateProfileOptions{Name: "dup-name"})
+		if err != nil {
+			t.Fatalf("First create failed: %v", err)
+		}
+
+		_, err = svc.Create(ctx, CreateProfileOptions{Name: "dup-name"})
+		if !IsValidation(err) {
+			t.Errorf("expected validation error for duplicate name, got %v", err)
+		}
+	})
+
+	t.Run("MockProfileService List with limit", func(t *testing.T) {
+		svc := NewMockProfileService()
+		ctx := context.Background()
+
+		// Add many profiles
+		for i := 0; i < 10; i++ {
+			svc.AddProfile(&store.Profile{
+				ID:   "prof_limit" + string(rune('0'+i)),
+				Name: "profile" + string(rune('0'+i)),
+			})
+		}
+
+		result, err := svc.List(ctx, ListProfilesOptions{Limit: 3})
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+		if len(result.Items) > 3 {
+			t.Errorf("expected at most 3 items, got %d", len(result.Items))
+		}
+	})
+
+	t.Run("MockProfileService Update not found", func(t *testing.T) {
+		svc := NewMockProfileService()
+		ctx := context.Background()
+
+		newName := "new-name"
+		_, err := svc.Update(ctx, "nonexistent", UpdateProfileOptions{Name: &newName})
+		if err != store.ErrNotFound {
+			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
 }
