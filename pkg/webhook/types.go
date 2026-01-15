@@ -124,6 +124,10 @@ type Config struct {
 
 	// BatchSize is the number of events to process in each batch.
 	BatchSize int
+
+	// EncryptionKey is the key used to encrypt webhook secrets (32 bytes for AES-256).
+	// If not set, secrets will be stored in base64 encoding (not secure for production).
+	EncryptionKey []byte
 }
 
 // DefaultConfig returns the default webhook configuration.

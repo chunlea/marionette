@@ -2,8 +2,13 @@ package core
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"time"
 
 	"github.com/chunlea/marionette/pkg/id"
@@ -96,6 +101,68 @@ func NewWebhookManager(
 	}
 }
 
+// encryptSecret encrypts a secret using AES-GCM.
+func (m *WebhookManager) encryptSecret(secret string) (string, error) {
+	if len(m.config.EncryptionKey) == 0 {
+		// No encryption key, just base64 encode (for testing/development)
+		return base64.StdEncoding.EncodeToString([]byte(secret)), nil
+	}
+
+	block, err := aes.NewCipher(m.config.EncryptionKey)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, []byte(secret), nil)
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+// decryptSecret decrypts a secret using AES-GCM.
+func (m *WebhookManager) decryptSecret(encrypted string) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(encrypted)
+	if err != nil {
+		return "", err
+	}
+
+	if len(m.config.EncryptionKey) == 0 {
+		// No encryption key, it was just base64 encoded
+		return string(data), nil
+	}
+
+	block, err := aes.NewCipher(m.config.EncryptionKey)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return "", errors.New("ciphertext too short")
+	}
+
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
+}
+
 // Stop gracefully stops the webhook manager.
 func (m *WebhookManager) Stop() {
 	if m.dispatcher != nil {
@@ -128,12 +195,19 @@ func (m *WebhookManager) Create(ctx context.Context, input *CreateWebhookInput) 
 		return nil, "", err
 	}
 
+	// Encrypt secret for storage
+	secretEncrypted, err := m.encryptSecret(secret)
+	if err != nil {
+		return nil, "", err
+	}
+
 	now := time.Now()
 	wh := &store.Webhook{
 		ID:                id.Webhook(),
 		Name:              input.Name,
 		URL:               input.URL,
 		Events:            input.Events,
+		SecretEncrypted:   secretEncrypted,
 		SecretHash:        secretHash,
 		SecretPrefix:      secretPrefix,
 		IsActive:          true,
@@ -337,9 +411,16 @@ func (m *WebhookManager) RotateSecret(ctx context.Context, webhookID string) (st
 		return "", err
 	}
 
+	// Encrypt secret for storage
+	secretEncrypted, err := m.encryptSecret(secret)
+	if err != nil {
+		return "", err
+	}
+
 	updates := store.WebhookUpdates{
-		SecretHash:   &secretHash,
-		SecretPrefix: &secretPrefix,
+		SecretEncrypted: &secretEncrypted,
+		SecretHash:      &secretHash,
+		SecretPrefix:    &secretPrefix,
 	}
 
 	if err := m.store.UpdateWebhook(ctx, webhookID, updates); err != nil {
@@ -536,13 +617,18 @@ func (m *WebhookManager) deliverEvent(ctx context.Context, event *store.WebhookE
 		return err
 	}
 
-	// Get the secret for signing (need to look it up since we only store hash)
-	// Note: In production, you'd need a way to retrieve the actual secret
-	// For now, we'll use the hash as the secret (recipients would need to handle this)
-	// This is a simplification - in real implementation, you'd store an encrypted secret
+	// Decrypt the secret for signing
+	secret, err := m.decryptSecret(wh.SecretEncrypted)
+	if err != nil {
+		m.logger.Error("failed to decrypt webhook secret",
+			zap.String("webhook_id", wh.ID),
+			zap.Error(err),
+		)
+		return err
+	}
 
 	// Deliver synchronously
-	result := m.dispatcher.DispatchSync(ctx, webhookInfo, &payload, event.ID, wh.SecretHash)
+	result := m.dispatcher.DispatchSync(ctx, webhookInfo, &payload, event.ID, secret)
 
 	// Update event status
 	now := time.Now()
