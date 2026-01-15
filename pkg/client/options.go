@@ -16,6 +16,10 @@ type CreateSessionOptions struct {
 	// Mutually exclusive with AgentConfigID.
 	APIKey string
 
+	// ProfileID is the ID of a profile to use for runner configuration.
+	// If set, the profile's resources, network, and tunnel settings will be applied.
+	ProfileID string
+
 	// LifecycleMode is the session lifecycle mode.
 	// Valid values: "on_demand", "always_on", "scheduled".
 	LifecycleMode string
