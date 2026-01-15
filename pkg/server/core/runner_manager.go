@@ -44,6 +44,7 @@ type RunnerManager struct {
 	taskMgr     TaskManagerInterface
 	sessionMgr  SessionManagerInterface
 	logger      *zap.Logger
+	webhooks    *WebhookIntegration
 }
 
 // RunnerManagerOption is a functional option for RunnerManager.
@@ -61,6 +62,11 @@ func WithSessionManager(sm SessionManagerInterface) RunnerManagerOption {
 	return func(m *RunnerManager) {
 		m.sessionMgr = sm
 	}
+}
+
+// SetWebhookIntegration sets the webhook integration for dispatching events.
+func (m *RunnerManager) SetWebhookIntegration(wi *WebhookIntegration) {
+	m.webhooks = wi
 }
 
 // NewRunnerManager creates a new RunnerManager.
@@ -119,6 +125,14 @@ func (m *RunnerManager) OnConnect(ctx context.Context, runnerID string) error {
 		zap.String("runner_id", runnerID),
 		zap.String("status", StatusIdle),
 	)
+
+	// Dispatch webhook event
+	if m.webhooks != nil {
+		// Fetch updated runner for webhook
+		if updatedRunner, err := m.store.GetRunner(ctx, runnerID); err == nil {
+			m.webhooks.DispatchRunnerEvent(ctx, "runner.connected", updatedRunner, nil)
+		}
+	}
 
 	// Try to attach to a resuming session
 	go m.tryAttachToResumingSession(ctx, runnerID)
@@ -229,6 +243,14 @@ func (m *RunnerManager) OnDisconnect(ctx context.Context, runnerID string) error
 		zap.String("runner_id", runnerID),
 		zap.String("status", StatusOffline),
 	)
+
+	// Dispatch webhook event
+	if m.webhooks != nil {
+		// Fetch updated runner for webhook
+		if runner, err := m.store.GetRunner(ctx, runnerID); err == nil {
+			m.webhooks.DispatchRunnerEvent(ctx, "runner.disconnected", runner, nil)
+		}
+	}
 
 	return nil
 }

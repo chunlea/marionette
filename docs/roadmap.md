@@ -1598,12 +1598,14 @@
 
 ### 10.5 Integration Hooks
 
-- [ ] Webhooks:
-  - [ ] Webhook configuration storage
-  - [ ] Event dispatcher
-  - [ ] Event types: session.*, task.*, runner.*, permission.*
-  - [ ] Retry with exponential backoff
-  - [ ] Webhook signature (HMAC)
+- [x] Webhooks:
+  - [x] Webhook configuration storage
+  - [x] Event dispatcher with wildcard pattern matching
+  - [x] Event types: session.*, task.*, runner.*, permission.*
+  - [x] Retry with exponential backoff
+  - [x] Webhook signature (HMAC-SHA256 with timestamp replay protection)
+  - [x] Admin API handlers for webhook CRUD
+  - [x] Background delivery job
 - [ ] Prometheus metrics:
   - [ ] Usage metrics by label
   - [ ] Token counting per agent

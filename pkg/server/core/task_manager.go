@@ -95,7 +95,13 @@ type TaskManager struct {
 	cmdSender  CommandSender
 	sessionMgr SessionManagerInterface
 	auditLog   audit.Logger
+	webhooks   *WebhookIntegration
 	logger     *zap.Logger
+}
+
+// SetWebhookIntegration sets the webhook integration for dispatching events.
+func (m *TaskManager) SetWebhookIntegration(wi *WebhookIntegration) {
+	m.webhooks = wi
 }
 
 // NewTaskManager creates a new TaskManager.
@@ -218,6 +224,11 @@ func (m *TaskManager) Create(ctx context.Context, opts CreateTaskOptions) (*stor
 			}).
 			WithSuccess(true).
 			Log(ctx, m.auditLog)
+	}
+
+	// Dispatch webhook event
+	if m.webhooks != nil {
+		m.webhooks.DispatchTaskEvent(ctx, "task.created", task, nil)
 	}
 
 	return task, nil
@@ -688,6 +699,17 @@ func (m *TaskManager) OnTaskCompleted(ctx context.Context, result *TaskCompleted
 		zap.Bool("success", result.Success),
 		zap.String("task_status", taskStatus),
 	)
+
+	// Dispatch webhook event
+	if m.webhooks != nil {
+		if task, err := m.store.GetTask(ctx, run.TaskID); err == nil {
+			eventType := "task.completed"
+			if taskStatus == TaskStatusFailed {
+				eventType = "task.failed"
+			}
+			m.webhooks.DispatchTaskEvent(ctx, eventType, task, run)
+		}
+	}
 
 	return nil
 }

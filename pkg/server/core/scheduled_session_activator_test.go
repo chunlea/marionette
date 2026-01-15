@@ -417,6 +417,49 @@ func (s *activatorTestStore) CleanupExpiredStreams(_ context.Context) (int, erro
 	return 0, nil
 }
 
+// Webhook methods (stub)
+func (s *activatorTestStore) CreateWebhook(_ context.Context, _ *store.Webhook) error {
+	panic("not implemented")
+}
+func (s *activatorTestStore) GetWebhook(_ context.Context, _ string) (*store.Webhook, error) {
+	panic("not implemented")
+}
+func (s *activatorTestStore) GetWebhookByName(_ context.Context, _ string, _ *string) (*store.Webhook, error) {
+	panic("not implemented")
+}
+func (s *activatorTestStore) ListWebhooks(_ context.Context, _ store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
+	panic("not implemented")
+}
+func (s *activatorTestStore) UpdateWebhook(_ context.Context, _ string, _ store.WebhookUpdates) error {
+	panic("not implemented")
+}
+func (s *activatorTestStore) DeleteWebhook(_ context.Context, _ string) error {
+	panic("not implemented")
+}
+func (s *activatorTestStore) GetActiveWebhooksForEvent(_ context.Context, _ string, _ *string) ([]*store.Webhook, error) {
+	panic("not implemented")
+}
+
+// WebhookEvent methods (stub)
+func (s *activatorTestStore) CreateWebhookEvent(_ context.Context, _ *store.WebhookEvent) error {
+	panic("not implemented")
+}
+func (s *activatorTestStore) GetWebhookEvent(_ context.Context, _ string) (*store.WebhookEvent, error) {
+	panic("not implemented")
+}
+func (s *activatorTestStore) ListWebhookEvents(_ context.Context, _ store.ListWebhookEventsOptions) (*store.ListResult[store.WebhookEvent], error) {
+	panic("not implemented")
+}
+func (s *activatorTestStore) UpdateWebhookEvent(_ context.Context, _ string, _ store.WebhookEventUpdates) error {
+	panic("not implemented")
+}
+func (s *activatorTestStore) GetPendingWebhookEvents(_ context.Context, _ int) ([]*store.WebhookEvent, error) {
+	panic("not implemented")
+}
+func (s *activatorTestStore) CancelWebhookEventsByWebhook(_ context.Context, _ string) error {
+	panic("not implemented")
+}
+
 func TestNewScheduledSessionActivator(t *testing.T) {
 	logger := zap.NewNop()
 	mockStore := &activatorTestStore{}

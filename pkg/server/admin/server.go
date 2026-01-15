@@ -28,6 +28,7 @@ type Server struct {
 	sessionActivator SessionActivator
 	actionLogs       ActionLogService
 	healthService    HealthService
+	webhooks         WebhookService
 
 	// Streaming handlers
 	streamsHandler   *StreamsHandler
@@ -126,6 +127,13 @@ func WithSignalingHandler(h *SignalingHandler) Option {
 func WithHealthService(hs HealthService) Option {
 	return func(srv *Server) {
 		srv.healthService = hs
+	}
+}
+
+// WithWebhookService sets the webhook service.
+func WithWebhookService(s WebhookService) Option {
+	return func(srv *Server) {
+		srv.webhooks = s
 	}
 }
 
@@ -250,6 +258,23 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 		r.Route("/action-logs", func(r chi.Router) {
 			r.Get("/", srv.handleListActionLogs)
 			r.Get("/{logID}", srv.handleGetActionLog)
+		})
+
+		// Webhooks
+		r.Route("/webhooks", func(r chi.Router) {
+			r.Post("/", srv.handleCreateWebhook)
+			r.Get("/", srv.handleListWebhooks)
+			r.Get("/{webhookID}", srv.handleGetWebhook)
+			r.Put("/{webhookID}", srv.handleUpdateWebhook)
+			r.Delete("/{webhookID}", srv.handleDeleteWebhook)
+			r.Post("/{webhookID}/rotate-secret", srv.handleRotateWebhookSecret)
+		})
+
+		// Webhook Events
+		r.Route("/webhook-events", func(r chi.Router) {
+			r.Get("/", srv.handleListWebhookEvents)
+			r.Get("/{eventID}", srv.handleGetWebhookEvent)
+			r.Post("/{eventID}/retry", srv.handleRetryWebhookEvent)
 		})
 
 		// Streams (desktop streaming)

@@ -148,3 +148,13 @@ func IsTunnelToken(id string) bool {
 func IsManifest(id string) bool {
 	return strings.HasPrefix(id, "mfst_")
 }
+
+// IsWebhook returns true if id is a webhook ID.
+func IsWebhook(id string) bool {
+	return strings.HasPrefix(id, "whk_")
+}
+
+// IsWebhookEvent returns true if id is a webhook event ID.
+func IsWebhookEvent(id string) bool {
+	return strings.HasPrefix(id, "whev_")
+}

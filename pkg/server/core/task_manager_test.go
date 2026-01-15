@@ -274,6 +274,43 @@ func (s *testTaskStore) setTaskRun(id string, run *store.TaskRun) {
 	s.taskRuns[id] = run
 }
 
+// Webhook methods (stub)
+func (s *testTaskStore) CreateWebhook(_ context.Context, _ *store.Webhook) error { return nil }
+func (s *testTaskStore) GetWebhook(_ context.Context, _ string) (*store.Webhook, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testTaskStore) GetWebhookByName(_ context.Context, _ string, _ *string) (*store.Webhook, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testTaskStore) ListWebhooks(_ context.Context, _ store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
+	return &store.ListResult[store.Webhook]{}, nil
+}
+func (s *testTaskStore) UpdateWebhook(_ context.Context, _ string, _ store.WebhookUpdates) error {
+	return nil
+}
+func (s *testTaskStore) DeleteWebhook(_ context.Context, _ string) error { return nil }
+func (s *testTaskStore) GetActiveWebhooksForEvent(_ context.Context, _ string, _ *string) ([]*store.Webhook, error) {
+	return nil, nil
+}
+
+// WebhookEvent methods (stub)
+func (s *testTaskStore) CreateWebhookEvent(_ context.Context, _ *store.WebhookEvent) error {
+	return nil
+}
+func (s *testTaskStore) GetWebhookEvent(_ context.Context, _ string) (*store.WebhookEvent, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testTaskStore) ListWebhookEvents(_ context.Context, _ store.ListWebhookEventsOptions) (*store.ListResult[store.WebhookEvent], error) {
+	return &store.ListResult[store.WebhookEvent]{}, nil
+}
+func (s *testTaskStore) UpdateWebhookEvent(_ context.Context, _ string, _ store.WebhookEventUpdates) error {
+	return nil
+}
+func (s *testTaskStore) GetPendingWebhookEvents(_ context.Context, _ int) ([]*store.WebhookEvent, error) {
+	return nil, nil
+}
+func (s *testTaskStore) CancelWebhookEventsByWebhook(_ context.Context, _ string) error { return nil }
+
 // mockCommandSender implements CommandSender for testing.
 type mockCommandSender struct {
 	sentCommands []*pb.ServerCommand

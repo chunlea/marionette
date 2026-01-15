@@ -16,6 +16,7 @@ import (
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
 	"github.com/chunlea/marionette/pkg/id"
+	"github.com/chunlea/marionette/pkg/jobs"
 	"github.com/chunlea/marionette/pkg/observability/health"
 	"github.com/chunlea/marionette/pkg/observability/metrics"
 	"github.com/chunlea/marionette/pkg/provider"
@@ -32,6 +33,7 @@ import (
 	"github.com/chunlea/marionette/pkg/streaming"
 	"github.com/chunlea/marionette/pkg/streaming/browser"
 	"github.com/chunlea/marionette/pkg/tunnel"
+	"github.com/chunlea/marionette/pkg/webhook"
 	"go.uber.org/zap"
 )
 
@@ -341,6 +343,45 @@ func main() {
 		profileAdapter := admin.NewProfileAdapter(dbStore)
 		adminOpts = append(adminOpts, admin.WithProfileService(profileAdapter))
 		logger.Info("Profile service wired to Admin API")
+
+		// Create webhook manager and service for admin API
+		webhookMgr := core.NewWebhookManager(dbStore, webhook.Config{
+			DefaultMaxRetries:        3,
+			DefaultRetryDelaySeconds: 60,
+			DefaultTimeoutSeconds:    30,
+			MaxPayloadSize:           10 * 1024 * 1024, // 10MB
+			UserAgent:                "Marionette-Webhook/1.0",
+			WorkerCount:              4,
+			BatchSize:                100,
+		}, logger.Named("webhook"))
+		webhookAdapter := admin.NewWebhookAdapter(webhookMgr)
+		adminOpts = append(adminOpts, admin.WithWebhookService(webhookAdapter))
+		logger.Info("Webhook service wired to Admin API")
+
+		// Create webhook integration and inject into managers
+		webhookIntegration := core.NewWebhookIntegration(webhookMgr, logger.Named("webhook-integration"))
+		if sessionMgr != nil {
+			sessionMgr.SetWebhookIntegration(webhookIntegration)
+		}
+		if taskMgr != nil {
+			taskMgr.SetWebhookIntegration(webhookIntegration)
+		}
+		if permMgr != nil {
+			permMgr.SetWebhookIntegration(webhookIntegration)
+		}
+		logger.Info("Webhook integration wired to managers")
+
+		// Start webhook delivery job
+		webhookDeliveryJob := jobs.NewWebhookDeliveryJob(webhookMgr, jobs.WebhookDeliveryJobConfig{
+			Interval:  5 * time.Second,
+			BatchSize: 100,
+			Logger:    logger.Named("webhook-delivery"),
+		})
+		if err := webhookDeliveryJob.Start(context.Background()); err != nil {
+			logger.Error("failed to start webhook delivery job", zap.Error(err))
+		} else {
+			logger.Info("Webhook delivery job started")
+		}
 	}
 	if streamMgr != nil {
 		// Create streams handler for admin API

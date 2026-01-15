@@ -444,6 +444,49 @@ func (s *integrationTestStore) GetDueScheduledTasks(_ context.Context, _ time.Ti
 	return nil, nil
 }
 
+// Webhook methods (stub)
+func (s *integrationTestStore) CreateWebhook(_ context.Context, _ *store.Webhook) error {
+	panic("not implemented")
+}
+func (s *integrationTestStore) GetWebhook(_ context.Context, _ string) (*store.Webhook, error) {
+	panic("not implemented")
+}
+func (s *integrationTestStore) GetWebhookByName(_ context.Context, _ string, _ *string) (*store.Webhook, error) {
+	panic("not implemented")
+}
+func (s *integrationTestStore) ListWebhooks(_ context.Context, _ store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
+	panic("not implemented")
+}
+func (s *integrationTestStore) UpdateWebhook(_ context.Context, _ string, _ store.WebhookUpdates) error {
+	panic("not implemented")
+}
+func (s *integrationTestStore) DeleteWebhook(_ context.Context, _ string) error {
+	panic("not implemented")
+}
+func (s *integrationTestStore) GetActiveWebhooksForEvent(_ context.Context, _ string, _ *string) ([]*store.Webhook, error) {
+	panic("not implemented")
+}
+
+// WebhookEvent methods (stub)
+func (s *integrationTestStore) CreateWebhookEvent(_ context.Context, _ *store.WebhookEvent) error {
+	panic("not implemented")
+}
+func (s *integrationTestStore) GetWebhookEvent(_ context.Context, _ string) (*store.WebhookEvent, error) {
+	panic("not implemented")
+}
+func (s *integrationTestStore) ListWebhookEvents(_ context.Context, _ store.ListWebhookEventsOptions) (*store.ListResult[store.WebhookEvent], error) {
+	panic("not implemented")
+}
+func (s *integrationTestStore) UpdateWebhookEvent(_ context.Context, _ string, _ store.WebhookEventUpdates) error {
+	panic("not implemented")
+}
+func (s *integrationTestStore) GetPendingWebhookEvents(_ context.Context, _ int) ([]*store.WebhookEvent, error) {
+	panic("not implemented")
+}
+func (s *integrationTestStore) CancelWebhookEventsByWebhook(_ context.Context, _ string) error {
+	panic("not implemented")
+}
+
 // integrationTestSetup holds all test components.
 type integrationTestSetup struct {
 	server      *grpc.Server

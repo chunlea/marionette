@@ -603,3 +603,38 @@ func (s *testStore) GetDueScheduledSessions(_ context.Context, _ time.Time, _ in
 func (s *testStore) GetDueScheduledTasks(_ context.Context, _ time.Time, _ int) ([]*store.ScheduledTask, error) {
 	return nil, nil
 }
+
+// Webhook methods (stub)
+func (s *testStore) CreateWebhook(_ context.Context, _ *store.Webhook) error { return nil }
+func (s *testStore) GetWebhook(_ context.Context, _ string) (*store.Webhook, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testStore) GetWebhookByName(_ context.Context, _ string, _ *string) (*store.Webhook, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testStore) ListWebhooks(_ context.Context, _ store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
+	return &store.ListResult[store.Webhook]{}, nil
+}
+func (s *testStore) UpdateWebhook(_ context.Context, _ string, _ store.WebhookUpdates) error {
+	return nil
+}
+func (s *testStore) DeleteWebhook(_ context.Context, _ string) error { return nil }
+func (s *testStore) GetActiveWebhooksForEvent(_ context.Context, _ string, _ *string) ([]*store.Webhook, error) {
+	return nil, nil
+}
+
+// WebhookEvent methods (stub)
+func (s *testStore) CreateWebhookEvent(_ context.Context, _ *store.WebhookEvent) error { return nil }
+func (s *testStore) GetWebhookEvent(_ context.Context, _ string) (*store.WebhookEvent, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testStore) ListWebhookEvents(_ context.Context, _ store.ListWebhookEventsOptions) (*store.ListResult[store.WebhookEvent], error) {
+	return &store.ListResult[store.WebhookEvent]{}, nil
+}
+func (s *testStore) UpdateWebhookEvent(_ context.Context, _ string, _ store.WebhookEventUpdates) error {
+	return nil
+}
+func (s *testStore) GetPendingWebhookEvents(_ context.Context, _ int) ([]*store.WebhookEvent, error) {
+	return nil, nil
+}
+func (s *testStore) CancelWebhookEventsByWebhook(_ context.Context, _ string) error { return nil }

@@ -184,6 +184,7 @@ type SessionManager struct {
 	auditLog         audit.Logger
 	providerRegistry ProviderRegistryInterface
 	taskManager      TaskManagerInterface
+	webhooks         *WebhookIntegration
 	logger           *zap.Logger
 }
 
@@ -234,6 +235,11 @@ func (m *SessionManager) SetProviderRegistry(pr ProviderRegistryInterface) {
 // SetTaskManager sets the task manager. This allows optional injection.
 func (m *SessionManager) SetTaskManager(tm TaskManagerInterface) {
 	m.taskManager = tm
+}
+
+// SetWebhookIntegration sets the webhook integration for dispatching events.
+func (m *SessionManager) SetWebhookIntegration(wi *WebhookIntegration) {
+	m.webhooks = wi
 }
 
 // CreateSessionOptions contains options for creating a new session.
@@ -359,6 +365,11 @@ func (m *SessionManager) Create(ctx context.Context, opts CreateSessionOptions) 
 			Log(ctx, m.auditLog)
 	}
 
+	// Dispatch webhook event
+	if m.webhooks != nil {
+		m.webhooks.DispatchSessionEvent(ctx, "session.created", session)
+	}
+
 	return session, nil
 }
 
@@ -469,6 +480,12 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 		zap.Bool("was_resuming", session.Status == SessionStatusResuming),
 	)
 	if session.Status == SessionStatusResuming {
+		// Dispatch session.resumed webhook event
+		if m.webhooks != nil {
+			if updatedSession, err := m.store.GetSession(ctx, sessionID); err == nil {
+				m.webhooks.DispatchSessionEvent(ctx, "session.resumed", updatedSession)
+			}
+		}
 		go m.reExecuteRunningTasks(ctx, sessionID, runnerID)
 	}
 
@@ -680,6 +697,14 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 			WithDetails(details).
 			WithSuccess(true).
 			Log(ctx, m.auditLog)
+	}
+
+	// Dispatch webhook event
+	if m.webhooks != nil {
+		// Fetch updated session for webhook
+		if updatedSession, err := m.store.GetSession(ctx, sessionID); err == nil {
+			m.webhooks.DispatchSessionEvent(ctx, "session.suspended", updatedSession)
+		}
 	}
 
 	return nil
@@ -1159,6 +1184,14 @@ func (m *SessionManager) Terminate(ctx context.Context, sessionID string) error 
 			WithDetails(details).
 			WithSuccess(true).
 			Log(ctx, m.auditLog)
+	}
+
+	// Dispatch webhook event
+	if m.webhooks != nil {
+		// Fetch updated session for webhook
+		if updatedSession, err := m.store.GetSession(ctx, sessionID); err == nil {
+			m.webhooks.DispatchSessionEvent(ctx, "session.terminated", updatedSession)
+		}
 	}
 
 	// Optionally cleanup workspace host directory

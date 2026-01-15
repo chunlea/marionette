@@ -979,6 +979,49 @@ func (m *mockStoreForRouter) GetDueScheduledTasks(_ context.Context, _ time.Time
 	return nil, nil
 }
 
+// Webhook methods (stub)
+func (m *mockStoreForRouter) CreateWebhook(_ context.Context, _ *store.Webhook) error {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) GetWebhook(_ context.Context, _ string) (*store.Webhook, error) {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) GetWebhookByName(_ context.Context, _ string, _ *string) (*store.Webhook, error) {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) ListWebhooks(_ context.Context, _ store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) UpdateWebhook(_ context.Context, _ string, _ store.WebhookUpdates) error {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) DeleteWebhook(_ context.Context, _ string) error {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) GetActiveWebhooksForEvent(_ context.Context, _ string, _ *string) ([]*store.Webhook, error) {
+	panic("not implemented")
+}
+
+// WebhookEvent methods (stub)
+func (m *mockStoreForRouter) CreateWebhookEvent(_ context.Context, _ *store.WebhookEvent) error {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) GetWebhookEvent(_ context.Context, _ string) (*store.WebhookEvent, error) {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) ListWebhookEvents(_ context.Context, _ store.ListWebhookEventsOptions) (*store.ListResult[store.WebhookEvent], error) {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) UpdateWebhookEvent(_ context.Context, _ string, _ store.WebhookEventUpdates) error {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) GetPendingWebhookEvents(_ context.Context, _ int) ([]*store.WebhookEvent, error) {
+	panic("not implemented")
+}
+func (m *mockStoreForRouter) CancelWebhookEventsByWebhook(_ context.Context, _ string) error {
+	panic("not implemented")
+}
+
 func TestMessageRouter_HandleMessage_PermissionRequest_WithManager(t *testing.T) {
 	logger := zap.NewNop()
 	pm := &mockPermissionManager{}

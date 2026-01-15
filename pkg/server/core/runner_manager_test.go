@@ -436,6 +436,45 @@ func (w *testStoreWrapper) GetDueScheduledTasks(_ context.Context, _ time.Time, 
 	return nil, nil
 }
 
+// Webhook methods (stub)
+func (w *testStoreWrapper) CreateWebhook(_ context.Context, _ *store.Webhook) error { return nil }
+func (w *testStoreWrapper) GetWebhook(_ context.Context, _ string) (*store.Webhook, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) GetWebhookByName(_ context.Context, _ string, _ *string) (*store.Webhook, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListWebhooks(_ context.Context, _ store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
+	return &store.ListResult[store.Webhook]{}, nil
+}
+func (w *testStoreWrapper) UpdateWebhook(_ context.Context, _ string, _ store.WebhookUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) DeleteWebhook(_ context.Context, _ string) error { return nil }
+func (w *testStoreWrapper) GetActiveWebhooksForEvent(_ context.Context, _ string, _ *string) ([]*store.Webhook, error) {
+	return nil, nil
+}
+
+// WebhookEvent methods (stub)
+func (w *testStoreWrapper) CreateWebhookEvent(_ context.Context, _ *store.WebhookEvent) error {
+	return nil
+}
+func (w *testStoreWrapper) GetWebhookEvent(_ context.Context, _ string) (*store.WebhookEvent, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) ListWebhookEvents(_ context.Context, _ store.ListWebhookEventsOptions) (*store.ListResult[store.WebhookEvent], error) {
+	return &store.ListResult[store.WebhookEvent]{}, nil
+}
+func (w *testStoreWrapper) UpdateWebhookEvent(_ context.Context, _ string, _ store.WebhookEventUpdates) error {
+	return nil
+}
+func (w *testStoreWrapper) GetPendingWebhookEvents(_ context.Context, _ int) ([]*store.WebhookEvent, error) {
+	return nil, nil
+}
+func (w *testStoreWrapper) CancelWebhookEventsByWebhook(_ context.Context, _ string) error {
+	return nil
+}
+
 // Helper to create test setup with real RunnerManager
 func setupRunnerManagerTest() (*RunnerManager, *testRunnerStore) {
 	s := newTestRunnerStore()
