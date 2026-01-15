@@ -53,6 +53,105 @@ var (
 	ErrScheduleCronRequired     = errors.New("schedule_cron is required for scheduled lifecycle mode")
 )
 
+// ProfileResources defines the resource configuration from a profile.
+type ProfileResources struct {
+	CPU    int    `json:"cpu"`
+	Memory string `json:"memory"` // e.g., "8GB"
+	Disk   string `json:"disk"`   // e.g., "50GB"
+}
+
+// ProfileNetwork defines the network configuration from a profile.
+type ProfileNetwork struct {
+	Level        string   `json:"level"`         // "none", "allow_list", "proxy", "air_gapped"
+	AllowedHosts []string `json:"allowed_hosts"` // For allow_list mode
+}
+
+// ProfileSelector defines the runner selector constraints from a profile.
+type ProfileSelector struct {
+	OS           string   `json:"os,omitempty"`           // e.g., "darwin", "linux"
+	Arch         string   `json:"arch,omitempty"`         // e.g., "arm64", "amd64"
+	Capabilities []string `json:"capabilities,omitempty"` // e.g., ["gpu", "xcode"]
+}
+
+// parseProfileResources parses a profile's resources JSON.
+func parseProfileResources(data json.RawMessage) (*ProfileResources, error) {
+	if len(data) == 0 || string(data) == "{}" {
+		return nil, nil
+	}
+	var resources ProfileResources
+	if err := json.Unmarshal(data, &resources); err != nil {
+		return nil, err
+	}
+	return &resources, nil
+}
+
+// parseProfileNetwork parses a profile's network JSON.
+func parseProfileNetwork(data json.RawMessage) (*ProfileNetwork, error) {
+	if len(data) == 0 || string(data) == "{}" {
+		return nil, nil
+	}
+	var network ProfileNetwork
+	if err := json.Unmarshal(data, &network); err != nil {
+		return nil, err
+	}
+	return &network, nil
+}
+
+// parseProfileSelector parses a profile's selector JSON.
+func parseProfileSelector(data json.RawMessage) (*ProfileSelector, error) {
+	if len(data) == 0 || string(data) == "{}" {
+		return nil, nil
+	}
+	var selector ProfileSelector
+	if err := json.Unmarshal(data, &selector); err != nil {
+		return nil, err
+	}
+	return &selector, nil
+}
+
+// parseMemorySize parses a memory size string like "8GB" to megabytes.
+func parseMemorySize(s string) int {
+	if s == "" {
+		return 0
+	}
+	// Try to parse the numeric part
+	var num int
+	var unit string
+	_, err := parseSize(s, &num, &unit)
+	if err != nil {
+		return 0
+	}
+	switch unit {
+	case "GB", "G", "gb", "g":
+		return num * 1024
+	case "MB", "M", "mb", "m":
+		return num
+	case "TB", "T", "tb", "t":
+		return num * 1024 * 1024
+	default:
+		return num
+	}
+}
+
+// parseSize parses a size string into number and unit.
+func parseSize(s string, num *int, unit *string) (int, error) {
+	// Find where the unit starts
+	i := 0
+	for i < len(s) && (s[i] >= '0' && s[i] <= '9') {
+		i++
+	}
+	if i == 0 {
+		return 0, errors.New("no numeric part")
+	}
+	n := 0
+	for j := 0; j < i; j++ {
+		n = n*10 + int(s[j]-'0')
+	}
+	*num = n
+	*unit = s[i:]
+	return n, nil
+}
+
 // SessionManagerInterface defines the interface for session management.
 // This is used for dependency injection in other components.
 type SessionManagerInterface interface {
@@ -144,6 +243,7 @@ type CreateSessionOptions struct {
 	Agent         string            // Required (e.g., "claude")
 	IsBYOK        bool              // Whether using BYOK mode
 	AgentConfigID *string           // Optional, for managed credentials
+	ProfileID     *string           // Optional, for runner configuration
 	LifecycleMode string            // on_demand, always_on, scheduled
 	IdleTimeout   *int              // Seconds (for on_demand mode)
 	NetworkPolicy string            // none, allow_list, proxy, air_gapped
@@ -215,6 +315,7 @@ func (m *SessionManager) Create(ctx context.Context, opts CreateSessionOptions) 
 		Name:               opts.Name,
 		Status:             SessionStatusPending,
 		WorkspaceID:        opts.WorkspaceID,
+		ProfileID:          opts.ProfileID,
 		Agent:              opts.Agent,
 		IsBYOK:             opts.IsBYOK,
 		AgentConfigID:      opts.AgentConfigID,
@@ -767,10 +868,30 @@ func (m *SessionManager) requestRunnerForResume(ctx context.Context, session *st
 		return
 	}
 
-	// Check if provider supports suspend/resume
+	// Load profile for this session (used by both pool and managed providers)
+	var profile *store.Profile
+	if session.ProfileID != nil && *session.ProfileID != "" {
+		var err error
+		profile, err = m.store.GetProfile(ctx, *session.ProfileID)
+		if err != nil {
+			m.logger.Warn("failed to get profile for session resume, using defaults",
+				zap.String("session_id", session.ID),
+				zap.Stringp("profile_id", session.ProfileID),
+				zap.Error(err),
+			)
+		}
+	}
+
+	// Check if provider is a pool acquirer (pool providers)
+	if poolProv, ok := prov.(provider.PoolAcquirer); ok {
+		m.requestRunnerFromPool(ctx, session, poolProv, profile)
+		return
+	}
+
+	// Check if provider supports suspend/resume (managed providers)
 	suspendProv, ok := prov.(provider.SuspendableProvider)
 	if !ok {
-		m.logger.Debug("provider does not support suspend/resume, skipping runner request",
+		m.logger.Debug("provider does not support suspend/resume or pool acquisition, skipping runner request",
 			zap.String("session_id", session.ID),
 			zap.String("provider", prov.Name()),
 		)
@@ -783,15 +904,61 @@ func (m *SessionManager) requestRunnerForResume(ctx context.Context, session *st
 		workspacePath, _ = m.workspaceManager.GetHostPath(ctx, session.WorkspaceID)
 	}
 
+	// Build spawn options with defaults
+	spawnOpts := &provider.SpawnOptions{
+		RunnerID:       id.Runner(),
+		Name:           "runner-" + session.ID,
+		WorkspaceMount: workspacePath,
+		SandboxMode:    "runner-is-sandbox",
+		NetworkPolicy:  session.NetworkPolicy,
+		AllowedHosts:   session.AllowedHosts,
+	}
+
+	// Apply profile configuration for managed providers
+	if profile != nil {
+		// Apply profile resources
+		resources, err := parseProfileResources(profile.Resources)
+		if err != nil {
+			m.logger.Warn("failed to parse profile resources",
+				zap.String("profile_id", profile.ID),
+				zap.Error(err),
+			)
+		} else if resources != nil {
+			spawnOpts.CPUs = float64(resources.CPU)
+			spawnOpts.MemoryMB = parseMemorySize(resources.Memory)
+			spawnOpts.DiskMB = parseMemorySize(resources.Disk)
+		}
+
+		// Apply profile network settings
+		network, err := parseProfileNetwork(profile.Network)
+		if err != nil {
+			m.logger.Warn("failed to parse profile network",
+				zap.String("profile_id", profile.ID),
+				zap.Error(err),
+			)
+		} else if network != nil {
+			// Profile network settings override session defaults
+			if network.Level != "" {
+				spawnOpts.NetworkPolicy = network.Level
+			}
+			if len(network.AllowedHosts) > 0 {
+				spawnOpts.AllowedHosts = network.AllowedHosts
+			}
+		}
+
+		m.logger.Info("applied profile configuration to runner",
+			zap.String("session_id", session.ID),
+			zap.String("profile_id", profile.ID),
+			zap.Float64("cpus", spawnOpts.CPUs),
+			zap.Int("memory_mb", spawnOpts.MemoryMB),
+			zap.Int("disk_mb", spawnOpts.DiskMB),
+			zap.String("network_policy", spawnOpts.NetworkPolicy),
+		)
+	}
+
 	// Build resume options
 	resumeOpts := provider.ResumeOptions{
-		SpawnOpts: &provider.SpawnOptions{
-			RunnerID:       id.Runner(),
-			Name:           "runner-" + session.ID,
-			WorkspaceMount: workspacePath,
-			SandboxMode:    "runner-is-sandbox",
-			// TODO: Get server URL and token from config
-		},
+		SpawnOpts: spawnOpts,
 	}
 
 	if session.PreviousRunnerID != nil {
@@ -821,6 +988,87 @@ func (m *SessionManager) requestRunnerForResume(ctx context.Context, session *st
 
 	// The runner will connect via gRPC and be assigned to the session
 	// via the normal AttachRunner flow
+}
+
+// requestRunnerFromPool acquires a runner from a pool provider for session resume.
+func (m *SessionManager) requestRunnerFromPool(ctx context.Context, session *store.Session, poolProv provider.PoolAcquirer, profile *store.Profile) {
+	// Build pool acquire options
+	opts := provider.PoolAcquireOptions{
+		SessionID: session.ID,
+	}
+
+	// Prefer previous runner if available
+	if session.PreviousRunnerID != nil && *session.PreviousRunnerID != "" {
+		opts.PreferRunnerID = *session.PreviousRunnerID
+	}
+
+	// Apply profile selector and capabilities if profile is specified
+	if profile != nil {
+		opts.ProfileID = profile.ID
+
+		// Parse profile selector for required labels
+		selector, err := parseProfileSelector(profile.Selector)
+		if err != nil {
+			m.logger.Warn("failed to parse profile selector",
+				zap.String("profile_id", profile.ID),
+				zap.Error(err),
+			)
+		} else if selector != nil {
+			opts.RequiredLabels = make(map[string]string)
+			if selector.OS != "" {
+				opts.RequiredLabels["os"] = selector.OS
+			}
+			if selector.Arch != "" {
+				opts.RequiredLabels["arch"] = selector.Arch
+			}
+			opts.RequiredCapabilities = selector.Capabilities
+		}
+
+		m.logger.Info("acquiring pool runner with profile requirements",
+			zap.String("session_id", session.ID),
+			zap.String("profile_id", profile.ID),
+			zap.Any("required_labels", opts.RequiredLabels),
+			zap.Strings("required_capabilities", opts.RequiredCapabilities),
+		)
+	}
+
+	m.logger.Info("requesting runner from pool for resume",
+		zap.String("session_id", session.ID),
+		zap.String("provider", poolProv.Name()),
+	)
+
+	// Acquire runner from pool
+	runnerInfo, err := poolProv.AcquireFromPool(ctx, opts)
+	if err != nil {
+		m.logger.Error("failed to acquire runner from pool",
+			zap.String("session_id", session.ID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	m.logger.Info("runner acquired from pool",
+		zap.String("session_id", session.ID),
+		zap.String("runner_id", runnerInfo.ID),
+		zap.String("runner_name", runnerInfo.Name),
+	)
+
+	// Attach runner to session
+	if err := m.AttachRunner(ctx, session.ID, runnerInfo.ID); err != nil {
+		m.logger.Error("failed to attach pool runner to session",
+			zap.String("session_id", session.ID),
+			zap.String("runner_id", runnerInfo.ID),
+			zap.Error(err),
+		)
+		// Release runner back to pool on failure
+		if releaseErr := poolProv.ReleaseToPool(ctx, runnerInfo.ID, false, ""); releaseErr != nil {
+			m.logger.Error("failed to release runner back to pool",
+				zap.String("runner_id", runnerInfo.ID),
+				zap.Error(releaseErr),
+			)
+		}
+		return
+	}
 }
 
 // GetContextSnapshot retrieves the context snapshot for a session.

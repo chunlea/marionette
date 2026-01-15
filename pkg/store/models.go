@@ -93,6 +93,7 @@ type Session struct {
 	Status                 string          `json:"status"` // pending, active, suspended, resuming, terminated
 	RunnerID               *string         `json:"runner_id,omitempty"`
 	WorkspaceID            string          `json:"workspace_id"`
+	ProfileID              *string         `json:"profile_id,omitempty"`
 	Agent                  string          `json:"agent"`
 	IsBYOK                 bool            `json:"is_byok"`
 	AgentConfigID          *string         `json:"agent_config_id,omitempty"`
@@ -126,6 +127,7 @@ type SessionUpdates struct {
 	Name                   *string
 	Status                 *string
 	RunnerID               *string
+	ProfileID              *string
 	AgentConfigID          *string
 	AgentConfigMetadata    json.RawMessage
 	ContextSnapshot        json.RawMessage

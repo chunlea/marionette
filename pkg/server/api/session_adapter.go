@@ -48,6 +48,9 @@ func (a *SessionAdapter) Create(ctx context.Context, opts CreateSessionOptions) 
 	if opts.AgentConfigID != "" {
 		coreOpts.AgentConfigID = &opts.AgentConfigID
 	}
+	if opts.ProfileID != "" {
+		coreOpts.ProfileID = &opts.ProfileID
+	}
 	if opts.IdleTimeoutSeconds > 0 {
 		coreOpts.IdleTimeout = &opts.IdleTimeoutSeconds
 	}

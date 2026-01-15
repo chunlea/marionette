@@ -124,6 +124,47 @@ type SuspendableProvider interface {
 	Resume(ctx context.Context, sessionID string, opts ResumeOptions) (*RunnerInstance, error)
 }
 
+// PoolAcquirer is implemented by pool providers to acquire runners from a pool.
+// Unlike managed providers that spawn runners, pool providers acquire idle runners
+// from a pre-registered pool of machines.
+type PoolAcquirer interface {
+	Provider
+
+	// AcquireFromPool acquires an idle runner from the pool.
+	// Returns the acquired runner info or an error if no suitable runner is available.
+	AcquireFromPool(ctx context.Context, opts PoolAcquireOptions) (RunnerInfo, error)
+
+	// ReleaseToPool releases a runner back to the pool.
+	ReleaseToPool(ctx context.Context, runnerID string, tainted bool, taintReason string) error
+}
+
+// PoolAcquireOptions contains options for acquiring a runner from a pool.
+type PoolAcquireOptions struct {
+	// PreferRunnerID prefers a specific runner if available (for resume).
+	PreferRunnerID string
+
+	// RequiredLabels are labels the runner must have (from profile selector).
+	RequiredLabels map[string]string
+
+	// RequiredCapabilities are capabilities the runner must have.
+	RequiredCapabilities []string
+
+	// ExcludeRunnerIDs excludes specific runners from selection.
+	ExcludeRunnerIDs []string
+
+	// SessionID is the session acquiring the runner.
+	SessionID string
+
+	// ProfileID is the profile ID for logging/tracking purposes.
+	ProfileID string
+}
+
+// RunnerInfo contains basic information about an acquired runner.
+type RunnerInfo struct {
+	ID   string
+	Name string
+}
+
 // SnapshotProvider extends Provider with full VM/container snapshot capabilities.
 // This is for providers that support creating and restoring named snapshots
 // of a runner's complete state (memory, disk, network).
