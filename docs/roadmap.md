@@ -1339,6 +1339,10 @@
   - [x] Create NetworkPolicy per session
   - [x] Egress rules from allowed_hosts
   - [x] Delete on session termination
+- [x] Server integration:
+  - [x] Register provider factory in server
+  - [x] Configuration structs in `pkg/config`
+  - [x] Example configuration file
 
 ### 9.3 E2B Provider
 

@@ -39,8 +39,9 @@ type DatabaseConfig struct {
 
 // ProvidersConfig holds provider configuration.
 type ProvidersConfig struct {
-	Default string                `mapstructure:"default"`
-	Docker  *DockerProviderConfig `mapstructure:"docker"`
+	Default    string                    `mapstructure:"default"`
+	Docker     *DockerProviderConfig     `mapstructure:"docker"`
+	Kubernetes *KubernetesProviderConfig `mapstructure:"kubernetes"`
 }
 
 // DockerProviderConfig holds Docker-specific provider settings.
@@ -67,6 +68,72 @@ type DockerResourcesConfig struct {
 
 	// CPUs is the CPU limit (e.g., "2", "1.5").
 	CPUs string `mapstructure:"cpus"`
+}
+
+// KubernetesProviderConfig holds Kubernetes-specific provider settings.
+type KubernetesProviderConfig struct {
+	// Kubeconfig is the path to the kubeconfig file.
+	// If empty, uses in-cluster config or default kubeconfig location.
+	Kubeconfig string `mapstructure:"kubeconfig"`
+
+	// Context is the kubeconfig context to use.
+	Context string `mapstructure:"context"`
+
+	// Namespace is the Kubernetes namespace for runner pods.
+	Namespace string `mapstructure:"namespace"`
+
+	// Image is the container image to use for runners.
+	Image string `mapstructure:"image"`
+
+	// ServiceAccount is the service account for runner pods.
+	ServiceAccount string `mapstructure:"service_account"`
+
+	// Resources holds default resource limits for pods.
+	Resources KubernetesResourcesConfig `mapstructure:"resources"`
+
+	// Storage holds PVC configuration for workspaces.
+	Storage KubernetesStorageConfig `mapstructure:"storage"`
+
+	// NodeSelector for pod scheduling.
+	NodeSelector map[string]string `mapstructure:"node_selector"`
+
+	// Tolerations for pod scheduling.
+	Tolerations []KubernetesTolerationConfig `mapstructure:"tolerations"`
+}
+
+// KubernetesResourcesConfig holds Kubernetes pod resource limits.
+type KubernetesResourcesConfig struct {
+	// Memory is the memory limit (e.g., "2Gi", "2048Mi").
+	Memory string `mapstructure:"memory"`
+
+	// MemoryRequest is the memory request (defaults to Memory if not set).
+	MemoryRequest string `mapstructure:"memory_request"`
+
+	// CPUs is the CPU limit (e.g., "2", "500m").
+	CPUs string `mapstructure:"cpus"`
+
+	// CPURequest is the CPU request (defaults to CPUs if not set).
+	CPURequest string `mapstructure:"cpu_request"`
+}
+
+// KubernetesStorageConfig holds PVC configuration.
+type KubernetesStorageConfig struct {
+	// Size is the PVC size (e.g., "10Gi").
+	Size string `mapstructure:"size"`
+
+	// StorageClass is the storage class name.
+	StorageClass string `mapstructure:"storage_class"`
+
+	// AccessMode is the PVC access mode (e.g., "ReadWriteOnce").
+	AccessMode string `mapstructure:"access_mode"`
+}
+
+// KubernetesTolerationConfig holds a single toleration.
+type KubernetesTolerationConfig struct {
+	Key      string `mapstructure:"key"`
+	Operator string `mapstructure:"operator"`
+	Value    string `mapstructure:"value"`
+	Effect   string `mapstructure:"effect"`
 }
 
 // StorageConfig holds storage backend configuration.

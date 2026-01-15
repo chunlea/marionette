@@ -1,0 +1,74 @@
+# Marionette Kubernetes Provider Configuration
+# Use this configuration when running Marionette with Kubernetes as the provider
+# Sensitive values should be set via environment variables (MARIONETTE_* prefix)
+
+server:
+  api:
+    port: 8080
+    host: "0.0.0.0"
+  admin:
+    port: 8081
+    host: "127.0.0.1"
+  grpc:
+    port: 9090
+    host: "0.0.0.0"
+
+# Provider configuration
+providers:
+  default: kubernetes
+  kubernetes:
+    # Kubeconfig path (optional, uses in-cluster config or ~/.kube/config by default)
+    # kubeconfig: "/path/to/kubeconfig"
+    # context: "my-context"
+
+    # Namespace for runner pods
+    namespace: "marionette"
+
+    # Container image for runners
+    image: "ghcr.io/chunlea/marionette-runner:latest"
+
+    # Service account for pods (optional)
+    service_account: "marionette-agent"
+
+    # Resource limits and requests
+    resources:
+      memory: "2Gi"
+      memory_request: "1Gi"
+      cpus: "2"
+      cpu_request: "500m"
+
+    # PVC configuration for workspace storage
+    storage:
+      size: "10Gi"
+      storage_class: "standard" # or "gp2", "default", etc.
+      access_mode: "ReadWriteOnce"
+
+    # Node selector (optional)
+    # node_selector:
+    #   kubernetes.io/os: linux
+    #   node-type: compute
+
+    # Tolerations (optional)
+    # tolerations:
+    #   - key: "dedicated"
+    #     operator: "Equal"
+    #     value: "marionette"
+    #     effect: "NoSchedule"
+
+# Storage configuration
+storage:
+  provider: local
+  local:
+    path: "./data/storage"
+  workspace:
+    base_dir: "./data/workspaces"
+
+# Logging configuration
+logging:
+  level: info
+  format: json
+
+# Development settings
+dev:
+  hot_reload: false
+  skip_tls: false

@@ -21,6 +21,7 @@ import (
 	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/provider/docker"
 	"github.com/chunlea/marionette/pkg/provider/e2b"
+	"github.com/chunlea/marionette/pkg/provider/kubernetes"
 	"github.com/chunlea/marionette/pkg/provider/pool"
 	"github.com/chunlea/marionette/pkg/server/admin"
 	"github.com/chunlea/marionette/pkg/server/api"
@@ -520,38 +521,82 @@ func initProviderRegistry(s store.Store, cfg *config.Config, logger *zap.Logger)
 		return docker.New(cfg)
 	})
 
+	// Register Kubernetes provider factory
+	registry.RegisterFactory("kubernetes", func(cfg *store.ProviderConfig) (provider.Provider, error) {
+		return kubernetes.New(cfg)
+	})
+
 	// Register Pool provider factory
 	registry.RegisterFactory("pool", pool.NewProviderFactory(s, logger))
 
 	// Register E2B provider factory
 	registry.RegisterFactory("e2b", e2b.NewProviderFactory())
 
-	// Load default Docker provider from YAML config if specified
-	if cfg.Providers.Default == "docker" && cfg.Providers.Docker != nil {
-		dockerCfg := cfg.Providers.Docker
-		providerCfg := &store.ProviderConfig{
-			Name:     "docker-default",
-			Provider: "docker",
-			Config:   dockerConfigToJSON(dockerCfg),
+	// Load default provider from YAML config based on configured default
+	switch cfg.Providers.Default {
+	case "docker":
+		if cfg.Providers.Docker != nil {
+			registerDefaultDockerProvider(registry, cfg.Providers.Docker, logger)
 		}
-
-		p, err := docker.New(providerCfg)
-		if err != nil {
-			logger.Error("failed to create default Docker provider", zap.Error(err))
-		} else {
-			if err := registry.Register("docker-default", p); err != nil {
-				logger.Error("failed to register default Docker provider", zap.Error(err))
-			} else {
-				registry.SetDefault("docker-default")
-				logger.Info("default Docker provider registered",
-					zap.String("image", dockerCfg.Image),
-					zap.String("network", dockerCfg.Network),
-				)
-			}
+	case "kubernetes":
+		if cfg.Providers.Kubernetes != nil {
+			registerDefaultKubernetesProvider(registry, cfg.Providers.Kubernetes, logger)
 		}
 	}
 
 	return registry
+}
+
+// registerDefaultDockerProvider registers the default Docker provider from config.
+func registerDefaultDockerProvider(registry *provider.Registry, dockerCfg *config.DockerProviderConfig, logger *zap.Logger) {
+	providerCfg := &store.ProviderConfig{
+		Name:     "docker-default",
+		Provider: "docker",
+		Config:   dockerConfigToJSON(dockerCfg),
+	}
+
+	p, err := docker.New(providerCfg)
+	if err != nil {
+		logger.Error("failed to create default Docker provider", zap.Error(err))
+		return
+	}
+
+	if err := registry.Register("docker-default", p); err != nil {
+		logger.Error("failed to register default Docker provider", zap.Error(err))
+		return
+	}
+
+	registry.SetDefault("docker-default")
+	logger.Info("default Docker provider registered",
+		zap.String("image", dockerCfg.Image),
+		zap.String("network", dockerCfg.Network),
+	)
+}
+
+// registerDefaultKubernetesProvider registers the default Kubernetes provider from config.
+func registerDefaultKubernetesProvider(registry *provider.Registry, k8sCfg *config.KubernetesProviderConfig, logger *zap.Logger) {
+	providerCfg := &store.ProviderConfig{
+		Name:     "kubernetes-default",
+		Provider: "kubernetes",
+		Config:   kubernetesConfigToJSON(k8sCfg),
+	}
+
+	p, err := kubernetes.New(providerCfg)
+	if err != nil {
+		logger.Error("failed to create default Kubernetes provider", zap.Error(err))
+		return
+	}
+
+	if err := registry.Register("kubernetes-default", p); err != nil {
+		logger.Error("failed to register default Kubernetes provider", zap.Error(err))
+		return
+	}
+
+	registry.SetDefault("kubernetes-default")
+	logger.Info("default Kubernetes provider registered",
+		zap.String("namespace", k8sCfg.Namespace),
+		zap.String("image", k8sCfg.Image),
+	)
 }
 
 // dockerConfigToJSON converts DockerProviderConfig to JSON for the provider.
@@ -567,6 +612,71 @@ func dockerConfigToJSON(cfg *config.DockerProviderConfig) json.RawMessage {
 			"cpus":   cfg.Resources.CPUs,
 		}
 	}
+	b, _ := json.Marshal(data)
+	return b
+}
+
+// kubernetesConfigToJSON converts KubernetesProviderConfig to JSON for the provider.
+func kubernetesConfigToJSON(cfg *config.KubernetesProviderConfig) json.RawMessage {
+	data := map[string]interface{}{
+		"kubeconfig":      cfg.Kubeconfig,
+		"context":         cfg.Context,
+		"namespace":       cfg.Namespace,
+		"image":           cfg.Image,
+		"service_account": cfg.ServiceAccount,
+	}
+
+	// Resources
+	if cfg.Resources.Memory != "" || cfg.Resources.CPUs != "" {
+		resources := map[string]string{}
+		if cfg.Resources.Memory != "" {
+			resources["memory"] = cfg.Resources.Memory
+		}
+		if cfg.Resources.MemoryRequest != "" {
+			resources["memory_request"] = cfg.Resources.MemoryRequest
+		}
+		if cfg.Resources.CPUs != "" {
+			resources["cpus"] = cfg.Resources.CPUs
+		}
+		if cfg.Resources.CPURequest != "" {
+			resources["cpu_request"] = cfg.Resources.CPURequest
+		}
+		data["resources"] = resources
+	}
+
+	// Storage
+	if cfg.Storage.Size != "" {
+		storage := map[string]string{
+			"size": cfg.Storage.Size,
+		}
+		if cfg.Storage.StorageClass != "" {
+			storage["storage_class"] = cfg.Storage.StorageClass
+		}
+		if cfg.Storage.AccessMode != "" {
+			storage["access_mode"] = cfg.Storage.AccessMode
+		}
+		data["storage"] = storage
+	}
+
+	// Node selector
+	if len(cfg.NodeSelector) > 0 {
+		data["node_selector"] = cfg.NodeSelector
+	}
+
+	// Tolerations
+	if len(cfg.Tolerations) > 0 {
+		tolerations := make([]map[string]string, len(cfg.Tolerations))
+		for i, t := range cfg.Tolerations {
+			tolerations[i] = map[string]string{
+				"key":      t.Key,
+				"operator": t.Operator,
+				"value":    t.Value,
+				"effect":   t.Effect,
+			}
+		}
+		data["tolerations"] = tolerations
+	}
+
 	b, _ := json.Marshal(data)
 	return b
 }
