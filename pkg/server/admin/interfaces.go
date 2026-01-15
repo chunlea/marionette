@@ -313,3 +313,61 @@ type ListProfilesOptions struct {
 	IncludeBuiltin   bool              `json:"include_builtin,omitempty"`
 	Labels           map[string]string `json:"labels,omitempty"`
 }
+
+// WebhookService defines the interface for webhook management.
+type WebhookService interface {
+	// Create creates a new webhook and returns the webhook and plaintext secret.
+	Create(ctx context.Context, input *CreateWebhookInput) (*store.Webhook, string, error)
+
+	// Get retrieves a webhook by ID.
+	Get(ctx context.Context, webhookID string) (*store.Webhook, error)
+
+	// List returns webhooks matching the given options.
+	List(ctx context.Context, opts store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error)
+
+	// Update updates a webhook.
+	Update(ctx context.Context, webhookID string, input *UpdateWebhookInput) error
+
+	// Delete deletes a webhook.
+	Delete(ctx context.Context, webhookID string) error
+
+	// RotateSecret generates a new secret for a webhook.
+	RotateSecret(ctx context.Context, webhookID string) (string, error)
+
+	// GetEvent retrieves a webhook event by ID.
+	GetEvent(ctx context.Context, eventID string) (*store.WebhookEvent, error)
+
+	// ListEvents returns webhook events matching the given options.
+	ListEvents(ctx context.Context, opts store.ListWebhookEventsOptions) (*store.ListResult[store.WebhookEvent], error)
+
+	// RetryEvent manually retries a failed webhook event.
+	RetryEvent(ctx context.Context, eventID string) error
+}
+
+// CreateWebhookInput defines input for creating a webhook.
+type CreateWebhookInput struct {
+	Name              string
+	URL               string
+	Events            []string
+	MaxRetries        *int
+	RetryDelaySeconds *int
+	TimeoutSeconds    *int
+	Headers           map[string]string
+	TenantID          *string
+	Labels            map[string]string
+	Annotations       map[string]string
+}
+
+// UpdateWebhookInput defines input for updating a webhook.
+type UpdateWebhookInput struct {
+	Name              *string
+	URL               *string
+	Events            []string
+	IsActive          *bool
+	MaxRetries        *int
+	RetryDelaySeconds *int
+	TimeoutSeconds    *int
+	Headers           map[string]string
+	Labels            map[string]string
+	Annotations       map[string]string
+}

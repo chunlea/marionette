@@ -47,6 +47,7 @@ type PermissionManager struct {
 	sessionMgr SessionManagerInterface
 	auditLog   audit.Logger
 	logger     *zap.Logger
+	webhooks   *WebhookIntegration
 }
 
 // NewPermissionManager creates a new PermissionManager.
@@ -64,6 +65,11 @@ func NewPermissionManager(
 		auditLog:   auditLog,
 		logger:     logger,
 	}
+}
+
+// SetWebhookIntegration sets the webhook integration for dispatching events.
+func (m *PermissionManager) SetWebhookIntegration(wi *WebhookIntegration) {
+	m.webhooks = wi
 }
 
 // Create stores a new permission request from runner.
@@ -112,6 +118,11 @@ func (m *PermissionManager) Create(ctx context.Context, req *CreatePermissionReq
 		zap.String("risk_level", perm.RiskLevel),
 	)
 
+	// Dispatch webhook event
+	if m.webhooks != nil {
+		m.webhooks.DispatchPermissionEvent(ctx, "permission.requested", perm)
+	}
+
 	return perm, nil
 }
 
@@ -156,6 +167,24 @@ func (m *PermissionManager) Respond(ctx context.Context, permID string, approved
 		zap.Bool("approved", approved),
 		zap.String("responded_by", respondedBy),
 	)
+
+	// Dispatch webhook event
+	if m.webhooks != nil {
+		eventType := "permission.denied"
+		if approved {
+			eventType = "permission.approved"
+		}
+		// Update perm struct for webhook dispatch
+		perm.Status = status
+		perm.RespondedAt = &now
+		if respondedBy != "" {
+			perm.RespondedBy = &respondedBy
+		}
+		if reason != "" {
+			perm.ResponseReason = &reason
+		}
+		m.webhooks.DispatchPermissionEvent(ctx, eventType, perm)
+	}
 
 	// Log audit event
 	if m.auditLog != nil {
@@ -278,6 +307,13 @@ func (m *PermissionManager) Cancel(ctx context.Context, permID string) error {
 	m.logger.Info("permission request canceled",
 		zap.String("perm_id", permID),
 	)
+
+	// Dispatch webhook event
+	if m.webhooks != nil {
+		perm.Status = status
+		perm.RespondedAt = &now
+		m.webhooks.DispatchPermissionEvent(ctx, "permission.canceled", perm)
+	}
 
 	// Log audit event
 	if m.auditLog != nil {

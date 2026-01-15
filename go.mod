@@ -12,6 +12,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/klauspost/compress v1.18.0
+	github.com/lib/pq v1.10.9
 	github.com/matoous/go-nanoid/v2 v2.1.0
 	github.com/opencontainers/image-spec v1.1.0
 	github.com/pion/interceptor v0.1.43
