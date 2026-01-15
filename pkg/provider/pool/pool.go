@@ -38,8 +38,11 @@ type Provider struct {
 	lastRelease map[string]time.Time
 }
 
-// Compile-time interface check.
-var _ provider.Provider = (*Provider)(nil)
+// Compile-time interface checks.
+var (
+	_ provider.Provider     = (*Provider)(nil)
+	_ provider.PoolAcquirer = (*Provider)(nil)
+)
 
 // New creates a pool provider from a store.ProviderConfig.
 func New(cfg *store.ProviderConfig, st RunnerStore, logger *zap.Logger) (*Provider, error) {
@@ -211,13 +214,26 @@ func (p *Provider) AcquireRunner(ctx context.Context, opts AcquireOptions) (*sto
 		ExcludeTainted:       true,
 	}
 
-	// Merge additional label requirements
+	// Merge additional label requirements (from profile selector)
 	if opts.RequiredLabels != nil {
 		if criteria.RequiredLabels == nil {
 			criteria.RequiredLabels = make(map[string]string)
 		}
 		for k, v := range opts.RequiredLabels {
 			criteria.RequiredLabels[k] = v
+		}
+	}
+
+	// Merge additional capability requirements (from profile)
+	if len(opts.RequiredCapabilities) > 0 {
+		capSet := make(map[string]bool)
+		for _, c := range criteria.RequiredCapabilities {
+			capSet[c] = true
+		}
+		for _, c := range opts.RequiredCapabilities {
+			if !capSet[c] {
+				criteria.RequiredCapabilities = append(criteria.RequiredCapabilities, c)
+			}
 		}
 	}
 
@@ -314,6 +330,36 @@ func (p *Provider) ReleaseRunner(ctx context.Context, runnerID string, tainted b
 	return nil
 }
 
+// AcquireFromPool implements provider.PoolAcquirer interface.
+// It acquires an idle runner from the pool based on the provided options.
+func (p *Provider) AcquireFromPool(ctx context.Context, opts provider.PoolAcquireOptions) (provider.RunnerInfo, error) {
+	// Convert provider options to internal options
+	acquireOpts := AcquireOptions{
+		PreferRunnerID:       opts.PreferRunnerID,
+		RequiredLabels:       opts.RequiredLabels,
+		RequiredCapabilities: opts.RequiredCapabilities,
+		ExcludeRunnerIDs:     opts.ExcludeRunnerIDs,
+		SessionID:            opts.SessionID,
+		ProfileID:            opts.ProfileID,
+	}
+
+	runner, err := p.AcquireRunner(ctx, acquireOpts)
+	if err != nil {
+		return provider.RunnerInfo{}, err
+	}
+
+	return provider.RunnerInfo{
+		ID:   runner.ID,
+		Name: runner.Name,
+	}, nil
+}
+
+// ReleaseToPool implements provider.PoolAcquirer interface.
+// It releases a runner back to the pool.
+func (p *Provider) ReleaseToPool(ctx context.Context, runnerID string, tainted bool, taintReason string) error {
+	return p.ReleaseRunner(ctx, runnerID, tainted, taintReason)
+}
+
 // PoolStats returns statistics about the pool.
 func (p *Provider) PoolStats(ctx context.Context) (*PoolStats, error) {
 	poolName := p.config.PoolName
@@ -369,11 +415,17 @@ type AcquireOptions struct {
 	// RequiredLabels are additional labels the runner must have.
 	RequiredLabels map[string]string
 
+	// RequiredCapabilities are capabilities the runner must have.
+	RequiredCapabilities []string
+
 	// ExcludeRunnerIDs excludes specific runners from selection.
 	ExcludeRunnerIDs []string
 
 	// SessionID is the session acquiring the runner.
 	SessionID string
+
+	// ProfileID is the profile ID for logging/tracking purposes.
+	ProfileID string
 }
 
 // PoolStats contains pool statistics.

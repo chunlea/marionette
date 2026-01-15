@@ -14,7 +14,7 @@ import (
 )
 
 // Session column list for SELECT queries.
-const sessionColumns = `id, name, status, runner_id, workspace_id, agent, is_byok,
+const sessionColumns = `id, name, status, runner_id, workspace_id, profile_id, agent, is_byok,
 	agent_config_id, agent_config_metadata, context_snapshot, agent_version,
 	suspend_strategy, suspend_snapshot_id, suspend_workspace_synced, previous_runner_id,
 	network_policy, allowed_hosts, lifecycle_mode, idle_timeout_seconds, max_lifetime_seconds,
@@ -38,21 +38,21 @@ func createSession(ctx context.Context, q querier, session *store.Session) error
 
 	query := `
 		INSERT INTO sessions (
-			id, name, status, runner_id, workspace_id, agent, is_byok,
+			id, name, status, runner_id, workspace_id, profile_id, agent, is_byok,
 			agent_config_id, agent_config_metadata, context_snapshot, agent_version,
 			suspend_strategy, suspend_snapshot_id, suspend_workspace_synced, previous_runner_id,
 			network_policy, allowed_hosts, lifecycle_mode, idle_timeout_seconds, max_lifetime_seconds,
 			schedule_cron, schedule_timezone, next_scheduled_at, tenant_id, labels, annotations,
 			last_activity_at, suspended_at, resumed_at, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-			$16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, NOW(), NOW()
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW()
 		)
 		RETURNING created_at, updated_at`
 
 	err := q.QueryRow(ctx, query,
 		session.ID, session.Name, session.Status, session.RunnerID, session.WorkspaceID,
-		session.Agent, session.IsBYOK, session.AgentConfigID, session.AgentConfigMetadata,
+		session.ProfileID, session.Agent, session.IsBYOK, session.AgentConfigID, session.AgentConfigMetadata,
 		session.ContextSnapshot, session.AgentVersion, session.SuspendStrategy,
 		session.SuspendSnapshotID, session.SuspendWorkspaceSynced, session.PreviousRunnerID,
 		session.NetworkPolicy, session.AllowedHosts, session.LifecycleMode,
@@ -224,6 +224,15 @@ func updateSession(ctx context.Context, q querier, sessionID string, updates sto
 			argNum++
 		}
 	}
+	if updates.ProfileID != nil {
+		if *updates.ProfileID == "" {
+			setClauses = append(setClauses, "profile_id = NULL")
+		} else {
+			setClauses = append(setClauses, fmt.Sprintf("profile_id = $%d", argNum))
+			args = append(args, *updates.ProfileID)
+			argNum++
+		}
+	}
 	if updates.AgentConfigID != nil {
 		setClauses = append(setClauses, fmt.Sprintf("agent_config_id = $%d", argNum))
 		args = append(args, *updates.AgentConfigID)
@@ -380,7 +389,7 @@ func deleteSession(ctx context.Context, q querier, sessionID string) error {
 func scanSession(row pgx.Row, identifier string) (*store.Session, error) {
 	var s store.Session
 	err := row.Scan(
-		&s.ID, &s.Name, &s.Status, &s.RunnerID, &s.WorkspaceID, &s.Agent, &s.IsBYOK,
+		&s.ID, &s.Name, &s.Status, &s.RunnerID, &s.WorkspaceID, &s.ProfileID, &s.Agent, &s.IsBYOK,
 		&s.AgentConfigID, &s.AgentConfigMetadata, &s.ContextSnapshot, &s.AgentVersion,
 		&s.SuspendStrategy, &s.SuspendSnapshotID, &s.SuspendWorkspaceSynced, &s.PreviousRunnerID,
 		&s.NetworkPolicy, &s.AllowedHosts, &s.LifecycleMode, &s.IdleTimeoutSeconds, &s.MaxLifetimeSeconds,
@@ -400,7 +409,7 @@ func scanSession(row pgx.Row, identifier string) (*store.Session, error) {
 func scanSessionFromRows(rows pgx.Rows) (*store.Session, error) {
 	var s store.Session
 	err := rows.Scan(
-		&s.ID, &s.Name, &s.Status, &s.RunnerID, &s.WorkspaceID, &s.Agent, &s.IsBYOK,
+		&s.ID, &s.Name, &s.Status, &s.RunnerID, &s.WorkspaceID, &s.ProfileID, &s.Agent, &s.IsBYOK,
 		&s.AgentConfigID, &s.AgentConfigMetadata, &s.ContextSnapshot, &s.AgentVersion,
 		&s.SuspendStrategy, &s.SuspendSnapshotID, &s.SuspendWorkspaceSynced, &s.PreviousRunnerID,
 		&s.NetworkPolicy, &s.AllowedHosts, &s.LifecycleMode, &s.IdleTimeoutSeconds, &s.MaxLifetimeSeconds,
