@@ -1424,8 +1424,8 @@
   - [x] List profiles
 - [x] Profile selection:
   - [x] `--profile` flag in session creation
-  - [ ] Profile applied to runner selection
-  - [ ] Profile settings override defaults
+  - [x] Profile applied to runner selection
+  - [x] Profile settings override defaults
 
 ---
 
