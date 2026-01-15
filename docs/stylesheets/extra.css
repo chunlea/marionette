@@ -1,0 +1,82 @@
+/* ASCII diagram styling - ensure proper monospace rendering */
+pre code {
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", "Roboto Mono", "Source Code Pro", Consolas, Monaco, "Courier New", monospace !important;
+  font-variant-ligatures: none;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+/* Fix for ASCII box drawing characters alignment */
+.md-typeset pre > code {
+  font-feature-settings: "calt" 0, "liga" 0;
+}
+
+/* Mermaid diagram styling */
+.mermaid {
+  text-align: center;
+  cursor: zoom-in;
+}
+
+/* Make diagrams responsive */
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Fullscreen modal for zoomed diagram */
+.diagram-modal {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.9);
+  cursor: zoom-out;
+  overflow: auto;
+}
+
+.diagram-modal.active {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diagram-modal svg {
+  max-width: 95%;
+  max-height: 95%;
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+/* Close button */
+.diagram-modal-close {
+  position: absolute;
+  top: 20px;
+  right: 30px;
+  color: white;
+  font-size: 36px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.diagram-modal-close:hover {
+  color: #ccc;
+}
+
+/* Hint text */
+.mermaid::after {
+  content: "Click to zoom";
+  display: block;
+  font-size: 0.75rem;
+  color: var(--md-default-fg-color--light);
+  margin-top: 0.5rem;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.mermaid:hover::after {
+  opacity: 1;
+}

@@ -72,3 +72,4 @@ web/src/routeTree.gen.ts
 # Embedded frontend assets (built from web/)
 pkg/server/admin/dist/
 !pkg/server/admin/dist/.gitkeep
+site/
