@@ -289,6 +289,45 @@ func (s *testSessionStore) SetPermissionRequest(req *store.PermissionRequest) {
 	s.permissionRequests[req.ID] = req
 }
 
+// Webhook methods (stub)
+func (s *testSessionStore) CreateWebhook(_ context.Context, _ *store.Webhook) error { return nil }
+func (s *testSessionStore) GetWebhook(_ context.Context, _ string) (*store.Webhook, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testSessionStore) GetWebhookByName(_ context.Context, _ string, _ *string) (*store.Webhook, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testSessionStore) ListWebhooks(_ context.Context, _ store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
+	return &store.ListResult[store.Webhook]{}, nil
+}
+func (s *testSessionStore) UpdateWebhook(_ context.Context, _ string, _ store.WebhookUpdates) error {
+	return nil
+}
+func (s *testSessionStore) DeleteWebhook(_ context.Context, _ string) error { return nil }
+func (s *testSessionStore) GetActiveWebhooksForEvent(_ context.Context, _ string, _ *string) ([]*store.Webhook, error) {
+	return nil, nil
+}
+
+// WebhookEvent methods (stub)
+func (s *testSessionStore) CreateWebhookEvent(_ context.Context, _ *store.WebhookEvent) error {
+	return nil
+}
+func (s *testSessionStore) GetWebhookEvent(_ context.Context, _ string) (*store.WebhookEvent, error) {
+	return nil, store.ErrNotFound
+}
+func (s *testSessionStore) ListWebhookEvents(_ context.Context, _ store.ListWebhookEventsOptions) (*store.ListResult[store.WebhookEvent], error) {
+	return &store.ListResult[store.WebhookEvent]{}, nil
+}
+func (s *testSessionStore) UpdateWebhookEvent(_ context.Context, _ string, _ store.WebhookEventUpdates) error {
+	return nil
+}
+func (s *testSessionStore) GetPendingWebhookEvents(_ context.Context, _ int) ([]*store.WebhookEvent, error) {
+	return nil, nil
+}
+func (s *testSessionStore) CancelWebhookEventsByWebhook(_ context.Context, _ string) error {
+	return nil
+}
+
 // Thread-safe getter methods for test verification
 func (s *testSessionStore) GetSessionDirect(id string) *store.Session {
 	s.mu.RLock()

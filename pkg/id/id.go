@@ -116,3 +116,9 @@ func Manifest() string { return New("mfst") }
 
 // Stream generates a stream ID (prefix: strm_).
 func Stream() string { return New("strm") }
+
+// Webhook generates a webhook ID (prefix: whk_).
+func Webhook() string { return New("whk") }
+
+// WebhookEvent generates a webhook event ID (prefix: whev_).
+func WebhookEvent() string { return New("whev") }

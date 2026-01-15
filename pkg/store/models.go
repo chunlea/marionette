@@ -642,3 +642,96 @@ type StreamUpdates struct {
 	StartedAt        *time.Time
 	StoppedAt        *time.Time
 }
+
+// Webhook represents a webhook subscription for event notifications.
+type Webhook struct {
+	ID                string          `json:"id"`
+	Name              string          `json:"name"`
+	URL               string          `json:"url"`
+	Events            []string        `json:"events"`        // Event patterns (e.g., "task.*", "session.created")
+	SecretHash        string          `json:"-"`             // Never expose in JSON
+	SecretPrefix      string          `json:"secret_prefix"` // First 8 chars for identification
+	IsActive          bool            `json:"is_active"`
+	MaxRetries        int             `json:"max_retries"`
+	RetryDelaySeconds int             `json:"retry_delay_seconds"`
+	TimeoutSeconds    int             `json:"timeout_seconds"`
+	Headers           json.RawMessage `json:"headers,omitempty"` // Custom headers
+	TenantID          *string         `json:"tenant_id,omitempty"`
+	Labels            json.RawMessage `json:"labels,omitempty"`
+	Annotations       json.RawMessage `json:"annotations,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+}
+
+// WebhookUpdates contains fields that can be updated on a webhook.
+type WebhookUpdates struct {
+	Name              *string
+	URL               *string
+	Events            []string
+	SecretHash        *string
+	SecretPrefix      *string
+	IsActive          *bool
+	MaxRetries        *int
+	RetryDelaySeconds *int
+	TimeoutSeconds    *int
+	Headers           json.RawMessage
+	Labels            json.RawMessage
+	Annotations       json.RawMessage
+}
+
+// WebhookEventStatus represents the delivery status of a webhook event.
+type WebhookEventStatus string
+
+const (
+	WebhookEventStatusPending   WebhookEventStatus = "pending"
+	WebhookEventStatusDelivered WebhookEventStatus = "delivered"
+	WebhookEventStatusFailed    WebhookEventStatus = "failed"
+	WebhookEventStatusExhausted WebhookEventStatus = "exhausted"
+	WebhookEventStatusCanceled  WebhookEventStatus = "canceled"
+)
+
+// WebhookEvent represents a single webhook delivery attempt.
+type WebhookEvent struct {
+	ID             string             `json:"id"`
+	WebhookID      string             `json:"webhook_id"`
+	EventType      string             `json:"event_type"`
+	Payload        json.RawMessage    `json:"payload"`
+	Status         WebhookEventStatus `json:"status"`
+	Attempts       int                `json:"attempts"`
+	LastError      *string            `json:"last_error,omitempty"`
+	LastStatusCode *int               `json:"last_status_code,omitempty"`
+	NextRetryAt    *time.Time         `json:"next_retry_at,omitempty"`
+	DeliveredAt    *time.Time         `json:"delivered_at,omitempty"`
+	TenantID       *string            `json:"tenant_id,omitempty"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+}
+
+// WebhookEventUpdates contains fields that can be updated on a webhook event.
+type WebhookEventUpdates struct {
+	Status         *WebhookEventStatus
+	Attempts       *int
+	LastError      *string
+	LastStatusCode *int
+	NextRetryAt    *time.Time
+	DeliveredAt    *time.Time
+}
+
+// ListWebhooksOptions contains options for listing webhooks.
+type ListWebhooksOptions struct {
+	TenantID   *string
+	ActiveOnly bool
+	Labels     map[string]string
+	Limit      int
+	Offset     int
+}
+
+// ListWebhookEventsOptions contains options for listing webhook events.
+type ListWebhookEventsOptions struct {
+	WebhookID string
+	TenantID  *string
+	Status    *WebhookEventStatus
+	EventType *string
+	Limit     int
+	Offset    int
+}

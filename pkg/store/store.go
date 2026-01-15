@@ -341,6 +341,23 @@ type Tx interface {
 	DeleteStream(ctx context.Context, id string) error
 	CleanupExpiredStreams(ctx context.Context) (int, error)
 
+	// Webhooks
+	CreateWebhook(ctx context.Context, webhook *Webhook) error
+	GetWebhook(ctx context.Context, id string) (*Webhook, error)
+	GetWebhookByName(ctx context.Context, name string, tenantID *string) (*Webhook, error)
+	ListWebhooks(ctx context.Context, opts ListWebhooksOptions) (*ListResult[Webhook], error)
+	UpdateWebhook(ctx context.Context, id string, updates WebhookUpdates) error
+	DeleteWebhook(ctx context.Context, id string) error
+	GetActiveWebhooksForEvent(ctx context.Context, eventType string, tenantID *string) ([]*Webhook, error)
+
+	// WebhookEvents
+	CreateWebhookEvent(ctx context.Context, event *WebhookEvent) error
+	GetWebhookEvent(ctx context.Context, id string) (*WebhookEvent, error)
+	ListWebhookEvents(ctx context.Context, opts ListWebhookEventsOptions) (*ListResult[WebhookEvent], error)
+	UpdateWebhookEvent(ctx context.Context, id string, updates WebhookEventUpdates) error
+	GetPendingWebhookEvents(ctx context.Context, limit int) ([]*WebhookEvent, error)
+	CancelWebhookEventsByWebhook(ctx context.Context, webhookID string) error
+
 	// Transaction control
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
