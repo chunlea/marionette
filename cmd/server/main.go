@@ -330,6 +330,11 @@ func main() {
 		runnerTokenAdapter := admin.NewRunnerTokenAdapter(runnerTokenSvc)
 		adminOpts = append(adminOpts, admin.WithRunnerTokenAdminService(runnerTokenAdapter))
 		logger.Info("Runner token service wired to Admin API")
+
+		// Create profile service for admin API
+		profileAdapter := admin.NewProfileAdapter(dbStore)
+		adminOpts = append(adminOpts, admin.WithProfileService(profileAdapter))
+		logger.Info("Profile service wired to Admin API")
 	}
 	if streamMgr != nil {
 		// Create streams handler for admin API
