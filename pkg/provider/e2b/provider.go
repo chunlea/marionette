@@ -3,6 +3,7 @@ package e2b
 import (
 	"context"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/chunlea/marionette/pkg/provider"
@@ -22,6 +23,11 @@ type Provider struct {
 	config        *Config
 	suspendConfig *SuspendConfig
 	client        *Client
+
+	// sandboxCache maps runnerID -> sandboxID for paused sandbox lookup.
+	// E2B paused sandboxes are not listed in the regular sandbox list,
+	// so we need to cache the mapping to support pause/unpause operations.
+	sandboxCache sync.Map
 }
 
 // New creates a new E2B provider from a ProviderConfig.
@@ -114,6 +120,10 @@ func (p *Provider) Spawn(ctx context.Context, opts provider.SpawnOptions) (*prov
 		}
 	}
 
+	// Cache the runnerID -> sandboxID mapping for pause/unpause operations.
+	// E2B paused sandboxes are not in the regular list, so we need this cache.
+	p.sandboxCache.Store(opts.RunnerID, resp.SandboxID)
+
 	return &provider.RunnerInstance{
 		ID:          opts.RunnerID,
 		ProviderID:  resp.SandboxID,
@@ -136,7 +146,8 @@ func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
 	sandboxID, err := p.findSandboxByRunnerID(ctx, runnerID)
 	if err != nil {
 		if IsNotFoundError(err) {
-			// Sandbox already terminated
+			// Sandbox already terminated, clean up cache
+			p.sandboxCache.Delete(runnerID)
 			return nil
 		}
 		return &provider.ErrDestroyFailed{
@@ -147,7 +158,8 @@ func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
 
 	if err := p.client.KillSandbox(ctx, sandboxID); err != nil {
 		if IsNotFoundError(err) {
-			// Sandbox already terminated
+			// Sandbox already terminated, clean up cache
+			p.sandboxCache.Delete(runnerID)
 			return nil
 		}
 		return &provider.ErrDestroyFailed{
@@ -155,6 +167,9 @@ func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
 			Cause:    err,
 		}
 	}
+
+	// Clean up cache after successful destruction
+	p.sandboxCache.Delete(runnerID)
 
 	return nil
 }
@@ -287,7 +302,7 @@ func (p *Provider) Unpause(ctx context.Context, runnerID string) error {
 		}
 	}
 
-	if _, err := p.client.ResumeSandbox(ctx, sandboxID); err != nil {
+	if _, err := p.client.ResumeSandbox(ctx, sandboxID, p.config.TimeoutSeconds); err != nil {
 		return &provider.ErrResumeFailed{
 			SessionID: runnerID,
 			Cause:     err,
@@ -298,7 +313,15 @@ func (p *Provider) Unpause(ctx context.Context, runnerID string) error {
 }
 
 // findSandboxByRunnerID finds the E2B sandbox ID for a given runner ID.
+// It first checks the in-memory cache (needed for paused sandboxes),
+// then falls back to listing all sandboxes.
 func (p *Provider) findSandboxByRunnerID(ctx context.Context, runnerID string) (string, error) {
+	// Check cache first - required for paused sandboxes which aren't in the list
+	if sandboxID, ok := p.sandboxCache.Load(runnerID); ok {
+		return sandboxID.(string), nil
+	}
+
+	// Fall back to listing sandboxes
 	sandboxes, err := p.client.ListSandboxes(ctx)
 	if err != nil {
 		return "", err
@@ -306,6 +329,8 @@ func (p *Provider) findSandboxByRunnerID(ctx context.Context, runnerID string) (
 
 	for _, sandbox := range sandboxes {
 		if id, ok := sandbox.Metadata[p.config.LabelPrefix+"/runner-id"]; ok && id == runnerID {
+			// Update cache for future lookups
+			p.sandboxCache.Store(runnerID, sandbox.SandboxID)
 			return sandbox.SandboxID, nil
 		}
 	}

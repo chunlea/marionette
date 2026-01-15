@@ -101,7 +101,7 @@ func (p *Provider) Resume(ctx context.Context, sessionID string, opts provider.R
 		}
 		if IsPausedError(err) {
 			// Sandbox is paused - resume it
-			if _, err := p.client.ResumeSandbox(ctx, sandboxID); err != nil {
+			if _, err := p.client.ResumeSandbox(ctx, sandboxID, p.config.TimeoutSeconds); err != nil {
 				return nil, &provider.ErrResumeFailed{
 					SessionID: sessionID,
 					Cause:     fmt.Errorf("resuming sandbox: %w", err),
@@ -126,7 +126,7 @@ func (p *Provider) Resume(ctx context.Context, sessionID string, opts provider.R
 	}
 
 	// Try to resume (in case it's paused)
-	if _, err := p.client.ResumeSandbox(ctx, sandboxID); err != nil {
+	if _, err := p.client.ResumeSandbox(ctx, sandboxID, p.config.TimeoutSeconds); err != nil {
 		// If resume fails but sandbox is running, that's OK
 		if !IsPausedError(err) {
 			// Sandbox might already be running

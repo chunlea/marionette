@@ -30,10 +30,10 @@ func NewClient(baseURL, apiKey string) *Client {
 
 // Sandbox represents an E2B sandbox instance.
 type Sandbox struct {
-	SandboxID  string            `json:"sandboxId"`
-	TemplateID string            `json:"templateId,omitempty"`
+	SandboxID  string            `json:"sandboxID"`
+	TemplateID string            `json:"templateID,omitempty"`
 	Alias      string            `json:"alias,omitempty"`
-	ClientID   string            `json:"clientId,omitempty"`
+	ClientID   string            `json:"clientID,omitempty"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	StartedAt  time.Time         `json:"startedAt"`
 	EndedAt    *time.Time        `json:"endedAt,omitempty"`
@@ -41,7 +41,7 @@ type Sandbox struct {
 
 // CreateSandboxRequest is the request body for creating a sandbox.
 type CreateSandboxRequest struct {
-	TemplateID string            `json:"templateId,omitempty"`
+	TemplateID string            `json:"templateID"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	Timeout    int               `json:"timeout,omitempty"` // timeout in seconds
 	EnvVars    map[string]string `json:"envVars,omitempty"`
@@ -49,9 +49,9 @@ type CreateSandboxRequest struct {
 
 // CreateSandboxResponse is the response from creating a sandbox.
 type CreateSandboxResponse struct {
-	SandboxID  string `json:"sandboxId"`
-	TemplateID string `json:"templateId"`
-	ClientID   string `json:"clientId"`
+	SandboxID  string `json:"sandboxID"`
+	TemplateID string `json:"templateID"`
+	ClientID   string `json:"clientID"`
 }
 
 // SetTimeoutRequest is the request body for setting sandbox timeout.
@@ -232,9 +232,24 @@ func (c *Client) PauseSandbox(ctx context.Context, sandboxID string) error {
 	return nil
 }
 
+// ResumeSandboxRequest is the request body for resuming a sandbox.
+type ResumeSandboxRequest struct {
+	Timeout int `json:"timeout"` // timeout in seconds
+}
+
 // ResumeSandbox resumes a paused sandbox (beta feature).
-func (c *Client) ResumeSandbox(ctx context.Context, sandboxID string) (*Sandbox, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sandboxes/"+sandboxID+"/resume", nil)
+func (c *Client) ResumeSandbox(ctx context.Context, sandboxID string, timeoutSeconds int) (*Sandbox, error) {
+	// E2B Resume API requires a timeout in the request body
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 300 // default 5 minutes
+	}
+
+	body, err := json.Marshal(&ResumeSandboxRequest{Timeout: timeoutSeconds})
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sandboxes/"+sandboxID+"/resume", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}

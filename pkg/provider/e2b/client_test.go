@@ -185,6 +185,11 @@ func TestClientResumeSandbox(t *testing.T) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/sandboxes/sandbox-123/resume", r.URL.Path)
 
+		// Verify request body contains timeout
+		var req ResumeSandboxRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		assert.Equal(t, 300, req.Timeout)
+
 		resp := Sandbox{
 			SandboxID:  "sandbox-123",
 			TemplateID: "base",
@@ -195,7 +200,7 @@ func TestClientResumeSandbox(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-api-key")
-	sandbox, err := client.ResumeSandbox(context.Background(), "sandbox-123")
+	sandbox, err := client.ResumeSandbox(context.Background(), "sandbox-123", 300)
 
 	require.NoError(t, err)
 	assert.Equal(t, "sandbox-123", sandbox.SandboxID)
