@@ -256,3 +256,60 @@ type ListRunnerTokensOptions struct {
 	IncludeRevoked bool              `json:"include_revoked,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 }
+
+// ProfileService defines the interface for profile management.
+type ProfileService interface {
+	// Create creates a new profile.
+	Create(ctx context.Context, opts CreateProfileOptions) (*store.Profile, error)
+
+	// Get retrieves a profile by ID.
+	Get(ctx context.Context, id string) (*store.Profile, error)
+
+	// List returns profiles matching the given options.
+	List(ctx context.Context, opts ListProfilesOptions) (*ListResult[store.Profile], error)
+
+	// Update updates a profile.
+	Update(ctx context.Context, id string, opts UpdateProfileOptions) (*store.Profile, error)
+
+	// Delete deletes a profile.
+	Delete(ctx context.Context, id string) error
+}
+
+// CreateProfileOptions defines options for creating a profile.
+type CreateProfileOptions struct {
+	Name             string            `json:"name"`
+	Description      string            `json:"description,omitempty"`
+	ProviderConfigID string            `json:"provider_config_id,omitempty"`
+	Resources        map[string]any    `json:"resources,omitempty"`
+	Network          map[string]any    `json:"network,omitempty"`
+	InitScript       string            `json:"init_script,omitempty"`
+	CleanupScript    string            `json:"cleanup_script,omitempty"`
+	Tunnels          []map[string]any  `json:"tunnels,omitempty"`
+	Selector         map[string]any    `json:"selector,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+	Annotations      map[string]string `json:"annotations,omitempty"`
+}
+
+// UpdateProfileOptions defines options for updating a profile.
+type UpdateProfileOptions struct {
+	Name             *string            `json:"name,omitempty"`
+	Description      *string            `json:"description,omitempty"`
+	ProviderConfigID *string            `json:"provider_config_id,omitempty"`
+	Resources        *map[string]any    `json:"resources,omitempty"`
+	Network          *map[string]any    `json:"network,omitempty"`
+	InitScript       *string            `json:"init_script,omitempty"`
+	CleanupScript    *string            `json:"cleanup_script,omitempty"`
+	Tunnels          *[]map[string]any  `json:"tunnels,omitempty"`
+	Selector         *map[string]any    `json:"selector,omitempty"`
+	Labels           *map[string]string `json:"labels,omitempty"`
+	Annotations      *map[string]string `json:"annotations,omitempty"`
+}
+
+// ListProfilesOptions defines options for listing profiles.
+type ListProfilesOptions struct {
+	Limit            int               `json:"limit,omitempty"`
+	Cursor           string            `json:"cursor,omitempty"`
+	ProviderConfigID string            `json:"provider_config_id,omitempty"`
+	IncludeBuiltin   bool              `json:"include_builtin,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+}

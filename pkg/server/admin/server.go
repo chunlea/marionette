@@ -22,6 +22,7 @@ type Server struct {
 	apiKeys          APIKeyService
 	agentConfigs     AgentConfigService
 	providerConfigs  ProviderConfigService
+	profiles         ProfileService
 	runners          RunnerAdminService
 	runnerTokens     RunnerTokenAdminService
 	sessionActivator SessionActivator
@@ -69,6 +70,13 @@ func WithAgentConfigService(s AgentConfigService) Option {
 func WithProviderConfigService(s ProviderConfigService) Option {
 	return func(srv *Server) {
 		srv.providerConfigs = s
+	}
+}
+
+// WithProfileService sets the profile service.
+func WithProfileService(s ProfileService) Option {
+	return func(srv *Server) {
+		srv.profiles = s
 	}
 }
 
@@ -204,6 +212,15 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.Get("/{configID}", srv.handleGetProviderConfig)
 			r.Put("/{configID}", srv.handleUpdateProviderConfig)
 			r.Delete("/{configID}", srv.handleDeleteProviderConfig)
+		})
+
+		// Profiles
+		r.Route("/profiles", func(r chi.Router) {
+			r.Post("/", srv.handleCreateProfile)
+			r.Get("/", srv.handleListProfiles)
+			r.Get("/{profileID}", srv.handleGetProfile)
+			r.Put("/{profileID}", srv.handleUpdateProfile)
+			r.Delete("/{profileID}", srv.handleDeleteProfile)
 		})
 
 		// Runners

@@ -133,6 +133,9 @@ func (c *HTTPClient) CreateSession(ctx context.Context, opts CreateSessionOption
 	if opts.APIKey != "" {
 		reqBody["api_key"] = opts.APIKey
 	}
+	if opts.ProfileID != "" {
+		reqBody["profile_id"] = opts.ProfileID
+	}
 	if opts.LifecycleMode != "" {
 		reqBody["lifecycle_mode"] = opts.LifecycleMode
 	}

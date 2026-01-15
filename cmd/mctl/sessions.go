@@ -14,6 +14,7 @@ var sessionsCreateFlags struct {
 	agent              string
 	agentConfig        string
 	agentAPIKey        string
+	profileID          string
 	lifecycleMode      string
 	idleTimeoutSeconds int
 	labels             []string
@@ -65,6 +66,7 @@ func init() {
 	sessionsCreateCmd.Flags().StringVar(&sessionsCreateFlags.agent, "agent", "claude", "agent type (claude, codex, etc.)")
 	sessionsCreateCmd.Flags().StringVar(&sessionsCreateFlags.agentConfig, "agent-config", "", "agent config ID to use")
 	sessionsCreateCmd.Flags().StringVar(&sessionsCreateFlags.agentAPIKey, "agent-api-key", "", "API key for BYOK mode")
+	sessionsCreateCmd.Flags().StringVar(&sessionsCreateFlags.profileID, "profile", "", "profile ID or name for runner configuration")
 	sessionsCreateCmd.Flags().StringVar(&sessionsCreateFlags.lifecycleMode, "lifecycle", "on_demand", "lifecycle mode (on_demand, always_on, scheduled)")
 	sessionsCreateCmd.Flags().IntVar(&sessionsCreateFlags.idleTimeoutSeconds, "idle-timeout", 1800, "idle timeout in seconds (for on_demand)")
 	sessionsCreateCmd.Flags().StringSliceVar(&sessionsCreateFlags.labels, "labels", nil, "labels in key=value format")
@@ -89,7 +91,10 @@ Examples:
   mctl sessions create --agent claude --agent-api-key $ANTHROPIC_API_KEY
 
   # Create an always-on session
-  mctl sessions create --name assistant --lifecycle always_on`,
+  mctl sessions create --name assistant --lifecycle always_on
+
+  # Create a session with a specific profile
+  mctl sessions create --name ml-project --profile ml-gpu`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx := cmd.Context()
 
@@ -102,6 +107,7 @@ Examples:
 			Agent:              sessionsCreateFlags.agent,
 			AgentConfigID:      sessionsCreateFlags.agentConfig,
 			APIKey:             sessionsCreateFlags.agentAPIKey,
+			ProfileID:          sessionsCreateFlags.profileID,
 			LifecycleMode:      sessionsCreateFlags.lifecycleMode,
 			IdleTimeoutSeconds: sessionsCreateFlags.idleTimeoutSeconds,
 			Labels:             parseLabels(sessionsCreateFlags.labels),

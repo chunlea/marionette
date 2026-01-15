@@ -51,6 +51,13 @@ type AdminClient interface {
 	// Sessions (admin operations)
 	ActivateSession(ctx context.Context, sessionID, runnerID string) error
 	SuspendSession(ctx context.Context, sessionID, strategy string) error
+
+	// Profiles
+	CreateProfile(ctx context.Context, opts CreateProfileOptions) (*store.Profile, error)
+	GetProfile(ctx context.Context, id string) (*store.Profile, error)
+	ListProfiles(ctx context.Context, opts ListProfilesOptions) (*ListResult[store.Profile], error)
+	UpdateProfile(ctx context.Context, id string, opts UpdateProfileOptions) (*store.Profile, error)
+	DeleteProfile(ctx context.Context, id string) error
 }
 
 // APIKeyWithSecret includes the raw API key (only returned on creation).
@@ -158,6 +165,45 @@ type ListRunnerTokensOptions struct {
 	Status         []string          `json:"status,omitempty"`
 	IncludeRevoked bool              `json:"include_revoked,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
+}
+
+// CreateProfileOptions contains options for creating a profile.
+type CreateProfileOptions struct {
+	Name             string            `json:"name"`
+	Description      string            `json:"description,omitempty"`
+	ProviderConfigID string            `json:"provider_config_id,omitempty"`
+	Resources        map[string]any    `json:"resources,omitempty"`
+	Network          map[string]any    `json:"network,omitempty"`
+	InitScript       string            `json:"init_script,omitempty"`
+	CleanupScript    string            `json:"cleanup_script,omitempty"`
+	Tunnels          []map[string]any  `json:"tunnels,omitempty"`
+	Selector         map[string]any    `json:"selector,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+	Annotations      map[string]string `json:"annotations,omitempty"`
+}
+
+// ListProfilesOptions contains options for listing profiles.
+type ListProfilesOptions struct {
+	Limit            int               `json:"limit,omitempty"`
+	Cursor           string            `json:"cursor,omitempty"`
+	ProviderConfigID string            `json:"provider_config_id,omitempty"`
+	IncludeBuiltin   bool              `json:"include_builtin,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+}
+
+// UpdateProfileOptions contains options for updating a profile.
+type UpdateProfileOptions struct {
+	Name             *string            `json:"name,omitempty"`
+	Description      *string            `json:"description,omitempty"`
+	ProviderConfigID *string            `json:"provider_config_id,omitempty"`
+	Resources        *map[string]any    `json:"resources,omitempty"`
+	Network          *map[string]any    `json:"network,omitempty"`
+	InitScript       *string            `json:"init_script,omitempty"`
+	CleanupScript    *string            `json:"cleanup_script,omitempty"`
+	Tunnels          *[]map[string]any  `json:"tunnels,omitempty"`
+	Selector         *map[string]any    `json:"selector,omitempty"`
+	Labels           *map[string]string `json:"labels,omitempty"`
+	Annotations      *map[string]string `json:"annotations,omitempty"`
 }
 
 // HTTPAdminClient implements the AdminClient interface using HTTP requests.
@@ -532,6 +578,71 @@ func (c *HTTPAdminClient) RotateRunnerToken(ctx context.Context, id string) (*Ru
 		return nil, err
 	}
 	return &result, nil
+}
+
+// Profiles
+
+// CreateProfile creates a new profile.
+func (c *HTTPAdminClient) CreateProfile(ctx context.Context, opts CreateProfileOptions) (*store.Profile, error) {
+	var result store.Profile
+	if err := c.doRequest(ctx, http.MethodPost, "/admin/api/v1/profiles", opts, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetProfile retrieves a profile by ID.
+func (c *HTTPAdminClient) GetProfile(ctx context.Context, id string) (*store.Profile, error) {
+	var result store.Profile
+	if err := c.doRequest(ctx, http.MethodGet, "/admin/api/v1/profiles/"+id, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListProfiles lists profiles with optional filtering.
+func (c *HTTPAdminClient) ListProfiles(ctx context.Context, opts ListProfilesOptions) (*ListResult[store.Profile], error) {
+	params := url.Values{}
+	if opts.Limit > 0 {
+		params.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Cursor != "" {
+		params.Set("cursor", opts.Cursor)
+	}
+	if opts.ProviderConfigID != "" {
+		params.Set("provider_config_id", opts.ProviderConfigID)
+	}
+	if opts.IncludeBuiltin {
+		params.Set("include_builtin", "true")
+	}
+	for k, v := range opts.Labels {
+		params.Set("labels["+k+"]", v)
+	}
+
+	path := "/admin/api/v1/profiles"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	var result ListResult[store.Profile]
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateProfile updates a profile.
+func (c *HTTPAdminClient) UpdateProfile(ctx context.Context, id string, opts UpdateProfileOptions) (*store.Profile, error) {
+	var result store.Profile
+	if err := c.doRequest(ctx, http.MethodPut, "/admin/api/v1/profiles/"+id, opts, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteProfile deletes a profile.
+func (c *HTTPAdminClient) DeleteProfile(ctx context.Context, id string) error {
+	return c.doRequest(ctx, http.MethodDelete, "/admin/api/v1/profiles/"+id, nil, nil)
 }
 
 // Ensure HTTPAdminClient implements AdminClient interface.

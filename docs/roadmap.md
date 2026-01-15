@@ -1395,7 +1395,7 @@
 
 ### 9.5 Profiles
 
-- [ ] Profile schema:
+- [x] Profile schema:
   ```go
   type Profile struct {
       ID          string
@@ -1410,18 +1410,20 @@
       Selector    map[string]string
   }
   ```
-- [ ] Built-in profiles:
-  - [ ] `dev-small`: 2 CPU, 4GB RAM
-  - [ ] `dev-medium`: 4 CPU, 8GB RAM
-  - [ ] `dev-large`: 8 CPU, 16GB RAM
-  - [ ] `ios-dev`: macOS pool, Xcode
-  - [ ] `android-dev`: Android emulator
-- [ ] Profile CRUD:
-  - [ ] Create custom profiles
-  - [ ] Update/delete profiles
-  - [ ] List profiles
-- [ ] Profile selection:
-  - [ ] `--profile` flag in session creation
+- [x] Built-in profiles:
+  - [x] `dev-small`: 2 CPU, 4GB RAM
+  - [x] `dev-medium`: 4 CPU, 8GB RAM
+  - [x] `dev-large`: 8 CPU, 16GB RAM
+  - [x] `ml-gpu`: 8 CPU, 32GB RAM, GPU support
+  - [x] `web-dev`: 4 CPU, 8GB RAM, browser streaming
+  - [x] `android-dev`: Android emulator
+  - [x] `secure`: 2 CPU, 4GB RAM, air-gapped network
+- [x] Profile CRUD:
+  - [x] Create custom profiles
+  - [x] Update/delete profiles
+  - [x] List profiles
+- [x] Profile selection:
+  - [x] `--profile` flag in session creation
   - [ ] Profile applied to runner selection
   - [ ] Profile settings override defaults
 
