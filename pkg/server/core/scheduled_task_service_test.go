@@ -874,3 +874,6 @@ func TestJSONToMap(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "value", result["key"])
 }
+
+// DispatchNext satisfies TaskManagerInterface. These fakes dispatch nothing.
+func (m *mockTaskMgrForScheduled) DispatchNext(_ context.Context, _ string) error { return nil }

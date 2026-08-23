@@ -327,7 +327,12 @@ func (m *mockCommandSender) SendCommand(_ string, cmd *pb.ServerCommand) error {
 }
 
 // mockSessionMgrForTask implements SessionManagerInterface for testing.
-type mockSessionMgrForTask struct{}
+type mockSessionMgrForTask struct {
+	// ensureRunnerErr, when set, makes EnsureRunner report that no runner
+	// could be allocated. The zero value succeeds.
+	ensureRunnerErr error
+	ensureCalls     int
+}
 
 func (m *mockSessionMgrForTask) Create(_ context.Context, _ CreateSessionOptions) (*store.Session, error) {
 	return nil, nil
@@ -1771,5 +1776,141 @@ func TestTaskManager_Execute_NoRunRecordedWhenNoRunner(t *testing.T) {
 	task, err := s.GetTask(context.Background(), "task_123")
 	require.NoError(t, err)
 	assert.Equal(t, TaskStatusPending, task.Status)
+	assert.Empty(t, cmdSender.sentCommands)
+}
+
+// EnsureRunner satisfies SessionManagerInterface. These fakes never allocate.
+func (m *mockSessionMgrForTask) EnsureRunner(_ context.Context, sessionID string) (*store.Session, error) {
+	m.ensureCalls++
+	if m.ensureRunnerErr != nil {
+		return nil, m.ensureRunnerErr
+	}
+	return &store.Session{ID: sessionID, Status: SessionStatusActive}, nil
+}
+
+// =============================================================================
+// G2: automatic dispatch
+// =============================================================================
+
+func setupAutoDispatchTest() (*TaskManager, *testTaskStore, *mockCommandSender, *mockSessionMgrForTask) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	sessionMgr := &mockSessionMgrForTask{}
+	manager := NewTaskManager(s, cmdSender, sessionMgr, nil, zap.NewNop())
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	}
+	return manager, s, cmdSender, sessionMgr
+}
+
+// TestTaskManager_Create_AutoDispatches is G2: creating a task on an active
+// session with an idle runner executes it, with no separate POST /execute.
+func TestTaskManager_Create_AutoDispatches(t *testing.T) {
+	manager, s, cmdSender, sessionMgr := setupAutoDispatchTest()
+
+	task, err := manager.Create(context.Background(), CreateTaskOptions{
+		SessionID: "sess_123",
+		Prompt:    "echo marionette",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, sessionMgr.ensureCalls, "creation must ensure the session has a runner")
+	require.Len(t, cmdSender.sentCommands, 1, "the task must be dispatched on creation")
+	assert.Equal(t, task.ID, cmdSender.sentCommands[0].GetExecuteTask().GetTaskId())
+
+	stored, err := s.GetTask(context.Background(), task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusRunning, stored.Status)
+}
+
+// TestTaskManager_Create_StaysPendingWithoutRunner is the other half of G1:
+// with no runner to be had, the task is created and parks as pending.
+func TestTaskManager_Create_StaysPendingWithoutRunner(t *testing.T) {
+	manager, s, cmdSender, sessionMgr := setupAutoDispatchTest()
+	sessionMgr.ensureRunnerErr = ErrNoRunnerAvailable
+
+	task, err := manager.Create(context.Background(), CreateTaskOptions{
+		SessionID: "sess_123",
+		Prompt:    "echo marionette",
+	})
+	require.NoError(t, err, "creation must succeed even when nothing can run it")
+
+	assert.Empty(t, cmdSender.sentCommands)
+	stored, err := s.GetTask(context.Background(), task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusPending, stored.Status,
+		"a task with nowhere to run must say so, not look running")
+}
+
+// TestTaskManager_Create_DoesNotJumpTheQueue keeps execution sequential: a
+// session already running a task must not have a second one dispatched into it.
+func TestTaskManager_Create_DoesNotJumpTheQueue(t *testing.T) {
+	manager, s, cmdSender, _ := setupAutoDispatchTest()
+
+	s.tasks["task_running"] = &store.Task{
+		ID:        "task_running",
+		SessionID: "sess_123",
+		Status:    TaskStatusRunning,
+		Prompt:    "first",
+	}
+
+	_, err := manager.Create(context.Background(), CreateTaskOptions{
+		SessionID: "sess_123",
+		Prompt:    "second",
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, cmdSender.sentCommands,
+		"a session with a task in flight must not dispatch another")
+}
+
+// TestTaskManager_Create_FailedDispatchParksPending holds coordinator verdict
+// 3b: a dispatch that reached a runner and failed is not retried in a loop, it
+// parks as pending for manual re-trigger.
+func TestTaskManager_Create_FailedDispatchParksPending(t *testing.T) {
+	manager, s, cmdSender, _ := setupAutoDispatchTest()
+	cmdSender.sendErr = errors.New("runner disconnected")
+
+	task, err := manager.Create(context.Background(), CreateTaskOptions{
+		SessionID: "sess_123",
+		Prompt:    "echo marionette",
+	})
+	require.NoError(t, err)
+
+	stored, err := s.GetTask(context.Background(), task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusPending, stored.Status)
+	assert.Equal(t, 0, stored.RetryCount, "a failed dispatch must not spend the retry budget")
+}
+
+func TestTaskManager_DispatchNext_PicksOldestPendingTask(t *testing.T) {
+	manager, s, cmdSender, _ := setupAutoDispatchTest()
+
+	base := time.Now()
+	s.tasks["task_new"] = &store.Task{
+		ID: "task_new", SessionID: "sess_123", Status: TaskStatusPending,
+		Prompt: "second", CreatedAt: base,
+	}
+	s.tasks["task_old"] = &store.Task{
+		ID: "task_old", SessionID: "sess_123", Status: TaskStatusPending,
+		Prompt: "first", CreatedAt: base.Add(-time.Hour),
+	}
+
+	require.NoError(t, manager.DispatchNext(context.Background(), "sess_123"))
+
+	require.Len(t, cmdSender.sentCommands, 1)
+	assert.Equal(t, "task_old", cmdSender.sentCommands[0].GetExecuteTask().GetTaskId(),
+		"tasks are sequential, so the oldest pending goes first")
+}
+
+func TestTaskManager_DispatchNext_NothingPending(t *testing.T) {
+	manager, _, cmdSender, _ := setupAutoDispatchTest()
+
+	require.NoError(t, manager.DispatchNext(context.Background(), "sess_123"),
+		"an idle session is not an error")
 	assert.Empty(t, cmdSender.sentCommands)
 }

@@ -1799,3 +1799,11 @@ func TestRunnerManager_DetachSessions_SuspendError(t *testing.T) {
 
 	assert.True(t, sessionMgr.suspendCalled)
 }
+
+// EnsureRunner satisfies SessionManagerInterface. These fakes never allocate.
+func (m *mockSessionMgrForRunner) EnsureRunner(_ context.Context, _ string) (*store.Session, error) {
+	return nil, ErrNoRunnerAvailable
+}
+
+// DispatchNext satisfies TaskManagerInterface. These fakes dispatch nothing.
+func (m *mockTaskMgrForRunner) DispatchNext(_ context.Context, _ string) error { return nil }

@@ -69,6 +69,7 @@ type TaskManagerInterface interface {
 	Cancel(ctx context.Context, taskID string) error
 	Execute(ctx context.Context, taskID string) error
 	ReExecute(ctx context.Context, taskID string) error
+	DispatchNext(ctx context.Context, sessionID string) error
 	CreateRun(ctx context.Context, taskID string) (*store.TaskRun, error)
 	OnTaskAccepted(ctx context.Context, runID string) error
 	OnTaskStarted(ctx context.Context, runID string) error
@@ -253,7 +254,103 @@ func (m *TaskManager) Create(ctx context.Context, opts CreateTaskOptions) (*stor
 		m.webhooks.DispatchTaskEvent(ctx, "task.created", task, nil)
 	}
 
+	// Creating a task is enough to run it. Before this, a task sat pending
+	// until someone called POST /tasks/{id}/execute by hand.
+	m.autoDispatch(ctx, task)
+
 	return task, nil
+}
+
+// DispatchNext executes the oldest pending task of a session, if the session is
+// free to take one.
+//
+// Tasks within a session are sequential, so a session with a task already in
+// flight is left alone: the next one goes out when that finishes. Returns nil
+// when there is nothing to dispatch - an idle session is not an error.
+func (m *TaskManager) DispatchNext(ctx context.Context, sessionID string) error {
+	running, err := m.store.ListTasks(ctx, ListTasksOptions{
+		BaseListOptions: store.BaseListOptions{Limit: 1},
+		SessionID:       &sessionID,
+		Status:          []string{TaskStatusRunning},
+	})
+	if err != nil {
+		return err
+	}
+	if len(running.Items) > 0 {
+		m.logger.Debug("session already has a task in flight, not dispatching",
+			zap.String("session_id", sessionID),
+			zap.String("running_task_id", running.Items[0].ID),
+		)
+		return nil
+	}
+
+	pending, err := m.store.ListTasks(ctx, ListTasksOptions{
+		BaseListOptions: store.BaseListOptions{Limit: dispatchScanLimit},
+		SessionID:       &sessionID,
+		Status:          []string{TaskStatusPending},
+	})
+	if err != nil {
+		return err
+	}
+
+	next := oldestTask(pending.Items)
+	if next == nil {
+		return nil
+	}
+
+	m.logger.Info("dispatching pending task",
+		zap.String("session_id", sessionID),
+		zap.String("task_id", next.ID),
+	)
+	return m.Execute(ctx, next.ID)
+}
+
+// dispatchScanLimit bounds how many pending tasks are considered when picking
+// the oldest. A session's backlog is small by construction - execution is
+// sequential - so this is a safety valve, not a page size.
+const dispatchScanLimit = 200
+
+// oldestTask returns the earliest-created task, or nil for an empty list.
+// The ordering is computed here rather than pushed into the query so the
+// behaviour does not depend on a store's default sort.
+func oldestTask(tasks []*store.Task) *store.Task {
+	var oldest *store.Task
+	for _, task := range tasks {
+		if oldest == nil || task.CreatedAt.Before(oldest.CreatedAt) {
+			oldest = task
+		}
+	}
+	return oldest
+}
+
+// autoDispatch gets a newly created task moving without a second API call.
+//
+// It asks the session manager for a runner first, which activates a pending
+// session by allocating one. When no runner can be had, the task and the
+// session both stay pending and say so - that is the honest state, and the user
+// re-triggers once capacity exists. A dispatch that reaches a runner and fails
+// is NOT retried here: it parks as pending for manual re-trigger.
+func (m *TaskManager) autoDispatch(ctx context.Context, task *store.Task) {
+	if m.sessionMgr == nil {
+		return
+	}
+
+	if _, err := m.sessionMgr.EnsureRunner(ctx, task.SessionID); err != nil {
+		m.logger.Warn("task created but no runner is available; it stays pending",
+			zap.String("task_id", task.ID),
+			zap.String("session_id", task.SessionID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	if err := m.DispatchNext(ctx, task.SessionID); err != nil {
+		m.logger.Warn("task created but dispatch failed; it stays pending",
+			zap.String("task_id", task.ID),
+			zap.String("session_id", task.SessionID),
+			zap.Error(err),
+		)
+	}
 }
 
 // Get retrieves a task by ID.
