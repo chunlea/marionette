@@ -1,0 +1,21 @@
+.github/workflows/ci.yml
+  s_30fb41c4a911b8::t_a60fba8667fc78 9-17,27-30,39,42,46-47,52-56,79,84-85,102-140,169,174-175
+Makefile
+  s_30fb41c4a911b8::t_6c0fcfa88d43d7 33-40,47-48,50-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "a6b45cd49525e4be9393fec0bd1313e8c9ef47c3",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
