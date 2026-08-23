@@ -102,11 +102,6 @@ jobs:
   web:
     name: Web
     runs-on: ubuntu-latest
-    # Non-blocking on purpose: this runs against the frontend as it stands
-    # today, which does not pass yet. It is here so the signal exists while lane
-    # C2 fixes it — C2 flips continue-on-error off (and makes this job required)
-    # once it is green.
-    continue-on-error: true
     defaults:
       run:
         working-directory: web
@@ -115,6 +110,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install pnpm
+        # Pinned to 9 deliberately: pnpm 10+ fails the install on
+        # ERR_PNPM_IGNORED_BUILDS. Keep in sync with the packageManager field
+        # in web/package.json.
         uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -122,21 +120,34 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check the generated API types match the OpenAPI document
+        # The Go side has its own drift check (TestOpenAPIDocumentIsUpToDate in
+        # the test job) for the document itself; this one catches a document
+        # that changed without src/types/api.gen.ts being regenerated.
+        run: |
+          pnpm generate:api
+          git diff --exit-code src/types/api.gen.ts \
+            || { echo "::error::run 'pnpm generate:api' and commit src/types/api.gen.ts"; exit 1; }
+
       - name: Lint
         run: pnpm lint
 
-      - name: Typecheck
-        run: npx tsc --noEmit
-
       - name: Test
         run: pnpm test
+
+      - name: Build
+        # `pnpm build` runs vite build and then the typecheck, in that order:
+        # the router plugin writes src/routeTree.gen.ts during the build and
+        # tsc needs it. It also exercises the bundle the server embeds, which
+        # nothing in CI used to do.
+        run: pnpm build
 
   schema:
     name: Schema drift
