@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/chunlea/marionette/pkg/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -22,7 +24,11 @@ func newTestServer(opts ...Option) *Server {
 		Username: "admin",
 		Password: "secret",
 	}
-	return New(cfg, logger, opts...)
+	srv, err := New(cfg, logger, opts...)
+	if err != nil {
+		panic(err)
+	}
+	return srv
 }
 
 func TestBasicAuthMiddleware(t *testing.T) {
@@ -2936,4 +2942,67 @@ func TestMockProfileService(t *testing.T) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
+}
+
+// TestNew_FailsClosedWithoutCredentials locks in the fix for an admin API that
+// shipped open: BasicAuthMiddleware was only installed when a username and
+// password were both set, and main.go never set them.
+func TestNew_FailsClosedWithoutCredentials(t *testing.T) {
+	logger := zap.NewNop()
+
+	tests := []struct {
+		name     string
+		username string
+		password string
+	}{
+		{"no credentials at all", "", ""},
+		{"username only", "admin", ""},
+		{"password only", "", "secret"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, err := New(Config{
+				Host:     "localhost",
+				Port:     8081,
+				Username: tt.username,
+				Password: tt.password,
+			}, logger)
+
+			require.ErrorIs(t, err, ErrCredentialsRequired)
+			assert.Nil(t, srv)
+		})
+	}
+}
+
+// TestNew_AllowInsecureSkipsAuth documents the explicit development opt-out.
+func TestNew_AllowInsecureSkipsAuth(t *testing.T) {
+	logger := zap.NewNop()
+
+	srv, err := New(Config{
+		Host:          "localhost",
+		Port:          8081,
+		AllowInsecure: true,
+	}, logger, WithAPIKeyService(NewMockAPIKeyService()))
+	require.NoError(t, err)
+	require.NotNil(t, srv)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/keys", nil)
+	rec := httptest.NewRecorder()
+	srv.router.ServeHTTP(rec, req)
+
+	assert.NotEqual(t, http.StatusUnauthorized, rec.Code,
+		"AllowInsecure must serve the admin API without credentials")
+}
+
+// TestNew_AuthEnforcedWhenCredentialsSet is the other half of the contract:
+// with credentials present, every admin route is behind basic auth.
+func TestNew_AuthEnforcedWhenCredentialsSet(t *testing.T) {
+	srv := newTestServer(WithAPIKeyService(NewMockAPIKeyService()))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/keys", nil)
+	rec := httptest.NewRecorder()
+	srv.router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }

@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -37,10 +38,20 @@ type Server struct {
 	// Basic auth credentials
 	username string
 	password string
+	// allowInsecure records that the operator explicitly opted out of auth.
+	allowInsecure bool
 
 	// Middleware
 	middlewares []func(http.Handler) http.Handler
 }
+
+// ErrCredentialsRequired is returned by New when the admin API would be
+// served without authentication and the operator has not explicitly opted in.
+var ErrCredentialsRequired = errors.New(
+	"admin: basic auth credentials are required; " +
+		"set MARIONETTE_UI_USERNAME and MARIONETTE_UI_PASSWORD, " +
+		"or pass --dev-insecure-admin to run without authentication",
+)
 
 // Config holds configuration for the admin server.
 type Config struct {
@@ -48,6 +59,12 @@ type Config struct {
 	Port     int
 	Username string // Basic auth username
 	Password string // Basic auth password
+
+	// AllowInsecure serves the admin API with no authentication at all.
+	// Development only: the admin API can mint API keys, register runners and
+	// read every session, so an unauthenticated one is a full compromise.
+	// Without this the server refuses to start rather than shipping open.
+	AllowInsecure bool
 }
 
 // Option is a functional option for configuring the server.
@@ -146,11 +163,24 @@ func WithMiddleware(m func(http.Handler) http.Handler) Option {
 }
 
 // New creates a new admin server.
-func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
+//
+// It fails closed: without basic auth credentials the admin API is refused
+// rather than served open. Set cfg.AllowInsecure to opt out in development.
+func New(cfg Config, logger *zap.Logger, opts ...Option) (*Server, error) {
+	if cfg.Username == "" || cfg.Password == "" {
+		if !cfg.AllowInsecure {
+			return nil, ErrCredentialsRequired
+		}
+		logger.Warn("admin API is serving WITHOUT authentication - development only",
+			zap.Int("port", cfg.Port),
+		)
+	}
+
 	srv := &Server{
-		logger:   logger,
-		username: cfg.Username,
-		password: cfg.Password,
+		logger:        logger,
+		username:      cfg.Username,
+		password:      cfg.Password,
+		allowInsecure: cfg.AllowInsecure,
 	}
 
 	// Apply options
@@ -191,8 +221,10 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 
 	// Admin API routes (with basic auth)
 	r.Route("/admin/api/v1", func(r chi.Router) {
-		// Apply basic auth middleware if credentials are set
-		if srv.username != "" && srv.password != "" {
+		// Apply basic auth. New guarantees credentials are present unless the
+		// operator explicitly opted out with AllowInsecure, so a missing
+		// middleware here can only be a deliberate development choice.
+		if !srv.allowInsecure {
 			r.Use(srv.BasicAuthMiddleware)
 		}
 
@@ -299,7 +331,7 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	return srv
+	return srv, nil
 }
 
 // Router returns the chi router for testing.

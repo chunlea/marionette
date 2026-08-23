@@ -40,6 +40,8 @@ import (
 func main() {
 	// Parse command-line flags
 	configPath := flag.String("config", "configs/local.yaml", "path to config file")
+	devInsecureAdmin := flag.Bool("dev-insecure-admin", false,
+		"serve the admin API without authentication (development only)")
 	flag.Parse()
 
 	// Load configuration
@@ -399,10 +401,19 @@ func main() {
 		}
 	}
 
-	adminServer := admin.New(admin.Config{
-		Host: cfg.Server.Admin.Host,
-		Port: cfg.Server.Admin.Port,
+	// The admin API mints API keys, registers runners and reads every session.
+	// It fails closed: without credentials the server refuses to start unless
+	// --dev-insecure-admin says otherwise.
+	adminServer, err := admin.New(admin.Config{
+		Host:          cfg.Server.Admin.Host,
+		Port:          cfg.Server.Admin.Port,
+		Username:      secrets.UIUsername,
+		Password:      secrets.UIPassword,
+		AllowInsecure: *devInsecureAdmin,
 	}, logger, adminOpts...)
+	if err != nil {
+		logger.Fatal("failed to create admin server", zap.Error(err))
+	}
 
 	grpcCfg.Host = cfg.Server.GRPC.Host
 	grpcCfg.Port = cfg.Server.GRPC.Port
