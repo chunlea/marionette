@@ -115,6 +115,54 @@ func TestUpstreamProxyRelaysWebSockets(t *testing.T) {
 	assert.Equal(t, "token=mk_test", string(message))
 }
 
+// The admin server that mounts this proxy wraps requests in a 30-second
+// timeout and gives its http.Server a 30-second write timeout. Either would
+// cut a log stream off mid-task if it reached the relayed connection, so pin
+// the behaviour: the request deadline is dropped for upgrades, and Go clears
+// the connection deadlines on hijack.
+func TestUpstreamProxyKeepsAWebSocketPastTheFrontEndTimeouts(t *testing.T) {
+	const timeout = 200 * time.Millisecond
+	const ticks = 4
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		for i := range ticks {
+			time.Sleep(timeout / 2)
+			if err := conn.WriteMessage(websocket.TextMessage, []byte{byte('0' + i)}); err != nil {
+				return
+			}
+		}
+	}))
+	defer upstreamServer.Close()
+
+	middleware, err := NewUpstreamProxy("/api/v1", upstreamServer.URL, zap.NewNop())
+	require.NoError(t, err)
+
+	front := httptest.NewUnstartedServer(middleware(http.NotFoundHandler()))
+	front.Config.WriteTimeout = timeout
+	front.Config.ReadTimeout = timeout
+	front.Start()
+	defer front.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(front.URL, "http") + "/api/v1/logs/task_1/stream"
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	defer func() { _ = resp.Body.Close() }()
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	for i := range ticks {
+		_, message, readErr := conn.ReadMessage()
+		require.NoErrorf(t, readErr, "stream died after %d of %d messages", i, ticks)
+		assert.Equal(t, string([]byte{byte('0' + i)}), string(message))
+	}
+}
+
 func TestUpstreamProxyReportsAnUnreachableAPI(t *testing.T) {
 	// A closed port stands in for the API server being down.
 	dead := httptest.NewServer(http.NotFoundHandler())
