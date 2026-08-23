@@ -84,7 +84,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the events:read scope.
+          description: The credential lacks the events:read scope.
           content:
             application/json:
               schema:
@@ -126,7 +126,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tasks:read scope.
+          description: The credential lacks the tasks:read scope.
           content:
             application/json:
               schema:
@@ -207,7 +207,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the permissions:read scope.
+          description: The credential lacks the permissions:read scope.
           content:
             application/json:
               schema:
@@ -247,7 +247,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the permissions:read scope.
+          description: The credential lacks the permissions:read scope.
           content:
             application/json:
               schema:
@@ -296,7 +296,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the permissions:write scope.
+          description: The credential lacks the permissions:write scope.
           content:
             application/json:
               schema:
@@ -344,7 +344,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the permissions:write scope.
+          description: The credential lacks the permissions:write scope.
           content:
             application/json:
               schema:
@@ -397,9 +397,9 @@ paths:
           description: Filter by pool.
           schema:
             type: string
-        - name: labels[key]
+        - name: labels
           in: query
-          description: Filter by label. Repeat with different keys to AND several labels, e.g. labels[env]=prod.
+          description: Filter by label, e.g. labels[env]=prod.
           schema:
             type: string
       responses:
@@ -416,7 +416,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the runners:read scope.
+          description: The credential lacks the runners:read scope.
           content:
             application/json:
               schema:
@@ -456,7 +456,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the runners:read scope.
+          description: The credential lacks the runners:read scope.
           content:
             application/json:
               schema:
@@ -502,7 +502,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the scheduled-tasks:write scope.
+          description: The credential lacks the scheduled-tasks:write scope.
           content:
             application/json:
               schema:
@@ -561,7 +561,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the scheduled-tasks:read scope.
+          description: The credential lacks the scheduled-tasks:read scope.
           content:
             application/json:
               schema:
@@ -601,7 +601,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the scheduled-tasks:read scope.
+          description: The credential lacks the scheduled-tasks:read scope.
           content:
             application/json:
               schema:
@@ -652,7 +652,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the scheduled-tasks:write scope.
+          description: The credential lacks the scheduled-tasks:write scope.
           content:
             application/json:
               schema:
@@ -693,7 +693,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the scheduled-tasks:write scope.
+          description: The credential lacks the scheduled-tasks:write scope.
           content:
             application/json:
               schema:
@@ -739,7 +739,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the scheduled-tasks:write scope.
+          description: The credential lacks the scheduled-tasks:write scope.
           content:
             application/json:
               schema:
@@ -785,7 +785,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the scheduled-tasks:write scope.
+          description: The credential lacks the scheduled-tasks:write scope.
           content:
             application/json:
               schema:
@@ -832,7 +832,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the scheduled-tasks:write scope.
+          description: The credential lacks the scheduled-tasks:write scope.
           content:
             application/json:
               schema:
@@ -879,7 +879,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the sessions:write scope.
+          description: The credential lacks the sessions:write scope.
           content:
             application/json:
               schema:
@@ -929,9 +929,9 @@ paths:
           description: Filter by lifecycle mode.
           schema:
             type: string
-        - name: labels[key]
+        - name: labels
           in: query
-          description: Filter by label. Repeat with different keys to AND several labels, e.g. labels[env]=prod.
+          description: Filter by label, e.g. labels[env]=prod.
           schema:
             type: string
       responses:
@@ -948,7 +948,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the sessions:read scope.
+          description: The credential lacks the sessions:read scope.
           content:
             application/json:
               schema:
@@ -988,7 +988,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the sessions:read scope.
+          description: The credential lacks the sessions:read scope.
           content:
             application/json:
               schema:
@@ -1030,7 +1030,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the sessions:write scope.
+          description: The credential lacks the sessions:write scope.
           content:
             application/json:
               schema:
@@ -1073,7 +1073,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the sessions:write scope.
+          description: The credential lacks the sessions:write scope.
           content:
             application/json:
               schema:
@@ -1116,7 +1116,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the sessions:write scope.
+          description: The credential lacks the sessions:write scope.
           content:
             application/json:
               schema:
@@ -1169,7 +1169,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tunnels:write scope.
+          description: The credential lacks the tunnels:write scope.
           content:
             application/json:
               schema:
@@ -1214,7 +1214,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tunnels:read scope.
+          description: The credential lacks the tunnels:read scope.
           content:
             application/json:
               schema:
@@ -1262,7 +1262,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the streams:read scope.
+          description: The credential lacks the streams:read scope.
           content:
             application/json:
               schema:
@@ -1309,7 +1309,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tasks:write scope.
+          description: The credential lacks the tasks:write scope.
           content:
             application/json:
               schema:
@@ -1368,7 +1368,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tasks:read scope.
+          description: The credential lacks the tasks:read scope.
           content:
             application/json:
               schema:
@@ -1408,7 +1408,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tasks:read scope.
+          description: The credential lacks the tasks:read scope.
           content:
             application/json:
               schema:
@@ -1450,7 +1450,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tasks:write scope.
+          description: The credential lacks the tasks:write scope.
           content:
             application/json:
               schema:
@@ -1497,7 +1497,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tasks:write scope.
+          description: The credential lacks the tasks:write scope.
           content:
             application/json:
               schema:
@@ -1572,7 +1572,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tasks:read scope.
+          description: The credential lacks the tasks:read scope.
           content:
             application/json:
               schema:
@@ -1615,7 +1615,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tasks:write scope.
+          description: The credential lacks the tasks:write scope.
           content:
             application/json:
               schema:
@@ -1682,7 +1682,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tasks:read scope.
+          description: The credential lacks the tasks:read scope.
           content:
             application/json:
               schema:
@@ -1728,7 +1728,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tunnels:read scope.
+          description: The credential lacks the tunnels:read scope.
           content:
             application/json:
               schema:
@@ -1769,7 +1769,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the tunnels:write scope.
+          description: The credential lacks the tunnels:write scope.
           content:
             application/json:
               schema:
@@ -1815,7 +1815,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the workspaces:write scope.
+          description: The credential lacks the workspaces:write scope.
           content:
             application/json:
               schema:
@@ -1860,7 +1860,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the workspaces:read scope.
+          description: The credential lacks the workspaces:read scope.
           content:
             application/json:
               schema:
@@ -1900,7 +1900,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the workspaces:read scope.
+          description: The credential lacks the workspaces:read scope.
           content:
             application/json:
               schema:
@@ -1951,7 +1951,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the workspaces:write scope.
+          description: The credential lacks the workspaces:write scope.
           content:
             application/json:
               schema:
@@ -1993,7 +1993,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: The API key lacks the workspaces:write scope.
+          description: The credential lacks the workspaces:write scope.
           content:
             application/json:
               schema:
@@ -2154,6 +2154,7 @@ components:
       description: An API key minted by the admin API.
       scheme: bearer
       type: http
+      unauthorized: The API key is missing, malformed, revoked or expired.
   schemas:
     ApproveRequest:
       type: object

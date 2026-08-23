@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chunlea/marionette/pkg/openapi"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -147,7 +148,7 @@ func TestRepeatedQueryParametersDeclareRepeatKeyForm(t *testing.T) {
 	// axios serializes arrays as status[]=a by default while Go reads
 	// r.URL.Query()["status"]; the spec has to say which form is right so a
 	// generated client gets it too.
-	param := repeatedQuery("status", "Filter by status.")
+	param := openapi.RepeatedQuery("status", "Filter by status.")
 	require.NotNil(t, param.Explode)
 	assert.True(t, *param.Explode)
 	assert.Equal(t, "form", param.Style)
@@ -157,32 +158,27 @@ func TestRepeatedQueryParametersDeclareRepeatKeyForm(t *testing.T) {
 func TestOperationIDsAreUniqueAndReadable(t *testing.T) {
 	seen := map[string]string{}
 	for _, route := range publicRoutes() {
-		id := operationID(route)
+		id := openapi.OperationID(route)
 		if previous, duplicate := seen[id]; duplicate {
 			t.Fatalf("operationId %q is used by both %s and %s %s", id, previous, route.Method, route.Path)
 		}
 		seen[id] = route.Method + " " + route.Path
 	}
 
-	assert.Equal(t, "getSessions", operationID(routeSpec{
+	assert.Equal(t, "getSessions", openapi.OperationID(openapi.Route{
 		Method: "GET", Path: "/api/v1/sessions",
 	}))
-	assert.Equal(t, "getSessionsBySessionID", operationID(routeSpec{
+	assert.Equal(t, "getSessionsBySessionID", openapi.OperationID(openapi.Route{
 		Method: "GET", Path: "/api/v1/sessions/{sessionID}",
 	}))
-	assert.Equal(t, "getSessionsTunnels", operationID(routeSpec{
+	assert.Equal(t, "getSessionsTunnels", openapi.OperationID(openapi.Route{
 		Method: "GET", Path: "/api/v1/sessions/{sessionID}/tunnels",
 	}))
-	assert.Equal(t, "postScheduledTasksTrigger", operationID(routeSpec{
+	assert.Equal(t, "postScheduledTasksTrigger", openapi.OperationID(openapi.Route{
 		Method: "POST", Path: "/api/v1/scheduled-tasks/{scheduledTaskID}/trigger",
 	}))
 }
 
-func TestSchemaNameRewrites(t *testing.T) {
-	item, ok := listEnvelopeItem("ListResponse[github.com/chunlea/marionette/pkg/server/api/apitypes.Session]")
-	require.True(t, ok)
-	assert.Equal(t, "Session", item)
-
-	_, ok = listEnvelopeItem("Session")
-	assert.False(t, ok)
-}
+// Schema name rewriting moved to pkg/openapi with the generator; its own tests
+// cover it. Duplicating them here would only assert that the import still
+// resolves.
