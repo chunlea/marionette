@@ -38,10 +38,54 @@ type RunnerConnection struct {
 
 	// commandCh is a buffered channel for outgoing commands to the runner.
 	// Commands are sent by the server and consumed by the sendCommands goroutine.
+	//
+	// commandCh is NEVER closed. Closing it would race with SendCommand, which
+	// necessarily publishes to it without holding a lock that the disconnect
+	// path also takes, and a send on a closed channel panics the whole process.
+	// Teardown is signalled through done instead.
 	commandCh chan *pb.ServerCommand
+
+	// done is closed exactly once when the connection is torn down. Both the
+	// sender goroutine and SendCommand select on it, so no command is published
+	// to a connection that is going away.
+	done      chan struct{}
+	closeOnce sync.Once
 
 	// stream is the bidirectional gRPC stream for this connection.
 	stream grpc.BidiStreamingServer[pb.RunnerMessage, pb.ServerCommand]
+}
+
+// newRunnerConnection creates a RunnerConnection with its channels initialized.
+func newRunnerConnection(runnerID, name, hostname string, stream grpc.BidiStreamingServer[pb.RunnerMessage, pb.ServerCommand]) *RunnerConnection {
+	now := time.Now()
+	return &RunnerConnection{
+		RunnerID:    runnerID,
+		Name:        name,
+		Hostname:    hostname,
+		Status:      RunnerStatusIdle,
+		ConnectedAt: now,
+		LastSeen:    now,
+		commandCh:   make(chan *pb.ServerCommand, commandBufferSize),
+		done:        make(chan struct{}),
+		stream:      stream,
+	}
+}
+
+// Close signals that the connection is torn down. It is safe to call multiple
+// times and from multiple goroutines. Queued but unsent commands are discarded.
+func (rc *RunnerConnection) Close() {
+	rc.closeOnce.Do(func() {
+		if rc.done != nil {
+			close(rc.done)
+		}
+	})
+}
+
+// Done returns a channel that is closed when the connection is torn down.
+// A connection built without newRunnerConnection returns nil, which blocks
+// forever in a select and therefore never reports teardown.
+func (rc *RunnerConnection) Done() <-chan struct{} {
+	return rc.done
 }
 
 // UpdateStatus updates the runner status.
@@ -210,8 +254,13 @@ func (cm *ConnectionManager) IsConnected(runnerID string) bool {
 // ErrCommandQueueFull is returned when the command queue is full.
 var ErrCommandQueueFull = errors.New("command queue full")
 
+// ErrRunnerDisconnected is returned when a command is dispatched to a
+// connection that is being torn down.
+var ErrRunnerDisconnected = errors.New("runner disconnected")
+
 // SendCommand queues a command to be sent to a runner.
 // Returns ErrRunnerNotFound if the runner is not connected.
+// Returns ErrRunnerDisconnected if the connection is being torn down.
 // Returns ErrCommandQueueFull if the command queue is full (backpressure).
 func (cm *ConnectionManager) SendCommand(runnerID string, cmd *pb.ServerCommand) error {
 	cm.mu.RLock()
@@ -220,6 +269,17 @@ func (cm *ConnectionManager) SendCommand(runnerID string, cmd *pb.ServerCommand)
 
 	if !exists {
 		return ErrRunnerNotFound
+	}
+
+	// The connection can be torn down between the map lookup above and the send
+	// below; the read lock is intentionally not held across the send. That is
+	// safe because commandCh is never closed - the worst case is a command
+	// queued onto a connection whose sender has already exited, which is
+	// equivalent to the runner vanishing mid-flight.
+	select {
+	case <-conn.done:
+		return ErrRunnerDisconnected
+	default:
 	}
 
 	// Non-blocking send with backpressure
