@@ -2,7 +2,6 @@ package claude
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -417,7 +416,7 @@ func TestExecutor_IsStreamMode_Default(t *testing.T) {
 }
 
 func TestExecutor_Execute_InvalidBinary(t *testing.T) {
-	e := New(WithBinaryPath("/nonexistent/binary"))
+	e := New(WithBinaryPath("/nonexistent/binary"), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -458,7 +457,7 @@ func TestExecutor_Execute_AlreadyRunning(t *testing.T) {
 
 func TestExecutor_Execute_ContextCanceled(t *testing.T) {
 	// Use a simple echo command to simulate claude
-	e := New(WithBinaryPath("echo"))
+	e := New(WithBinaryPath("echo"), WithoutPermissionGating())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -483,170 +482,6 @@ func TestExecutor_Interfaces(t *testing.T) {
 	// Verify interface implementation
 	var _ executor.Executor = e
 	var _ executor.StreamExecutor = e
-}
-
-func TestIsPermissionRequired(t *testing.T) {
-	tests := []struct {
-		tool     string
-		required bool
-	}{
-		{"Bash", true},
-		{"Write", true},
-		{"Edit", true},
-		{"NotebookEdit", true},
-		{"computer", true},
-		{"Read", false},
-		{"Glob", false},
-		{"Grep", false},
-		{"WebFetch", false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.tool, func(t *testing.T) {
-			assert.Equal(t, tc.required, IsPermissionRequired(tc.tool))
-		})
-	}
-}
-
-func TestExecutor_processOutput_PermissionRequest(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-
-	// Simulate Claude output with a tool_use event for Bash (permission required)
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"Bash","input":{"command":"ls -la"}}]}}`
-
-	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify permission request was made
-	requests := handler.GetPermissionRequests()
-	require.Len(t, requests, 1)
-	assert.Equal(t, "toolu_123", requests[0].ID)
-	assert.Equal(t, "Bash", requests[0].Tool)
-	assert.Contains(t, requests[0].Action, "ls -la")
-	assert.Equal(t, executor.RiskMedium, requests[0].RiskLevel)
-}
-
-func TestExecutor_processOutput_PermissionApproved(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-	handler.permissionApprove = true
-
-	// Simulate Claude output with a tool_use event
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_456","name":"Write","input":{"file_path":"/tmp/test.txt"}}]}}`
-
-	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify permission was approved
-	outputs := handler.GetOutputs()
-	found := false
-	for _, o := range outputs {
-		if strings.Contains(string(o.data), "permission_approved: Write toolu_456") {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "Should emit permission_approved system message")
-}
-
-func TestExecutor_processOutput_PermissionDenied(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-	handler.permissionApprove = false
-
-	// Simulate Claude output with a tool_use event
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_789","name":"Edit","input":{"file_path":"/etc/passwd"}}]}}`
-
-	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify permission was denied
-	outputs := handler.GetOutputs()
-	found := false
-	for _, o := range outputs {
-		if strings.Contains(string(o.data), "permission_denied: Edit toolu_789") {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "Should emit permission_denied system message")
-}
-
-func TestExecutor_processOutput_PermissionError(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-	handler.permissionErr = errors.New("context canceled")
-
-	// Simulate Claude output with a tool_use event
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_err","name":"Bash","input":{}}]}}`
-
-	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify error message was emitted
-	outputs := handler.GetOutputs()
-	found := false
-	for _, o := range outputs {
-		if strings.Contains(string(o.data), "permission_request_error") {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "Should emit permission_request_error system message")
-}
-
-func TestExecutor_processOutput_NoPermissionForReadTools(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-
-	// Simulate Claude output with a tool_use event for Read (no permission required)
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/test.txt"}}]}}`
-
-	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify no permission request was made
-	requests := handler.GetPermissionRequests()
-	assert.Len(t, requests, 0, "Read tool should not require permission")
-}
-
-func TestExecutor_processOutput_MultipleToolUses(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-	handler.permissionApprove = true
-
-	// Simulate multiple tool uses - one requiring permission, one not
-	bashJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}]}}`
-	readJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Read","input":{}}]}}`
-	writeJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_3","name":"Write","input":{}}]}}`
-
-	reader := strings.NewReader(bashJSON + "\n" + readJSON + "\n" + writeJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify only Bash and Write triggered permission requests
-	requests := handler.GetPermissionRequests()
-	require.Len(t, requests, 2)
-	assert.Equal(t, "Bash", requests[0].Tool)
-	assert.Equal(t, "Write", requests[1].Tool)
 }
 
 func TestExecutor_processOutput_ContextCanceled(t *testing.T) {
@@ -682,30 +517,6 @@ func TestExecutor_processOutput_ContextCanceled(t *testing.T) {
 		_ = writer.Close()
 		t.Fatal("processOutput did not return after context cancellation and pipe close")
 	}
-}
-
-func TestExecutor_processOutput_PermissionRequestStopsOnError(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	// Use a cancelable context
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	handler := newTestOutputHandler()
-	handler.permissionErr = context.Canceled
-
-	// Simulate two tool uses that require permission
-	// After the first error, processing should stop
-	bashJSON1 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}]}}`
-	bashJSON2 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{}}]}}`
-
-	reader := strings.NewReader(bashJSON1 + "\n" + bashJSON2 + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Should only have one permission request since processing stops on error
-	requests := handler.GetPermissionRequests()
-	assert.Len(t, requests, 1, "Processing should stop after permission error")
 }
 
 func TestExecutor_processStderr(t *testing.T) {
@@ -929,7 +740,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","s
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -971,7 +782,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","s
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -998,7 +809,7 @@ sleep 100
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -1028,7 +839,7 @@ exit 42
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -1058,7 +869,7 @@ exit 0
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	result, err := e.Execute(context.Background(), &executor.Task{
 		Prompt:  "test",
@@ -1085,7 +896,7 @@ exit 0
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	result, err := e.Execute(context.Background(), &executor.Task{
 		Prompt:  "test",
@@ -1113,7 +924,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","s
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -1151,7 +962,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","s
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -1196,7 +1007,7 @@ cat > /dev/null
 		_ = os.Remove(capturePath)
 	}()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	task := &executor.Task{
 		Prompt:          "continue please",
@@ -1244,7 +1055,7 @@ cat > /dev/null
 		_ = os.Remove(capturePath)
 	}()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 	handler := newTestOutputHandler()
 
 	done := make(chan *executor.Result, 1)

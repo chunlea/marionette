@@ -18,6 +18,14 @@ import (
 )
 
 func main() {
+	// The agent re-invokes itself as the CLI's PreToolUse permission hook.
+	// This must be the very first thing main does: the hook runs per tool
+	// call, has a JSON contract on stdin/stdout, and must not touch config,
+	// logging or the network.
+	if len(os.Args) > 1 && os.Args[1] == claude.PermissionHookCommand {
+		os.Exit(runPermissionHook(os.Args[2:]))
+	}
+
 	// Parse command-line flags
 	flags := pflag.NewFlagSet("agent", pflag.ExitOnError)
 	configPath := flags.String("config", "", "path to config file")
@@ -166,6 +174,22 @@ func main() {
 	}
 
 	logger.Info("marionette agent stopped")
+}
+
+// runPermissionHook answers one PreToolUse permission question and returns the
+// process exit code. It always writes a decision: a hook that exits without
+// one makes the CLI fail open and run the tool unapproved.
+func runPermissionHook(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: marionette-agent "+claude.PermissionHookCommand+" <socket-path>")
+		return 2
+	}
+
+	if err := claude.RunPermissionHook(context.Background(), args[0], os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "permission hook failed: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func connectWithRetry(ctx context.Context, client *agent.Client, _ *agent.Config, logger *zap.Logger) error {

@@ -43,6 +43,11 @@ type Executor struct {
 	// Parser for output
 	parser *Parser
 
+	// Permission gating
+	hookArgv       []string
+	permissionWait time.Duration
+	gatingDisabled bool
+
 	// Context for cancellation
 	cancelFunc context.CancelFunc
 }
@@ -54,6 +59,35 @@ type Option func(*Executor)
 func WithBinaryPath(path string) Option {
 	return func(e *Executor) {
 		e.binaryPath = path
+	}
+}
+
+// WithPermissionHookCommand sets the command the CLI runs as its PreToolUse
+// hook. It defaults to this binary re-invoked as `permission-hook`, which is
+// what the agent wants; tests override it.
+func WithPermissionHookCommand(argv ...string) Option {
+	return func(e *Executor) {
+		e.hookArgv = argv
+	}
+}
+
+// WithPermissionWait sets how long a gated tool call may wait for an operator
+// decision before it is denied.
+func WithPermissionWait(d time.Duration) Option {
+	return func(e *Executor) {
+		e.permissionWait = d
+	}
+}
+
+// WithoutPermissionGating disables pre-execution gating.
+//
+// Use it only where an operator has deliberately accepted that the agent runs
+// unsupervised. It must never be a fallback for a gate that failed to start:
+// running ungated while reporting success is the exact dishonesty this
+// executor is being repaired to remove.
+func WithoutPermissionGating() Option {
+	return func(e *Executor) {
+		e.gatingDisabled = true
 	}
 }
 
@@ -98,6 +132,32 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 
 	// Build command arguments
 	args, hasResume := e.buildArgs(task, config)
+
+	// Real permission gating runs as a PreToolUse hook in a subprocess that
+	// calls back into this broker. Starting it is not optional: if the gate
+	// cannot run, the task fails rather than running unsupervised.
+	if !e.gatingDisabled {
+		broker, err := NewPermissionBroker(handler, e.permissionWait)
+		if err != nil {
+			return nil, fmt.Errorf("failed to start permission gate: %w", err)
+		}
+		defer func() { _ = broker.Close() }()
+
+		hookArgv, err := e.permissionHookArgv(broker.SocketPath())
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve permission hook command: %w", err)
+		}
+
+		settings, err := hookSettings(hookArgv, broker.Wait())
+		if err != nil {
+			return nil, fmt.Errorf("failed to build permission hook settings: %w", err)
+		}
+
+		args = append(args, "--settings", settings)
+		brokerCtx, brokerCancel := context.WithCancel(ctx)
+		defer brokerCancel()
+		broker.Serve(brokerCtx)
+	}
 
 	// Create cancellable context
 	ctx, cancel := context.WithCancel(ctx)
@@ -349,6 +409,19 @@ func (e *Executor) buildArgs(task *executor.Task, config *executor.AgentConfig) 
 	return args, hasResume
 }
 
+// permissionHookArgv returns the command the CLI runs for each tool call.
+func (e *Executor) permissionHookArgv(socketPath string) ([]string, error) {
+	if len(e.hookArgv) > 0 {
+		return append(append([]string{}, e.hookArgv...), socketPath), nil
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	return []string{self, PermissionHookCommand, socketPath}, nil
+}
+
 // buildEnv constructs environment variables for Claude Code.
 func (e *Executor) buildEnv(config *executor.AgentConfig) []string {
 	env := os.Environ()
@@ -422,34 +495,15 @@ func (e *Executor) processOutput(ctx context.Context, r io.Reader, stream string
 			e.closeStdin()
 		}
 
-		// Process events (could emit to a separate event handler in the future)
+		// Permission gating is NOT done here. By the time a tool_use event
+		// appears in the output stream the tool has already run, so asking
+		// here could only ever produce a decision after the fact. The real
+		// gate is the PreToolUse hook wired up in Execute; see
+		// permission_broker.go.
 		for _, event := range events {
-			// Check for tool use that might require permission
 			if event.Type == executor.EventToolUse && event.ToolUse != nil {
-				if IsPermissionRequired(event.ToolUse.Name) {
-					// Create permission request
-					req := &executor.PermissionRequest{
-						ID:        event.ToolUse.ID,
-						Tool:      event.ToolUse.Name,
-						Action:    event.ToolUse.Input,
-						RiskLevel: executor.RiskMedium,
-					}
-
-					// Send permission request and block until approved/denied
-					approved, err := handler.HandlePermissionRequest(ctx, req)
-					if err != nil {
-						handler.HandleOutput("system", []byte(fmt.Sprintf("permission_request_error: %s %v", req.ID, err)))
-						return // Context cancelled or other error - stop processing
-					}
-					if !approved {
-						handler.HandleOutput("system", []byte(fmt.Sprintf("permission_denied: %s %s", req.Tool, req.ID)))
-						// Note: With --permission-mode acceptEdits, Claude has already executed the tool.
-						// Denial here is for audit/tracking purposes. Future: use a permission mode
-						// that actually pauses Claude until approval.
-					} else {
-						handler.HandleOutput("system", []byte(fmt.Sprintf("permission_approved: %s %s", req.Tool, req.ID)))
-					}
-				}
+				handler.HandleOutput("system", []byte(fmt.Sprintf(
+					"tool_use: %s %s", event.ToolUse.Name, event.ToolUse.ID)))
 			}
 		}
 	}
