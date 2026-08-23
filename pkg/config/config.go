@@ -14,7 +14,18 @@ type Config struct {
 	Development   DevelopmentConfig   `mapstructure:"dev"`
 	Observability ObservabilityConfig `mapstructure:"observability"`
 	Streaming     StreamingConfig     `mapstructure:"streaming"`
-	Tunnels       TunnelsConfig       `mapstructure:"tunnels"`
+
+	// MultiTenant turns tenant isolation from a column into an enforced
+	// boundary.
+	//
+	// Off (the default) is a single-tenant deployment: nothing writes a
+	// tenant_id, every row has a NULL one, and everything behaves as it always
+	// has. On, every API key must be scoped to a tenant, the store binds that
+	// tenant for each statement, and the row level security policies added in
+	// migration 008 hide everything else - including from a query that forgot
+	// its WHERE clause.
+	MultiTenant bool          `mapstructure:"multi_tenant"`
+	Tunnels     TunnelsConfig `mapstructure:"tunnels"`
 }
 
 // StreamingConfig gates the desktop/browser streaming subsystem.

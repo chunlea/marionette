@@ -130,4 +130,7 @@ func setDefaults(v *viper.Viper) {
 
 	// Tunnels (live path: on unless explicitly disabled)
 	v.SetDefault("tunnels.enabled", true)
+
+	// Single-tenant unless a deployment says otherwise.
+	v.SetDefault("multi_tenant", false)
 }

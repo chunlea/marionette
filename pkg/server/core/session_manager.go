@@ -282,11 +282,24 @@ func (m *SessionManager) Create(ctx context.Context, opts CreateSessionOptions) 
 	}
 
 	// Validate workspace exists
-	_, err := m.store.GetWorkspace(ctx, opts.WorkspaceID)
+	workspace, err := m.store.GetWorkspace(ctx, opts.WorkspaceID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, errors.New("workspace not found")
 		}
+		return nil, err
+	}
+
+	tenantID, err := tenantFor(ctx, opts.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	// A session and its workspace must belong to the same tenant. Row level
+	// security stops a query from reading another tenant's workspace, but a
+	// caller that already knows the id would otherwise be able to point a
+	// session at it.
+	if err := requireSameTenant("workspace", workspace.ID, tenantID, workspace.TenantID); err != nil {
 		return nil, err
 	}
 
@@ -338,7 +351,7 @@ func (m *SessionManager) Create(ctx context.Context, opts CreateSessionOptions) 
 		IdleTimeoutSeconds: opts.IdleTimeout,
 		ScheduleCron:       opts.ScheduleCron,
 		ScheduleTimezone:   opts.ScheduleTZ,
-		TenantID:           opts.TenantID,
+		TenantID:           tenantID,
 		Labels:             labels,
 		Annotations:        annotations,
 		CreatedAt:          time.Now(),
@@ -433,6 +446,12 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 
 	if runner.Status != StatusIdle && !isResumeToSameRunner {
 		return ErrRunnerNotIdle
+	}
+
+	// A session must not run on another tenant's runner: the runner mounts the
+	// session's workspace and holds its credentials.
+	if err := requireSameTenant("runner", runner.ID, session.TenantID, runner.TenantID); err != nil {
+		return err
 	}
 
 	// Detach any session still holding this runner. A failure here used to be

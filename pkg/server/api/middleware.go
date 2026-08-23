@@ -129,6 +129,28 @@ func (s *Server) AuthMiddleware(next http.Handler) http.Handler {
 
 		// Add API key to context
 		ctx := context.WithValue(r.Context(), APIKeyContextKey, apiKey)
+
+		// Bind the tenant the key belongs to. This is the only place a tenant
+		// enters a request: it comes from the credential, never from a header,
+		// a query parameter or a body field the caller controls. Everything
+		// downstream - the store's row level security, the cross-entity checks
+		// in core - reads it from here.
+		if apiKey.TenantID != nil && *apiKey.TenantID != "" {
+			ctx = store.WithTenant(ctx, *apiKey.TenantID)
+		} else if s.multiTenant {
+			// A key with no tenant in a multi-tenant deployment cannot be
+			// scoped to anything. Serving it would mean either showing it
+			// every tenant's rows or none of them, and both are wrong answers
+			// to a question that should not have been asked.
+			s.logger.Error("api key has no tenant in multi-tenant mode",
+				zap.String("api_key_id", apiKey.ID),
+				zap.String("path", r.URL.Path),
+			)
+			WriteError(w, http.StatusInternalServerError, "tenant_unresolved",
+				"This API key is not scoped to a tenant")
+			return
+		}
+
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

@@ -154,6 +154,11 @@ func (m *WorkspaceManager) Create(ctx context.Context, opts CreateWorkspaceOptio
 		annotations = []byte("{}")
 	}
 
+	tenantID, err := tenantFor(ctx, opts.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
 	ws := &store.Workspace{
 		ID:          wsID,
 		Name:        name,
@@ -161,7 +166,7 @@ func (m *WorkspaceManager) Create(ctx context.Context, opts CreateWorkspaceOptio
 		StorageType: storageType,
 		Mobility:    mobility,
 		DiskQuotaMB: diskQuotaMB,
-		TenantID:    opts.TenantID,
+		TenantID:    tenantID,
 		Labels:      labels,
 		Annotations: annotations,
 	}

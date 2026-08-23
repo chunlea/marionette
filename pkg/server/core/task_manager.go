@@ -218,11 +218,13 @@ func (m *TaskManager) Create(ctx context.Context, opts CreateTaskOptions) (*stor
 		annotations = []byte("{}")
 	}
 
-	// Use session's tenant ID if not specified
-	tenantID := opts.TenantID
-	if tenantID == nil {
-		tenantID = session.TenantID
+	// A task belongs to its session's tenant. The request context is checked
+	// against any explicit value first, so a caller cannot create a task in a
+	// tenant it is not acting for.
+	if _, err := tenantFor(ctx, opts.TenantID); err != nil {
+		return nil, err
 	}
+	tenantID := session.TenantID
 
 	// Create task
 	task := &store.Task{

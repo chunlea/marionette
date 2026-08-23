@@ -80,6 +80,7 @@ func main() {
 			MaxConns:        int32(cfg.Database.MaxOpenConns),
 			MinConns:        int32(cfg.Database.MaxIdleConns),
 			MaxConnLifetime: parseDuration(cfg.Database.ConnMaxLifetime, time.Hour),
+			MultiTenant:     cfg.MultiTenant,
 		}, logger)
 		if err != nil {
 			logger.Fatal("failed to connect to database", zap.Error(err))
@@ -283,8 +284,9 @@ func main() {
 
 	// Create servers
 	apiServer := api.New(api.Config{
-		Host: cfg.Server.API.Host,
-		Port: cfg.Server.API.Port,
+		Host:        cfg.Server.API.Host,
+		Port:        cfg.Server.API.Port,
+		MultiTenant: cfg.MultiTenant,
 	}, logger, apiOpts...)
 
 	// Create health checker
