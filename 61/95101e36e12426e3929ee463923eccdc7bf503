@@ -1,0 +1,55 @@
+migrations/013_runner_claim.down.sql
+  s_922ee36a2ef105::t_24112a22b530f8 1-11
+migrations/013_runner_claim.up.sql
+  s_922ee36a2ef105::t_459ac5792a8782 1-39
+pkg/server/core/runner_manager_test.go
+  s_922ee36a2ef105::t_d552ee87399187 117-150
+pkg/server/core/runner_registry_test.go
+  s_922ee36a2ef105::t_80f27950a0734e 88-95
+pkg/server/core/scheduled_session_activator_test.go
+  s_922ee36a2ef105::t_ed8777f33a33a4 79-87
+pkg/server/core/teststore_test.go
+  s_922ee36a2ef105::t_6bd83e8f2d0b2c 21-29,362-397
+pkg/server/grpc/integration_test.go
+  s_922ee36a2ef105::t_02b99572031dd9 31,139-164
+pkg/server/grpc/message_router_test.go
+  s_922ee36a2ef105::t_c008b275a2758c 608-615
+pkg/store/options.go
+  s_4e03746a1c3c16::t_55de9e22f4249f 13-22
+pkg/store/postgres/runners.go
+  s_922ee36a2ef105::t_fbf0ebe9f11a33 8,363-431
+pkg/store/store.go
+  s_922ee36a2ef105::t_7647a8b1551812 26-37,228-239
+pkg/store/storemock/storemock.go
+  s_922ee36a2ef105::t_5c5b83d5ffc26b 74-88,1722-1735,2054-2068,3688-3701
+pkg/server/core/multiprocess_claim_test.go
+  s_922ee36a2ef105::t_cba4f95b80ae94 1-398
+pkg/server/core/session_manager.go
+  s_922ee36a2ef105::t_62b2bdfdd3157d 249-260,263,266-272,276-282,520-540,1695,1835-1846,1852,1858,1861-1862
+pkg/store/postgres/runners_test.go
+  s_922ee36a2ef105::t_db3cc4092071b1 5-6,252-385
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "6195101e36e12426e3929ee463923eccdc7bf503",
+  "prompts": {},
+  "sessions": {
+    "s_4e03746a1c3c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60714d52-8636-4fc2-adaa-7b5018a4a131",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_922ee36a2ef105": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e4155e7b-3074-4ac3-9061-4d234659107f",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
