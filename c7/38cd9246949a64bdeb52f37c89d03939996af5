@@ -1,0 +1,21 @@
+pkg/agent/executor/claude/live_test.go
+  s_476c758fe5506c::t_f444d20a6cdec1 1-132
+pkg/agent/executor/claude/permission_test.go
+  s_476c758fe5506c::t_809971224e377f 370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "c738cd9246949a64bdeb52f37c89d03939996af5",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
