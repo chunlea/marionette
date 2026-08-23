@@ -1,0 +1,21 @@
+pkg/tunnel/manager.go
+  s_476c758fe5506c::t_4ab50684646b28 46-79,250-251,253-258,359,364-379,383-387,389-390,393-398,402-404
+pkg/tunnel/manager_test.go
+  s_476c758fe5506c::t_e2f0a842ab9585 430,433,735-820
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "8f6aad400528dda7701fd34770f08136b2d67614",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
