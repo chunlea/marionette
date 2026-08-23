@@ -469,6 +469,58 @@ func TestLogCursorPaginationBySequence(t *testing.T) {
 	})
 }
 
+// TestWebhookCursorPagination covers the two listings that page newest-first
+// with no caller-selectable ordering.
+func TestWebhookCursorPagination(t *testing.T) {
+	ctx := context.Background()
+
+	wh := createTestWebhook(ctx, t, []string{"task.completed"})
+
+	const total = 5
+	created := make([]string, 0, total)
+	for i := 0; i < total; i++ {
+		created = append(created, createTestWebhookEvent(ctx, t, wh.ID, "task.completed").ID)
+	}
+
+	list := func(ctx context.Context, cursor string) (*store.ListResult[store.WebhookEvent], error) {
+		return testStore.ListWebhookEvents(ctx, store.ListWebhookEventsOptions{
+			WebhookID: wh.ID,
+			Limit:     2,
+			Cursor:    cursor,
+		})
+	}
+
+	var seen []string
+	var cursor string
+	for i := 0; i < 20; i++ {
+		res, err := list(ctx, cursor)
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(total), res.TotalCount,
+			"TotalCount must not shrink as pages advance")
+
+		for _, e := range res.Items {
+			seen = append(seen, e.ID)
+		}
+		if !res.HasMore {
+			assert.Empty(t, res.NextCursor)
+			break
+		}
+		require.NotEmpty(t, res.NextCursor, "HasMore was set but no cursor was returned")
+		require.NotEqual(t, cursor, res.NextCursor, "cursor did not advance")
+		cursor = res.NextCursor
+	}
+
+	assertNoDuplicates(t, seen)
+	assert.Equal(t, reversed(created), seen, "events page newest first")
+
+	t.Run("rejects a malformed cursor", func(t *testing.T) {
+		_, err := list(ctx, "not a cursor!!")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, store.ErrInvalidInput)
+	})
+}
+
 // Helpers -------------------------------------------------------------------
 
 // encodeTestCursor mirrors the store's cursor encoding so tests can hand-craft

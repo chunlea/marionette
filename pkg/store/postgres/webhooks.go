@@ -95,6 +95,16 @@ func getWebhookByName(ctx context.Context, q querier, name string, tenantID *str
 	return scanWebhook(row, name)
 }
 
+// webhookOffset resolves the two paging mechanisms these listings support.
+// Cursor and Offset both mean "skip what I already have"; applying them
+// together would skip a page twice, so a cursor wins.
+func webhookOffset(offset int, cursor string) int {
+	if cursor != "" || offset < 0 {
+		return 0
+	}
+	return offset
+}
+
 func (s *Store) ListWebhooks(ctx context.Context, opts store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
 	return listWebhooks(ctx, s.pool, opts)
 }
@@ -131,24 +141,34 @@ func listWebhooks(ctx context.Context, q querier, opts store.ListWebhooksOptions
 		where = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	// Get total count
+	// Get total count. Filters only: TotalCount reports how many webhooks match,
+	// not how many are left after the current page.
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM webhooks %s", where)
 	var total int64
 	if err := q.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 
-	// Get results
 	limit := 100
 	if opts.Limit > 0 && opts.Limit < limit {
 		limit = opts.Limit
 	}
-	offset := opts.Offset
 
-	query := fmt.Sprintf(`SELECT %s FROM webhooks %s ORDER BY created_at DESC LIMIT %d OFFSET %d`,
-		webhookColumns, where, limit, offset)
+	// Ordering is fixed to newest first, so only the cursor is caller-supplied.
+	page, err := webhookSortColumns.page(
+		store.BaseListOptions{Cursor: opts.Cursor, OrderDesc: true}, argNum)
+	if err != nil {
+		return nil, err
+	}
 
-	rows, err := q.Query(ctx, query, args...)
+	// Fetch one extra row to detect whether another page exists.
+	query := fmt.Sprintf(`SELECT %s FROM webhooks %s ORDER BY %s LIMIT $%d OFFSET $%d`,
+		webhookColumns, page.where(where), page.orderBy,
+		page.limitArg(argNum), page.limitArg(argNum)+1)
+	queryArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	queryArgs = append(queryArgs, limit+1, webhookOffset(opts.Offset, opts.Cursor))
+
+	rows, err := q.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -167,9 +187,22 @@ func listWebhooks(ctx context.Context, q querier, opts store.ListWebhooksOptions
 		return nil, fmt.Errorf("iterating webhooks: %w", err)
 	}
 
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+
+	var nextCursor string
+	if len(items) > 0 {
+		last := items[len(items)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Webhook]{
 		Items:      items,
 		TotalCount: total,
+		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -412,6 +445,7 @@ func listWebhookEvents(ctx context.Context, q querier, opts store.ListWebhookEve
 	if opts.EventType != nil {
 		conditions = append(conditions, fmt.Sprintf("event_type = $%d", argNum))
 		args = append(args, *opts.EventType)
+		argNum++
 	}
 
 	where := ""
@@ -419,24 +453,34 @@ func listWebhookEvents(ctx context.Context, q querier, opts store.ListWebhookEve
 		where = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	// Get total count
+	// Get total count. Filters only: TotalCount reports how many events match,
+	// not how many are left after the current page.
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM webhook_events %s", where)
 	var total int64
 	if err := q.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 
-	// Get results
 	limit := 100
 	if opts.Limit > 0 && opts.Limit < limit {
 		limit = opts.Limit
 	}
-	offset := opts.Offset
 
-	query := fmt.Sprintf(`SELECT %s FROM webhook_events %s ORDER BY created_at DESC LIMIT %d OFFSET %d`,
-		webhookEventColumns, where, limit, offset)
+	// Ordering is fixed to newest first, so only the cursor is caller-supplied.
+	page, err := webhookEventSortColumns.page(
+		store.BaseListOptions{Cursor: opts.Cursor, OrderDesc: true}, argNum)
+	if err != nil {
+		return nil, err
+	}
 
-	rows, err := q.Query(ctx, query, args...)
+	// Fetch one extra row to detect whether another page exists.
+	query := fmt.Sprintf(`SELECT %s FROM webhook_events %s ORDER BY %s LIMIT $%d OFFSET $%d`,
+		webhookEventColumns, page.where(where), page.orderBy,
+		page.limitArg(argNum), page.limitArg(argNum)+1)
+	queryArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	queryArgs = append(queryArgs, limit+1, webhookOffset(opts.Offset, opts.Cursor))
+
+	rows, err := q.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -455,9 +499,22 @@ func listWebhookEvents(ctx context.Context, q querier, opts store.ListWebhookEve
 		return nil, fmt.Errorf("iterating webhook events: %w", err)
 	}
 
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+
+	var nextCursor string
+	if len(items) > 0 {
+		last := items[len(items)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.WebhookEvent]{
 		Items:      items,
 		TotalCount: total,
+		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

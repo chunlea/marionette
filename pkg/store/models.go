@@ -720,15 +720,22 @@ type WebhookEventUpdates struct {
 }
 
 // ListWebhooksOptions contains options for listing webhooks.
+//
+// Webhooks are always listed newest first. Cursor and Offset are alternative
+// ways to page: when Cursor is set, Offset is ignored.
 type ListWebhooksOptions struct {
 	TenantID   *string
 	ActiveOnly bool
 	Labels     map[string]string
 	Limit      int
 	Offset     int
+	Cursor     string
 }
 
 // ListWebhookEventsOptions contains options for listing webhook events.
+//
+// Events are always listed newest first. Cursor and Offset are alternative ways
+// to page: when Cursor is set, Offset is ignored.
 type ListWebhookEventsOptions struct {
 	WebhookID string
 	TenantID  *string
@@ -736,4 +743,5 @@ type ListWebhookEventsOptions struct {
 	EventType *string
 	Limit     int
 	Offset    int
+	Cursor    string
 }

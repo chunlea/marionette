@@ -191,4 +191,8 @@ var (
 	tunnelSortColumns         = sortColumns{allowed: []string{"created_at", "updated_at", "type", "expires_at", "closed_at"}}
 	workspaceSortColumns      = sortColumns{allowed: []string{"created_at", "updated_at", "name", "expires_at", "last_synced_at"}}
 	streamSortColumns         = sortColumns{allowed: []string{"created_at", "updated_at", "type", "state", "started_at", "stopped_at"}}
+	// The two webhook listings expose no OrderBy: they are fixed to newest
+	// first, so created_at is both the only ordering and the cursor key.
+	webhookSortColumns      = sortColumns{allowed: []string{"created_at"}}
+	webhookEventSortColumns = sortColumns{allowed: []string{"created_at"}}
 )

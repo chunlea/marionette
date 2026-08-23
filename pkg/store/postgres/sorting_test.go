@@ -87,6 +87,8 @@ func allSortColumns() map[string]sortColumns {
 		"tunnels":             tunnelSortColumns,
 		"workspaces":          workspaceSortColumns,
 		"streams":             streamSortColumns,
+		"webhooks":            webhookSortColumns,
+		"webhook_events":      webhookEventSortColumns,
 	}
 }
 
