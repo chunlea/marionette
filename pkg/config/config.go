@@ -13,6 +13,24 @@ type Config struct {
 	TLS           TLSConfig           `mapstructure:"tls"`
 	Development   DevelopmentConfig   `mapstructure:"dev"`
 	Observability ObservabilityConfig `mapstructure:"observability"`
+	Streaming     StreamingConfig     `mapstructure:"streaming"`
+	Tunnels       TunnelsConfig       `mapstructure:"tunnels"`
+}
+
+// StreamingConfig gates the desktop/browser streaming subsystem.
+//
+// Streaming is frozen: the SFU has no media source, no renegotiation and
+// never reads RTCP, so it cannot deliver a frame. It stays compiled but must
+// not register itself as a provider unless someone explicitly opts in.
+type StreamingConfig struct {
+	// Enabled turns the streaming subsystem on. Default false.
+	Enabled bool `mapstructure:"enabled"`
+}
+
+// TunnelsConfig gates the tunnel subsystem (HTTP proxy and TCP relay).
+type TunnelsConfig struct {
+	// Enabled turns tunnels on. Default true: this is a live product path.
+	Enabled bool `mapstructure:"enabled"`
 }
 
 // ServerConfig holds configuration for all server endpoints.

@@ -124,4 +124,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("observability.tracing.service_name", "marionette-server")
 	v.SetDefault("observability.tracing.sample_rate", 0.1)
 	v.SetDefault("observability.tracing.insecure", true)
+
+	// Streaming (frozen subsystem: off unless explicitly enabled)
+	v.SetDefault("streaming.enabled", false)
+
+	// Tunnels (live path: on unless explicitly disabled)
+	v.SetDefault("tunnels.enabled", true)
 }

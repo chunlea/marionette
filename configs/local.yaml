@@ -46,3 +46,13 @@ logging:
 dev:
   hot_reload: true
   skip_tls: true  # Skip TLS verification in development
+
+# Tunnel subsystem (HTTP proxy + TCP relay)
+tunnels:
+  enabled: true
+
+# Streaming subsystem (desktop/browser)
+# Frozen: the SFU has no media source, no renegotiation and never reads RTCP,
+# so it cannot deliver a frame. Leave disabled unless you are working on it.
+streaming:
+  enabled: false
