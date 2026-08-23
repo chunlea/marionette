@@ -1,0 +1,29 @@
+pkg/jobs/partition_maintenance.go
+  s_829cd3b6a7eda7::t_7e55fd06d7259b 1-242
+pkg/jobs/partition_maintenance_test.go
+  s_30fb41c4a911b8::t_5ec3d4c9104927 1-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "d3c85a287d584b084139409308dd185ce80256be",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_829cd3b6a7eda7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d342e86d-a42f-469e-846f-fd4f6252c53c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
