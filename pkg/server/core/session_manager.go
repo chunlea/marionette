@@ -2025,8 +2025,10 @@ func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.S
 		return err
 	}
 
-	// Determine workspace path to send to agent
-	// If workspaceManager is configured, use host path; otherwise fall back to workspace name
+	// Determine where the workspace is mounted for this runner. This is a
+	// location, not an identity: a container sees /workspace regardless of
+	// which workspace it holds. The identity travels separately, in
+	// workspace_id and tenant_id below.
 	workspacePath := workspace.Name
 	if m.workspaceManager != nil {
 		if hostPath, err := m.workspaceManager.GetHostPath(ctx, session.WorkspaceID); err == nil && hostPath != "" {
@@ -2108,8 +2110,14 @@ func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.S
 	cmd := &pb.ServerCommand{
 		Payload: &pb.ServerCommand_AttachSession{
 			AttachSession: &pb.AttachSession{
-				SessionId:          session.ID,
-				WorkspacePath:      workspacePath,
+				SessionId:     session.ID,
+				WorkspacePath: workspacePath,
+				// Identity, not location. workspace_path is "/workspace" for
+				// every container-mode session, so a runner keying content
+				// addressed storage on it would collide every session's chunks
+				// into one namespace.
+				WorkspaceId:        workspace.ID,
+				TenantId:           stringValue(workspace.TenantID),
 				ContextSnapshot:    session.ContextSnapshot,
 				AgentConfig:        agentConfig,
 				PendingPermissions: pendingPerms,
