@@ -254,6 +254,7 @@ jobs:
       # pipefail so a benchmark that fails to build fails the step instead of
       # leaving an empty bench.txt for the comparison below to skip over.
       - name: Run benchmarks
+        shell: bash
         run: |
           set -euo pipefail
           go test -run '^$' -bench . -benchmem -benchtime 2s -count 3 ./pkg/server/core/... | tee -a bench.txt
@@ -268,6 +269,7 @@ jobs:
       # a gate ends up tolerant without anyone deciding that.
       - name: Compare against the baseline
         continue-on-error: false
+        shell: bash
         run: |
           set -euo pipefail
           go run ./test/perf/benchcmp -baseline test/perf/BASELINE.md -bench bench.txt | tee -a bench.txt
