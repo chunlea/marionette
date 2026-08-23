@@ -1,0 +1,53 @@
+pkg/store/postgres/auth.go
+  s_b1ee0c9aba1316::t_58c4971a5619ba 128,143-145,171-176,181,422,437-439,465-470,475
+pkg/store/postgres/configs.go
+  s_b1ee0c9aba1316::t_107b0d138d9226 142,157-159,185-190,195,443,458-460,486-491,496,724,739-741,767-772,777
+pkg/store/postgres/helpers.go
+  s_30fb41c4a911b8::t_4d50efc4c18c7c 145-150,153-154,156,161,166-186,189,194
+pkg/store/postgres/logs.go
+  s_30fb41c4a911b8::t_f0d6545b1c0ebc 198,213-215,241-246,251,397,412-414,440-445,450,683,698-700,727-729
+pkg/store/postgres/pagination_test.go
+  s_30fb41c4a911b8::t_a4ef20aefa2d22 1-536
+pkg/store/postgres/permissions.go
+  s_b1ee0c9aba1316::t_90c32b49a37dfe 120,135-137,163-168,173
+pkg/store/postgres/runners.go
+  s_b1ee0c9aba1316::t_9e9e7632e4d1df 134,151-153,179-184,189
+pkg/store/postgres/sessions.go
+  s_b1ee0c9aba1316::t_4d565d821456ec 136,153-155,181-186,191
+pkg/store/postgres/sorting.go
+  s_30fb41c4a911b8::t_627c9b74c496a7 6,8,13-14,21-24,26-52,54-57,59,62,65-163,165,169-170,176-193
+pkg/store/postgres/sorting_test.go
+  s_30fb41c4a911b8::t_f6e2614649fc98 15,24-27,39-43,95-96,99-100,125
+pkg/store/postgres/storage.go
+  s_b1ee0c9aba1316::t_99b945a4c294e6 128,143-145,171-176,181,419,434-436,462-467,472
+pkg/store/postgres/streams.go
+  s_b1ee0c9aba1316::t_5ab26d68e59eba 153,170-172,198-203,208
+pkg/store/postgres/tasks.go
+  s_b1ee0c9aba1316::t_073f6c09a772cc 117,132-134,160-165,170,392,407-409,435-440,445,652,667-669,695-700,705
+pkg/store/postgres/workspaces.go
+  s_b1ee0c9aba1316::t_f454f25fe5c947 110,127-129,155-160,165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "c879f19f44458af1c6a3f649a6e7e5c48c131ad1",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
