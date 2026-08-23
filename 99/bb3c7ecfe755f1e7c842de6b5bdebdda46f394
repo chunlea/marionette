@@ -1,0 +1,29 @@
+pkg/server/core/runner_manager_test.go
+  s_407eac4b802d80::t_36394d7f32e0bc 153-174
+pkg/server/core/runner_registry_test.go
+  s_407eac4b802d80::t_afb3bead009a4a 1180-1197
+pkg/server/core/scheduled_session_activator_test.go
+  s_407eac4b802d80::t_4fd03faa50eef4 922-941
+pkg/server/core/teststore_test.go
+  s_407eac4b802d80::t_9a3ed0b8fde6e8 24-28,403-522
+pkg/server/grpc/integration_test.go
+  s_407eac4b802d80::t_0df29bfe461171 1173-1192
+pkg/server/grpc/message_router_test.go
+  s_407eac4b802d80::t_d343369e12ea13 1755-1774
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "99bb3c7ecfe755f1e7c842de6b5bdebdda46f394",
+  "prompts": {},
+  "sessions": {
+    "s_407eac4b802d80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef840d6e-7942-40f8-90b2-80141044f398",
+        "model": "claude-opus-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
