@@ -1,0 +1,25 @@
+pkg/config/config.go
+  s_476c758fe5506c::t_ee1f482130f19c 16-33
+pkg/config/load.go
+  s_476c758fe5506c::t_0027d0a21e2760 127-132
+configs/local.yaml
+  s_476c758fe5506c::t_3ca2c31ee08209 49-58
+pkg/config/load_test.go
+  s_476c758fe5506c::t_83f71d6bbf6cc5 151-167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "587e5b2d7e8279b59ac2a4b127ad21b68862e7e0",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
