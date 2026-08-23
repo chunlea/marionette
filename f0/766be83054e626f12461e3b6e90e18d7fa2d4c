@@ -1,0 +1,21 @@
+pkg/server/core/workspace_manager.go
+  s_30fb41c4a911b8::t_74d68381b402f5 7,11,236-290
+pkg/server/core/workspace_sync_test.go
+  s_30fb41c4a911b8::t_d02d975226cabd 1-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "f0766be83054e626f12461e3b6e90e18d7fa2d4c",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
