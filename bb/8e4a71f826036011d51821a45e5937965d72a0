@@ -1,0 +1,21 @@
+cmd/server/main_test.go
+  s_e995f4552d48c1::t_9a3ae099122fee 1-35
+cmd/server/main.go
+  s_e995f4552d48c1::t_640bcb77094ac1 9,13,378-393,638-653
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "bb8e4a71f826036011d51821a45e5937965d72a0",
+  "prompts": {},
+  "sessions": {
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
