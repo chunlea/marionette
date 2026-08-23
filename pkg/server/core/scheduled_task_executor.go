@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -192,9 +193,14 @@ func (e *ScheduledTaskExecutor) executeTask(ctx context.Context, scheduledTaskID
 		return
 	}
 
-	// Execute the scheduled task
-	task, err := e.scheduledTaskSvc.ExecuteScheduledTask(ctx, scheduledTask)
+	// Claim the tick, then execute. Every replica polling this database sees
+	// the same due task; only the one that wins the claim runs it.
+	task, err := e.scheduledTaskSvc.ExecuteDue(ctx, scheduledTask)
 	if err != nil {
+		if errors.Is(err, ErrScheduledTickTaken) {
+			logger.Debug("another replica claimed this scheduled run, skipping")
+			return
+		}
 		logger.Error("failed to execute scheduled task", zap.Error(err))
 		// Mark as failed
 		if markErr := e.scheduledTaskSvc.MarkTaskCompleted(ctx, scheduledTaskID, false); markErr != nil {

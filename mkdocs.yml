@@ -106,4 +106,5 @@ nav:
       - Storage: reference/storage.md
   - Development:
       - Contributing: development/contributing.md
+      - Releasing: development/releasing.md
       - Roadmap: development/roadmap.md

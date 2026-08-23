@@ -4,12 +4,20 @@
 # =============================================================================
 # Build stage
 # =============================================================================
-FROM golang:1.25-bookworm AS builder
+# See Dockerfile.server for why the builder stays on the native platform and
+# cross-compiles. The runtime stage below does run emulated (apt-get), which is
+# the slow part of an arm64 build and the reason QEMU is set up in the workflow.
+FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS builder
+
+# Toolchain pins. Keep in sync with .github/workflows/ci.yml and the Makefile.
+ARG BUF_VERSION=v1.72.0
+ARG PROTOC_GEN_GO_VERSION=v1.36.11
+ARG PROTOC_GEN_GO_GRPC_VERSION=v1.6.2
 
 # Install buf and protobuf plugins for code generation
-RUN go install github.com/bufbuild/buf/cmd/buf@latest && \
-    go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+RUN go install "github.com/bufbuild/buf/cmd/buf@${BUF_VERSION}" && \
+    go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}" && \
+    go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}"
 
 WORKDIR /app
 
@@ -23,15 +31,29 @@ COPY . .
 # Generate protobuf code
 RUN buf generate
 
+# Version stamping. Inert until cmd/agent declares the vars; see
+# docs/development/releasing.md.
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
 # Build the agent binary
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w" \
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
     -o /agent ./cmd/agent
 
 # =============================================================================
 # Runtime stage
 # =============================================================================
 FROM debian:bookworm-slim
+
+# Links the published package to this repository on ghcr, which is also what
+# lets GITHUB_TOKEN push it from Actions without a personal token.
+LABEL org.opencontainers.image.source="https://github.com/chunlea/marionette"
+LABEL org.opencontainers.image.description="Marionette runner agent: runs a coding agent inside a runner"
+LABEL org.opencontainers.image.licenses="MIT"
 
 # Install runtime dependencies commonly needed by AI agents
 # - ca-certificates: HTTPS connections

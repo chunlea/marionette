@@ -216,7 +216,7 @@ func TestProvider_Destroy(t *testing.T) {
 	p, err := NewWithConfig("test", cfg, nil, ms, zap.NewNop())
 	require.NoError(t, err)
 
-	err = p.Destroy(context.Background(), "run_1")
+	err = p.Destroy(context.Background(), "run_1", provider.DestroyOptions{})
 	require.NoError(t, err)
 
 	// Runner should be marked offline
@@ -236,7 +236,7 @@ func TestProvider_Destroy_WrongPool(t *testing.T) {
 	p, err := NewWithConfig("test", cfg, nil, ms, nil)
 	require.NoError(t, err)
 
-	err = p.Destroy(context.Background(), "run_1")
+	err = p.Destroy(context.Background(), "run_1", provider.DestroyOptions{})
 	require.Error(t, err)
 
 	var notFoundErr *provider.ErrRunnerNotFound

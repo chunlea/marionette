@@ -1,5 +1,10 @@
 # Marionette
 
+[![CI](https://github.com/chunlea/marionette/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/chunlea/marionette/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/chunlea/marionette?sort=semver)](https://github.com/chunlea/marionette/releases)
+[![Go Report Card](https://goreportcard.com/badge/github.com/chunlea/marionette)](https://goreportcard.com/report/github.com/chunlea/marionette)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Marionette runs AI coding agents on machines you control, and gives you an API to
 drive them: create a session, send it work, watch the logs, approve what it wants
 to run, suspend it, pick it up again later.
@@ -28,11 +33,43 @@ walk (`scripts/smoke.sh`) exercises on every change:
 | Desktop and browser streaming | **Frozen.** See [Frozen features](#frozen-features) |
 | Multi-tenancy | Columns everywhere, enforcement behind `multi_tenant` |
 
+## Install
+
+Every release publishes multi-architecture images (`linux/amd64` and
+`linux/arm64`) to GitHub Container Registry, and `mctl` binaries for macOS
+(arm64) and Linux (amd64, arm64):
+
+```bash
+docker pull ghcr.io/chunlea/marionette-server:v0.1.0
+docker pull ghcr.io/chunlea/marionette-agent:v0.1.0
+```
+
+The compose stack can run those images instead of building the checkout. You
+still need the repository for the compose file, the server config and
+`migrations/`:
+
+```bash
+MARIONETTE_VERSION=v0.1.0 docker compose \
+  -f deploy/docker/docker-compose.yml \
+  -f deploy/docker/docker-compose.release.yml up -d
+```
+
+`:latest` follows the newest non-prerelease tag; pin a version for anything you
+depend on.
+
+> **v0.1.0 predates the release automation.** Its images were built by hand on
+> an arm64 machine — they run on `linux/arm64` and nothing else — and no `mctl`
+> binaries are attached to it. Both are fixed from the next tag on; on amd64,
+> build from source until then.
+
+[Installation](docs/getting-started/installation.md) covers Kubernetes and
+Helm. [CHANGELOG.md](CHANGELOG.md) is what changed between versions.
+
 ## Quick start
 
-The walk below is the same one `scripts/smoke.sh` automates. If a command here
-stops working, that script is the source of truth — it is run against every
-change.
+The walk below builds from source, and is the same one `scripts/smoke.sh`
+automates. If a command here stops working, that script is the source of truth
+— it is run against every change.
 
 ### Prerequisites
 
@@ -328,12 +365,13 @@ read it locally).
 | [API reference](docs/guides/api-reference.md) | The served OpenAPI spec |
 | [Security](docs/guides/security.md) | Auth, permissions, tenant isolation |
 | [Providers](docs/concepts/providers.md) | Docker, Kubernetes, E2B, pools |
+| [Releasing](docs/development/releasing.md) | How a version is cut and published |
 | [Database schema](docs/reference/schema.md) | Generated from `migrations/` |
 
 ## Development
 
 ```bash
-make build          # all three binaries
+make build          # all three binaries, stamped with the git version
 make test           # unit tests (macOS-native)
 make test-linux     # full suite in Docker, matching CI
 make lint           # golangci-lint
@@ -341,12 +379,15 @@ make proto          # regenerate protobuf
 make schema         # regenerate docs/schema.sql from migrations
 make openapi        # regenerate the OpenAPI spec
 make dev            # hot reload
+make dist           # the mctl release tarballs, as the release workflow builds them
 
 ./scripts/smoke.sh  # the end-to-end acceptance walk
 ```
 
 New code is expected to come with tests; see
 [docs/development/contributing.md](docs/development/contributing.md).
+Cutting a release is one tag push — see
+[docs/development/releasing.md](docs/development/releasing.md).
 
 ## License
 

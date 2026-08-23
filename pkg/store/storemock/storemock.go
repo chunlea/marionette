@@ -71,6 +71,21 @@ func (mr *MockStoreMockRecorder) CancelWebhookEventsByWebhook(ctx, webhookID any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelWebhookEventsByWebhook", reflect.TypeOf((*MockStore)(nil).CancelWebhookEventsByWebhook), ctx, webhookID)
 }
 
+// ClaimRunner mocks base method.
+func (m *MockStore) ClaimRunner(ctx context.Context, runnerID, sessionID string, lease time.Duration) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClaimRunner", ctx, runnerID, sessionID, lease)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClaimRunner indicates an expected call of ClaimRunner.
+func (mr *MockStoreMockRecorder) ClaimRunner(ctx, runnerID, sessionID, lease any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimRunner", reflect.TypeOf((*MockStore)(nil).ClaimRunner), ctx, runnerID, sessionID, lease)
+}
+
 // CleanupExpiredStreams mocks base method.
 func (m *MockStore) CleanupExpiredStreams(ctx context.Context) (int, error) {
 	m.ctrl.T.Helper()
@@ -1704,6 +1719,20 @@ func (mr *MockStoreMockRecorder) Ping(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Ping", reflect.TypeOf((*MockStore)(nil).Ping), ctx)
 }
 
+// ReleaseRunnerClaim mocks base method.
+func (m *MockStore) ReleaseRunnerClaim(ctx context.Context, runnerID, sessionID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseRunnerClaim", ctx, runnerID, sessionID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReleaseRunnerClaim indicates an expected call of ReleaseRunnerClaim.
+func (mr *MockStoreMockRecorder) ReleaseRunnerClaim(ctx, runnerID, sessionID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseRunnerClaim", reflect.TypeOf((*MockStore)(nil).ReleaseRunnerClaim), ctx, runnerID, sessionID)
+}
+
 // UpdateAPIKey mocks base method.
 func (m *MockStore) UpdateAPIKey(ctx context.Context, id string, updates store.APIKeyUpdates) error {
 	m.ctrl.T.Helper()
@@ -2020,6 +2049,21 @@ func (m *MockTx) CancelWebhookEventsByWebhook(ctx context.Context, webhookID str
 func (mr *MockTxMockRecorder) CancelWebhookEventsByWebhook(ctx, webhookID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelWebhookEventsByWebhook", reflect.TypeOf((*MockTx)(nil).CancelWebhookEventsByWebhook), ctx, webhookID)
+}
+
+// ClaimRunner mocks base method.
+func (m *MockTx) ClaimRunner(ctx context.Context, runnerID, sessionID string, lease time.Duration) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClaimRunner", ctx, runnerID, sessionID, lease)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClaimRunner indicates an expected call of ClaimRunner.
+func (mr *MockTxMockRecorder) ClaimRunner(ctx, runnerID, sessionID, lease any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimRunner", reflect.TypeOf((*MockTx)(nil).ClaimRunner), ctx, runnerID, sessionID, lease)
 }
 
 // CleanupExpiredStreams mocks base method.
@@ -3639,6 +3683,20 @@ func (m *MockTx) MarkChunkDeleted(ctx context.Context, tenantID, hash string) er
 func (mr *MockTxMockRecorder) MarkChunkDeleted(ctx, tenantID, hash any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkChunkDeleted", reflect.TypeOf((*MockTx)(nil).MarkChunkDeleted), ctx, tenantID, hash)
+}
+
+// ReleaseRunnerClaim mocks base method.
+func (m *MockTx) ReleaseRunnerClaim(ctx context.Context, runnerID, sessionID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseRunnerClaim", ctx, runnerID, sessionID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReleaseRunnerClaim indicates an expected call of ReleaseRunnerClaim.
+func (mr *MockTxMockRecorder) ReleaseRunnerClaim(ctx, runnerID, sessionID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseRunnerClaim", reflect.TypeOf((*MockTx)(nil).ReleaseRunnerClaim), ctx, runnerID, sessionID)
 }
 
 // Rollback mocks base method.

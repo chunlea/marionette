@@ -199,7 +199,12 @@ func (p *Provider) Spawn(ctx context.Context, opts provider.SpawnOptions) (*prov
 }
 
 // Destroy deletes a pod. By default, it preserves the PVC for workspace persistence.
-func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
+//
+// opts.ProviderInstanceID is deliberately ignored: a pod's instance id here is
+// its UID, which the Kubernetes API cannot address a delete to. The label
+// selector is a complete lookup for pods in every state, so nothing is lost -
+// see findPodNameByRunnerID.
+func (p *Provider) Destroy(ctx context.Context, runnerID string, _ provider.DestroyOptions) error {
 	return p.destroyPod(ctx, runnerID, false)
 }
 

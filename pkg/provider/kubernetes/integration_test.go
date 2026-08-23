@@ -129,7 +129,7 @@ func TestIntegrationKubernetesProvider(t *testing.T) {
 
 	// Test 6: Destroy (cleanup)
 	t.Run("Destroy", func(t *testing.T) {
-		err := p.Destroy(ctx, runnerID)
+		err := p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 		require.NoError(t, err)
 		t.Log("Runner destroyed (Pod deleted, PVC may still exist)")
 	})

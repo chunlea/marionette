@@ -76,6 +76,15 @@ type activatorTestStore struct {
 	updateCalls       []string
 }
 
+// ClaimRunner: this fake is not used for runner allocation, so nothing here
+// contends for a runner.
+func (s *activatorTestStore) ClaimRunner(_ context.Context, _, _ string, _ time.Duration) (bool, error) {
+	return true, nil
+}
+
+// ReleaseRunnerClaim: see ClaimRunner.
+func (s *activatorTestStore) ReleaseRunnerClaim(_ context.Context, _, _ string) error { return nil }
+
 func (s *activatorTestStore) GetDueScheduledSessions(ctx context.Context, now time.Time, limit int) ([]*store.Session, error) {
 	s.mu.Lock()
 	s.getDueCalls++

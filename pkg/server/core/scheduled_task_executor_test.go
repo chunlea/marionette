@@ -82,6 +82,12 @@ func (m *mockScheduledTaskSvc) ExecuteScheduledTask(ctx context.Context, schedul
 	return &store.Task{ID: "task_test"}, nil
 }
 
+// ExecuteDue routes to the same recorder: the executor's job is to call it and
+// to interpret a lost claim, and the claim itself is covered where it lives.
+func (m *mockScheduledTaskSvc) ExecuteDue(ctx context.Context, scheduledTask *store.ScheduledTask) (*store.Task, error) {
+	return m.ExecuteScheduledTask(ctx, scheduledTask)
+}
+
 func (m *mockScheduledTaskSvc) MarkTaskCompleted(ctx context.Context, id string, success bool) error {
 	m.mu.Lock()
 	m.markCompletedCalls++

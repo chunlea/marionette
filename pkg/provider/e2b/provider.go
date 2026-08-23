@@ -24,9 +24,15 @@ type Provider struct {
 	suspendConfig *provider.SuspendConfig
 	client        *Client
 
-	// sandboxCache maps runnerID -> sandboxID for paused sandbox lookup.
-	// E2B paused sandboxes are not listed in the regular sandbox list,
-	// so we need to cache the mapping to support pause/unpause operations.
+	// sandboxCache maps runnerID -> sandboxID.
+	//
+	// It is a cache, not the record: a paused E2B sandbox is absent from GET
+	// /sandboxes (verified against the live API), so a process that only has
+	// this map loses every paused sandbox when it restarts - and a lost paused
+	// sandbox keeps billing. The record is runners.provider_instance_id, which
+	// the server passes back in through DestroyOptions/SuspendOptions/
+	// ResumeOptions; this map only saves a round trip when it happens to be
+	// warm.
 	sandboxCache sync.Map
 }
 
@@ -142,8 +148,8 @@ func (p *Provider) Spawn(ctx context.Context, opts provider.SpawnOptions) (*prov
 }
 
 // Destroy terminates an E2B sandbox.
-func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
-	sandboxID, err := p.findSandboxByRunnerID(ctx, runnerID)
+func (p *Provider) Destroy(ctx context.Context, runnerID string, opts provider.DestroyOptions) error {
+	sandboxID, err := p.findSandboxByRunnerID(ctx, runnerID, opts.ProviderInstanceID)
 	if err != nil {
 		if IsNotFoundError(err) {
 			// Sandbox already terminated, clean up cache
@@ -176,7 +182,7 @@ func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
 
 // Status returns the current status of an E2B sandbox.
 func (p *Provider) Status(ctx context.Context, runnerID string) (*provider.RunnerStatus, error) {
-	sandboxID, err := p.findSandboxByRunnerID(ctx, runnerID)
+	sandboxID, err := p.findSandboxByRunnerID(ctx, runnerID, "")
 	if err != nil {
 		if IsNotFoundError(err) {
 			return nil, &provider.ErrRunnerNotFound{RunnerID: runnerID}
@@ -273,7 +279,12 @@ func (p *Provider) Capabilities() provider.ProviderCapabilities {
 
 // Pause pauses an E2B sandbox (beta feature).
 func (p *Provider) Pause(ctx context.Context, runnerID string) error {
-	sandboxID, err := p.findSandboxByRunnerID(ctx, runnerID)
+	return p.pause(ctx, runnerID, "")
+}
+
+// pause pauses the sandbox, preferring the caller's persisted instance id.
+func (p *Provider) pause(ctx context.Context, runnerID, instanceID string) error {
+	sandboxID, err := p.findSandboxByRunnerID(ctx, runnerID, instanceID)
 	if err != nil {
 		return &provider.ErrPauseFailed{
 			RunnerID: runnerID,
@@ -293,7 +304,12 @@ func (p *Provider) Pause(ctx context.Context, runnerID string) error {
 
 // Unpause resumes a paused E2B sandbox (beta feature).
 func (p *Provider) Unpause(ctx context.Context, runnerID string) error {
-	sandboxID, err := p.findSandboxByRunnerID(ctx, runnerID)
+	return p.unpause(ctx, runnerID, "")
+}
+
+// unpause resumes the sandbox, preferring the caller's persisted instance id.
+func (p *Provider) unpause(ctx context.Context, runnerID, instanceID string) error {
+	sandboxID, err := p.findSandboxByRunnerID(ctx, runnerID, instanceID)
 	if err != nil {
 		return &provider.ErrResumeFailed{
 			SessionID: runnerID,
@@ -311,16 +327,28 @@ func (p *Provider) Unpause(ctx context.Context, runnerID string) error {
 	return nil
 }
 
-// findSandboxByRunnerID finds the E2B sandbox ID for a given runner ID.
-// It first checks the in-memory cache (needed for paused sandboxes),
-// then falls back to listing all sandboxes.
-func (p *Provider) findSandboxByRunnerID(ctx context.Context, runnerID string) (string, error) {
-	// Check cache first - required for paused sandboxes which aren't in the list
+// findSandboxByRunnerID resolves the E2B sandbox id for a runner, in order of
+// how much the answer can be trusted:
+//
+//  1. instanceID, the id the server persisted at spawn. It survives a restart,
+//     so it is the only source that can name a paused sandbox on a cold
+//     process.
+//  2. the in-memory cache, warm only for sandboxes this process spawned or
+//     looked up.
+//  3. GET /sandboxes, which is blind to paused sandboxes and so can only ever
+//     be a last resort.
+func (p *Provider) findSandboxByRunnerID(ctx context.Context, runnerID, instanceID string) (string, error) {
+	if instanceID != "" {
+		// Warm the cache so the rest of this process's calls skip the lookup.
+		p.sandboxCache.Store(runnerID, instanceID)
+		return instanceID, nil
+	}
+
 	if sandboxID, ok := p.sandboxCache.Load(runnerID); ok {
 		return sandboxID.(string), nil
 	}
 
-	// Fall back to listing sandboxes
+	// Last resort: enumerate. A paused sandbox will not be in this list.
 	sandboxes, err := p.client.ListSandboxes(ctx)
 	if err != nil {
 		return "", err

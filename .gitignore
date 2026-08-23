@@ -1,5 +1,7 @@
 # Binaries
 /bin/
+# Release artifacts (make dist)
+/dist/
 /server
 /agent
 /mctl

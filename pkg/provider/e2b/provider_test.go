@@ -213,7 +213,7 @@ func TestProviderDestroy(t *testing.T) {
 	defer server.Close()
 
 	p := newTestProvider(t, server.URL)
-	err := p.Destroy(context.Background(), "run_123")
+	err := p.Destroy(context.Background(), "run_123", provider.DestroyOptions{})
 
 	require.NoError(t, err)
 }
@@ -230,7 +230,7 @@ func TestProviderDestroyNotFound(t *testing.T) {
 
 	p := newTestProvider(t, server.URL)
 	// Should not error when sandbox not found
-	err := p.Destroy(context.Background(), "run_123")
+	err := p.Destroy(context.Background(), "run_123", provider.DestroyOptions{})
 
 	require.NoError(t, err)
 }
@@ -456,7 +456,7 @@ func TestProviderDestroyError(t *testing.T) {
 	defer server.Close()
 
 	p := newTestProvider(t, server.URL)
-	err := p.Destroy(context.Background(), "run_123")
+	err := p.Destroy(context.Background(), "run_123", provider.DestroyOptions{})
 
 	require.Error(t, err)
 	var destroyErr *provider.ErrDestroyFailed
@@ -471,7 +471,7 @@ func TestProviderDestroyListError(t *testing.T) {
 	defer server.Close()
 
 	p := newTestProvider(t, server.URL)
-	err := p.Destroy(context.Background(), "run_123")
+	err := p.Destroy(context.Background(), "run_123", provider.DestroyOptions{})
 
 	require.Error(t, err)
 	var destroyErr *provider.ErrDestroyFailed

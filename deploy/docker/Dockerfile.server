@@ -4,12 +4,22 @@
 # =============================================================================
 # Build stage
 # =============================================================================
-FROM golang:1.25-bookworm AS builder
+# --platform=$BUILDPLATFORM keeps the compiler on the native architecture of the
+# builder and cross-compiles instead: a Go build under QEMU emulation costs tens
+# of minutes, a cross-compile costs the same as a native one. Only the runtime
+# stage is emulated, and for a distroless image nothing runs there at build time.
+FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS builder
+
+# Toolchain pins. Keep in sync with .github/workflows/ci.yml and the Makefile so
+# a local image, a CI image and a release image generate the same code.
+ARG BUF_VERSION=v1.72.0
+ARG PROTOC_GEN_GO_VERSION=v1.36.11
+ARG PROTOC_GEN_GO_GRPC_VERSION=v1.6.2
 
 # Install buf and protobuf plugins for code generation
-RUN go install github.com/bufbuild/buf/cmd/buf@latest && \
-    go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+RUN go install "github.com/bufbuild/buf/cmd/buf@${BUF_VERSION}" && \
+    go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}" && \
+    go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}"
 
 WORKDIR /app
 
@@ -23,16 +33,31 @@ COPY . .
 # Generate protobuf code
 RUN buf generate
 
+# Version stamping. The linker ignores an -X for a symbol that does not exist,
+# so these are inert until cmd/server declares the vars (see
+# docs/development/releasing.md); the image labels carry the version either way.
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
 # Build the server binary
 # CGO disabled for static binary, stripped for smaller size
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w" \
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
     -o /server ./cmd/server
 
 # =============================================================================
 # Runtime stage
 # =============================================================================
 FROM gcr.io/distroless/static-debian12:nonroot
+
+# Links the published package to this repository on ghcr, which is also what
+# lets GITHUB_TOKEN push it from Actions without a personal token.
+LABEL org.opencontainers.image.source="https://github.com/chunlea/marionette"
+LABEL org.opencontainers.image.description="Marionette server: public API, admin API and gRPC for runners"
+LABEL org.opencontainers.image.licenses="MIT"
 
 # Copy the binary from builder
 COPY --from=builder /server /server

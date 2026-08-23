@@ -88,6 +88,10 @@ type WireDeps struct {
 	RunnerTokenService *auth.RunnerTokenService
 	// ProviderRegistry resolves runner providers for spawn/suspend/destroy.
 	ProviderRegistry ProviderRegistryInterface
+	// RunnerServerURL is the gRPC address spawned runners dial back on. It is
+	// baked into the instance at spawn, so a wrong or empty value produces a
+	// runner that comes up and never connects.
+	RunnerServerURL string
 	// AuditLog records sensitive actions. Optional but strongly recommended.
 	AuditLog audit.Logger
 	// Logger is the root logger.
@@ -129,13 +133,16 @@ type App struct {
 	Permissions    *PermissionManager
 	Runners        *RunnerManager
 	RunnerRegistry *RunnerRegistry
-	Workspaces     *WorkspaceManager
-	ScheduledTasks *ScheduledTaskService
-	Webhooks       *WebhookManager
-	LogSubscribers *LogSubscriberManager
-	Events         *EventBus
-	Reaper         *Reaper
-	DispatchWaker  *DispatchWaker
+	// RunnerProvisioner spawns and destroys managed runners. It is the only
+	// writer of runners.provider_instance_id at spawn time.
+	RunnerProvisioner *RunnerProvisioner
+	Workspaces        *WorkspaceManager
+	ScheduledTasks    *ScheduledTaskService
+	Webhooks          *WebhookManager
+	LogSubscribers    *LogSubscriberManager
+	Events            *EventBus
+	Reaper            *Reaper
+	DispatchWaker     *DispatchWaker
 
 	// Background jobs, started by Start and drained by Stop.
 	jobs []backgroundJob
@@ -252,26 +259,37 @@ func Wire(deps WireDeps) (*App, error) {
 	)
 
 	registry := NewRunnerRegistry(deps.Store, deps.RunnerTokenService, logger.Named("registry"))
+
+	// The provisioner is what makes a managed spawn reachable: it writes the
+	// runner row, the token the instance authenticates with, and the provider
+	// instance id that lets a restarted server find the instance again.
+	provisioner := NewRunnerProvisioner(
+		deps.Store, deps.ProviderRegistry, deps.RunnerTokenService,
+		deps.RunnerServerURL, logger.Named("provisioner"),
+	)
+	sessions.setProvisioner(provisioner)
+
 	scheduledTasks := NewScheduledTaskService(deps.Store, tasks, deps.AuditLog, logger.Named("scheduled-task"))
 	logSubscribers := NewLogSubscriberManager(logger.Named("log-subscriber"))
 
 	app := &App{
-		Store:          deps.Store,
-		Logger:         logger,
-		Sessions:       sessions,
-		Tasks:          tasks,
-		Permissions:    permissions,
-		Runners:        runners,
-		RunnerRegistry: registry,
-		Workspaces:     workspaces,
-		ScheduledTasks: scheduledTasks,
-		Webhooks:       webhookMgr,
-		LogSubscribers: logSubscribers,
-		Events:         events,
-		DispatchWaker:  waker,
-		ctx:            appCtx,
-		cancel:         cancel,
-		background:     background,
+		Store:             deps.Store,
+		Logger:            logger,
+		Sessions:          sessions,
+		Tasks:             tasks,
+		Permissions:       permissions,
+		Runners:           runners,
+		RunnerRegistry:    registry,
+		RunnerProvisioner: provisioner,
+		Workspaces:        workspaces,
+		ScheduledTasks:    scheduledTasks,
+		Webhooks:          webhookMgr,
+		LogSubscribers:    logSubscribers,
+		Events:            events,
+		DispatchWaker:     waker,
+		ctx:               appCtx,
+		cancel:            cancel,
+		background:        background,
 	}
 
 	app.buildJobs(deps)

@@ -132,8 +132,9 @@ func (p *Provider) Spawn(_ context.Context, opts provider.SpawnOptions) (*provid
 }
 
 // Destroy removes a runner from the pool.
-// For pool providers, this marks the runner as offline but doesn't destroy infrastructure.
-func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
+// For pool providers, this marks the runner as offline but doesn't destroy
+// infrastructure, so there is no provider instance to address: opts is unused.
+func (p *Provider) Destroy(ctx context.Context, runnerID string, _ provider.DestroyOptions) error {
 	runner, err := p.store.GetRunner(ctx, runnerID)
 	if err != nil {
 		return &provider.ErrDestroyFailed{RunnerID: runnerID, Cause: err}

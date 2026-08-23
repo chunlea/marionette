@@ -50,6 +50,10 @@ var (
 	ErrScheduledTaskAlreadyActive  = errors.New("scheduled task is already active")
 	ErrScheduledTaskAlreadyPaused  = errors.New("scheduled task is already paused")
 	ErrScheduledTaskDisabled       = errors.New("scheduled task is disabled")
+
+	// ErrScheduledTickTaken reports that another replica already claimed this
+	// run.
+	ErrScheduledTickTaken = errors.New("scheduled task tick already claimed")
 )
 
 // ScheduledTaskServiceInterface defines the interface for scheduled task management.
@@ -64,6 +68,7 @@ type ScheduledTaskServiceInterface interface {
 	Trigger(ctx context.Context, taskID string) (*store.Task, error)
 	GetDue(ctx context.Context, limit int) ([]*store.ScheduledTask, error)
 	ExecuteScheduledTask(ctx context.Context, scheduledTask *store.ScheduledTask) (*store.Task, error)
+	ExecuteDue(ctx context.Context, scheduledTask *store.ScheduledTask) (*store.Task, error)
 	MarkTaskCompleted(ctx context.Context, scheduledTaskID string, success bool) error
 	CalculateNextRunAt(cronExpr, timezone string, after time.Time) (*time.Time, error)
 }
@@ -485,8 +490,62 @@ func (s *ScheduledTaskService) GetDue(ctx context.Context, limit int) ([]*store.
 	return s.store.GetDueScheduledTasks(ctx, time.Now(), limit)
 }
 
+// ExecuteDue runs one due cron tick, claiming it first.
+//
+// GetDue is a plain SELECT, so every replica polling the same database sees the
+// same due task. Without a claim they all execute it: an agent with shell
+// access runs the user's prompt once per replica, against one workspace. The
+// claim is a compare-and-set that advances next_run_at away from the due time -
+// exactly one replica moves it, and the rest get ErrScheduledTickTaken.
+//
+// The schedule therefore advances BEFORE the task is created, which means a
+// failure to create the task skips that tick rather than repeating it. That is
+// the right way round: a skipped report is a nuisance, a prompt executed twice
+// concurrently by an agent with shell access is a hazard.
+func (s *ScheduledTaskService) ExecuteDue(ctx context.Context, scheduledTask *store.ScheduledTask) (*store.Task, error) {
+	if scheduledTask.NextRunAt == nil {
+		// Nothing to claim: this is not a scheduled tick.
+		return s.ExecuteScheduledTask(ctx, scheduledTask)
+	}
+
+	now := time.Now()
+	loc, _ := time.LoadLocation(scheduledTask.Timezone)
+	nextRunAt, _ := s.CalculateNextRunAt(scheduledTask.CronExpression, scheduledTask.Timezone, now.In(loc))
+
+	if err := s.store.UpdateScheduledTask(ctx, scheduledTask.ID, store.ScheduledTaskUpdates{
+		NextRunAt:         nextRunAt,
+		ExpectedNextRunAt: scheduledTask.NextRunAt,
+	}); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return nil, ErrScheduledTickTaken
+		}
+		return nil, fmt.Errorf("claiming scheduled tick: %w", err)
+	}
+
+	// The schedule is already advanced, so the execution below must not
+	// advance it again.
+	claimed := *scheduledTask
+	claimed.NextRunAt = nil
+	return s.executeScheduledTask(ctx, &claimed, false)
+}
+
 // ExecuteScheduledTask executes a scheduled task by creating a regular task.
+//
+// This is the manual path (Trigger): it claims no tick, because there is none
+// to claim - the user asked for a run now.
 func (s *ScheduledTaskService) ExecuteScheduledTask(ctx context.Context, scheduledTask *store.ScheduledTask) (*store.Task, error) {
+	return s.executeScheduledTask(ctx, scheduledTask, true)
+}
+
+// executeScheduledTask creates the task and records the run.
+//
+// advanceSchedule is false when the caller already advanced next_run_at to
+// claim the tick; advancing again there would skip a run.
+func (s *ScheduledTaskService) executeScheduledTask(
+	ctx context.Context,
+	scheduledTask *store.ScheduledTask,
+	advanceSchedule bool,
+) (*store.Task, error) {
 	// Render prompt template
 	prompt, err := s.renderPromptTemplate(scheduledTask)
 	if err != nil {
@@ -511,15 +570,15 @@ func (s *ScheduledTaskService) ExecuteScheduledTask(ctx context.Context, schedul
 	now := time.Now()
 	runCount := scheduledTask.RunCount + 1
 
-	// Calculate next run time
-	loc, _ := time.LoadLocation(scheduledTask.Timezone)
-	nextRunAt, _ := s.CalculateNextRunAt(scheduledTask.CronExpression, scheduledTask.Timezone, now.In(loc))
-
 	updates := store.ScheduledTaskUpdates{
 		LastRunAt:  &now,
 		LastTaskID: &task.ID,
 		RunCount:   &runCount,
-		NextRunAt:  nextRunAt,
+	}
+
+	if advanceSchedule {
+		loc, _ := time.LoadLocation(scheduledTask.Timezone)
+		updates.NextRunAt, _ = s.CalculateNextRunAt(scheduledTask.CronExpression, scheduledTask.Timezone, now.In(loc))
 	}
 
 	if err := s.store.UpdateScheduledTask(ctx, scheduledTask.ID, updates); err != nil {
@@ -535,7 +594,7 @@ func (s *ScheduledTaskService) ExecuteScheduledTask(ctx context.Context, schedul
 		zap.String("name", scheduledTask.Name),
 		zap.String("task_id", task.ID),
 		zap.Int("run_count", runCount),
-		zap.Timep("next_run_at", nextRunAt),
+		zap.Timep("next_run_at", updates.NextRunAt),
 	)
 
 	return task, nil

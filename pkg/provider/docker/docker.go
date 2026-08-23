@@ -283,8 +283,8 @@ func (p *Provider) attachNetwork() string {
 }
 
 // Destroy stops and removes a container.
-func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
-	containerID, err := p.findContainerByRunnerID(ctx, runnerID)
+func (p *Provider) Destroy(ctx context.Context, runnerID string, opts provider.DestroyOptions) error {
+	containerID, err := p.findContainerByRunnerID(ctx, runnerID, opts.ProviderInstanceID)
 	if err != nil {
 		return err
 	}
@@ -320,7 +320,7 @@ func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
 
 // Status returns the current status of a runner.
 func (p *Provider) Status(ctx context.Context, runnerID string) (*provider.RunnerStatus, error) {
-	containerID, err := p.findContainerByRunnerID(ctx, runnerID)
+	containerID, err := p.findContainerByRunnerID(ctx, runnerID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +358,12 @@ func (p *Provider) List(ctx context.Context) ([]*provider.RunnerInstance, error)
 
 // Pause suspends a running container, preserving memory state.
 func (p *Provider) Pause(ctx context.Context, runnerID string) error {
-	containerID, err := p.findContainerByRunnerID(ctx, runnerID)
+	return p.pause(ctx, runnerID, "")
+}
+
+// pause pauses the container, preferring the caller's persisted instance id.
+func (p *Provider) pause(ctx context.Context, runnerID, instanceID string) error {
+	containerID, err := p.findContainerByRunnerID(ctx, runnerID, instanceID)
 	if err != nil {
 		return err
 	}
@@ -372,7 +377,12 @@ func (p *Provider) Pause(ctx context.Context, runnerID string) error {
 
 // Unpause resumes a paused container.
 func (p *Provider) Unpause(ctx context.Context, runnerID string) error {
-	containerID, err := p.findContainerByRunnerID(ctx, runnerID)
+	return p.unpause(ctx, runnerID, "")
+}
+
+// unpause resumes the container, preferring the caller's persisted instance id.
+func (p *Provider) unpause(ctx context.Context, runnerID, instanceID string) error {
+	containerID, err := p.findContainerByRunnerID(ctx, runnerID, instanceID)
 	if err != nil {
 		return err
 	}
@@ -607,7 +617,17 @@ func (p *Provider) buildMounts(opts provider.SpawnOptions) []mount.Mount {
 	return mounts
 }
 
-func (p *Provider) findContainerByRunnerID(ctx context.Context, runnerID string) (string, error) {
+// findContainerByRunnerID resolves the container behind a runner.
+//
+// instanceID is the container id the server persisted at spawn; it is used
+// as-is when present. Docker can enumerate stopped and paused containers, so
+// the label lookup below is a complete fallback here - unlike E2B, where a
+// paused instance is invisible and the persisted id is the only handle.
+func (p *Provider) findContainerByRunnerID(ctx context.Context, runnerID, instanceID string) (string, error) {
+	if instanceID != "" {
+		return instanceID, nil
+	}
+
 	containers, err := p.client.ContainerList(ctx, container.ListOptions{
 		All: true,
 		Filters: filters.NewArgs(

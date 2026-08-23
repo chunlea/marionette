@@ -282,7 +282,9 @@ func (r *Reaper) reap(ctx context.Context, runner *store.Runner) bool {
 		return false
 	}
 
-	if err := prov.Destroy(ctx, runner.ID); err != nil {
+	if err := prov.Destroy(ctx, runner.ID, provider.DestroyOptions{
+		ProviderInstanceID: runnerInstanceID(runner),
+	}); err != nil {
 		r.mu.Lock()
 		r.attempts[runner.ID]++
 		attempts := r.attempts[runner.ID]

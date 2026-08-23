@@ -85,6 +85,14 @@ func (m *mockRunnerStore) ListRunners(_ context.Context, _ store.ListRunnersOpti
 	return &store.ListResult[store.Runner]{Items: items}, nil
 }
 
+// ClaimRunner: registration does not allocate, so nothing here contends.
+func (m *mockRunnerStore) ClaimRunner(_ context.Context, _, _ string, _ time.Duration) (bool, error) {
+	return true, nil
+}
+
+// ReleaseRunnerClaim: see ClaimRunner.
+func (m *mockRunnerStore) ReleaseRunnerClaim(_ context.Context, _, _ string) error { return nil }
+
 func (m *mockRunnerStore) DeleteRunner(_ context.Context, id string) error {
 	delete(m.runners, id)
 	return nil

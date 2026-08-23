@@ -24,7 +24,9 @@ func (p *mockProvider) Capabilities() ProviderCapabilities { return ProviderCapa
 func (p *mockProvider) Spawn(ctx context.Context, opts SpawnOptions) (*RunnerInstance, error) {
 	return nil, nil
 }
-func (p *mockProvider) Destroy(ctx context.Context, runnerID string) error { return nil }
+func (p *mockProvider) Destroy(ctx context.Context, runnerID string, opts DestroyOptions) error {
+	return nil
+}
 func (p *mockProvider) Status(ctx context.Context, runnerID string) (*RunnerStatus, error) {
 	return nil, nil
 }

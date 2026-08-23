@@ -230,7 +230,7 @@ func TestDestroy(t *testing.T) {
 			},
 		})
 
-		err := p.Destroy(ctx, "run_del")
+		err := p.Destroy(ctx, "run_del", provider.DestroyOptions{})
 		require.NoError(t, err)
 
 		// Pod should be deleted
@@ -243,7 +243,7 @@ func TestDestroy(t *testing.T) {
 		client.AddNamespace("test-ns")
 		p := newTestProvider(client)
 
-		err := p.Destroy(ctx, "nonexistent")
+		err := p.Destroy(ctx, "nonexistent", provider.DestroyOptions{})
 		require.Error(t, err)
 		var notFoundErr *provider.ErrRunnerNotFound
 		require.ErrorAs(t, err, &notFoundErr)
@@ -956,7 +956,7 @@ func TestDestroyErrors(t *testing.T) {
 
 		client.DeletePodErr = fmt.Errorf("simulated delete error")
 
-		err := p.Destroy(ctx, "run_destroy")
+		err := p.Destroy(ctx, "run_destroy", provider.DestroyOptions{})
 		require.Error(t, err)
 		var destroyErr *provider.ErrDestroyFailed
 		require.ErrorAs(t, err, &destroyErr)

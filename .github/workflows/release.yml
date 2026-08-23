@@ -1,0 +1,358 @@
+name: Release
+
+# Cutting a release is one tag push. Everything below is what used to be done by
+# hand for v0.1.0: build both images multi-arch, push them to ghcr, cross-compile
+# the mctl tarballs, and open a DRAFT release for a human to polish and publish.
+#
+# workflow_dispatch is the rehearsal: it builds everything and pushes nothing, so
+# the workflow can be validated without spending a version number. Run it from
+# the ref you want to build:
+#
+#   gh workflow run release.yml --ref main -f tag=v9.9.9 -f dry_run=true
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version to build as, e.g. v0.2.0. For a real run, dispatch from that tag."
+        required: true
+        type: string
+      dry_run:
+        description: "Build everything, push nothing, create no release."
+        required: false
+        default: true
+        type: boolean
+
+env:
+  # Same pins as .github/workflows/ci.yml — a release must not generate
+  # different code from the commit CI went green on. The image builds take these
+  # as build args; the Dockerfiles carry the same values as ARG defaults.
+  BUF_VERSION: v1.72.0
+  PROTOC_GEN_GO_VERSION: v1.36.11
+  PROTOC_GEN_GO_GRPC_VERSION: v1.6.2
+  REGISTRY: ghcr.io
+
+# Least privilege by default; the two jobs that need more say so themselves.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      latest: ${{ steps.plan.outputs.latest }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+      build_date: ${{ steps.plan.outputs.build_date }}
+    steps:
+      - name: Work out what is being released
+        id: plan
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            version="${GITHUB_REF_NAME}"
+            dry_run=false
+          else
+            version="${INPUT_TAG}"
+            dry_run="${INPUT_DRY_RUN}"
+          fi
+
+          if ! printf '%s' "${version}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'${version}' is not vMAJOR.MINOR.PATCH[-prerelease]"
+            exit 1
+          fi
+
+          # A prerelease is published as a prerelease and never moves :latest.
+          case "${version}" in
+            *-*) prerelease=true;  latest=false ;;
+            *)   prerelease=false; latest=true  ;;
+          esac
+
+          # One timestamp for every artifact in this run.
+          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          {
+            echo "version=${version}"
+            echo "latest=${latest}"
+            echo "prerelease=${prerelease}"
+            echo "dry_run=${dry_run}"
+            echo "build_date=${build_date}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "### Release ${version}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| dry run | ${dry_run} |"
+            echo "| prerelease | ${prerelease} |"
+            echo "| moves \`:latest\` | ${latest} |"
+            echo "| commit | ${GITHUB_SHA} |"
+            echo "| built | ${build_date} |"
+            if [ "${dry_run}" = "true" ]; then
+              echo
+              echo "Nothing will be pushed and no release will be created."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  images:
+    name: Image (${{ matrix.component }})
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # ghcr auth is the built-in token, never a personal one. The package has to
+      # be linked to this repository for the token to be allowed to push it — see
+      # docs/development/releasing.md if the first push 403s.
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: server
+            image: marionette-server
+            dockerfile: deploy/docker/Dockerfile.server
+          - component: agent
+            image: marionette-agent
+            dockerfile: deploy/docker/Dockerfile.agent
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # The admin UI is embedded into the server binary from
+      # pkg/server/admin/dist, and only .gitkeep is committed there. Without this
+      # the released image would serve an empty single-page app.
+      - name: Install pnpm
+        if: matrix.component == 'server'
+        # Pinned to 9 for the same reason as the CI web job: pnpm 10+ fails the
+        # install on ERR_PNPM_IGNORED_BUILDS.
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node
+        if: matrix.component == 'server'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Build the admin UI
+        if: matrix.component == 'server'
+        run: |
+          pnpm --dir web install --frozen-lockfile
+          make web-build
+
+      # Only the agent image's runtime stage is emulated (apt-get); both builder
+      # stages cross-compile. See deploy/docker/Dockerfile.server.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr
+        if: needs.prepare.outputs.dry_run != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          LATEST: ${{ needs.prepare.outputs.latest }}
+        run: |
+          set -euo pipefail
+          tags="${IMAGE}:${VERSION}"
+          if [ "${LATEST}" = "true" ]; then
+            tags="${tags},${IMAGE}:latest"
+          fi
+          echo "tags=${tags}" >> "${GITHUB_OUTPUT}"
+          echo "Tags: ${tags}"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.prepare.outputs.dry_run != 'true' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ needs.prepare.outputs.build_date }}
+            BUF_VERSION=${{ env.BUF_VERSION }}
+            PROTOC_GEN_GO_VERSION=${{ env.PROTOC_GEN_GO_VERSION }}
+            PROTOC_GEN_GO_GRPC_VERSION=${{ env.PROTOC_GEN_GO_GRPC_VERSION }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ needs.prepare.outputs.build_date }}
+          # No layer cache and no attestations on purpose. A release is cut a few
+          # times a year: a reused cache layer or an extra unknown/unknown entry
+          # in the manifest list costs more in confusion than the minutes saved.
+          provenance: false
+          sbom: false
+
+  binaries:
+    name: mctl binaries
+    needs: prepare
+    runs-on: ubuntu-latest
+    # Same container as the CI build job, so the released binaries come off the
+    # same Go toolchain that CI compiled and tested with.
+    container:
+      image: golang:1.25-bookworm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install dependencies
+        run: |
+          apt-get update && apt-get install -y curl
+          # Install buf
+          curl -sSL "https://github.com/bufbuild/buf/releases/download/${BUF_VERSION}/buf-Linux-x86_64" -o /usr/local/bin/buf
+          chmod +x /usr/local/bin/buf
+
+      - name: Install protoc plugins
+        run: |
+          go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}"
+          go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}"
+
+      # One binary for three platforms is a loop, not a release framework: the
+      # hard part of this build is `buf generate` before it, which goreleaser
+      # would have to be taught anyway. `make dist` is the same command a
+      # maintainer runs locally, so the artifacts cannot drift from it.
+      - name: Build the release tarballs
+        run: |
+          make dist \
+            VERSION="${{ needs.prepare.outputs.version }}" \
+            COMMIT="${GITHUB_SHA}" \
+            BUILD_DATE="${{ needs.prepare.outputs.build_date }}"
+
+      - name: Check the stamp took
+        run: |
+          set -euo pipefail
+          tar -xzf "dist/mctl_${{ needs.prepare.outputs.version }}_linux_amd64.tar.gz" -C /tmp
+          /tmp/mctl version
+          /tmp/mctl version | grep -q "${{ needs.prepare.outputs.version }}"
+
+      - name: Upload the tarballs
+        uses: actions/upload-artifact@v4
+        with:
+          name: mctl-binaries
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    needs: [prepare, images, binaries]
+    if: needs.prepare.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # The notes are a commit list between two tags; a shallow clone has
+          # neither the tags nor the history.
+          fetch-depth: 0
+
+      - name: Download the tarballs
+        uses: actions/download-artifact@v4
+        with:
+          name: mctl-binaries
+          path: dist
+
+      - name: Write the draft notes
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          previous="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
+
+          {
+            echo "## Images"
+            echo
+            echo '```bash'
+            echo "docker pull ${REGISTRY}/${OWNER}/marionette-server:${VERSION}"
+            echo "docker pull ${REGISTRY}/${OWNER}/marionette-agent:${VERSION}"
+            echo '```'
+            echo
+            echo "## mctl"
+            echo
+            echo "Tarballs for darwin/arm64 and linux amd64/arm64 are attached, with"
+            echo "\`SHA256SUMS\` to check them against."
+            echo
+            echo "Full changelog: <https://github.com/${REPO}/blob/${VERSION}/CHANGELOG.md>"
+            echo
+            if [ -n "${previous}" ]; then
+              echo "## Commits since ${previous}"
+              echo
+              git log --no-merges --pretty='- %s (%h)' "${previous}..${VERSION}"
+            else
+              echo "## Commits"
+              echo
+              git log --no-merges --pretty='- %s (%h)'
+            fi
+          } > "${RUNNER_TEMP}/notes.md"
+
+          cat "${RUNNER_TEMP}/notes.md"
+
+      # Draft, not published: a human reads the generated notes, rewrites them
+      # into something worth reading, and presses publish.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+            echo "Release ${VERSION} already exists — replacing its assets only."
+            gh release upload "${VERSION}" dist/* --clobber
+            exit 0
+          fi
+
+          args=(--draft --verify-tag --title "${VERSION}" --notes-file "${RUNNER_TEMP}/notes.md")
+          if [ "${PRERELEASE}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+
+          gh release create "${VERSION}" "${args[@]}" dist/*
+
+      - name: Say where it went
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "### Draft release ${VERSION} is ready"
+            echo
+            echo "Polish the notes and publish it:"
+            echo "<https://github.com/${REPO}/releases>"
+          } >> "${GITHUB_STEP_SUMMARY}"

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -189,23 +188,10 @@ type SessionManager struct {
 	providerRegistry ProviderRegistryInterface
 	taskManager      TaskManagerInterface
 	waker            RunnerAvailableNotifier
+	provisioner      *RunnerProvisioner
 	webhooks         *WebhookIntegration
 	background       *backgroundTasks
 	logger           *zap.Logger
-
-	// reserved holds runners chosen but not yet written to a session row.
-	//
-	// runnerClaimed answers from the database, so between selecting an idle
-	// runner and recording the choice there is a window in which the runner
-	// still looks free. Two sessions activating at the same time both take it,
-	// and Activate then detaches the loser - so N concurrent creates against N
-	// idle runners leave most of the sessions with nothing, which is exactly
-	// what the load test found.
-	//
-	// This closes the window inside one process. Across processes it needs a
-	// claim the database arbitrates; see NEEDS in the round-3 report.
-	reservedMu sync.Mutex
-	reserved   map[string]struct{}
 }
 
 // SessionManagerConfig holds configuration for SessionManager.
@@ -253,29 +239,47 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 	}
 }
 
-// reserveRunner marks a runner as spoken for, reporting false if it already is.
-func (m *SessionManager) reserveRunner(runnerID string) bool {
-	m.reservedMu.Lock()
-	defer m.reservedMu.Unlock()
-	if m.reserved == nil {
-		m.reserved = make(map[string]struct{})
-	}
-	if _, taken := m.reserved[runnerID]; taken {
-		return false
-	}
-	m.reserved[runnerID] = struct{}{}
-	return true
+// setProvisioner injects the runner provisioner. Like setTaskManager, this is
+// a Wire-time injection rather than a constructor argument because the
+// provisioner and the session manager are built from the same dependencies.
+func (m *SessionManager) setProvisioner(p *RunnerProvisioner) {
+	m.provisioner = p
 }
 
-// releaseReservation drops a reservation. It is safe to call for a runner that
-// was never reserved.
-func (m *SessionManager) releaseReservation(runnerID string) {
+// claimRunner takes the database-arbitrated claim on a runner for a session.
+//
+// It reports false for a runner somebody else holds, which is a lost race and
+// not an error: the caller moves on to the next candidate.
+func (m *SessionManager) claimRunner(ctx context.Context, runnerID, sessionID string) bool {
+	won, err := m.store.ClaimRunner(ctx, runnerID, sessionID, store.DefaultRunnerClaimLease)
+	if err != nil {
+		m.logger.Warn("could not claim runner; skipping it",
+			zap.String("runner_id", runnerID),
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+		return false
+	}
+	return won
+}
+
+// releaseRunnerClaim drops a claim held by sessionID. It is safe to call for a
+// runner that was never claimed, or whose claim has already been taken over.
+//
+// The release deliberately does not inherit the caller's cancellation: it runs
+// after the work it was protecting, and dropping it because a request returned
+// would leave the runner claimed until the lease expired.
+func (m *SessionManager) releaseRunnerClaim(ctx context.Context, runnerID, sessionID string) {
 	if runnerID == "" {
 		return
 	}
-	m.reservedMu.Lock()
-	defer m.reservedMu.Unlock()
-	delete(m.reserved, runnerID)
+	if err := m.store.ReleaseRunnerClaim(context.WithoutCancel(ctx), runnerID, sessionID); err != nil {
+		m.logger.Warn("failed to release runner claim; it will expire with its lease",
+			zap.String("runner_id", runnerID),
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+	}
 }
 
 // setTaskManager injects the task manager after construction.
@@ -512,6 +516,27 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 	if err := requireSameTenant("runner", runner.ID, session.TenantID, runner.TenantID); err != nil {
 		return err
 	}
+
+	// Take the claim before touching anything. Detaching comes next, and
+	// detaching without the claim is how a losing activation used to steal a
+	// runner from the session that had just won it: two activations both passed
+	// the checks above, the second detached the first and then took the runner,
+	// and the session that believed it was running found itself suspended with
+	// a task in flight.
+	//
+	// EnsureRunner already holds the claim for this session, and re-claiming as
+	// the same session is allowed, so the allocation path passes straight
+	// through. A direct activation - the admin route - contends here.
+	if !m.claimRunner(ctx, runnerID, sessionID) {
+		m.logger.Warn("runner is claimed by another session; refusing to activate",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", runnerID),
+		)
+		return ErrRunnerNotIdle
+	}
+	// Released on every path: once the session row names the runner,
+	// runnerClaimed answers for it and the claim has done its job.
+	defer m.releaseRunnerClaim(ctx, runnerID, sessionID)
 
 	// Detach any session still holding this runner. A failure here used to be
 	// logged and ignored, which let two sessions own one runner: both would
@@ -911,7 +936,7 @@ func (m *SessionManager) releaseRunner(ctx context.Context, sessionID string, ru
 		return
 	}
 
-	prov, err := m.providerForRunner(ctx, *runnerID)
+	prov, runner, err := m.providerForRunner(ctx, *runnerID)
 	if err != nil {
 		m.logger.Warn("could not resolve provider to release runner",
 			zap.String("session_id", sessionID),
@@ -929,7 +954,8 @@ func (m *SessionManager) releaseRunner(ctx context.Context, sessionID string, ru
 	defer cancel()
 
 	strategy := provider.SuspendStrategy(opts.Strategy)
-	actual, err := m.applySuspendStrategy(releaseCtx, prov, sessionID, *runnerID, strategy, opts)
+	instanceID := runnerInstanceID(runner)
+	actual, err := m.applySuspendStrategy(releaseCtx, prov, sessionID, *runnerID, instanceID, strategy, opts)
 	if err != nil {
 		m.logger.Error("failed to release runner on suspend",
 			zap.String("session_id", sessionID),
@@ -957,7 +983,7 @@ func (m *SessionManager) releaseRunner(ctx context.Context, sessionID string, ru
 func (m *SessionManager) applySuspendStrategy(
 	ctx context.Context,
 	prov provider.Provider,
-	sessionID, runnerID string,
+	sessionID, runnerID, instanceID string,
 	strategy provider.SuspendStrategy,
 	opts SuspendOptions,
 ) (*provider.SuspendResult, error) {
@@ -979,13 +1005,18 @@ func (m *SessionManager) applySuspendStrategy(
 
 	if susp, ok := prov.(provider.SuspendableProvider); ok {
 		return susp.Suspend(ctx, runnerID, provider.SuspendOptions{
-			Strategy:      strategy,
-			SaveSnapshot:  opts.SnapshotID != "" || strategy == provider.SuspendStrategySnapshot,
-			SyncWorkspace: opts.WorkspaceSynced,
-			Timeout:       providerSuspendTimeout,
+			Strategy:           strategy,
+			ProviderInstanceID: instanceID,
+			SaveSnapshot:       opts.SnapshotID != "" || strategy == provider.SuspendStrategySnapshot,
+			SyncWorkspace:      opts.WorkspaceSynced,
+			Timeout:            providerSuspendTimeout,
 		})
 	}
 
+	// PausableProvider carries no options, so this branch cannot pass the
+	// instance id on. It is reachable only for a provider that can pause but
+	// not suspend; every provider in tree implements SuspendableProvider and
+	// is served above.
 	if pausable, ok := prov.(provider.PausableProvider); ok && strategy == provider.SuspendStrategyPause {
 		if err := pausable.Pause(ctx, runnerID); err != nil {
 			return nil, err
@@ -1021,7 +1052,9 @@ func (m *SessionManager) applySuspendStrategy(
 		zap.String("reason", "provider implements neither SuspendableProvider nor a usable Pause"),
 	)
 
-	if err := prov.Destroy(ctx, runnerID); err != nil {
+	if err := prov.Destroy(ctx, runnerID, provider.DestroyOptions{
+		ProviderInstanceID: instanceID,
+	}); err != nil {
 		return nil, err
 	}
 	return &provider.SuspendResult{
@@ -1121,20 +1154,56 @@ func (m *SessionManager) recordSuspendResult(
 // providerForRunner resolves the provider that owns a runner.
 // Returns (nil, nil) for runners with no provider config: those are external
 // or manually registered and are not ours to manage.
-func (m *SessionManager) providerForRunner(ctx context.Context, runnerID string) (provider.Provider, error) {
+// recordProviderInstance persists the provider-side instance id a provider
+// just handed back.
+//
+// Resume can return either the instance it just woke or a brand new one, and
+// in both cases this is the moment the server learns the id. Failing to record
+// it does not fail the resume - the runner is up - but it does mean the next
+// suspend has nothing to address, so it is logged loudly.
+func (m *SessionManager) recordProviderInstance(ctx context.Context, instance *provider.RunnerInstance) {
+	if instance == nil || instance.ID == "" || instance.ProviderID == "" {
+		return
+	}
+	if err := m.store.UpdateRunner(ctx, instance.ID, store.RunnerUpdates{
+		ProviderInstanceID: &instance.ProviderID,
+	}); err != nil {
+		m.logger.Error("failed to record provider instance id for runner",
+			zap.String("runner_id", instance.ID),
+			zap.String("provider_instance_id", instance.ProviderID),
+			zap.Error(err),
+		)
+	}
+}
+
+// runnerInstanceID returns the provider instance id recorded for a runner, or
+// "" when there is none. An empty id makes every provider fall back to its own
+// lookup, which is what happened everywhere before this was persisted.
+func runnerInstanceID(runner *store.Runner) string {
+	if runner == nil || runner.ProviderInstanceID == nil {
+		return ""
+	}
+	return *runner.ProviderInstanceID
+}
+
+// The runner row is returned alongside the provider because callers need
+// runners.provider_instance_id to address the instance: it is the only handle
+// that survives a server restart.
+func (m *SessionManager) providerForRunner(ctx context.Context, runnerID string) (provider.Provider, *store.Runner, error) {
 	runner, err := m.store.GetRunner(ctx, runnerID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if runner.ProviderConfigID == nil || *runner.ProviderConfigID == "" {
-		return nil, nil
+		return nil, runner, nil
 	}
 
 	provConfig, err := m.store.GetProviderConfig(ctx, *runner.ProviderConfigID)
 	if err != nil {
-		return nil, err
+		return nil, runner, err
 	}
-	return m.providerRegistry.Get(ctx, provConfig.Name)
+	prov, err := m.providerRegistry.Get(ctx, provConfig.Name)
+	return prov, runner, err
 }
 
 // ResumeResult contains information about a resumed session.
@@ -1195,12 +1264,24 @@ func (m *SessionManager) ResumeWithResult(ctx context.Context, sessionID string)
 	}
 
 	now := time.Now()
+	// Compare-and-set on the status the caller validated above. The scheduled
+	// session activator polls with a plain SELECT, so two replicas can find
+	// the same session due at the same moment; without this both would resume
+	// it and both would advance next_scheduled_at, silently skipping a run.
 	updates := store.SessionUpdates{
-		Status:    stringPtr(SessionStatusResuming),
-		ResumedAt: &now,
+		Status:         stringPtr(SessionStatusResuming),
+		ExpectedStatus: &session.Status,
+		ResumedAt:      &now,
 	}
 
 	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			m.logger.Debug("session was resumed by another server first",
+				zap.String("session_id", sessionID),
+				zap.String("from_status", session.Status),
+			)
+			return nil, ErrInvalidSessionTransition
+		}
 		return nil, err
 	}
 
@@ -1258,8 +1339,13 @@ func (m *SessionManager) requestRunnerForResume(ctx context.Context, session *st
 	// Check if previous runner was managed by a provider
 	var prov provider.Provider
 
+	// Kept beyond the block below: its provider_instance_id is what lets the
+	// provider find an instance it cannot enumerate.
+	var prevRunner *store.Runner
+
 	if session.PreviousRunnerID != nil && *session.PreviousRunnerID != "" {
-		prevRunner, err := m.store.GetRunner(ctx, *session.PreviousRunnerID)
+		var err error
+		prevRunner, err = m.store.GetRunner(ctx, *session.PreviousRunnerID)
 		if err != nil {
 			m.logger.Debug("previous runner not found, skipping provider spawn",
 				zap.String("session_id", session.ID),
@@ -1356,15 +1442,43 @@ func (m *SessionManager) requestRunnerForResume(ctx context.Context, session *st
 		workspacePath, _ = m.workspaceManager.GetHostPath(ctx, session.WorkspaceID)
 	}
 
-	// Build spawn options with defaults
-	spawnOpts := &provider.SpawnOptions{
-		RunnerID:       id.Runner(),
+	// Spawn options come from the provisioner because a spawned runner needs a
+	// row and a token to exist before it boots. Without one there is nothing to
+	// hand the provider but a runner id nothing knows about and an empty token,
+	// which produces an instance that can never connect and only bills.
+	if m.provisioner == nil {
+		m.logger.Error("cannot request a managed runner: no provisioner configured",
+			zap.String("session_id", session.ID),
+			zap.String("provider", prov.Name()),
+		)
+		return
+	}
+
+	provisionOpts := ProvisionOptions{
 		Name:           "runner-" + session.ID,
 		WorkspaceMount: workspacePath,
-		SandboxMode:    "runner-is-sandbox",
-		NetworkPolicy:  session.NetworkPolicy,
-		AllowedHosts:   session.AllowedHosts,
 	}
+	if profile != nil {
+		provisionOpts.ProfileID = profile.ID
+		if profile.ProviderConfigID != nil {
+			provisionOpts.ProviderConfigID = *profile.ProviderConfigID
+		}
+	}
+	if provisionOpts.ProviderConfigID == "" {
+		provisionOpts.ProviderName = prov.Name()
+	}
+
+	spawnOpts, err := m.provisioner.PrepareSpawn(ctx, provisionOpts)
+	if err != nil {
+		m.logger.Error("failed to prepare spawn options for resume",
+			zap.String("session_id", session.ID),
+			zap.String("provider", prov.Name()),
+			zap.Error(err),
+		)
+		return
+	}
+	spawnOpts.NetworkPolicy = session.NetworkPolicy
+	spawnOpts.AllowedHosts = session.AllowedHosts
 
 	// Apply profile configuration for managed providers
 	if profile != nil {
@@ -1415,6 +1529,7 @@ func (m *SessionManager) requestRunnerForResume(ctx context.Context, session *st
 
 	if session.PreviousRunnerID != nil {
 		resumeOpts.RunnerID = *session.PreviousRunnerID
+		resumeOpts.ProviderInstanceID = runnerInstanceID(prevRunner)
 	}
 
 	m.logger.Info("requesting runner from provider for resume",
@@ -1425,6 +1540,7 @@ func (m *SessionManager) requestRunnerForResume(ctx context.Context, session *st
 	// Call provider to spawn/resume runner
 	instance, err := suspendProv.Resume(ctx, session.ID, resumeOpts)
 	if err != nil {
+		m.provisioner.DiscardPrepared(ctx, spawnOpts.RunnerID)
 		m.logger.Error("failed to resume runner from provider",
 			zap.String("session_id", session.ID),
 			zap.Error(err),
@@ -1432,9 +1548,18 @@ func (m *SessionManager) requestRunnerForResume(ctx context.Context, session *st
 		return
 	}
 
+	// The provider reused the existing instance, so the runner prepared for a
+	// spawn that did not happen has to go back.
+	if instance.ID != spawnOpts.RunnerID {
+		m.provisioner.DiscardPrepared(ctx, spawnOpts.RunnerID)
+	}
+
+	m.recordProviderInstance(ctx, instance)
+
 	m.logger.Info("runner requested for resume",
 		zap.String("session_id", session.ID),
 		zap.String("runner_id", instance.ID),
+		zap.String("provider_instance_id", instance.ProviderID),
 		zap.String("status", string(instance.Status)),
 	)
 
@@ -1579,7 +1704,7 @@ func (m *SessionManager) EnsureRunner(ctx context.Context, sessionID string) (*s
 	}
 	// Held until the session row names the runner, which is the point at which
 	// runnerClaimed starts answering correctly for it.
-	defer m.releaseReservation(runnerID)
+	defer m.releaseRunnerClaim(ctx, runnerID, sessionID)
 
 	if err := m.Activate(ctx, sessionID, runnerID); err != nil {
 		m.logger.Error("failed to activate session on allocated runner",
@@ -1719,31 +1844,34 @@ func (m *SessionManager) selectIdleRunner(ctx context.Context, session *store.Se
 		if m.connManager != nil && !m.connManager.IsConnected(runner.ID) {
 			continue
 		}
-		// The reservation is taken BEFORE the database is asked whether the
-		// runner is claimed, and that order is the whole point. The other way
-		// round, a caller that reads "unclaimed" can be overtaken by a caller
-		// that reserves, activates and releases before it gets to reserve; it
-		// then takes a runner on the strength of an answer that is no longer
-		// true. Reserving first means any claim committed before the check is
-		// seen, and any claim committed after it can only come from the one
-		// holder of the reservation.
-		if !m.reserveRunner(runner.ID) {
+		// The claim is taken BEFORE the database is asked whether a session
+		// already owns the runner, and that order is the whole point. The other
+		// way round, a caller that reads "unowned" can be overtaken by a caller
+		// that claims, activates and releases before it gets to claim; it then
+		// takes a runner on the strength of an answer that is no longer true.
+		// Claiming first means any ownership committed before the check is
+		// seen, and any ownership committed after it can only come from the one
+		// holder of the claim.
+		//
+		// The claim is a conditional UPDATE on the runner row, so this holds
+		// across processes and not merely across goroutines.
+		if !m.claimRunner(ctx, runner.ID, session.ID) {
 			continue
 		}
 
 		// "idle" is the runner's connection state, not an assignment: a runner
 		// can be idle while a session still owns it.
-		claimed, err := m.runnerClaimed(ctx, runner.ID)
+		owned, err := m.runnerClaimed(ctx, runner.ID)
 		if err != nil {
 			m.logger.Warn("could not determine whether runner is claimed; skipping it",
 				zap.String("runner_id", runner.ID),
 				zap.Error(err),
 			)
-			m.releaseReservation(runner.ID)
+			m.releaseRunnerClaim(ctx, runner.ID, session.ID)
 			continue
 		}
-		if claimed {
-			m.releaseReservation(runner.ID)
+		if owned {
+			m.releaseRunnerClaim(ctx, runner.ID, session.ID)
 			continue
 		}
 		return runner.ID, nil

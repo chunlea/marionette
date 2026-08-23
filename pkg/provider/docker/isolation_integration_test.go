@@ -272,7 +272,7 @@ func TestIsolationAirGapped_NoInterfaceExistsUntilRulesAreInstalled(t *testing.T
 		NetworkPolicy: "air_gapped",
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Destroy(context.Background(), instance.ID) })
+	t.Cleanup(func() { _ = p.Destroy(context.Background(), instance.ID, provider.DestroyOptions{}) })
 
 	require.NoError(t, observer.observeErr)
 
@@ -328,7 +328,7 @@ func TestIsolationAllowList_OpensOnlyTheResolvedAddresses(t *testing.T) {
 		AllowedHosts: []string{"example.com"},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Destroy(context.Background(), instance.ID) })
+	t.Cleanup(func() { _ = p.Destroy(context.Background(), instance.ID, provider.DestroyOptions{}) })
 
 	pid := containerPID(t, client, instance.Metadata["container_id"])
 
@@ -359,7 +359,7 @@ func TestIsolationNone_LeavesTheContainerAlone(t *testing.T) {
 		NetworkPolicy: "none",
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Destroy(context.Background(), instance.ID) })
+	t.Cleanup(func() { _ = p.Destroy(context.Background(), instance.ID, provider.DestroyOptions{}) })
 
 	// Attached at creation, so the provider never called NetworkConnect.
 	assert.Empty(t, observer.linksAtConnect)

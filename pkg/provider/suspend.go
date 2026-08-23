@@ -98,7 +98,11 @@ func (c *SuspendConfig) ApplyDefaults(defaults SuspendConfig) {
 }
 
 // SuspendFunc performs one suspend strategy against a runner.
-type SuspendFunc func(ctx context.Context, runnerID string) error
+//
+// opts is handed through unchanged so a handler can reach the provider
+// instance id the server persisted; a provider that can only find its own
+// instances by enumeration needs it.
+type SuspendFunc func(ctx context.Context, runnerID string, opts SuspendOptions) error
 
 // SuspendDispatcher runs a provider's suspend strategies with shared
 // validation, fallback and error handling.
@@ -161,7 +165,7 @@ func (d SuspendDispatcher) Suspend(ctx context.Context, runnerID string, opts Su
 		return nil, &ErrStrategyNotSupported{Strategy: strategy, Provider: d.Provider}
 	}
 
-	result, err := d.run(ctx, runnerID, strategy)
+	result, err := d.run(ctx, runnerID, strategy, opts)
 	if err == nil {
 		return result, nil
 	}
@@ -171,7 +175,7 @@ func (d SuspendDispatcher) Suspend(ctx context.Context, runnerID string, opts Su
 		return nil, err
 	}
 
-	result, fallbackErr := d.run(ctx, runnerID, fallback)
+	result, fallbackErr := d.run(ctx, runnerID, fallback, opts)
 	if fallbackErr != nil {
 		// Report both. The per-provider copies of this logic recursed into
 		// the fallback and dropped the original error entirely, which made
@@ -183,13 +187,13 @@ func (d SuspendDispatcher) Suspend(ctx context.Context, runnerID string, opts Su
 }
 
 // run executes a single strategy without fallback.
-func (d SuspendDispatcher) run(ctx context.Context, runnerID string, strategy SuspendStrategy) (*SuspendResult, error) {
+func (d SuspendDispatcher) run(ctx context.Context, runnerID string, strategy SuspendStrategy, opts SuspendOptions) (*SuspendResult, error) {
 	fn, ok := d.Handlers[strategy]
 	if !ok {
 		return nil, &ErrStrategyNotSupported{Strategy: strategy, Provider: d.Provider}
 	}
 
-	if err := fn(ctx, runnerID); err != nil {
+	if err := fn(ctx, runnerID, opts); err != nil {
 		return nil, &ErrSuspendFailed{RunnerID: runnerID, Strategy: strategy, Cause: err}
 	}
 

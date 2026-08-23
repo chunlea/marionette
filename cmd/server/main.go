@@ -150,6 +150,7 @@ func main() {
 			CmdSender:          connManager,
 			RunnerTokenService: runnerTokenSvc,
 			ProviderRegistry:   providerRegistry,
+			RunnerServerURL:    runnerServerURL(cfg, logger),
 			AuditLog:           auditLog,
 			Logger:             logger,
 			MetricsRegisterer:  metricsRegisterer,
@@ -351,6 +352,14 @@ func main() {
 	if app != nil {
 		adminOpts = append(adminOpts, admin.WithSessionActivator(app.Sessions))
 		logger.Info("Session activator wired to Admin API")
+
+		// Without this the admin runner endpoints answered 501 and no managed
+		// runner could ever be spawned through the API, which is why nothing
+		// recorded runners.provider_instance_id in the first place.
+		adminOpts = append(adminOpts, admin.WithRunnerAdminService(
+			&runnerAdminAdapter{provisioner: app.RunnerProvisioner},
+		))
+		logger.Info("Runner admin service wired to Admin API")
 	}
 	if dbStore != nil {
 		// Create action log service adapter for admin API
@@ -698,6 +707,32 @@ func localAPIAddr(cfg config.EndpointConfig) string {
 		host = "127.0.0.1"
 	}
 	return fmt.Sprintf("http://%s", net.JoinHostPort(host, strconv.Itoa(cfg.Port)))
+}
+
+// runnerServerURL is the gRPC address a spawned runner dials back on.
+//
+// The operator-set isolation server_url wins: it is the address that already
+// has to be reachable from inside a restricted runner, so it is the one that
+// has been thought about. Otherwise it is derived from the gRPC listener,
+// which is right for a runner on the same host and a guess anywhere else -
+// hence the warning, because a wrong value here produces instances that come
+// up, fail to connect, and bill until the reaper notices.
+func runnerServerURL(cfg *config.Config, logger *zap.Logger) string {
+	if cfg.Providers.Docker != nil && cfg.Providers.Docker.Isolation.ServerURL != "" {
+		return cfg.Providers.Docker.Isolation.ServerURL
+	}
+
+	host := cfg.Server.GRPC.Host
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(cfg.Server.GRPC.Port))
+	logger.Warn("no runner server URL configured, derived one from the gRPC listener",
+		zap.String("server_url", addr),
+		zap.String("configure", "providers.docker.isolation.server_url"),
+	)
+	return addr
 }
 
 // initChunkGC builds the content-addressed storage garbage collector.
