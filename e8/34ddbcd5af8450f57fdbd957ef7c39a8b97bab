@@ -1,0 +1,19 @@
+.github/workflows/ci.yml
+  s_c065cc8f8dc5eb::t_25aa0c3deaf645 257,272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "e834ddbcd5af8450f57fdbd957ef7c39a8b97bab",
+  "prompts": {},
+  "sessions": {
+    "s_c065cc8f8dc5eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a030fc-1d5b-7542-9241-6be2f7ebc51a",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
