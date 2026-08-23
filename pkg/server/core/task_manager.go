@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -99,6 +100,20 @@ type TaskManager struct {
 	webhooks   *WebhookIntegration
 	background *backgroundTasks
 	logger     *zap.Logger
+
+	// dispatchLocks serialises DispatchNext per session.
+	//
+	// Creating a task both activates the session (which schedules a dispatch)
+	// and dispatches directly, and a resume dispatches too. Without this,
+	// two of those can each see "nothing running" and both send the same
+	// pending task to the runner.
+	dispatchLocks sync.Map // sessionID -> *sync.Mutex
+}
+
+// dispatchLock returns the per-session dispatch mutex, creating it on first use.
+func (m *TaskManager) dispatchLock(sessionID string) *sync.Mutex {
+	lock, _ := m.dispatchLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
 }
 
 // TaskManagerOption is a functional option for TaskManager.
@@ -268,6 +283,13 @@ func (m *TaskManager) Create(ctx context.Context, opts CreateTaskOptions) (*stor
 // flight is left alone: the next one goes out when that finishes. Returns nil
 // when there is nothing to dispatch - an idle session is not an error.
 func (m *TaskManager) DispatchNext(ctx context.Context, sessionID string) error {
+	// Held across the whole dispatch, including Execute: Execute commits the
+	// task as running before it sends, so a caller that waits here then sees
+	// the task in flight and correctly does nothing.
+	lock := m.dispatchLock(sessionID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	running, err := m.store.ListTasks(ctx, ListTasksOptions{
 		BaseListOptions: store.BaseListOptions{Limit: 1},
 		SessionID:       &sessionID,

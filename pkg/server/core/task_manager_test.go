@@ -1914,3 +1914,36 @@ func TestTaskManager_DispatchNext_NothingPending(t *testing.T) {
 		"an idle session is not an error")
 	assert.Empty(t, cmdSender.sentCommands)
 }
+
+// TestTaskManager_DispatchNext_ConcurrentCallersSendOnce closes the race that
+// automatic dispatch creates: creating a task activates the session, which
+// schedules a dispatch, while Create also dispatches directly. Both can see
+// "nothing running" and send the same task twice.
+func TestTaskManager_DispatchNext_ConcurrentCallersSendOnce(t *testing.T) {
+	for round := 0; round < 20; round++ {
+		manager, _, cmdSender, _ := setupAutoDispatchTest()
+		manager.store.(*testTaskStore).tasks["task_1"] = &store.Task{
+			ID:        "task_1",
+			SessionID: "sess_123",
+			Status:    TaskStatusPending,
+			Prompt:    "only once",
+			CreatedAt: time.Now(),
+		}
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				assert.NoError(t, manager.DispatchNext(context.Background(), "sess_123"))
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		assert.Len(t, cmdSender.sentCommands, 1,
+			"a pending task must be dispatched exactly once")
+	}
+}
