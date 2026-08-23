@@ -83,7 +83,7 @@ func newTestDispatcher(t *testing.T, calls *[]SuspendStrategy, failing map[Suspe
 	t.Helper()
 
 	handler := func(s SuspendStrategy) SuspendFunc {
-		return func(_ context.Context, _ string) error {
+		return func(_ context.Context, _ string, _ SuspendOptions) error {
 			*calls = append(*calls, s)
 			return failing[s]
 		}

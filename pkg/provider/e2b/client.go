@@ -60,8 +60,12 @@ type SetTimeoutRequest struct {
 }
 
 // PauseSandboxResponse is the response from pausing a sandbox.
+//
+// The live API returns "sandboxID", matching every other response in this
+// file. Go's JSON decoding is case-insensitive so the old "sandboxId" tag
+// worked, but it described the API wrongly.
 type PauseSandboxResponse struct {
-	SandboxID string `json:"sandboxId"`
+	SandboxID string `json:"sandboxID"`
 }
 
 // APIError represents an error response from the E2B API.
@@ -310,11 +314,21 @@ func IsNotFoundError(err error) bool {
 	return false
 }
 
-// IsPausedError checks if the error indicates the sandbox is paused.
-func IsPausedError(err error) bool {
+// IsConflictError reports whether the API answered 409.
+//
+// E2B uses one status for two states that read as opposites: a sandbox that is
+// paused when the caller wanted it running, and a sandbox that is running when
+// the caller asked to resume it. Only the call site knows which, so the two
+// named helpers below both delegate here rather than pretending to tell them
+// apart.
+func IsConflictError(err error) bool {
 	if apiErr, ok := err.(*APIError); ok {
-		// E2B returns specific error when trying to interact with paused sandbox
 		return apiErr.Code == http.StatusConflict
 	}
 	return false
+}
+
+// IsPausedError checks if the error indicates the sandbox is paused.
+func IsPausedError(err error) bool {
+	return IsConflictError(err)
 }

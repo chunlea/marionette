@@ -85,7 +85,11 @@ type Provider interface {
 	Spawn(ctx context.Context, opts SpawnOptions) (*RunnerInstance, error)
 
 	// Destroy terminates a Runner and cleans up resources.
-	Destroy(ctx context.Context, runnerID string) error
+	//
+	// opts carries the provider instance id the server persisted at spawn.
+	// A provider that keeps its own runner->instance mapping must prefer it
+	// over that mapping: the server survives restarts, the mapping does not.
+	Destroy(ctx context.Context, runnerID string, opts DestroyOptions) error
 
 	// Status returns the current status of a Runner.
 	Status(ctx context.Context, runnerID string) (*RunnerStatus, error)
@@ -170,6 +174,11 @@ type SuspendOptions struct {
 	// Strategy is the requested suspend strategy (uses provider default if empty).
 	Strategy SuspendStrategy
 
+	// ProviderInstanceID is the provider-side instance id recorded on the
+	// runner row at spawn (runners.provider_instance_id). Empty when the
+	// server never learned one.
+	ProviderInstanceID string
+
 	// SaveSnapshot creates a snapshot before suspend (if provider supports).
 	SaveSnapshot bool
 
@@ -200,6 +209,12 @@ type ResumeOptions struct {
 	// RunnerID is the preferred runner ID (for pool, may get different one).
 	RunnerID string
 
+	// ProviderInstanceID is the provider-side instance id recorded for
+	// RunnerID at spawn. It is the only way to reach an instance a provider
+	// cannot enumerate - an E2B paused sandbox is absent from the sandbox
+	// list, so without this a restarted server can never resume or kill it.
+	ProviderInstanceID string
+
 	// SnapshotID is the snapshot to restore from (if available).
 	SnapshotID string
 
@@ -208,6 +223,13 @@ type ResumeOptions struct {
 
 	// SpawnOptions contains options for spawning a new runner if needed.
 	SpawnOpts *SpawnOptions
+}
+
+// DestroyOptions contains parameters for destroy operation.
+type DestroyOptions struct {
+	// ProviderInstanceID is the provider-side instance id recorded for the
+	// runner at spawn. See ResumeOptions.ProviderInstanceID.
+	ProviderInstanceID string
 }
 
 // ProviderCapabilities describes what the provider supports.

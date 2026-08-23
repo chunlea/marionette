@@ -315,7 +315,7 @@ func TestProvider_Destroy_Success(t *testing.T) {
 	mockClient.On("ContainerStop", ctx, "abc123", mock.Anything).Return(nil)
 	mockClient.On("ContainerRemove", ctx, "abc123", mock.Anything).Return(nil)
 
-	err := p.Destroy(ctx, runnerID)
+	err := p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	assert.NoError(t, err)
 	mockClient.AssertExpectations(t)
@@ -331,7 +331,7 @@ func TestProvider_Destroy_NotFound(t *testing.T) {
 	// Mock container not found
 	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{}, nil)
 
-	err := p.Destroy(ctx, runnerID)
+	err := p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	assert.Error(t, err)
 
@@ -782,7 +782,7 @@ func TestProvider_Destroy_StopFails(t *testing.T) {
 	// Mock stop fails with non-"not running" error
 	mockClient.On("ContainerStop", ctx, "abc123", mock.Anything).Return(errors.New("timeout"))
 
-	err := p.Destroy(ctx, runnerID)
+	err := p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	assert.Error(t, err)
 	var destroyErr *provider.ErrDestroyFailed
@@ -809,7 +809,7 @@ func TestProvider_Destroy_StopNotRunning_RemoveSucceeds(t *testing.T) {
 	// Mock remove succeeds
 	mockClient.On("ContainerRemove", ctx, "abc123", mock.Anything).Return(nil)
 
-	err := p.Destroy(ctx, runnerID)
+	err := p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	assert.NoError(t, err)
 	mockClient.AssertExpectations(t)
@@ -833,7 +833,7 @@ func TestProvider_Destroy_RemoveFails(t *testing.T) {
 	// Mock remove fails
 	mockClient.On("ContainerRemove", ctx, "abc123", mock.Anything).Return(errors.New("permission denied"))
 
-	err := p.Destroy(ctx, runnerID)
+	err := p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	assert.Error(t, err)
 	var destroyErr *provider.ErrDestroyFailed
@@ -1260,7 +1260,7 @@ func TestProvider_FindContainer_ListError(t *testing.T) {
 	// Mock list fails
 	mockClient.On("ContainerList", ctx, mock.Anything).Return([]types.Container{}, errors.New("docker error"))
 
-	err := p.Destroy(ctx, "run_test123")
+	err := p.Destroy(ctx, "run_test123", provider.DestroyOptions{})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "listing containers")

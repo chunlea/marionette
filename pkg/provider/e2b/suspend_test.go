@@ -491,7 +491,11 @@ func TestProviderResumeFromEndedSandbox(t *testing.T) {
 	assert.Equal(t, "sandbox-new", instance.ProviderID)
 }
 
-func TestProviderResumeResumeError(t *testing.T) {
+func TestProviderResumeConflictMeansAlreadyRunning(t *testing.T) {
+	// 409 on resume is E2B's way of saying the sandbox is already running.
+	// The caller asked for a usable runner and there is one, so this is a
+	// success; treating it as a failure used to strand a perfectly good
+	// sandbox behind a resume error.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/sandboxes" {
 			resp := []Sandbox{
@@ -505,17 +509,41 @@ func TestProviderResumeResumeError(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
-		if r.Method == http.MethodGet && r.URL.Path == "/sandboxes/sandbox-abc" {
-			resp := Sandbox{
-				SandboxID:  "sandbox-abc",
-				TemplateID: "base",
+		if r.Method == http.MethodPost && r.URL.Path == "/sandboxes/sandbox-abc/resume" {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(APIError{Message: "sandbox is already running"})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	p := newTestProvider(t, server.URL)
+	instance, err := p.Resume(context.Background(), "sess_123", provider.ResumeOptions{
+		RunnerID: "run_123",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "sandbox-abc", instance.ProviderID)
+	assert.Equal(t, provider.InstanceStatusRunning, instance.Status)
+}
+
+func TestProviderResumeServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/sandboxes" {
+			resp := []Sandbox{
+				{
+					SandboxID: "sandbox-abc",
+					Metadata: map[string]string{
+						"marionette.dev/runner-id": "run_123",
+					},
+				},
 			}
 			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
 		if r.Method == http.MethodPost && r.URL.Path == "/sandboxes/sandbox-abc/resume" {
-			// Conflict means sandbox is paused
-			w.WriteHeader(http.StatusConflict)
+			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(APIError{Message: "resume failed"})
 			return
 		}

@@ -117,11 +117,11 @@ func (p *Provider) Resume(ctx context.Context, sessionID string, opts provider.R
 }
 
 // suspendWithTerminatePreserveStorage deletes the pod but keeps the PVC.
-func (p *Provider) suspendWithTerminatePreserveStorage(ctx context.Context, runnerID string) error {
+func (p *Provider) suspendWithTerminatePreserveStorage(ctx context.Context, runnerID string, _ provider.SuspendOptions) error {
 	return p.destroyPod(ctx, runnerID, false)
 }
 
 // suspendWithTerminate deletes both the pod and the PVC.
-func (p *Provider) suspendWithTerminate(ctx context.Context, runnerID string) error {
+func (p *Provider) suspendWithTerminate(ctx context.Context, runnerID string, _ provider.SuspendOptions) error {
 	return p.destroyPod(ctx, runnerID, true)
 }

@@ -493,7 +493,7 @@ func TestDestroy_StopsTheRefresherAndRemovesRules(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, f.provider.networkIsolation.ResolvedPolicy("run_1"))
 
-	require.NoError(t, f.provider.Destroy(context.Background(), "run_1"))
+	require.NoError(t, f.provider.Destroy(context.Background(), "run_1", provider.DestroyOptions{}))
 
 	assert.True(t, containsFragment(f.log.snapshot(), "-X MARIONETTE_run_1"))
 	assert.Nil(t, f.provider.networkIsolation.ResolvedPolicy("run_1"))

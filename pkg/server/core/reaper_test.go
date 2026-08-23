@@ -114,6 +114,10 @@ type fakeProvider struct {
 	kind       provider.ProviderType
 	destroyed  []string
 	destroyErr error
+
+	// destroyedInstances records the provider instance id each Destroy was
+	// given, so a test can assert the reaper passes the persisted handle.
+	destroyedInstances []string
 }
 
 func (p *fakeProvider) Name() string                { return p.name }
@@ -122,11 +126,12 @@ func (p *fakeProvider) Spawn(context.Context, provider.SpawnOptions) (*provider.
 	return nil, errors.New("not implemented")
 }
 
-func (p *fakeProvider) Destroy(_ context.Context, runnerID string) error {
+func (p *fakeProvider) Destroy(_ context.Context, runnerID string, opts provider.DestroyOptions) error {
 	if p.destroyErr != nil {
 		return p.destroyErr
 	}
 	p.destroyed = append(p.destroyed, runnerID)
+	p.destroyedInstances = append(p.destroyedInstances, opts.ProviderInstanceID)
 	return nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 
+	"github.com/chunlea/marionette/pkg/server/admin"
 	"github.com/chunlea/marionette/pkg/server/api"
 	"github.com/chunlea/marionette/pkg/server/core"
 	"github.com/chunlea/marionette/pkg/store"
@@ -201,4 +202,56 @@ func toEventMessage(evt core.Event) api.EventMessage {
 		}
 	}
 	return msg
+}
+
+// runnerAdminAdapter implements admin.RunnerAdminService over the core runner
+// provisioner.
+//
+// It lives here for the same reason as the adapters above: pkg/server/admin
+// imports core, so core cannot import admin back to satisfy the interface
+// itself.
+type runnerAdminAdapter struct {
+	provisioner *core.RunnerProvisioner
+}
+
+// Spawn creates a runner on a managed provider.
+func (a *runnerAdminAdapter) Spawn(ctx context.Context, opts admin.SpawnRunnerOptions) (*store.Runner, error) {
+	return a.provisioner.Spawn(ctx, core.ProvisionOptions{
+		Name:             opts.Name,
+		ProviderConfigID: opts.ProviderConfigID,
+		ProviderName:     opts.Provider,
+		ProfileID:        opts.ProfileID,
+		Labels:           opts.Labels,
+		WorkspaceMount:   opts.WorkspaceMount,
+	})
+}
+
+// Destroy terminates a runner's instance.
+func (a *runnerAdminAdapter) Destroy(ctx context.Context, id string) error {
+	return a.provisioner.Destroy(ctx, id)
+}
+
+// Get retrieves a runner by ID.
+func (a *runnerAdminAdapter) Get(ctx context.Context, id string) (*store.Runner, error) {
+	return a.provisioner.Get(ctx, id)
+}
+
+// List returns runners matching opts.
+func (a *runnerAdminAdapter) List(ctx context.Context, opts admin.ListRunnersOptions) (*admin.ListResult[store.Runner], error) {
+	result, err := a.provisioner.List(ctx, store.ListRunnersOptions{
+		BaseListOptions: store.BaseListOptions{
+			Limit:  opts.Limit,
+			Cursor: opts.Cursor,
+		},
+		Status: opts.Status,
+		Labels: opts.Labels,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &admin.ListResult[store.Runner]{
+		Items:      result.Items,
+		NextCursor: result.NextCursor,
+		TotalCount: result.TotalCount,
+	}, nil
 }

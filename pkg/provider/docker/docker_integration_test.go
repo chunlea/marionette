@@ -83,7 +83,7 @@ func TestDockerProvider_SpawnDestroy_Integration(t *testing.T) {
 	assert.True(t, found, "spawned container should appear in list")
 
 	// Cleanup
-	err = p.Destroy(ctx, runnerID)
+	err = p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 	require.NoError(t, err)
 
 	// Verify destroyed
@@ -128,7 +128,7 @@ func TestDockerProvider_PauseUnpause_Integration(t *testing.T) {
 		RunnerToken: "test-token",
 	})
 	require.NoError(t, err)
-	defer p.Destroy(ctx, runnerID)
+	defer p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	t.Logf("Spawned container for pause test: %s", instance.ProviderID[:12])
 
@@ -202,7 +202,7 @@ func TestDockerProvider_NetworkAutoCreate_Integration(t *testing.T) {
 	t.Logf("Spawned container with auto-created network: %s", networkName)
 
 	// Cleanup container
-	defer p.Destroy(ctx, runnerID)
+	defer p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	assert.NotNil(t, instance)
 
@@ -215,7 +215,7 @@ func TestDockerProvider_NetworkAutoCreate_Integration(t *testing.T) {
 		RunnerToken: "test-token",
 	})
 	require.NoError(t, err)
-	defer p.Destroy(ctx, runnerID2)
+	defer p.Destroy(ctx, runnerID2, provider.DestroyOptions{})
 
 	assert.NotNil(t, instance2)
 }
@@ -256,7 +256,7 @@ func TestDockerProvider_ResourceLimits_Integration(t *testing.T) {
 		CPUs:        2.0,
 	})
 	require.NoError(t, err)
-	defer p.Destroy(ctx, runnerID)
+	defer p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	t.Logf("Spawned container with custom resources: %s", instance.ProviderID[:12])
 
@@ -312,7 +312,7 @@ func TestDockerProvider_Labels_Integration(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	defer p.Destroy(ctx, runnerID)
+	defer p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	// Inspect container to verify labels
 	info, err := client.ContainerInspect(ctx, instance.ProviderID)
@@ -365,7 +365,7 @@ func TestDockerProvider_Environment_Integration(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	defer p.Destroy(ctx, runnerID)
+	defer p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	// Inspect container to verify environment
 	info, err := client.ContainerInspect(ctx, instance.ProviderID)
@@ -425,7 +425,7 @@ func TestDockerProvider_NewFromJSON_Integration(t *testing.T) {
 		RunnerToken: "test-token",
 	})
 	require.NoError(t, err)
-	defer p.Destroy(ctx, runnerID)
+	defer p.Destroy(ctx, runnerID, provider.DestroyOptions{})
 
 	assert.Equal(t, runnerID, instance.ID)
 	assert.Equal(t, provider.InstanceStatusRunning, instance.Status)

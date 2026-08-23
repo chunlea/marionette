@@ -57,7 +57,7 @@ func (p *Provider) Resume(ctx context.Context, sessionID string, opts provider.R
 	switch status.Status {
 	case provider.InstanceStatusPaused:
 		// Unpause the container.
-		if err := p.Unpause(ctx, opts.RunnerID); err != nil {
+		if err := p.unpause(ctx, opts.RunnerID, opts.ProviderInstanceID); err != nil {
 			return nil, &provider.ErrResumeFailed{
 				SessionID: sessionID,
 				Cause:     err,
@@ -70,7 +70,7 @@ func (p *Provider) Resume(ctx context.Context, sessionID string, opts provider.R
 
 	case provider.InstanceStatusStopped:
 		// Container exists but stopped - start it.
-		containerID, err := p.findContainerByRunnerID(ctx, opts.RunnerID)
+		containerID, err := p.findContainerByRunnerID(ctx, opts.RunnerID, opts.ProviderInstanceID)
 		if err != nil {
 			return nil, &provider.ErrResumeFailed{
 				SessionID: sessionID,
@@ -104,13 +104,13 @@ func (p *Provider) Resume(ctx context.Context, sessionID string, opts provider.R
 }
 
 // suspendWithPause uses docker pause to suspend the runner.
-func (p *Provider) suspendWithPause(ctx context.Context, runnerID string) error {
-	return p.Pause(ctx, runnerID)
+func (p *Provider) suspendWithPause(ctx context.Context, runnerID string, opts provider.SuspendOptions) error {
+	return p.pause(ctx, runnerID, opts.ProviderInstanceID)
 }
 
 // suspendWithTerminatePreserveStorage stops the container but keeps volumes.
-func (p *Provider) suspendWithTerminatePreserveStorage(ctx context.Context, runnerID string) error {
-	containerID, err := p.findContainerByRunnerID(ctx, runnerID)
+func (p *Provider) suspendWithTerminatePreserveStorage(ctx context.Context, runnerID string, opts provider.SuspendOptions) error {
+	containerID, err := p.findContainerByRunnerID(ctx, runnerID, opts.ProviderInstanceID)
 	if err != nil {
 		return err
 	}
@@ -127,8 +127,10 @@ func (p *Provider) suspendWithTerminatePreserveStorage(ctx context.Context, runn
 }
 
 // suspendWithTerminate fully destroys the runner.
-func (p *Provider) suspendWithTerminate(ctx context.Context, runnerID string) error {
-	return p.Destroy(ctx, runnerID)
+func (p *Provider) suspendWithTerminate(ctx context.Context, runnerID string, opts provider.SuspendOptions) error {
+	return p.Destroy(ctx, runnerID, provider.DestroyOptions{
+		ProviderInstanceID: opts.ProviderInstanceID,
+	})
 }
 
 // resumeWithNewContainer spawns a new container for resume.
