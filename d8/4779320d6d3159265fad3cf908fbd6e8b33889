@@ -1,0 +1,83 @@
+pkg/agent/android_stream.go
+  s_e995f4552d48c1::t_ac177c217aa20b 1-4
+pkg/agent/android_stream_test.go
+  s_e995f4552d48c1::t_1a7eb73eb096ad 1-4
+pkg/streaming/android/adb.go
+  s_e995f4552d48c1::t_cb87870a3dbf44 1-4
+pkg/streaming/android/adb_test.go
+  s_e995f4552d48c1::t_5d3654f1c06a4a 1-4
+pkg/streaming/android/errors.go
+  s_e995f4552d48c1::t_b5ed597878b167 1-4
+pkg/streaming/android/errors_test.go
+  s_e995f4552d48c1::t_4847a19ab9fd21 1-4
+pkg/streaming/android/interface.go
+  s_e995f4552d48c1::t_b9b4b430073298 1-4
+pkg/streaming/android/mock.go
+  s_e995f4552d48c1::t_0cd4215168ddbd 1-4
+pkg/streaming/android/mock_test.go
+  s_e995f4552d48c1::t_0e2164a9911c21 1-4
+pkg/streaming/android/scrcpy/config.go
+  s_e995f4552d48c1::t_54ef0e803b2e5d 1-4
+pkg/streaming/android/scrcpy/config_test.go
+  s_e995f4552d48c1::t_0b488f7bdb0521 1-4
+pkg/streaming/android/scrcpy/h264.go
+  s_e995f4552d48c1::t_ebb7ef81104939 1-4
+pkg/streaming/android/scrcpy/h264_test.go
+  s_e995f4552d48c1::t_c4cf0772a92ce5 1-4
+pkg/streaming/android/scrcpy/process.go
+  s_e995f4552d48c1::t_96e9365c45585b 1-4
+pkg/streaming/android/scrcpy/provider.go
+  s_e995f4552d48c1::t_dce96d315ecad1 1-4
+pkg/streaming/android/scrcpy/stream.go
+  s_e995f4552d48c1::t_38f75769fd9d38 1-4
+pkg/streaming/android/scrcpy/stream_provider.go
+  s_e995f4552d48c1::t_8bb4ddad2db0c8 1-4
+pkg/streaming/android/types.go
+  s_e995f4552d48c1::t_6ce8e1988f2441 1-4
+pkg/streaming/android/types_test.go
+  s_e995f4552d48c1::t_d7a8365faa10fc 1-4
+pkg/streaming/browser/buffer.go
+  s_476c758fe5506c::t_72e04b783cc360 1-4
+pkg/streaming/browser/buffer_test.go
+  s_476c758fe5506c::t_18701a84aa5e36 1-4
+pkg/streaming/browser/cdp_commands.go
+  s_476c758fe5506c::t_d60a575187c6fd 1-4
+pkg/streaming/browser/cdp_commands_test.go
+  s_476c758fe5506c::t_6794ff501e3b4e 1-4
+pkg/streaming/browser/cdp_interface.go
+  s_476c758fe5506c::t_017bfef853493d 1-4
+pkg/streaming/browser/cdp_interface_test.go
+  s_476c758fe5506c::t_83007e2a8cfd4d 1-4
+pkg/streaming/browser/cdp_provider.go
+  s_476c758fe5506c::t_af3d40dee6cccc 1-4
+pkg/streaming/browser/chrome.go
+  s_476c758fe5506c::t_140548f0e244e1 1-4
+pkg/streaming/browser/chrome_test.go
+  s_476c758fe5506c::t_e24c7bb93856e5 1-4
+pkg/streaming/browser/mock_provider_test.go
+  s_476c758fe5506c::t_2583428a101a0f 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "d84779320d6d3159265fad3cf908fbd6e8b33889",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
