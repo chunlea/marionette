@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminClient } from '../admin'
-import type { Stream, StreamList, StartStreamRequest } from '@/types/stream'
+import type { Stream, StreamList, StreamSettings } from '@/types/stream'
 
 // Query keys for caching
 export const streamKeys = {
@@ -23,7 +23,7 @@ export function useStream(streamId: string | undefined) {
     refetchInterval: (query) => {
       // Auto-refresh while stream is starting
       const stream = query.state.data
-      if (stream?.status === 'starting' || stream?.status === 'pending') {
+      if (stream?.state === 'starting' || stream?.state === 'pending') {
         return 2000 // 2 seconds
       }
       return false
@@ -57,7 +57,7 @@ export function useStartDesktopStream() {
     }: {
       sessionId: string
       runnerId?: string
-      config?: StartStreamRequest
+      config?: StreamSettings
     }) => {
       const { data } = await adminClient.post<Stream>(
         `/streams`,
@@ -107,7 +107,7 @@ export function useActiveDesktopStream(sessionId: string | undefined) {
   const { data: streams, ...rest } = useSessionStreams(sessionId)
 
   const activeStream = streams?.items?.find(
-    (s) => s.status === 'active' || s.status === 'starting'
+    (s) => s.state === 'active' || s.state === 'starting'
   )
 
   return {

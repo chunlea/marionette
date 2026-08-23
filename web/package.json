@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build && pnpm typecheck",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
-    "generate:api": "openapi-typescript ../pkg/server/api/openapi.yaml -o src/types/api.gen.ts",
+    "generate:api": "openapi-typescript ../pkg/server/api/openapi.yaml -o src/types/api.gen.ts && openapi-typescript ../pkg/server/admin/openapi.yaml -o src/types/admin.gen.ts",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",

@@ -4,7 +4,7 @@
  */
 
 export interface paths {
-    "/api/v1/events": {
+    "/admin/api/v1/action-logs": {
         parameters: {
             query?: never;
             header?: never;
@@ -12,10 +12,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Stream server events over WebSocket
-         * @description Emits permission requests and session, task and runner state changes.
+         * List audited actions
+         * @description Every state-changing call, who made it, and whether it succeeded.
          */
-        get: operations["getEvents"];
+        get: operations["getActionLogs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -24,64 +24,228 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/logs/{taskID}/stream": {
+    "/admin/api/v1/action-logs/{logID}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
+        /** Get an audited action */
+        get: operations["getActionLogsByLogID"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/agent-configs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List agent configs */
+        get: operations["getAgentConfigs"];
+        put?: never;
         /**
-         * Stream task logs over WebSocket
-         * @description Upgrades to a WebSocket that emits one JSON log message per line. Browsers cannot set headers on a WebSocket handshake, so this route also accepts the API key as a ?token= query parameter.
+         * Create an agent config
+         * @description The agent's API key is encrypted at rest and never returned.
          */
-        get: operations["getLogsStream"];
-        put?: never;
-        post?: never;
+        post: operations["postAgentConfigs"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/permissions": {
+    "/admin/api/v1/agent-configs/{configID}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
+        /** Get an agent config */
+        get: operations["getAgentConfigsByConfigID"];
+        /** Update an agent config */
+        put: operations["putAgentConfigsByConfigID"];
+        post?: never;
+        /** Delete an agent config */
+        delete: operations["deleteAgentConfigsByConfigID"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List API keys */
+        get: operations["getKeys"];
+        put?: never;
         /**
-         * List permission requests
-         * @description Permission requests never expire on their own: they stay pending until approved, denied, or cancelled with the task.
+         * Create an API key
+         * @description The response is the only time the token is readable.
          */
-        get: operations["getPermissions"];
-        put?: never;
-        post?: never;
+        post: operations["postKeys"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/permissions/{permissionID}": {
+    "/admin/api/v1/keys/{keyID}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get a permission request */
-        get: operations["getPermissionsByPermissionID"];
+        /** Get an API key */
+        get: operations["getKeysByKeyID"];
         put?: never;
         post?: never;
+        /**
+         * Revoke an API key
+         * @description Revocation is immediate and permanent; keys are never deleted, so the audit trail survives.
+         */
+        delete: operations["deleteKeysByKeyID"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List profiles */
+        get: operations["getProfiles"];
+        put?: never;
+        /**
+         * Create a profile
+         * @description A profile is the reusable runner shape a session asks for by id.
+         */
+        post: operations["postProfiles"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/permissions/{permissionID}/approve": {
+    "/admin/api/v1/profiles/{profileID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a profile */
+        get: operations["getProfilesByProfileID"];
+        /**
+         * Update a profile
+         * @description Built-in profiles cannot be edited.
+         */
+        put: operations["putProfilesByProfileID"];
+        post?: never;
+        /** Delete a profile */
+        delete: operations["deleteProfilesByProfileID"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/provider-configs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List provider configs */
+        get: operations["getProviderConfigs"];
+        put?: never;
+        /**
+         * Create a provider config
+         * @description The config block is provider-specific and is stored and returned as given.
+         */
+        post: operations["postProviderConfigs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/provider-configs/{configID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a provider config */
+        get: operations["getProviderConfigsByConfigID"];
+        /** Update a provider config */
+        put: operations["putProviderConfigsByConfigID"];
+        post?: never;
+        /** Delete a provider config */
+        delete: operations["deleteProviderConfigsByConfigID"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/runner-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List runner tokens */
+        get: operations["getRunnerTokens"];
+        put?: never;
+        /**
+         * Create a runner token
+         * @description The credential a pool runner presents when it joins. The response is the only time it is readable.
+         */
+        post: operations["postRunnerTokens"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/runner-tokens/{tokenID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a runner token */
+        get: operations["getRunnerTokensByTokenID"];
+        put?: never;
+        post?: never;
+        /** Revoke a runner token */
+        delete: operations["deleteRunnerTokensByTokenID"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/runner-tokens/{tokenID}/rotate": {
         parameters: {
             query?: never;
             header?: never;
@@ -91,34 +255,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Approve a permission request
-         * @description May be called while the session is suspended; the response is delivered when the session resumes.
+         * Rotate a runner token
+         * @description Issues a replacement and gives the runner until rotation_deadline to start using it. The response is the only time the new token is readable.
          */
-        post: operations["postPermissionsApprove"];
+        post: operations["postRunnerTokensRotate"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/permissions/{permissionID}/deny": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Deny a permission request */
-        post: operations["postPermissionsDeny"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/runners": {
+    "/admin/api/v1/runners": {
         parameters: {
             query?: never;
             header?: never;
@@ -127,7 +274,7 @@ export interface paths {
         };
         /**
          * List runners
-         * @description Runners are managed by the server; this view is read-only. Provisioning lives in the admin API.
+         * @description The operator's view, which unlike the public one names the provider behind each runner.
          */
         get: operations["getRunners"];
         put?: never;
@@ -138,7 +285,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/runners/{runnerID}": {
+    "/admin/api/v1/runners/spawn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Spawn a runner
+         * @description Provisions a runner through the given provider config. Pool runners join by themselves and are not spawned here.
+         */
+        post: operations["postRunnersSpawn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/runners/{runnerID}": {
         parameters: {
             query?: never;
             header?: never;
@@ -149,84 +316,17 @@ export interface paths {
         get: operations["getRunnersByRunnerID"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Destroy a runner
+         * @description Terminates the runner through its provider and removes it.
+         */
+        delete: operations["deleteRunnersByRunnerID"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/scheduled-tasks": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List scheduled tasks */
-        get: operations["getScheduledTasks"];
-        put?: never;
-        /** Create a scheduled task */
-        post: operations["postScheduledTasks"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/scheduled-tasks/{scheduledTaskID}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get a scheduled task */
-        get: operations["getScheduledTasksByScheduledTaskID"];
-        put?: never;
-        post?: never;
-        /** Delete a scheduled task */
-        delete: operations["deleteScheduledTasksByScheduledTaskID"];
-        options?: never;
-        head?: never;
-        /** Update a scheduled task */
-        patch: operations["patchScheduledTasksByScheduledTaskID"];
-        trace?: never;
-    };
-    "/api/v1/scheduled-tasks/{scheduledTaskID}/pause": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Pause a scheduled task */
-        post: operations["postScheduledTasksPause"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/scheduled-tasks/{scheduledTaskID}/resume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Resume a paused scheduled task */
-        post: operations["postScheduledTasksResume"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/scheduled-tasks/{scheduledTaskID}/trigger": {
+    "/admin/api/v1/sessions/{sessionID}/activate": {
         parameters: {
             query?: never;
             header?: never;
@@ -236,59 +336,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Trigger a scheduled task now
-         * @description Creates the task the schedule would have created, without waiting for the next occurrence.
+         * Attach a runner to a pending session
+         * @description An operator escape hatch; ordinary session lifecycle runs through the public API.
          */
-        post: operations["postScheduledTasksTrigger"];
+        post: operations["postSessionsActivate"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List sessions */
-        get: operations["getSessions"];
-        put?: never;
-        /**
-         * Create a session
-         * @description Creates a session and, unless an existing workspace is given, the workspace behind it. The session starts pending and becomes active once a runner is attached.
-         */
-        post: operations["postSessions"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionID}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get a session */
-        get: operations["getSessionsBySessionID"];
-        put?: never;
-        post?: never;
-        /**
-         * Terminate a session
-         * @description Ends the session and releases its resources. Terminated sessions cannot be resumed.
-         */
-        delete: operations["deleteSessionsBySessionID"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionID}/resume": {
+    "/admin/api/v1/sessions/{sessionID}/suspend": {
         parameters: {
             query?: never;
             header?: never;
@@ -297,30 +355,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Resume a suspended session
-         * @description Acquires a runner, restores the workspace and context, and delivers any permission responses that arrived while the session was suspended.
-         */
-        post: operations["postSessionsResume"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionID}/suspend": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Suspend a session
-         * @description Releases the runner while preserving the workspace and the agent context, so the session can be resumed later.
-         */
+        /** Suspend a session */
         post: operations["postSessionsSuspend"];
         delete?: never;
         options?: never;
@@ -328,28 +363,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/sessions/{sessionID}/tunnels": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List a session's tunnels */
-        get: operations["getSessionsTunnels"];
-        put?: never;
-        /**
-         * Open a tunnel into a session
-         * @description Forwards a port inside the runner through the API server. The response is the only place the tunnel token is readable.
-         */
-        post: operations["postSessionsTunnels"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/streams/{streamID}/ws": {
+    "/admin/api/v1/signaling": {
         parameters: {
             query?: never;
             header?: never;
@@ -357,10 +371,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Stream browser frames over WebSocket
-         * @description Sends rendered frames to the client and accepts input events back.
+         * WebRTC signalling
+         * @description Part of the frozen streaming subsystem: served only when the streaming handlers are configured, and hidden in the dashboard unless it is built with VITE_ENABLE_STREAMING.
+         *
+         *     A browser cannot attach basic auth to a WebSocket handshake, so the dashboard cannot reach this endpoint at all today; unfreezing desktop streaming means giving it a query-token path like the public log stream has.
          */
-        get: operations["getStreamsWs"];
+        get: operations["getSignaling"];
         put?: never;
         post?: never;
         delete?: never;
@@ -369,36 +385,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/tasks": {
+    "/admin/api/v1/streams": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List tasks */
-        get: operations["getTasks"];
+        /**
+         * List desktop streams
+         * @description Part of the frozen streaming subsystem: served only when the streaming handlers are configured, and hidden in the dashboard unless it is built with VITE_ENABLE_STREAMING.
+         */
+        get: operations["getStreams"];
         put?: never;
         /**
-         * Create a task
-         * @description Queues a prompt in a session. If the session is active the task is dispatched immediately; if it is pending or suspended, creating the task also brings it up.
+         * Start a desktop stream
+         * @description Part of the frozen streaming subsystem: served only when the streaming handlers are configured, and hidden in the dashboard unless it is built with VITE_ENABLE_STREAMING.
          */
-        post: operations["postTasks"];
+        post: operations["postStreams"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/tasks/{taskID}": {
+    "/admin/api/v1/streams/{streamID}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get a task */
-        get: operations["getTasksByTaskID"];
+        /**
+         * Get a desktop stream
+         * @description Part of the frozen streaming subsystem: served only when the streaming handlers are configured, and hidden in the dashboard unless it is built with VITE_ENABLE_STREAMING.
+         */
+        get: operations["getStreamsByStreamID"];
+        put?: never;
+        post?: never;
+        /**
+         * Stop a desktop stream
+         * @description Part of the frozen streaming subsystem: served only when the streaming handlers are configured, and hidden in the dashboard unless it is built with VITE_ENABLE_STREAMING.
+         */
+        delete: operations["deleteStreamsByStreamID"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/webhook-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List delivery attempts */
+        get: operations["getWebhookEvents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -407,52 +450,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/tasks/{taskID}/cancel": {
+    "/admin/api/v1/webhook-events/{eventID}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        /** Cancel a task */
-        post: operations["postTasksCancel"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/tasks/{taskID}/execute": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Execute a pending task
-         * @description Dispatches a task that is still pending. Returns as soon as the runner has accepted the work.
-         */
-        post: operations["postTasksExecute"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/tasks/{taskID}/logs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List task logs */
-        get: operations["getTasksLogs"];
+        /** Get a delivery attempt */
+        get: operations["getWebhookEventsByEventID"];
         put?: never;
         post?: never;
         delete?: never;
@@ -461,7 +467,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/tasks/{taskID}/retry": {
+    "/admin/api/v1/webhook-events/{eventID}/retry": {
         parameters: {
             query?: never;
             header?: never;
@@ -471,17 +477,77 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Retry a failed task
-         * @description Starts a new run of a failed task. Fails with 409 once max_retries is reached.
+         * Retry a failed delivery
+         * @description Queues the event again immediately, without waiting for the backoff.
          */
-        post: operations["postTasksRetry"];
+        post: operations["postWebhookEventsRetry"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/tasks/{taskID}/runs": {
+    "/admin/api/v1/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List webhooks */
+        get: operations["getWebhooks"];
+        put?: never;
+        /**
+         * Create a webhook
+         * @description The signing secret in the response is readable only here and on rotation.
+         */
+        post: operations["postWebhooks"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/webhooks/{webhookID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a webhook */
+        get: operations["getWebhooksByWebhookID"];
+        /** Update a webhook */
+        put: operations["putWebhooksByWebhookID"];
+        post?: never;
+        /** Delete a webhook */
+        delete: operations["deleteWebhooksByWebhookID"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/v1/webhooks/{webhookID}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate a webhook's signing secret
+         * @description Deliveries are signed with the new secret from the next event onward.
+         */
+        post: operations["postWebhooksRotateSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/status": {
         parameters: {
             query?: never;
             header?: never;
@@ -489,74 +555,16 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List task runs
-         * @description Lists the execution attempts of a task, oldest attempt first. The task itself only carries the latest status, so this is where a retry that failed before a later attempt succeeded is visible.
+         * Status of every service in the process
+         * @description The server, admin, gRPC and metrics listeners, as registered at start-up.
          */
-        get: operations["getTasksRuns"];
+        get: operations["getStatus"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/api/v1/tunnels/{tunnelID}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get a tunnel */
-        get: operations["getTunnelsByTunnelID"];
-        put?: never;
-        post?: never;
-        /** Close a tunnel */
-        delete: operations["deleteTunnelsByTunnelID"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/workspaces": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List workspaces */
-        get: operations["getWorkspaces"];
-        put?: never;
-        /** Create a workspace */
-        post: operations["postWorkspaces"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/workspaces/{workspaceID}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get a workspace */
-        get: operations["getWorkspacesByWorkspaceID"];
-        put?: never;
-        post?: never;
-        /**
-         * Delete a workspace
-         * @description Soft-deletes the workspace. Fails with 409 while a session still uses it.
-         */
-        delete: operations["deleteWorkspacesByWorkspaceID"];
-        options?: never;
-        head?: never;
-        /** Update a workspace */
-        patch: operations["patchWorkspacesByWorkspaceID"];
         trace?: never;
     };
     "/docs": {
@@ -585,6 +593,46 @@ export interface paths {
         };
         /** Liveness probe */
         get: operations["getHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Liveness probe with per-check detail
+         * @description Served only when a health service is configured.
+         */
+        get: operations["getHealthLive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Readiness probe
+         * @description Reports the dependencies the server needs before it can serve traffic.
+         */
+        get: operations["getHealthReady"];
         put?: never;
         post?: never;
         delete?: never;
@@ -627,7 +675,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/tunnels/{tunnelID}/": {
+    "/{path}": {
         parameters: {
             query?: never;
             header?: never;
@@ -635,30 +683,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Tunnel entry point
-         * @description Serves the tunnelled application. Authenticated by the tunnel token (Authorization: Bearer, the X-Marionette-Tunnel-Token header, or HTTP basic with the token as the password) unless the tunnel is public.
+         * The dashboard
+         * @description Everything not matched above serves the embedded single-page app, falling back to index.html so client-side routes deep-link. This origin also forwards /api/v1 to the public API, so the browser has one origin for both.
          */
-        get: operations["openTunnel"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/tunnels/{tunnelID}/{path}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Tunnel passthrough
-         * @description Proxies any path, and any method, to the tunnelled service. WebSocket upgrades are relayed too.
-         */
-        get: operations["proxyThroughTunnel"];
+        get: operations["getDashboard"];
         put?: never;
         post?: never;
         delete?: never;
@@ -671,142 +699,304 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        ApproveRequest: {
-            reason?: string;
-        };
-        CreateScheduledTaskRequest: {
-            session_id: string;
-            name: string;
-            description?: string;
-            cron_expression: string;
-            timezone?: string;
-            prompt_template: string;
-            /** Format: int32 */
-            timeout_seconds?: number;
-            /** Format: int32 */
-            max_retries?: number;
-            on_failure?: string;
-            /** Format: int32 */
-            max_consecutive_failures?: number;
-            labels?: {
-                [key: string]: string;
-            };
-            annotations?: {
-                [key: string]: string;
-            };
-        };
-        CreateSessionRequest: {
-            name?: string;
-            agent: string;
-            agent_config_id?: string;
-            api_key?: string;
-            workspace_id?: string;
-            profile_id?: string;
-            lifecycle_mode?: string;
-            /** Format: int32 */
-            idle_timeout_seconds?: number;
-            network_policy?: string;
-            allowed_hosts?: string[];
-            labels?: {
-                [key: string]: string;
-            };
-        };
-        CreateTaskRequest: {
-            session_id: string;
-            prompt: string;
-            continue_from?: string;
-            /** Format: int32 */
-            timeout_seconds?: number;
-            /** Format: int32 */
-            max_retries?: number;
-        };
-        CreateTunnelRequest: {
-            session_id?: string;
-            type: string;
-            /** Format: int32 */
-            local_port: number;
-            public: boolean;
-        };
-        CreateWorkspaceRequest: {
-            name?: string;
-            persist?: boolean;
-            storage_type?: string;
-            mobility?: string;
-            /** Format: int32 */
-            disk_quota_mb?: number;
-            labels?: {
-                [key: string]: string;
-            };
-            annotations?: {
-                [key: string]: string;
-            };
-        };
-        DenyRequest: {
-            reason?: string;
-        };
-        ErrorResponse: {
-            code: string;
-            message: string;
-        };
-        HealthStatus: {
-            status: string;
-        };
-        Log: {
+        APIKey: {
             id: string;
-            session_id: string;
-            task_id: string;
-            run_id: string;
-            runner_id: string;
-            /** @enum {string} */
-            stream: "stdout" | "stderr" | "system";
-            /** @enum {string} */
-            level: "debug" | "info" | "warn" | "error";
-            content: string;
-            /** Format: int64 */
-            sequence: number;
-            metadata: {
+            name: string;
+            key_prefix: string;
+            scopes: string[];
+            labels: {
+                [key: string]: string;
+            };
+            annotations: {
                 [key: string]: string;
             };
             /** Format: date-time */
             created_at: string;
+            created_by?: string;
+            /** Format: date-time */
+            last_used_at?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            /** Format: date-time */
+            revoked_at?: string;
+            revoke_reason?: string;
         };
-        LogList: {
-            items: components["schemas"]["Log"][];
+        APIKeyList: {
+            items: components["schemas"]["APIKey"][];
             /** Format: int64 */
             total_count: number;
             has_more: boolean;
             next_cursor?: string;
         };
-        PermissionRequest: {
+        Accepted: {
+            status: string;
+        };
+        ActionLog: {
             id: string;
-            original_request_id: string;
-            session_id: string;
-            task_id: string;
-            run_id: string;
-            tool: string;
+            /** @enum {string} */
+            actor_type: "user" | "api_key" | "system" | "runner";
+            actor_id?: string;
+            actor_name?: string;
             action: string;
-            context?: string;
-            /** @enum {string} */
-            risk_level: "low" | "medium" | "high" | "critical";
-            /** @enum {string} */
-            status: "pending" | "approved" | "denied" | "expired" | "canceled";
-            /** Format: int32 */
-            suspend_after_seconds: number;
-            responded_by?: string;
-            response_reason?: string;
+            resource_type: string;
+            resource_id: string;
+            session_id?: string;
+            task_id?: string;
+            details: {
+                [key: string]: unknown;
+            };
+            ip_address?: string;
+            user_agent?: string;
+            success: boolean;
+            error_message?: string;
             /** Format: date-time */
-            responded_at?: string;
+            created_at: string;
+        };
+        ActionLogList: {
+            items: components["schemas"]["ActionLog"][];
+            /** Format: int64 */
+            total_count: number;
+            has_more: boolean;
+            next_cursor?: string;
+        };
+        ActivateSessionRequest: {
+            runner_id: string;
+        };
+        AgentConfig: {
+            id: string;
+            name: string;
+            agent: string;
+            model?: string;
+            base_url?: string;
+            extra: {
+                [key: string]: unknown;
+            };
+            is_default: boolean;
+            labels: {
+                [key: string]: string;
+            };
+            annotations: {
+                [key: string]: string;
+            };
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
         };
-        PermissionRequestList: {
-            items: components["schemas"]["PermissionRequest"][];
+        AgentConfigList: {
+            items: components["schemas"]["AgentConfig"][];
             /** Format: int64 */
             total_count: number;
             has_more: boolean;
             next_cursor?: string;
+        };
+        CheckResult: {
+            status: string;
+            message?: string;
+            latency?: string;
+        };
+        CreateAPIKeyRequest: {
+            name: string;
+            scopes?: string[];
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            expires_at?: string;
+        };
+        CreateAgentConfigRequest: {
+            name: string;
+            agent: string;
+            api_key: string;
+            model?: string;
+            base_url?: string;
+            extra?: {
+                [key: string]: unknown;
+            };
+            is_default?: boolean;
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        CreateProfileRequest: {
+            name: string;
+            description?: string;
+            provider_config_id?: string;
+            resources?: {
+                [key: string]: unknown;
+            };
+            network?: {
+                [key: string]: unknown;
+            };
+            init_script?: string;
+            cleanup_script?: string;
+            tunnels?: {
+                [key: string]: unknown;
+            }[];
+            selector?: {
+                [key: string]: unknown;
+            };
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+        };
+        CreateProviderConfigRequest: {
+            name: string;
+            provider: string;
+            config?: {
+                [key: string]: unknown;
+            };
+            suspend_config?: {
+                [key: string]: unknown;
+            };
+            is_default?: boolean;
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        CreateRunnerTokenRequest: {
+            pool_name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            expires_at?: string;
+        };
+        CreateWebhookRequest: {
+            name: string;
+            url: string;
+            events: string[];
+            /** Format: int32 */
+            max_retries?: number;
+            /** Format: int32 */
+            retry_delay_seconds?: number;
+            /** Format: int32 */
+            timeout_seconds?: number;
+            headers?: {
+                [key: string]: string;
+            };
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+        };
+        CreatedAPIKey: {
+            key?: components["schemas"]["APIKey"];
+            raw_token: string;
+        };
+        CreatedRunnerToken: {
+            token?: components["schemas"]["RunnerToken"];
+            raw_token: string;
+        };
+        CreatedWebhook: {
+            webhook?: components["schemas"]["Webhook"];
+            secret: string;
+        };
+        ErrorResponse: {
+            code: string;
+            message: string;
+        };
+        Health: {
+            status: string;
+            version: string;
+            service: string;
+        };
+        Profile: {
+            id: string;
+            name: string;
+            description?: string;
+            provider_config_id?: string;
+            resources: {
+                [key: string]: unknown;
+            };
+            network: {
+                [key: string]: unknown;
+            };
+            init_script?: string;
+            cleanup_script?: string;
+            tunnels: {
+                [key: string]: unknown;
+            }[];
+            selector: {
+                [key: string]: unknown;
+            };
+            is_builtin: boolean;
+            labels: {
+                [key: string]: string;
+            };
+            annotations: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ProfileList: {
+            items: components["schemas"]["Profile"][];
+            /** Format: int64 */
+            total_count: number;
+            has_more: boolean;
+            next_cursor?: string;
+        };
+        ProviderConfig: {
+            id: string;
+            name: string;
+            provider: string;
+            config: {
+                [key: string]: unknown;
+            };
+            suspend_config: {
+                [key: string]: unknown;
+            };
+            is_default: boolean;
+            labels: {
+                [key: string]: string;
+            };
+            annotations: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ProviderConfigList: {
+            items: components["schemas"]["ProviderConfig"][];
+            /** Format: int64 */
+            total_count: number;
+            has_more: boolean;
+            next_cursor?: string;
+        };
+        ResolutionRequest: {
+            /** Format: int32 */
+            width: number;
+            /** Format: int32 */
+            height: number;
+        };
+        Response: {
+            status: string;
+            checks?: {
+                [key: string]: components["schemas"]["CheckResult"];
+            };
+        };
+        RevokeAPIKeyRequest: {
+            reason?: string;
+        };
+        RevokeRunnerTokenRequest: {
+            reason?: string;
+        };
+        RotatedWebhookSecret: {
+            secret: string;
+            secret_prefix: string;
         };
         Runner: {
             id: string;
@@ -819,6 +1009,8 @@ export interface components {
             /** @enum {string} */
             sandbox_mode: "runner-is-sandbox" | "runner-creates-sandbox" | "none";
             sandbox_types: string[];
+            provider_config_id?: string;
+            provider_instance_id?: string;
             pool_name?: string;
             profile_id?: string;
             capabilities: string[];
@@ -842,259 +1034,238 @@ export interface components {
             has_more: boolean;
             next_cursor?: string;
         };
-        ScheduledTask: {
+        RunnerToken: {
             id: string;
-            session_id: string;
-            name: string;
-            description?: string;
-            cron_expression: string;
-            timezone: string;
-            prompt_template: string;
-            /** Format: int32 */
-            timeout_seconds: number;
-            /** Format: int32 */
-            max_retries: number;
-            /** @enum {string} */
-            status: "active" | "paused" | "disabled";
-            /** Format: date-time */
-            next_run_at?: string;
-            /** Format: date-time */
-            last_run_at?: string;
-            last_task_id?: string;
-            /** Format: int32 */
-            run_count: number;
-            /** @enum {string} */
-            on_failure: "continue" | "pause_on_failure" | "disable_on_failure";
-            /** Format: int32 */
-            failure_count: number;
-            /** Format: int32 */
-            consecutive_failures: number;
-            /** Format: int32 */
-            max_consecutive_failures?: number;
-            labels: {
-                [key: string]: string;
-            };
-            annotations: {
-                [key: string]: string;
-            };
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        ScheduledTaskList: {
-            items: components["schemas"]["ScheduledTask"][];
-            /** Format: int64 */
-            total_count: number;
-            has_more: boolean;
-            next_cursor?: string;
-        };
-        Session: {
-            id: string;
-            name?: string;
-            /** @enum {string} */
-            status: "pending" | "active" | "suspended" | "resuming" | "terminated";
-            agent: string;
-            agent_version?: string;
-            agent_config_id?: string;
-            is_byok: boolean;
+            token_prefix: string;
             runner_id?: string;
-            previous_runner_id?: string;
-            workspace_id: string;
-            profile_id?: string;
+            pool_name: string;
             /** @enum {string} */
-            network_policy: "none" | "allow_list" | "proxy" | "air_gapped";
-            allowed_hosts: string[];
-            /** @enum {string} */
-            lifecycle_mode: "on_demand" | "always_on" | "scheduled";
-            /** Format: int32 */
-            idle_timeout_seconds?: number;
-            /** Format: int32 */
-            max_lifetime_seconds?: number;
-            suspend_strategy?: string;
-            schedule_cron?: string;
-            schedule_timezone?: string;
+            status: "active" | "rotating" | "revoked" | "expired";
             /** Format: date-time */
-            next_scheduled_at?: string;
+            rotation_deadline?: string;
             labels: {
-                [key: string]: string;
-            };
-            annotations: {
-                [key: string]: string;
-            };
-            /** Format: date-time */
-            last_activity_at?: string;
-            /** Format: date-time */
-            suspended_at?: string;
-            /** Format: date-time */
-            resumed_at?: string;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        SessionList: {
-            items: components["schemas"]["Session"][];
-            /** Format: int64 */
-            total_count: number;
-            has_more: boolean;
-            next_cursor?: string;
-        };
-        Task: {
-            id: string;
-            session_id: string;
-            prompt: string;
-            /** @enum {string} */
-            status: "pending" | "running" | "completed" | "failed" | "canceled";
-            /** Format: int32 */
-            max_retries: number;
-            /** Format: int32 */
-            retry_count: number;
-            /** Format: int32 */
-            timeout_seconds: number;
-            labels: {
-                [key: string]: string;
-            };
-            annotations: {
                 [key: string]: string;
             };
             /** Format: date-time */
             created_at: string;
+            created_by?: string;
             /** Format: date-time */
-            updated_at: string;
-        };
-        TaskExecutionAccepted: {
-            status: string;
-        };
-        TaskList: {
-            items: components["schemas"]["Task"][];
-            /** Format: int64 */
-            total_count: number;
-            has_more: boolean;
-            next_cursor?: string;
-        };
-        TaskRun: {
-            id: string;
-            task_id: string;
-            /** Format: int32 */
-            attempt: number;
-            runner_id?: string;
-            /** @enum {string} */
-            status: "pending" | "assigned" | "running" | "completed" | "failed" | "timeout" | "canceled";
-            error?: string;
-            /** Format: int32 */
-            exit_code?: number;
-            /** Format: int32 */
-            tokens_input?: number;
-            /** Format: int32 */
-            tokens_output?: number;
-            /** Format: date-time */
-            queued_at: string;
-            /** Format: date-time */
-            assigned_at?: string;
-            /** Format: date-time */
-            started_at?: string;
-            /** Format: date-time */
-            ended_at?: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        TaskRunList: {
-            items: components["schemas"]["TaskRun"][];
-            /** Format: int64 */
-            total_count: number;
-            has_more: boolean;
-            next_cursor?: string;
-        };
-        Tunnel: {
-            id: string;
-            session_id: string;
-            runner_id?: string;
-            /** @enum {string} */
-            type: "http" | "tcp" | "desktop" | "browser" | "ios" | "android";
-            /** @enum {string} */
-            direction: "inbound" | "outbound";
-            /** Format: int32 */
-            local_port: number;
-            public_url?: string;
-            is_public: boolean;
-            token?: string;
-            /** Format: date-time */
-            expires_at: string;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            closed_at?: string;
-        };
-        TunnelList: {
-            items: components["schemas"]["Tunnel"][];
-            /** Format: int64 */
-            total_count: number;
-            has_more: boolean;
-            next_cursor?: string;
-        };
-        UpdateScheduledTaskRequest: {
-            name?: string;
-            description?: string;
-            cron_expression?: string;
-            timezone?: string;
-            prompt_template?: string;
-            /** Format: int32 */
-            timeout_seconds?: number;
-            /** Format: int32 */
-            max_retries?: number;
-            on_failure?: string;
-            /** Format: int32 */
-            max_consecutive_failures?: number;
-            labels?: {
-                [key: string]: string;
-            };
-            annotations?: {
-                [key: string]: string;
-            };
-        };
-        UpdateWorkspaceRequest: {
-            name?: string;
-            persist?: boolean;
-            /** Format: int32 */
-            disk_quota_mb?: number;
-            labels?: {
-                [key: string]: string;
-            };
-            annotations?: {
-                [key: string]: string;
-            };
-        };
-        Workspace: {
-            id: string;
-            name: string;
-            persist: boolean;
-            storage_type: string;
-            /** @enum {string} */
-            mobility: "local" | "shared" | "object_sync";
-            /** Format: int64 */
-            storage_size_bytes?: number;
-            /** Format: int32 */
-            disk_quota_mb?: number;
-            /** Format: date-time */
-            last_synced_at?: string;
-            labels: {
-                [key: string]: string;
-            };
-            annotations: {
-                [key: string]: string;
-            };
+            last_used_at?: string;
             /** Format: date-time */
             expires_at?: string;
             /** Format: date-time */
+            revoked_at?: string;
+            revoke_reason?: string;
+        };
+        RunnerTokenList: {
+            items: components["schemas"]["RunnerToken"][];
+            /** Format: int64 */
+            total_count: number;
+            has_more: boolean;
+            next_cursor?: string;
+        };
+        ServiceStatus: {
+            name: string;
+            /** Format: int32 */
+            port: number;
+            /** @enum {string} */
+            status: "ok" | "error" | "unknown";
+            message?: string;
+        };
+        SpawnRunnerRequest: {
+            name?: string;
+            provider_config_id: string;
+            profile_id?: string;
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        Status: {
+            services: components["schemas"]["ServiceStatus"][];
+        };
+        StreamRequest: {
+            session_id: string;
+            runner_id?: string;
+            type: string;
+            resolution?: components["schemas"]["ResolutionRequest"];
+            /** Format: int32 */
+            frame_rate?: number;
+            /** Format: int32 */
+            bitrate?: number;
+            audio_enabled?: boolean;
+            input_enabled?: boolean;
+            metadata?: {
+                [key: string]: string;
+            };
+        };
+        StreamResponse: {
+            id: string;
+            session_id: string;
+            runner_id?: string;
+            type: string;
+            state: string;
+            signaling_url?: string;
+            resolution?: components["schemas"]["ResolutionRequest"];
+            /** Format: int32 */
+            frame_rate?: number;
+            /** Format: int32 */
+            bitrate?: number;
+            video_codec?: string;
+            audio_codec?: string;
+            audio_enabled: boolean;
+            input_enabled: boolean;
+            provider_name: string;
+            provider_stream_id?: string;
+            error?: string;
+            metadata?: {
+                [key: string]: string;
+            };
+            created_at: string;
+            updated_at: string;
+            started_at?: string;
+            stopped_at?: string;
+        };
+        StreamResponseList: {
+            items: components["schemas"]["StreamResponse"][];
+            /** Format: int64 */
+            total_count: number;
+            has_more: boolean;
+            next_cursor?: string;
+        };
+        SuspendSessionRequest: {
+            strategy?: string;
+        };
+        UpdateAgentConfigRequest: {
+            name?: string;
+            api_key?: string;
+            model?: string;
+            base_url?: string;
+            extra?: {
+                [key: string]: unknown;
+            };
+            is_default?: boolean;
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        UpdateProfileRequest: {
+            name?: string;
+            description?: string;
+            provider_config_id?: string;
+            resources?: {
+                [key: string]: unknown;
+            };
+            network?: {
+                [key: string]: unknown;
+            };
+            init_script?: string;
+            cleanup_script?: string;
+            tunnels?: {
+                [key: string]: unknown;
+            }[];
+            selector?: {
+                [key: string]: unknown;
+            };
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+        };
+        UpdateProviderConfigRequest: {
+            name?: string;
+            config?: {
+                [key: string]: unknown;
+            };
+            suspend_config?: {
+                [key: string]: unknown;
+            };
+            is_default?: boolean;
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        UpdateWebhookRequest: {
+            name?: string;
+            url?: string;
+            events?: string[];
+            is_active?: boolean;
+            /** Format: int32 */
+            max_retries?: number;
+            /** Format: int32 */
+            retry_delay_seconds?: number;
+            /** Format: int32 */
+            timeout_seconds?: number;
+            headers?: {
+                [key: string]: string;
+            };
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+        };
+        Webhook: {
+            id: string;
+            name: string;
+            url: string;
+            events: string[];
+            secret_prefix: string;
+            is_active: boolean;
+            /** Format: int32 */
+            max_retries: number;
+            /** Format: int32 */
+            retry_delay_seconds: number;
+            /** Format: int32 */
+            timeout_seconds: number;
+            headers: {
+                [key: string]: string;
+            };
+            labels: {
+                [key: string]: string;
+            };
+            annotations: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
-            /** Format: date-time */
-            deleted_at?: string;
         };
-        WorkspaceList: {
-            items: components["schemas"]["Workspace"][];
+        WebhookEvent: {
+            id: string;
+            webhook_id: string;
+            event_type: string;
+            payload: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status: "pending" | "delivered" | "failed" | "exhausted" | "canceled";
+            /** Format: int32 */
+            attempts: number;
+            last_error?: string;
+            /** Format: int32 */
+            last_status_code?: number;
+            /** Format: date-time */
+            next_retry_at?: string;
+            /** Format: date-time */
+            delivered_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        WebhookEventList: {
+            items: components["schemas"]["WebhookEvent"][];
+            /** Format: int64 */
+            total_count: number;
+            has_more: boolean;
+            next_cursor?: string;
+        };
+        WebhookList: {
+            items: components["schemas"]["Webhook"][];
             /** Format: int64 */
             total_count: number;
             has_more: boolean;
@@ -1109,132 +1280,35 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    getEvents: {
+    getActionLogs: {
         parameters: {
             query?: {
-                /** @description Only deliver these event types. */
-                event_type?: string[];
-                /** @description JSON object of labels to filter on. */
-                labels?: string;
-                /** @description API key, for clients that cannot set an Authorization header. */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The connection was upgraded to a WebSocket. */
-            101: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the events:read scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getLogsStream: {
-        parameters: {
-            query?: {
-                /** @description API key, for clients that cannot set an Authorization header. */
-                token?: string;
-            };
-            header?: never;
-            path: {
-                taskID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The connection was upgraded to a WebSocket. */
-            101: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tasks:read scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getPermissions: {
-        parameters: {
-            query?: {
-                /** @description Maximum number of items to return. Defaults to 50. */
+                /** @description Maximum number of items to return. Defaults to 50, capped at 100. */
                 limit?: number;
                 /** @description Opaque cursor from a previous response's next_cursor. */
                 cursor?: string;
+                /** @description Filter by actor kind: user, api_key, system or runner. */
+                actor_type?: string;
+                /** @description Filter by actor. */
+                actor_id?: string;
+                /** @description Exact action match, e.g. session.create. */
+                action?: string;
+                /** @description Action prefix match, e.g. permission. */
+                action_prefix?: string;
+                /** @description Filter by resource kind. */
+                resource_type?: string;
+                /** @description Filter by resource. */
+                resource_id?: string;
                 /** @description Filter by session. */
                 session_id?: string;
                 /** @description Filter by task. */
                 task_id?: string;
-                /** @description Filter by request status. */
-                status?: string[];
-                /** @description Filter by risk level. */
-                risk_level?: string[];
+                /** @description Only successes, or only failures. */
+                success?: boolean;
+                /** @description Only entries at or after this time. */
+                from?: string;
+                /** @description Only entries at or before this time. */
+                to?: string;
             };
             header?: never;
             path?: never;
@@ -1248,20 +1322,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PermissionRequestList"];
+                    "application/json": components["schemas"]["ActionLogList"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the permissions:read scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1280,12 +1345,12 @@ export interface operations {
             };
         };
     };
-    getPermissionsByPermissionID: {
+    getActionLogsByLogID: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                permissionID: string;
+                logID: string;
             };
             cookie?: never;
         };
@@ -1297,20 +1362,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PermissionRequest"];
+                    "application/json": components["schemas"]["ActionLog"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the permissions:read scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1338,29 +1394,34 @@ export interface operations {
             };
         };
     };
-    postPermissionsApprove: {
+    getAgentConfigs: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                permissionID: string;
+            query?: {
+                /** @description Maximum number of items to return. Defaults to 50, capped at 100. */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's next_cursor. */
+                cursor?: string;
+                /** @description Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend. */
+                labels?: string;
+                /** @description Filter by agent type. */
+                agent?: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApproveRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description Success, with no response body. */
-            204: {
+            /** @description Success. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["AgentConfigList"];
+                };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -1369,8 +1430,81 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the permissions:write scope. */
-            403: {
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postAgentConfigs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAgentConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfig"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getAgentConfigsByConfigID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                configID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfig"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1398,18 +1532,254 @@ export interface operations {
             };
         };
     };
-    postPermissionsDeny: {
+    putAgentConfigsByConfigID: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                permissionID: string;
+                configID: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DenyRequest"];
+                "application/json": components["schemas"]["UpdateAgentConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfig"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteAgentConfigsByConfigID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                configID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success, with no response body. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getKeys: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return. Defaults to 50, capped at 100. */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's next_cursor. */
+                cursor?: string;
+                /** @description Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend. */
+                labels?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIKeyList"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAPIKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedAPIKey"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getKeysByKeyID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                keyID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIKey"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteKeysByKeyID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                keyID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevokeAPIKeyRequest"];
             };
         };
         responses: {
@@ -1420,7 +1790,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -1429,8 +1799,719 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the permissions:write scope. */
-            403: {
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getProfiles: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return. Defaults to 50, capped at 100. */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's next_cursor. */
+                cursor?: string;
+                /** @description Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend. */
+                labels?: string;
+                /** @description Filter by provider config. */
+                provider_config_id?: string;
+                /** @description Include the profiles the server ships. */
+                include_builtin?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileList"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postProfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getProfilesByProfileID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profileID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    putProfilesByProfileID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profileID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteProfilesByProfileID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profileID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success, with no response body. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getProviderConfigs: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return. Defaults to 50, capped at 100. */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's next_cursor. */
+                cursor?: string;
+                /** @description Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend. */
+                labels?: string;
+                /** @description Filter by provider kind, e.g. docker. */
+                provider?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderConfigList"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postProviderConfigs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProviderConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderConfig"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getProviderConfigsByConfigID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                configID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderConfig"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    putProviderConfigsByConfigID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                configID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProviderConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderConfig"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteProviderConfigsByConfigID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                configID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success, with no response body. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getRunnerTokens: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return. Defaults to 50, capped at 100. */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's next_cursor. */
+                cursor?: string;
+                /** @description Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend. */
+                labels?: string;
+                /** @description Filter by pool. */
+                pool_name?: string;
+                /** @description Filter by status, comma-separated. */
+                status?: string;
+                /** @description Include revoked tokens. */
+                include_revoked?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerTokenList"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postRunnerTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRunnerTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedRunnerToken"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getRunnerTokensByTokenID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tokenID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerToken"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteRunnerTokensByTokenID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tokenID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevokeRunnerTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Success, with no response body. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postRunnerTokensRotate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tokenID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedRunnerToken"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1461,16 +2542,16 @@ export interface operations {
     getRunners: {
         parameters: {
             query?: {
-                /** @description Maximum number of items to return. Defaults to 50. */
+                /** @description Maximum number of items to return. Defaults to 50, capped at 100. */
                 limit?: number;
                 /** @description Opaque cursor from a previous response's next_cursor. */
                 cursor?: string;
-                /** @description Filter by runner status. */
-                status?: string[];
+                /** @description Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend. */
+                labels?: string;
+                /** @description Filter by status, comma-separated. */
+                status?: string;
                 /** @description Filter by pool. */
                 pool_name?: string;
-                /** @description Filter by label. Repeat with different keys to AND several labels, e.g. labels[env]=prod. */
-                "labels[key]"?: string;
             };
             header?: never;
             path?: never;
@@ -1487,7 +2568,7 @@ export interface operations {
                     "application/json": components["schemas"]["RunnerList"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -1496,8 +2577,41 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the runners:read scope. */
-            403: {
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postRunnersSpawn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpawnRunnerRequest"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Runner"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1536,17 +2650,8 @@ export interface operations {
                     "application/json": components["schemas"]["Runner"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the runners:read scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1574,177 +2679,12 @@ export interface operations {
             };
         };
     };
-    getScheduledTasks: {
-        parameters: {
-            query?: {
-                /** @description Maximum number of items to return. Defaults to 50. */
-                limit?: number;
-                /** @description Opaque cursor from a previous response's next_cursor. */
-                cursor?: string;
-                /** @description Filter by session. */
-                session_id?: string;
-                /** @description Filter by scheduled task status. */
-                status?: string[];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScheduledTaskList"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the scheduled-tasks:read scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    postScheduledTasks: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateScheduledTaskRequest"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScheduledTask"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getScheduledTasksByScheduledTaskID: {
+    deleteRunnersByRunnerID: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scheduledTaskID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScheduledTask"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the scheduled-tasks:read scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    deleteScheduledTasksByScheduledTaskID: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scheduledTaskID: string;
+                runnerID: string;
             };
             cookie?: never;
         };
@@ -1757,17 +2697,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1795,18 +2726,18 @@ export interface operations {
             };
         };
     };
-    patchScheduledTasksByScheduledTaskID: {
+    postSessionsActivate: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                scheduledTaskID: string;
+                sessionID: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateScheduledTaskRequest"];
+                "application/json": components["schemas"]["ActivateSessionRequest"];
             };
         };
         responses: {
@@ -1816,475 +2747,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScheduledTask"];
+                    "application/json": components["schemas"]["Accepted"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    postScheduledTasksPause: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scheduledTaskID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScheduledTask"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    postScheduledTasksResume: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scheduledTaskID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScheduledTask"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    postScheduledTasksTrigger: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scheduledTaskID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Task"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getSessions: {
-        parameters: {
-            query?: {
-                /** @description Maximum number of items to return. Defaults to 50. */
-                limit?: number;
-                /** @description Opaque cursor from a previous response's next_cursor. */
-                cursor?: string;
-                /** @description Filter by session status. */
-                status?: string[];
-                /** @description Filter by agent type. */
-                agent?: string;
-                /** @description Filter by lifecycle mode. */
-                lifecycle_mode?: string;
-                /** @description Filter by label. Repeat with different keys to AND several labels, e.g. labels[env]=prod. */
-                "labels[key]"?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionList"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the sessions:read scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    postSessions: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Session"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the sessions:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getSessionsBySessionID: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                sessionID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Session"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the sessions:read scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    deleteSessionsBySessionID: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                sessionID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success, with no response body. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the sessions:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    postSessionsResume: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                sessionID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success, with no response body. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the sessions:write scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2321,63 +2788,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
-        responses: {
-            /** @description Success, with no response body. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the sessions:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuspendSessionRequest"];
             };
         };
-    };
-    getSessionsTunnels: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                sessionID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Success. */
             200: {
@@ -2385,20 +2800,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TunnelList"];
+                    "application/json": components["schemas"]["Accepted"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tunnels:read scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2426,78 +2832,11 @@ export interface operations {
             };
         };
     };
-    postSessionsTunnels: {
+    getSignaling: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                sessionID: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateTunnelRequest"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Tunnel"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tunnels:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getStreamsWs: {
-        parameters: {
-            query?: {
-                /** @description API key, for clients that cannot set an Authorization header. */
-                token?: string;
-            };
-            header?: never;
-            path: {
-                streamID: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -2509,26 +2848,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the streams:read scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2547,17 +2868,25 @@ export interface operations {
             };
         };
     };
-    getTasks: {
+    getStreams: {
         parameters: {
             query?: {
-                /** @description Maximum number of items to return. Defaults to 50. */
-                limit?: number;
-                /** @description Opaque cursor from a previous response's next_cursor. */
-                cursor?: string;
                 /** @description Filter by session. */
                 session_id?: string;
-                /** @description Filter by task status. */
-                status?: string[];
+                /** @description Filter by runner. */
+                runner_id?: string;
+                /** @description Filter by tenant. */
+                tenant_id?: string;
+                /** @description Filter by stream type. */
+                type?: string;
+                /** @description Filter by stream state. */
+                state?: string;
+                /** @description Only streams that are starting or active. */
+                active_only?: boolean;
+                /** @description Maximum number of items to return. */
+                limit?: number;
+                /** @description Number of items to skip. This listing pages by offset, not by cursor. */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -2571,20 +2900,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TaskList"];
+                    "application/json": components["schemas"]["StreamResponseList"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tasks:read scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2603,7 +2923,7 @@ export interface operations {
             };
         };
     };
-    postTasks: {
+    postStreams: {
         parameters: {
             query?: never;
             header?: never;
@@ -2612,7 +2932,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateTaskRequest"];
+                "application/json": components["schemas"]["StreamRequest"];
             };
         };
         responses: {
@@ -2622,20 +2942,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Task"];
+                    "application/json": components["schemas"]["StreamResponse"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tasks:write scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2654,12 +2965,12 @@ export interface operations {
             };
         };
     };
-    getTasksByTaskID: {
+    getStreamsByStreamID: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                taskID: string;
+                streamID: string;
             };
             cookie?: never;
         };
@@ -2671,20 +2982,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Task"];
+                    "application/json": components["schemas"]["StreamResponse"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tasks:read scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2712,12 +3014,12 @@ export interface operations {
             };
         };
     };
-    postTasksCancel: {
+    deleteStreamsByStreamID: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                taskID: string;
+                streamID: string;
             };
             cookie?: never;
         };
@@ -2730,17 +3032,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tasks:write scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2768,373 +3061,19 @@ export interface operations {
             };
         };
     };
-    postTasksExecute: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                taskID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Accepted; the work continues asynchronously. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskExecutionAccepted"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tasks:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getTasksLogs: {
+    getWebhookEvents: {
         parameters: {
             query?: {
-                /** @description Maximum number of items to return. Defaults to 50. */
+                /** @description Maximum number of items to return. Defaults to 50, capped at 100. */
                 limit?: number;
                 /** @description Opaque cursor from a previous response's next_cursor. */
                 cursor?: string;
-                /** @description Filter by log level. */
-                level?: string[];
-                /** @description Filter by output stream. */
-                stream?: string[];
-            };
-            header?: never;
-            path: {
-                taskID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LogList"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tasks:read scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    postTasksRetry: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                taskID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success, with no response body. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tasks:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getTasksRuns: {
-        parameters: {
-            query?: {
-                /** @description Maximum number of items to return. Defaults to 50. */
-                limit?: number;
-                /** @description Opaque cursor from a previous response's next_cursor. */
-                cursor?: string;
-                /** @description Filter by run status. */
-                status?: string[];
-            };
-            header?: never;
-            path: {
-                taskID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskRunList"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tasks:read scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getTunnelsByTunnelID: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                tunnelID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Tunnel"];
-                };
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tunnels:read scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    deleteTunnelsByTunnelID: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                tunnelID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Success, with no response body. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The API key is missing, malformed, revoked or expired. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the tunnels:write scope. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getWorkspaces: {
-        parameters: {
-            query?: {
-                /** @description Maximum number of items to return. Defaults to 50. */
-                limit?: number;
-                /** @description Opaque cursor from a previous response's next_cursor. */
-                cursor?: string;
+                /** @description Filter by webhook. */
+                webhook_id?: string;
+                /** @description Filter by delivery status. */
+                status?: string;
+                /** @description Filter by event type. */
+                event_type?: string;
             };
             header?: never;
             path?: never;
@@ -3148,20 +3087,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkspaceList"];
+                    "application/json": components["schemas"]["WebhookEventList"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the workspaces:read scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3180,7 +3110,152 @@ export interface operations {
             };
         };
     };
-    postWorkspaces: {
+    getWebhookEventsByEventID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eventID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookEvent"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postWebhookEventsRetry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eventID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Accepted"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getWebhooks: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return. Defaults to 50, capped at 100. */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's next_cursor. */
+                cursor?: string;
+                /** @description Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend. */
+                labels?: string;
+                /** @description Only active webhooks. */
+                is_active?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookList"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    postWebhooks: {
         parameters: {
             query?: never;
             header?: never;
@@ -3189,7 +3264,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateWorkspaceRequest"];
+                "application/json": components["schemas"]["CreateWebhookRequest"];
             };
         };
         responses: {
@@ -3199,20 +3274,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Workspace"];
+                    "application/json": components["schemas"]["CreatedWebhook"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the workspaces:write scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3231,12 +3297,12 @@ export interface operations {
             };
         };
     };
-    getWorkspacesByWorkspaceID: {
+    getWebhooksByWebhookID: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                workspaceID: string;
+                webhookID: string;
             };
             cookie?: never;
         };
@@ -3248,20 +3314,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Workspace"];
+                    "application/json": components["schemas"]["Webhook"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the workspaces:read scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3289,12 +3346,65 @@ export interface operations {
             };
         };
     };
-    deleteWorkspacesByWorkspaceID: {
+    putWebhooksByWebhookID: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                workspaceID: string;
+                webhookID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWebhookRequest"];
+            };
+        };
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            /** @description Basic auth credentials are missing or wrong. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteWebhooksByWebhookID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webhookID: string;
             };
             cookie?: never;
         };
@@ -3307,17 +3417,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the workspaces:write scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3345,20 +3446,16 @@ export interface operations {
             };
         };
     };
-    patchWorkspacesByWorkspaceID: {
+    postWebhooksRotateSecret: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                workspaceID: string;
+                webhookID: string;
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateWorkspaceRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Success. */
             200: {
@@ -3366,20 +3463,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Workspace"];
+                    "application/json": components["schemas"]["RotatedWebhookSecret"];
                 };
             };
-            /** @description The API key is missing, malformed, revoked or expired. */
+            /** @description Basic auth credentials are missing or wrong. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The API key lacks the workspaces:write scope. */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3394,6 +3482,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Status"];
                 };
             };
             /** @description An error occurred. */
@@ -3451,7 +3568,65 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HealthStatus"];
+                    "application/json": components["schemas"]["Health"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getHealthLive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getHealthReady: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response"];
                 };
             };
             /** @description An error occurred. */
@@ -3480,7 +3655,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HealthStatus"];
+                    "application/json": components["schemas"]["Health"];
                 };
             };
             /** @description An error occurred. */
@@ -3503,7 +3678,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The OpenAPI description of this API. */
+            /** @description The OpenAPI description of the admin API. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3523,65 +3698,24 @@ export interface operations {
             };
         };
     };
-    openTunnel: {
+    getDashboard: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                tunnelID: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Whatever the tunnelled service returned. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": unknown;
-                };
-            };
-            /** @description No such resource. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description An error occurred. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    proxyThroughTunnel: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                tunnelID: string;
                 path: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Whatever the tunnelled service returned. */
+            /** @description The dashboard, or one of its assets. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": unknown;
+                    "text/html": unknown;
                 };
             };
             /** @description No such resource. */
