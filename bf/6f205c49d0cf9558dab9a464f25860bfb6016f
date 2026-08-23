@@ -1,0 +1,19 @@
+.github/workflows/release.yml
+  s_d7da100278f3de::t_a6f61278015a99 1-358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "bf6f205c49d0cf9558dab9a464f25860bfb6016f",
+  "prompts": {},
+  "sessions": {
+    "s_d7da100278f3de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d25f03f-fcd3-47a0-8cec-a7ffad651de1",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
