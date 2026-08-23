@@ -634,6 +634,13 @@ type ManifestFile struct {
     Size    int64       `json:"size"`
     Chunks  []string    `json:"chunks"`
 
+    // ChunkSizes are the uncompressed sizes of Chunks, in the same order.
+    // The chunks table stores a size and nothing else that reads a manifest
+    // object can recover it, so it travels with the hashes. Manifests written
+    // before this field omit it; a reader that finds it missing treats the
+    // sizes as unknown, not as zero.
+    ChunkSizes []int64 `json:"chunk_sizes,omitempty"`
+
     // Type is "" (regular file), "d" (directory) or "l" (symlink). The empty
     // string means a file so that manifests written before directories and
     // symlinks were recorded still read correctly. Link is the symlink

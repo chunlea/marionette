@@ -528,3 +528,62 @@ func TestCDC_SkipsEntriesWithNoContent(t *testing.T) {
 	require.NoError(t, sync.restoreFromManifestInternal(ctx, "ws-1", manifestID, "tenant-1", dstDir))
 	assert.NoFileExists(t, filepath.Join(dstDir, "pipe"))
 }
+
+// A manifest object has to carry enough to record the snapshot in the
+// database. The chunks table stores a size, and nothing else that reads a
+// manifest can recover it, so the sizes travel with the hashes.
+func TestCDC_ManifestCarriesChunkSizes(t *testing.T) {
+	ctx := context.Background()
+	sync, _ := newCDCSync(t, cdcConfig())
+
+	srcDir := t.TempDir()
+	blob := make([]byte, 6<<20)
+	rng := rand.New(rand.NewSource(23)) //nolint:gosec // reproducible test data
+	_, _ = rng.Read(blob)
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "blob.bin"), blob, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "small.txt"), []byte("hello"), 0o644))
+
+	manifestID, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
+	require.NoError(t, err)
+
+	manifest, err := sync.manifestStore.LoadManifest(ctx, "tenant-1", "ws-1", manifestID)
+	require.NoError(t, err)
+
+	distinct := map[string]int64{}
+	var total int64
+	for _, entry := range manifest.Files {
+		require.Len(t, entry.ChunkSizes, len(entry.Chunks), "every chunk needs its size")
+
+		var fileTotal int64
+		for _, ref := range entry.ChunkRefs() {
+			assert.Positivef(t, ref.Size, "chunk %s has no size", ref.Hash)
+			fileTotal += ref.Size
+			distinct[ref.Hash] = ref.Size
+		}
+		assert.Equal(t, entry.Size, fileTotal, "a file's chunks must add up to the file")
+		total += fileTotal
+	}
+
+	require.Greater(t, len(distinct), 1, "the blob should have spanned several chunks")
+	assert.Equal(t, manifest.TotalSize, total)
+
+	// The reuse path carries the sizes over rather than dropping them.
+	second, _, err := sync.SyncIncremental(ctx, "ws-1", "tenant-1", srcDir, manifestID)
+	require.NoError(t, err)
+	reused, err := sync.manifestStore.LoadManifest(ctx, "tenant-1", "ws-1", second)
+	require.NoError(t, err)
+	for _, entry := range reused.Files {
+		assert.Len(t, entry.ChunkSizes, len(entry.Chunks), "reused entries keep their sizes")
+	}
+}
+
+// A manifest written before sizes were recorded has to read as sizes unknown,
+// not as chunks of zero bytes silently accepted as fact.
+func TestManifestFile_ChunkRefsWithoutSizes(t *testing.T) {
+	entry := ManifestFile{Chunks: []string{"a", "b"}}
+
+	refs := entry.ChunkRefs()
+	require.Len(t, refs, 2)
+	assert.Equal(t, ChunkRef{Hash: "a"}, refs[0])
+	assert.Equal(t, ChunkRef{Hash: "b"}, refs[1])
+}

@@ -128,6 +128,15 @@ type ManifestFile struct {
 	// Chunks contains the ordered list of chunk hashes that make up this file.
 	Chunks []string `json:"chunks"`
 
+	// ChunkSizes are the uncompressed sizes of Chunks, in the same order.
+	//
+	// The hashes alone are not enough to record a manifest in the database:
+	// the chunks table stores a size, and nothing else that reads a manifest
+	// object can recover it. Manifests written before this field existed omit
+	// it, and a reader that finds it missing has to treat the sizes as
+	// unknown rather than as zero.
+	ChunkSizes []int64 `json:"chunk_sizes,omitempty"`
+
 	// Type is the entry kind: EntryFile (default), EntryDir or EntrySymlink.
 	Type string `json:"type,omitempty"`
 
@@ -205,4 +214,26 @@ func FromHeader(h ManifestHeader) *Manifest {
 		m.ChunkHash = &h.ChunkHash
 	}
 	return m
+}
+
+// ChunkRef is one chunk of one file: what it is and how big it is.
+type ChunkRef struct {
+	Hash string
+	Size int64
+}
+
+// ChunkRefs returns the entry's chunks with their sizes.
+//
+// A manifest written before sizes were recorded yields zero sizes, which the
+// caller has to notice: a chunk row claiming zero bytes makes the collector's
+// accounting wrong, not its decisions.
+func (f ManifestFile) ChunkRefs() []ChunkRef {
+	refs := make([]ChunkRef, len(f.Chunks))
+	for i, hash := range f.Chunks {
+		refs[i] = ChunkRef{Hash: hash}
+		if i < len(f.ChunkSizes) {
+			refs[i].Size = f.ChunkSizes[i]
+		}
+	}
+	return refs
 }

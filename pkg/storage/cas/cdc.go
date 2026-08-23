@@ -419,6 +419,7 @@ func (s *Sync) syncCDC(ctx context.Context, manifest *Manifest, srcDir string, p
 
 			if hadPrev && reusable(prev, info) {
 				record.Chunks = prev.Chunks
+				record.ChunkSizes = prev.ChunkSizes
 				for _, hash := range prev.Chunks {
 					sink.Known(hash)
 				}
@@ -428,11 +429,12 @@ func (s *Sync) syncCDC(ctx context.Context, manifest *Manifest, srcDir string, p
 				break
 			}
 
-			chunks, err := s.chunkFile(filepath.Join(srcDir, filepath.FromSlash(rel)), chunkIter, sink)
+			chunks, sizes, err := s.chunkFile(filepath.Join(srcDir, filepath.FromSlash(rel)), chunkIter, sink)
 			if err != nil {
 				return err
 			}
 			record.Chunks = chunks
+			record.ChunkSizes = sizes
 
 			if diff != nil {
 				switch {
@@ -483,23 +485,25 @@ func (s *Sync) syncCDC(ctx context.Context, manifest *Manifest, srcDir string, p
 }
 
 // chunkFile streams one file through the chunker, offering every chunk to the
-// sink and keeping only the hashes.
-func (s *Sync) chunkFile(path string, iter *Iterator, sink *chunkSink) ([]string, error) {
+// sink and keeping only the hashes and their sizes.
+func (s *Sync) chunkFile(path string, iter *Iterator, sink *chunkSink) ([]string, []int64, error) {
 	f, err := os.Open(path) //nolint:gosec // path is a walk result under srcDir
 	if err != nil {
-		return nil, fmt.Errorf("failed to open %s: %w", path, err)
+		return nil, nil, fmt.Errorf("failed to open %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 
 	hashes := make([]string, 0, 1)
+	sizes := make([]int64, 0, 1)
 	err = iter.Iterate(f, func(hash string, data []byte) error {
 		hashes = append(hashes, hash)
+		sizes = append(sizes, int64(len(data)))
 		return sink.Add(hash, data)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to chunk %s: %w", path, err)
+		return nil, nil, fmt.Errorf("failed to chunk %s: %w", path, err)
 	}
-	return hashes, nil
+	return hashes, sizes, nil
 }
 
 // =============================================================================
