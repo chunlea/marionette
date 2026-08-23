@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/chunlea/marionette/pkg/store"
 	pgstore "github.com/chunlea/marionette/pkg/store/postgres"
@@ -369,7 +370,32 @@ func TestRLS_StrictModeRefusesAnExemptRole(t *testing.T) {
 	}, zap.NewNop())
 
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multi_tenant is on")
 	assert.Contains(t, err.Error(), "BYPASSRLS")
+}
+
+// TestRLS_SingleTenantWarnsButStarts is the other half: the same conditions are
+// harmless while there is only one tenant, so they must not stop the server -
+// which is what keeps the smoke walk and every existing deployment working.
+func TestRLS_SingleTenantWarnsButStarts(t *testing.T) {
+	logs, observed := observer.New(zap.WarnLevel)
+
+	s, err := pgstore.New(context.Background(), pgstore.Config{
+		URL:      testDSN, // the harness role: a superuser
+		MaxConns: 2,
+	}, zap.New(logs))
+	require.NoError(t, err, "single-tenant mode must start on an exempt role")
+	t.Cleanup(func() { _ = s.Close() })
+
+	require.Positive(t, observed.Len(), "an unenforced policy must be said out loud")
+	assert.Contains(t, observed.All()[0].Message, "row level security is not enforced")
+}
+
+// TestRLS_UnprivilegedRoleIsAccepted proves the check passes for the shape a
+// multi-tenant deployment is supposed to use.
+func TestRLS_UnprivilegedRoleIsAccepted(t *testing.T) {
+	s := strictStore(t)
+	require.NotNil(t, s, "an unprivileged role with the policies applied must be accepted")
 }
 
 // TestRLS_SingleTenantCRUDSliceUnchanged runs a representative slice of the
