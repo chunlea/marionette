@@ -19,8 +19,9 @@ type ControlChannel struct {
 	handler CommandHandler
 	logger  *zap.Logger
 
-	stream   pb.RunnerService_ConnectClient
-	streamMu sync.Mutex
+	stream       pb.RunnerService_ConnectClient
+	streamCancel context.CancelFunc
+	streamMu     sync.Mutex
 
 	// Channel for outgoing messages
 	outbox chan *pb.RunnerMessage
@@ -52,48 +53,66 @@ func (c *ControlChannel) Start(ctx context.Context) error {
 		return fmt.Errorf("client not connected")
 	}
 
-	// Create the bidirectional stream
-	stream, err := c.client.GRPCClient().Connect(c.client.AttachMetadata(ctx))
+	// The stream gets its own cancelable context so Stop can interrupt a
+	// blocked Recv. Commands keep running on the caller's context: tearing the
+	// connection down must not cancel a task that is already executing.
+	streamCtx, streamCancel := context.WithCancel(ctx)
+
+	stream, err := c.client.GRPCClient().Connect(c.client.AttachMetadata(streamCtx))
 	if err != nil {
+		streamCancel()
 		return fmt.Errorf("creating control stream: %w", err)
 	}
 
 	c.streamMu.Lock()
 	c.stream = stream
+	c.streamCancel = streamCancel
 	c.streamMu.Unlock()
 
 	c.logger.Info("control channel established")
 
 	// Start the receive and send loops
 	c.started.Store(true)
-	go c.run(ctx)
+	go c.run(ctx, streamCtx)
 
 	return nil
 }
 
 // run manages the control channel lifecycle.
-func (c *ControlChannel) run(ctx context.Context) {
+//
+// cmdCtx is the caller's context and is what dispatched commands run on.
+// streamCtx additionally dies when Stop is called, which is what unblocks a
+// receive sitting in stream.Recv.
+func (c *ControlChannel) run(cmdCtx, streamCtx context.Context) {
 	defer close(c.stoppedC)
 
 	// Start sender goroutine
 	senderDone := make(chan struct{})
 	go func() {
 		defer close(senderDone)
-		c.sendLoop(ctx)
+		c.sendLoop(streamCtx)
 	}()
 
 	// Run receiver in main goroutine
-	c.receiveLoop(ctx)
+	c.receiveLoop(cmdCtx, streamCtx)
+
+	// receiveLoop only returns when this channel is finished: stop requested,
+	// context canceled, or the stream failed. In the stream-failure case
+	// nothing else ever releases sendLoop, which selects on ctx and stopC
+	// only - so run() would block on senderDone forever, stoppedC would never
+	// close, and every caller of Wait (including the reconnect supervisor)
+	// would hang behind a connection that is already gone.
+	c.StopAsync()
 
 	// Wait for sender to finish
 	<-senderDone
 }
 
 // receiveLoop receives commands from the server.
-func (c *ControlChannel) receiveLoop(ctx context.Context) {
+func (c *ControlChannel) receiveLoop(cmdCtx, streamCtx context.Context) {
 	for {
 		select {
-		case <-ctx.Done():
+		case <-streamCtx.Done():
 			c.logger.Info("receive loop stopped: context canceled")
 			return
 		case <-c.stopC:
@@ -123,7 +142,7 @@ func (c *ControlChannel) receiveLoop(ctx context.Context) {
 		}
 
 		// Dispatch command to handler
-		go c.handleCommand(ctx, cmd)
+		go c.handleCommand(cmdCtx, cmd)
 	}
 }
 
@@ -217,7 +236,20 @@ func (c *ControlChannel) Stop() {
 
 // StopAsync signals the control channel to stop without waiting.
 func (c *ControlChannel) StopAsync() {
-	c.stopOnce.Do(func() { close(c.stopC) })
+	c.stopOnce.Do(func() {
+		close(c.stopC)
+
+		// Cancel the stream too. stopC alone cannot interrupt a receive that
+		// is blocked in stream.Recv, so without this Stop would hang until the
+		// connection happened to break on its own.
+		c.streamMu.Lock()
+		cancel := c.streamCancel
+		c.streamMu.Unlock()
+
+		if cancel != nil {
+			cancel()
+		}
+	})
 }
 
 // Wait blocks until the control channel has stopped. It returns immediately if

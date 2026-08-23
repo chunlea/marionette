@@ -50,6 +50,20 @@ func NewGRPCLogStreamer(client pb.RunnerServiceClient, runnerID string, logger *
 	}
 }
 
+// Rebind points the streamer at a new connection.
+//
+// The gRPC client and runner ID are per-connection: a value captured once at
+// construction becomes a handle to a closed connection after the first
+// reconnect, and every log written through it is silently lost. The connection
+// supervisor calls this on each (re)connect.
+func (s *GRPCLogStreamer) Rebind(client pb.RunnerServiceClient, runnerID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.client = client
+	s.runnerID = runnerID
+}
+
 // Start initializes a new log stream with the server.
 func (s *GRPCLogStreamer) Start(ctx context.Context, init *pb.StreamLogsInit) error {
 	s.mu.Lock()
@@ -57,6 +71,10 @@ func (s *GRPCLogStreamer) Start(ctx context.Context, init *pb.StreamLogsInit) er
 
 	if s.active.Load() {
 		return ErrStreamAlreadyActive
+	}
+
+	if s.client == nil {
+		return ErrNotConnected
 	}
 
 	// Create the stream with metadata

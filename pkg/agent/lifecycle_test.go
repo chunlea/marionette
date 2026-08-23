@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/chunlea/marionette/gen/proto/v1"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
@@ -187,4 +189,91 @@ func TestClient_DialGivesUpWhenUnreachable(t *testing.T) {
 	conn, err := client.dial(ctx)
 	require.Error(t, err)
 	assert.Nil(t, conn)
+}
+
+// TestControlChannel_StopInterruptsBlockedReceive pins that Stop returns
+// promptly while the receive loop is parked in stream.Recv. Signalling stopC
+// alone cannot interrupt a blocking Recv, so Stop used to hang until the
+// connection happened to break on its own.
+func TestControlChannel_StopInterruptsBlockedReceive(t *testing.T) {
+	server, err := NewMockServer()
+	require.NoError(t, err)
+
+	// Hold the stream open and never send anything.
+	serverDone := make(chan struct{})
+	server.ConnectFunc = func(stream pb.RunnerService_ConnectServer) error {
+		defer close(serverDone)
+		for {
+			if _, err := stream.Recv(); err != nil {
+				return nil
+			}
+		}
+	}
+	server.Start()
+	defer server.Stop()
+
+	logger := zaptest.NewLogger(t)
+	client := NewClient(testClientConfig(server.Addr()), logger)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	require.NoError(t, client.Connect(ctx))
+	defer func() { _ = client.Close() }()
+
+	cc := NewControlChannel(client, NewDefaultCommandHandler(NewWorkspaceManager(t.TempDir(), logger), logger), logger)
+	require.NoError(t, cc.Start(ctx))
+
+	// Give the receive loop time to park inside Recv.
+	time.Sleep(100 * time.Millisecond)
+
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		cc.Stop()
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not interrupt a receive blocked in stream.Recv")
+	}
+}
+
+// TestControlChannel_ExitsWhenServerClosesStream is the other half of the
+// bricked-agent bug: the receive loop returned on a clean EOF but the send
+// loop kept running, so run() never finished, stoppedC never closed, and the
+// supervisor waiting on Wait() hung behind a connection that was already gone.
+func TestControlChannel_ExitsWhenServerClosesStream(t *testing.T) {
+	server, err := NewMockServer()
+	require.NoError(t, err)
+
+	// Close the control stream immediately, the way a restarting server does.
+	server.ConnectFunc = func(pb.RunnerService_ConnectServer) error { return nil }
+	server.Start()
+	defer server.Stop()
+
+	logger := zaptest.NewLogger(t)
+	client := NewClient(testClientConfig(server.Addr()), logger)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	require.NoError(t, client.Connect(ctx))
+	defer func() { _ = client.Close() }()
+
+	cc := NewControlChannel(client, NewDefaultCommandHandler(NewWorkspaceManager(t.TempDir(), logger), logger), logger)
+	require.NoError(t, cc.Start(ctx))
+
+	waited := make(chan struct{})
+	go func() {
+		defer close(waited)
+		cc.Wait()
+	}()
+
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("control channel did not finish after the server closed the stream")
+	}
 }
