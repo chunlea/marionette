@@ -46,12 +46,21 @@ type SessionState struct {
 	AgentConfig     *pb.AgentConfig
 	ContextSnapshot []byte
 	AttachedAt      time.Time
+
+	// Workspace is the CAS key for this session's workspace. It is only set
+	// once the server tells the runner which workspace it holds.
+	Workspace WorkspaceIdentity
+
+	// WorkspaceManifestID is the snapshot to restore from on attach, and is
+	// updated to the newest snapshot after each successful sync.
+	WorkspaceManifestID string
 }
 
 // DefaultCommandHandler provides a basic implementation of CommandHandler.
 // It manages sessions and workspaces, and can be extended for task execution.
 type DefaultCommandHandler struct {
 	workspace *WorkspaceManager
+	syncer    *WorkspaceSyncer
 	logger    *zap.Logger
 
 	// Active sessions
@@ -78,6 +87,23 @@ func NewDefaultCommandHandler(workspace *WorkspaceManager, logger *zap.Logger) *
 		logger:    logger.Named("handler"),
 		sessions:  make(map[string]*SessionState),
 	}
+}
+
+// SetWorkspaceSyncer attaches the CAS syncer used for suspend and resume.
+// Without one, suspends report the workspace as not synced.
+func (h *DefaultCommandHandler) SetWorkspaceSyncer(syncer *WorkspaceSyncer) {
+	h.syncer = syncer
+}
+
+// workspaceIdentityFromAttach extracts the CAS key for the attached workspace.
+//
+// It returns an unknown identity today because AttachSession carries no
+// workspace id: the server sends session_id and workspace_path, and
+// workspace_path is the literal string "/workspace" for every container-mode
+// session, so it cannot key anything. This is the single input the sync path
+// is missing; see the NEEDS in the lane report for the proto fields.
+func workspaceIdentityFromAttach(_ *pb.AttachSession) (WorkspaceIdentity, string) {
+	return WorkspaceIdentity{}, ""
 }
 
 // HandleExecuteTask handles task execution.
@@ -244,6 +270,7 @@ func (h *DefaultCommandHandler) HandleAttachSession(ctx context.Context, cmd *pb
 		ContextSnapshot: cmd.ContextSnapshot,
 		AttachedAt:      time.Now(),
 	}
+	session.Workspace, session.WorkspaceManifestID = workspaceIdentityFromAttach(cmd)
 
 	// Store session
 	h.sessionsMu.Lock()
@@ -254,6 +281,8 @@ func (h *DefaultCommandHandler) HandleAttachSession(ctx context.Context, cmd *pb
 		zap.String("session_id", cmd.SessionId),
 		zap.String("workspace", cmd.WorkspacePath),
 	)
+
+	h.restoreWorkspace(ctx, session)
 
 	// Process pending permissions if any
 	for _, perm := range cmd.PendingPermissions {
@@ -289,7 +318,7 @@ func (h *DefaultCommandHandler) HandleAttachSession(ctx context.Context, cmd *pb
 }
 
 // HandleDetachSession handles session detachment.
-func (h *DefaultCommandHandler) HandleDetachSession(_ context.Context, cmd *pb.DetachSession) (*pb.RunnerMessage, error) {
+func (h *DefaultCommandHandler) HandleDetachSession(ctx context.Context, cmd *pb.DetachSession) (*pb.RunnerMessage, error) {
 	h.logger.Info("received detach session command",
 		zap.String("session_id", cmd.SessionId),
 		zap.Bool("save_context", cmd.SaveContext),
@@ -329,10 +358,18 @@ func (h *DefaultCommandHandler) HandleDetachSession(_ context.Context, cmd *pb.D
 			zap.String("reason", cmd.Suspend.Reason),
 		)
 
-		// Workspace sync would be done here (implemented in Phase 5)
 		if cmd.Suspend.SyncWorkspace {
-			// TODO: Sync workspace to CAS
-			workspaceSynced = false // Will be true when CAS sync is implemented
+			var reason string
+			workspaceSynced, reason = h.syncWorkspace(ctx, session)
+			if !workspaceSynced {
+				// A workspace that could not be saved must not read as saved,
+				// but it also must not fail the suspend: the runner is going
+				// away either way, and refusing to suspend strands it.
+				h.logger.Warn("workspace not synced on suspend",
+					zap.String("session_id", cmd.SessionId),
+					zap.String("reason", reason),
+				)
+			}
 		}
 	}
 
@@ -441,4 +478,82 @@ func (h *DefaultCommandHandler) ActiveSessionCount() int {
 	h.sessionsMu.RLock()
 	defer h.sessionsMu.RUnlock()
 	return len(h.sessions)
+}
+
+// syncWorkspace stores the session's workspace in CAS and reports whether it
+// actually landed, plus why not when it did not.
+//
+// It never returns an error: the suspend path must proceed regardless. The
+// caller's job is to report the truth, not to abort.
+func (h *DefaultCommandHandler) syncWorkspace(ctx context.Context, session *SessionState) (synced bool, reason string) {
+	if !h.syncer.Available() {
+		return false, ErrSyncUnavailable.Error()
+	}
+
+	result, err := h.syncer.Sync(ctx, session.Workspace, h.workspace.Resolve(session.WorkspacePath))
+	if err != nil {
+		h.logger.Warn("workspace sync failed",
+			zap.String("session_id", session.SessionID),
+			zap.String("workspace_id", session.Workspace.WorkspaceID),
+			zap.Error(err),
+		)
+	}
+	if result.Synced {
+		session.WorkspaceManifestID = result.ManifestID
+	}
+
+	return result.Synced, result.Reason
+}
+
+// restoreWorkspace materializes a previously synced workspace when the runner
+// has nothing local for this session.
+//
+// A populated workspace is left alone: the runner may be re-attaching to work
+// it still holds, and overwriting that with an older snapshot would destroy it.
+func (h *DefaultCommandHandler) restoreWorkspace(ctx context.Context, session *SessionState) {
+	if !h.syncer.Available() || !session.Workspace.Known() {
+		return
+	}
+	if session.WorkspaceManifestID == "" {
+		// Nothing was ever synced for this workspace, or the server did not
+		// tell us which snapshot to use. Either way there is nothing to
+		// restore, and guessing would be worse than starting empty.
+		return
+	}
+
+	dir := h.workspace.Resolve(session.WorkspacePath)
+
+	empty, err := IsEmptyDir(dir)
+	if err != nil {
+		h.logger.Warn("cannot inspect workspace before restore",
+			zap.String("session_id", session.SessionID),
+			zap.String("dir", dir),
+			zap.Error(err),
+		)
+		return
+	}
+	if !empty {
+		h.logger.Debug("workspace already populated, skipping restore",
+			zap.String("session_id", session.SessionID),
+			zap.String("dir", dir),
+		)
+		return
+	}
+
+	if err := h.syncer.Restore(ctx, session.Workspace, session.WorkspaceManifestID, dir); err != nil {
+		// A failed restore leaves an empty workspace rather than a wrong one.
+		// The task will run against nothing and say so, which beats running
+		// against a half-materialized tree.
+		h.logger.Error("workspace restore failed",
+			zap.String("session_id", session.SessionID),
+			zap.String("workspace_id", session.Workspace.WorkspaceID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	h.logger.Info("workspace restored from CAS",
+		zap.String("session_id", session.SessionID),
+		zap.String("workspace_id", session.Workspace.WorkspaceID),
+	)
 }

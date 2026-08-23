@@ -19,6 +19,7 @@ type Config struct {
 	Workspace WorkspaceConfig `mapstructure:"workspace"`
 	Heartbeat HeartbeatConfig `mapstructure:"heartbeat"`
 	Sandbox   SandboxConfig   `mapstructure:"sandbox"`
+	Storage   StorageConfig   `mapstructure:"storage"`
 	TLS       TLSConfig       `mapstructure:"tls"`
 	Logging   LoggingConfig   `mapstructure:"logging"`
 }
@@ -28,6 +29,35 @@ type WorkspaceConfig struct {
 	// BasePath is the base directory for workspaces.
 	// Default: /workspace
 	BasePath string `mapstructure:"base_path"`
+}
+
+// Storage backends the runner can sync a workspace to.
+const (
+	// StorageBackendNone disables workspace sync. Default.
+	StorageBackendNone = "none"
+
+	// StorageBackendLocal syncs to a directory the runner can write, which is
+	// how a shared volume or a mounted object store is used.
+	StorageBackendLocal = "local"
+)
+
+// StorageEncryptionNone stores chunks without encryption.
+const StorageEncryptionNone = "none"
+
+// StorageConfig controls where the runner syncs workspaces for suspend and
+// resume. With no backend configured the runner reports workspace sync as not
+// done rather than claiming a snapshot it never wrote.
+type StorageConfig struct {
+	// Backend is "none" (default) or "local".
+	Backend string `mapstructure:"backend"`
+
+	// LocalPath is the directory the local backend writes chunks and
+	// manifests into. Required when Backend is "local".
+	LocalPath string `mapstructure:"local_path"`
+
+	// Encryption is "none". It has no default on purpose: storing workspace
+	// contents unencrypted is an operator decision, not a fallback.
+	Encryption string `mapstructure:"encryption"`
 }
 
 // ServerConfig contains gRPC server connection settings.
@@ -110,6 +140,9 @@ func BindFlags(flags *pflag.FlagSet) {
 	flags.String("pool", "", "Pool name for pool runners")
 	flags.String("workspace", "/workspace", "Base path for workspaces")
 	flags.String("sandbox-mode", "runner-is-sandbox", "Sandbox mode: runner-is-sandbox, runner-creates-sandbox, or none")
+	flags.String("storage-backend", "none", "Workspace sync backend: none or local")
+	flags.String("storage-local-path", "", "Directory the local storage backend writes to")
+	flags.String("storage-encryption", "", "Workspace chunk encryption: none (no default; must be set when a backend is configured)")
 	flags.String("log-level", "info", "Log level: debug, info, warn, error")
 	flags.String("log-format", "json", "Log format: json or console")
 	flags.Bool("tls", false, "Enable TLS for gRPC connection")
@@ -127,6 +160,9 @@ func bindPFlags(v *viper.Viper, flags *pflag.FlagSet) {
 	_ = v.BindPFlag("runner.pool_name", flags.Lookup("pool"))
 	_ = v.BindPFlag("workspace.base_path", flags.Lookup("workspace"))
 	_ = v.BindPFlag("sandbox.mode", flags.Lookup("sandbox-mode"))
+	_ = v.BindPFlag("storage.backend", flags.Lookup("storage-backend"))
+	_ = v.BindPFlag("storage.local_path", flags.Lookup("storage-local-path"))
+	_ = v.BindPFlag("storage.encryption", flags.Lookup("storage-encryption"))
 	_ = v.BindPFlag("logging.level", flags.Lookup("log-level"))
 	_ = v.BindPFlag("logging.format", flags.Lookup("log-format"))
 	_ = v.BindPFlag("tls.enabled", flags.Lookup("tls"))
@@ -210,6 +246,10 @@ func setDefaults(v *viper.Viper) {
 	// Sandbox defaults
 	v.SetDefault("sandbox.mode", "runner-is-sandbox")
 
+	// Storage: sync is off unless an operator turns it on. Encryption has no
+	// default so that enabling a backend forces an explicit choice.
+	v.SetDefault("storage.backend", StorageBackendNone)
+
 	// TLS defaults
 	v.SetDefault("tls.enabled", false)
 	v.SetDefault("tls.skip_verify", false)
@@ -271,6 +311,30 @@ func (c *Config) Validate() error {
 	if !validModes[c.Sandbox.Mode] {
 		return fmt.Errorf("%w: sandbox.mode must be 'runner-is-sandbox', 'runner-creates-sandbox', or 'none', got %q",
 			ErrInvalidConfig, c.Sandbox.Mode)
+	}
+
+	// Storage validation. A misconfigured backend must fail at startup rather
+	// than at the first suspend, where the only symptom would be a workspace
+	// that quietly never got saved.
+	switch c.Storage.Backend {
+	case "", StorageBackendNone:
+		// Sync disabled; nothing else to check.
+	case StorageBackendLocal:
+		if c.Storage.LocalPath == "" {
+			return fmt.Errorf("%w: storage.local_path is required when storage.backend is %q",
+				ErrInvalidConfig, StorageBackendLocal)
+		}
+		if c.Storage.Encryption == "" {
+			return fmt.Errorf("%w: storage.encryption must be set explicitly when storage.backend is configured",
+				ErrInvalidConfig)
+		}
+		if c.Storage.Encryption != StorageEncryptionNone {
+			return fmt.Errorf("%w: storage.encryption must be %q, got %q",
+				ErrInvalidConfig, StorageEncryptionNone, c.Storage.Encryption)
+		}
+	default:
+		return fmt.Errorf("%w: storage.backend must be %q or %q, got %q",
+			ErrInvalidConfig, StorageBackendNone, StorageBackendLocal, c.Storage.Backend)
 	}
 
 	validLogLevels := map[string]bool{

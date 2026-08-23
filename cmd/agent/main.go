@@ -81,6 +81,23 @@ func main() {
 	workspaceMgr := agent.NewWorkspaceManager(cfg.Workspace.BasePath, logger)
 	cmdHandler := agent.NewDefaultCommandHandler(workspaceMgr, logger)
 
+	// Workspace sync for suspend and resume. A backend that fails to build is
+	// fatal: starting with sync silently off would let suspends report a
+	// workspace as unsaved forever without anyone noticing why.
+	syncer, err := agent.NewWorkspaceSyncerFromConfig(cfg.Storage, logger)
+	if err != nil {
+		logger.Fatal("failed to configure workspace sync", zap.Error(err))
+	}
+	cmdHandler.SetWorkspaceSyncer(syncer)
+	if syncer.Available() {
+		logger.Info("workspace sync enabled",
+			zap.String("backend", cfg.Storage.Backend),
+			zap.String("path", cfg.Storage.LocalPath),
+		)
+	} else {
+		logger.Info("workspace sync disabled; suspends will report the workspace as not synced")
+	}
+
 	// sender forwards to whichever control channel is currently live.
 	sender := newCurrentChannel(logger)
 
