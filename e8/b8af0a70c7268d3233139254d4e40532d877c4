@@ -1,0 +1,45 @@
+migrations/011_system_access.down.sql
+  s_e995f4552d48c1::t_c990e272a8b6e6 1-465
+migrations/011_system_access.up.sql
+  s_e995f4552d48c1::t_46ceb6d5e6ff08 1-581
+pkg/audit/hooks.go
+  s_4e03746a1c3c16::t_811a674ad9c040 6-7,160-167
+pkg/audit/hooks_test.go
+  s_e995f4552d48c1::t_ac24012a7d4245 7-8,439-491
+pkg/server/admin/middleware.go
+  s_e995f4552d48c1::t_970205c4d2b9f2 6-7,30-35
+pkg/server/core/app.go
+  s_e995f4552d48c1::t_044529ac80f32c 176-181
+pkg/store/postgres/store.go
+  s_e995f4552d48c1::t_ac5b288afdd4ee 273-278
+pkg/store/postgres/tenant.go
+  s_e995f4552d48c1::t_b54b406265a3ee 24-30,45-46,52-60,68-76,79,107,125
+pkg/store/postgres/tenant_test.go
+  s_e995f4552d48c1::t_b9d080ede4852d 482-576
+pkg/store/tenant.go
+  s_e995f4552d48c1::t_5393cdc27df884 43-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "e8b8af0a70c7268d3233139254d4e40532d877c4",
+  "prompts": {},
+  "sessions": {
+    "s_4e03746a1c3c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60714d52-8636-4fc2-adaa-7b5018a4a131",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
