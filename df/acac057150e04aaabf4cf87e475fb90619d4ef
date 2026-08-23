@@ -1,0 +1,31 @@
+pkg/server/api/log_archive.go
+  s_ecb7c44fe1ae09::t_047ce314cfca09 103-121
+pkg/server/api/session_adapter.go
+  s_ecb7c44fe1ae09::t_5818a8c3848a74 73
+pkg/store/postgres/log_archive_test.go
+  s_1e03d1f9444213::t_a5fe7fcf724da1 1-581
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "dfacac057150e04aaabf4cf87e475fb90619d4ef",
+  "prompts": {},
+  "sessions": {
+    "s_1e03d1f9444213": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f08e1d14-b06b-4619-aa64-c85c623e5795",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_ecb7c44fe1ae09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "52064dcb-78a6-4657-81a0-b7202cd11674",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
