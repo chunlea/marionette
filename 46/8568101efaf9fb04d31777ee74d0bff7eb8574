@@ -1,0 +1,35 @@
+CHANGELOG.md
+  s_d7da100278f3de::t_4ac52bba643702 97-99
+deploy/docker/docker-compose.release.yml
+  s_4e03746a1c3c16::t_416e7577204d3f 1-22
+docs/development/releasing.md
+  s_d7da100278f3de::t_32dcfc2798e4f8 1-136
+docs/getting-started/installation.md
+  s_d7da100278f3de::t_2604b94533d824 11-60,63-64
+mkdocs.yml
+  s_d7da100278f3de::t_eb5e0f4abe921a 109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "468568101efaf9fb04d31777ee74d0bff7eb8574",
+  "prompts": {},
+  "sessions": {
+    "s_4e03746a1c3c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60714d52-8636-4fc2-adaa-7b5018a4a131",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_d7da100278f3de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d25f03f-fcd3-47a0-8cec-a7ffad651de1",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
