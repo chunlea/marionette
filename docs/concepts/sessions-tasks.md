@@ -94,12 +94,25 @@ A **Session** is a long-lived work context that:
 
 | Component | Storage | Survives Runner Change |
 |-----------|---------|------------------------|
-| Workspace files | CAS / Volume | ✓ Yes |
-| Agent context | DB (snapshot) | ✓ Yes |
+| Workspace files | Volume, or CAS when sync is configured | Conditional — see below |
+| Agent context | DB (`context_snapshot`) | ✓ Yes |
 | Session metadata | DB | ✓ Yes |
 | Pending permissions | DB | ✓ Yes |
 | Running processes | Memory | ✗ No |
 | Network connections | Memory | ✗ No |
+
+!!! warning "Workspace survival depends on the strategy"
+    A workspace on a volume that outlives the runner (`pause`,
+    `terminate_preserve_storage`) survives on its own. A `release_to_pool`
+    suspend hands the machine to someone else, so the workspace only survives
+    if the runner synced it to CAS first — and that requires a storage backend
+    configured on the runner. The suspend response reports `workspace_synced`
+    truthfully: when it is false, the workspace was not saved. See
+    [Workspaces](workspaces.md).
+
+The agent context is what makes a resumed session continue the same
+conversation rather than start a new one: it carries the Claude CLI session id,
+and resume is keyed on that id alone, not on the working directory.
 
 ### Lifecycle Modes
 
