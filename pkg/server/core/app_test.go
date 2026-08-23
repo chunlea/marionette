@@ -8,6 +8,7 @@ import (
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/provider"
+	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/webhook"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,7 @@ func testWireDeps(t *testing.T) WireDeps {
 			ScheduledTaskCheckInterval:    time.Hour,
 			ScheduledSessionCheckInterval: time.Hour,
 			ReapInterval:                  time.Hour,
+			PartitionInterval:             time.Hour,
 		},
 	}
 }
@@ -92,6 +94,7 @@ func TestWire_StartsEveryBackgroundJob(t *testing.T) {
 		"scheduled-task-executor",
 		"scheduled-session-activator",
 		"runner-reaper",
+		"log-partition-maintainer",
 	}, names)
 
 	require.NoError(t, app.Start(context.Background()))
@@ -175,4 +178,36 @@ func TestApp_StopWithoutStart(t *testing.T) {
 
 	require.NoError(t, app.Stop(context.Background()))
 	assert.Error(t, app.Context().Err())
+}
+
+// TestWire_LogRetentionOffByDefault guards a foot-gun: the log partitions are
+// the only copy of the logs until archiving is wired, so a non-zero retention
+// here deletes them rather than ageing them out of hot storage.
+func TestWire_LogRetentionOffByDefault(t *testing.T) {
+	var deps WireDeps
+	assert.Zero(t, deps.Jobs.LogRetentionDays,
+		"log retention must stay disabled until log archiving exists")
+}
+
+// TestWire_SkipsPartitionMaintainerWithoutSupport keeps a store that cannot
+// partition from blocking startup.
+func TestWire_SkipsPartitionMaintainerWithoutSupport(t *testing.T) {
+	deps := testWireDeps(t)
+	deps.Store = &nonPartitioningStore{Store: deps.Store}
+
+	app, err := Wire(deps)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+
+	for _, job := range app.jobs {
+		assert.NotEqual(t, "log-partition-maintainer", job.name)
+	}
+}
+
+// nonPartitioningStore hides the LogPartitioner methods of the store it wraps.
+// Embedding the store.Store interface promotes only that interface's methods,
+// and partition maintenance is not part of it - so the wrapper satisfies
+// store.Store but not jobs.LogPartitioner.
+type nonPartitioningStore struct {
+	store.Store
 }

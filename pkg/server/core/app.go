@@ -10,6 +10,7 @@ import (
 	"github.com/chunlea/marionette/pkg/audit"
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
+	"github.com/chunlea/marionette/pkg/jobs"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/webhook"
 	"go.uber.org/zap"
@@ -51,6 +52,18 @@ type JobsConfig struct {
 	// BackgroundWorkers bounds fire-and-forget work (task retries, post-resume
 	// re-execution, runner attach). Zero uses the package default.
 	BackgroundWorkers int
+
+	PartitionInterval          time.Duration
+	PartitionDaysAhead         int
+	DisablePartitionMaintainer bool
+
+	// LogRetentionDays drops log partitions older than this many days.
+	//
+	// It MUST stay zero (the default, meaning "never drop") until log archiving
+	// is wired: the partitions are the only copy of the logs, so a non-zero
+	// value here deletes them outright rather than ageing them out of hot
+	// storage. See docs/storage.md.
+	LogRetentionDays int
 }
 
 // WireDeps are the external dependencies App needs. They are struct fields
@@ -118,11 +131,12 @@ type App struct {
 }
 
 // backgroundJob adapts the varying Start/Stop shapes of the core jobs to one
-// interface App can drive.
+// interface App can drive. stop receives the shutdown context so a job that
+// can block on teardown honours the same deadline as everything else.
 type backgroundJob struct {
 	name  string
 	start func(ctx context.Context) error
-	stop  func()
+	stop  func(ctx context.Context)
 }
 
 // Wire builds every core manager and background job from deps.
@@ -256,7 +270,7 @@ func (a *App) buildJobs(deps WireDeps) {
 		a.jobs = append(a.jobs, backgroundJob{
 			name:  "stale-detector",
 			start: func(ctx context.Context) error { sd.Start(ctx); return nil },
-			stop:  sd.Stop,
+			stop:  func(context.Context) { sd.Stop() },
 		})
 	}
 
@@ -269,7 +283,7 @@ func (a *App) buildJobs(deps WireDeps) {
 		a.jobs = append(a.jobs, backgroundJob{
 			name:  "task-timeout-enforcer",
 			start: func(ctx context.Context) error { tte.Start(ctx); return nil },
-			stop:  tte.Stop,
+			stop:  func(context.Context) { tte.Stop() },
 		})
 	}
 
@@ -278,7 +292,7 @@ func (a *App) buildJobs(deps WireDeps) {
 		a.jobs = append(a.jobs, backgroundJob{
 			name:  "permission-timeout-enforcer",
 			start: func(ctx context.Context) error { pte.Start(ctx); return nil },
-			stop:  pte.Stop,
+			stop:  func(context.Context) { pte.Stop() },
 		})
 	}
 
@@ -291,8 +305,34 @@ func (a *App) buildJobs(deps WireDeps) {
 		a.jobs = append(a.jobs, backgroundJob{
 			name:  "scheduled-task-executor",
 			start: func(ctx context.Context) error { ste.Start(ctx); return nil },
-			stop:  ste.Stop,
+			stop:  func(context.Context) { ste.Stop() },
 		})
+	}
+
+	// The logs table is partitioned by day and the initial migration created a
+	// fixed set once. Without this job the partitions run out and every log
+	// insert fails; migration 007 added a default partition so writes survive,
+	// but retention only works while the daily partitions keep coming.
+	if !cfg.DisablePartitionMaintainer {
+		if partitioner, ok := a.Store.(jobs.LogPartitioner); ok {
+			pm := jobs.NewPartitionMaintainer(partitioner, jobs.PartitionMaintainerConfig{
+				Interval:      cfg.PartitionInterval,
+				DaysAhead:     cfg.PartitionDaysAhead,
+				RetentionDays: cfg.LogRetentionDays,
+				Logger:        a.Logger.Named("partition-maintainer"),
+			})
+			a.jobs = append(a.jobs, backgroundJob{
+				name:  "log-partition-maintainer",
+				start: pm.Start,
+				stop: func(ctx context.Context) {
+					if err := pm.Stop(ctx); err != nil {
+						a.Logger.Warn("partition maintainer did not stop cleanly", zap.Error(err))
+					}
+				},
+			})
+		} else {
+			a.Logger.Warn("store does not maintain log partitions; log inserts will fail once the existing partitions run out")
+		}
 	}
 
 	if !cfg.DisableReaper {
@@ -308,7 +348,7 @@ func (a *App) buildJobs(deps WireDeps) {
 		a.jobs = append(a.jobs, backgroundJob{
 			name:  "runner-reaper",
 			start: func(ctx context.Context) error { reaper.Start(ctx); return nil },
-			stop:  reaper.Stop,
+			stop:  func(context.Context) { reaper.Stop() },
 		})
 	}
 
@@ -322,7 +362,7 @@ func (a *App) buildJobs(deps WireDeps) {
 		a.jobs = append(a.jobs, backgroundJob{
 			name:  "scheduled-session-activator",
 			start: func(_ context.Context) error { return ssa.Start() },
-			stop:  ssa.Stop,
+			stop:  func(context.Context) { ssa.Stop() },
 		})
 	}
 }
@@ -376,7 +416,7 @@ func (a *App) Stop(ctx context.Context) error {
 		// Stop in reverse start order.
 		for i := len(a.jobs) - 1; i >= 0; i-- {
 			job := a.jobs[i]
-			job.stop()
+			job.stop(ctx)
 			a.Logger.Info("background job stopped", zap.String("job", job.name))
 		}
 	}()

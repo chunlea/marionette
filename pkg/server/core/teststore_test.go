@@ -662,3 +662,14 @@ func (s *testStore) GetPendingWebhookEvents(_ context.Context, _ int) ([]*store.
 	return nil, nil
 }
 func (s *testStore) CancelWebhookEventsByWebhook(_ context.Context, _ string) error { return nil }
+
+// MaintainLogPartitions and DropOldLogPartitions make testStore satisfy
+// jobs.LogPartitioner, so Wire builds the partition maintainer in tests the
+// same way it does against postgres.
+func (s *testStore) MaintainLogPartitions(_ context.Context, _ int) error {
+	return nil
+}
+
+func (s *testStore) DropOldLogPartitions(_ context.Context, _ int) error {
+	return nil
+}
