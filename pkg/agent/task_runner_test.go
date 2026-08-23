@@ -1459,3 +1459,149 @@ func TestDefaultCommandHandler_DetachSession_CancelsTask(t *testing.T) {
 	// Verify OnDetachSession was called with the correct session ID
 	assert.Equal(t, "sess_test123", canceledSessionID)
 }
+
+// attachTestSession attaches a session so Execute has somewhere to run.
+func attachTestSession(t *testing.T, cmdHandler *DefaultCommandHandler, sessionID string) {
+	t.Helper()
+
+	_, err := cmdHandler.HandleAttachSession(context.Background(), &pb.AttachSession{
+		SessionId:     sessionID,
+		WorkspacePath: "ws_test",
+		AgentConfig:   &pb.AgentConfig{Agent: "claude", Model: "claude-fable-5", ApiKey: "test-key"},
+	})
+	require.NoError(t, err)
+}
+
+// TestTaskRunner_Execute_UsesServerTimeout pins that the server's timeout is
+// honored. The runner used to hardcode one hour and ignore it, so a task the
+// server capped at five minutes ran twelve times longer than it was allowed.
+func TestTaskRunner_Execute_UsesServerTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		sandbox *pb.SandboxConfig
+		want    time.Duration
+	}{
+		{
+			name:    "server supplies a timeout",
+			sandbox: &pb.SandboxConfig{TimeoutSeconds: 300},
+			want:    5 * time.Minute,
+		},
+		{
+			name:    "no sandbox config falls back to the default",
+			sandbox: nil,
+			want:    defaultTaskTimeout,
+		},
+		{
+			name:    "zero timeout falls back to the default",
+			sandbox: &pb.SandboxConfig{TimeoutSeconds: 0},
+			want:    defaultTaskTimeout,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := zaptest.NewLogger(t)
+
+			var gotTimeout time.Duration
+			exec := &mockExecutor{
+				executeFunc: func(_ context.Context, task *executor.Task, _ *executor.AgentConfig, _ executor.OutputHandler) (*executor.Result, error) {
+					gotTimeout = task.Timeout
+					return &executor.Result{Success: true}, nil
+				},
+			}
+
+			wsMgr := NewWorkspaceManager(t.TempDir(), logger)
+			cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+			runner := NewTaskRunner(&mockMessageSender{}, exec, wsMgr, cmdHandler, &mockStatusSetter{}, nil, logger)
+
+			attachTestSession(t, cmdHandler, "sess_timeout")
+
+			_, err := runner.Execute(context.Background(), &pb.ExecuteTask{
+				TaskId:    "task_timeout",
+				RunId:     "trun_timeout",
+				SessionId: "sess_timeout",
+				Attempt:   1,
+				Prompt:    "test",
+				Sandbox:   tt.sandbox,
+			})
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.want, gotTimeout)
+		})
+	}
+}
+
+// TestTaskRunner_Execute_ReportsAgentFailure covers the honesty rule end to
+// end: when the agent itself reports the run failed, the server must receive
+// that reason rather than a bare exit code or, worse, a success.
+func TestTaskRunner_Execute_ReportsAgentFailure(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	exec := &mockExecutor{
+		executeFunc: func(context.Context, *executor.Task, *executor.AgentConfig, executor.OutputHandler) (*executor.Result, error) {
+			// What the claude executor produces for a result line with
+			// subtype error_max_turns and is_error true.
+			return &executor.Result{
+				Success:      false,
+				ExitCode:     0,
+				Error:        "agent stopped: max turns reached: ran out of turns",
+				TokensInput:  1200,
+				TokensOutput: 340,
+			}, nil
+		},
+	}
+
+	wsMgr := NewWorkspaceManager(t.TempDir(), logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+	runner := NewTaskRunner(&mockMessageSender{}, exec, wsMgr, cmdHandler, &mockStatusSetter{}, nil, logger)
+
+	attachTestSession(t, cmdHandler, "sess_fail")
+
+	msg, err := runner.Execute(context.Background(), &pb.ExecuteTask{
+		TaskId:    "task_fail",
+		RunId:     "trun_fail",
+		SessionId: "sess_fail",
+		Attempt:   1,
+		Prompt:    "test",
+	})
+	require.NoError(t, err)
+
+	completed := msg.GetTaskCompleted()
+	require.NotNil(t, completed)
+	assert.False(t, completed.Success)
+	assert.Equal(t, "agent stopped: max turns reached: ran out of turns", completed.Error)
+	assert.Equal(t, int64(1200), completed.TokensInput)
+	assert.Equal(t, int64(340), completed.TokensOutput)
+}
+
+// TestTaskRunner_Execute_ForwardsContextSnapshot pins that the resume handle
+// reaches the server with the completion. Relying only on the mid-run
+// ContextUpdate loses it whenever a run ends before one is sent.
+func TestTaskRunner_Execute_ForwardsContextSnapshot(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	snapshot := []byte(`{"conversation_id":"080a38b4-4ab2-434d-927e-2f3103a3f56e"}`)
+
+	exec := &mockExecutor{
+		executeFunc: func(context.Context, *executor.Task, *executor.AgentConfig, executor.OutputHandler) (*executor.Result, error) {
+			return &executor.Result{Success: true, ContextSnapshot: snapshot}, nil
+		},
+	}
+
+	wsMgr := NewWorkspaceManager(t.TempDir(), logger)
+	cmdHandler := NewDefaultCommandHandler(wsMgr, logger)
+	runner := NewTaskRunner(&mockMessageSender{}, exec, wsMgr, cmdHandler, &mockStatusSetter{}, nil, logger)
+
+	attachTestSession(t, cmdHandler, "sess_snap")
+
+	msg, err := runner.Execute(context.Background(), &pb.ExecuteTask{
+		TaskId:    "task_snap",
+		RunId:     "trun_snap",
+		SessionId: "sess_snap",
+		Attempt:   1,
+		Prompt:    "test",
+	})
+	require.NoError(t, err)
+
+	completed := msg.GetTaskCompleted()
+	require.NotNil(t, completed)
+	assert.JSONEq(t, string(snapshot), string(completed.ContextSnapshot))
+}
