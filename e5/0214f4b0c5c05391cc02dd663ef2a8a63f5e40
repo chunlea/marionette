@@ -1,0 +1,35 @@
+pkg/server/api/mock_task_service_test.go
+  s_e995f4552d48c1::t_80bcfeb61a1606 7,19-20,30,39,399-428
+pkg/server/api/openapi.yaml
+  s_e995f4552d48c1::t_90880c21e94b77 1635-1701,2846-2918
+pkg/server/api/openapi_routes.go
+  s_e995f4552d48c1::t_b3371ea662a792 229-238
+pkg/server/api/openapi_test.go
+  s_e995f4552d48c1::t_946b6aa5596ad1 117-120,125-128
+pkg/server/api/server.go
+  s_e995f4552d48c1::t_cef74de6bda0e2 245
+pkg/server/api/server_test.go
+  s_e995f4552d48c1::t_9f64ca66a72764 1165,1687-1748
+pkg/server/api/task_adapter.go
+  s_e995f4552d48c1::t_7e6c0eae1f972b 6,31-51
+pkg/server/api/task_service.go
+  s_e995f4552d48c1::t_387ae7890ba5c5 30-32,58-64
+pkg/server/api/tasks_handler.go
+  s_e995f4552d48c1::t_3473f91b878598 153-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "e50214f4b0c5c05391cc02dd663ef2a8a63f5e40",
+  "prompts": {},
+  "sessions": {
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
