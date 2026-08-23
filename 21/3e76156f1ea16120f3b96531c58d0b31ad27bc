@@ -1,0 +1,31 @@
+cmd/server/adapters.go
+  s_407eac4b802d80::t_d8b462a2d17380 11,19,687-865
+cmd/server/main.go
+  s_b2fb362fa9128c::t_ad434da13c1a19 210,642-647,654-677,682
+cmd/server/tunnel_wiring_test.go
+  s_b2fb362fa9128c::t_9a4d66c35db57a 1-247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "213e76156f1ea16120f3b96531c58d0b31ad27bc",
+  "prompts": {},
+  "sessions": {
+    "s_407eac4b802d80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef840d6e-7942-40f8-90b2-80141044f398",
+        "model": "claude-opus-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b2fb362fa9128c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90747e52-2fa2-46d4-953b-527cf3ed633b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
