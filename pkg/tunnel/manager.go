@@ -43,6 +43,40 @@ type activeTunnel struct {
 	hashVersion int
 }
 
+// hasCredentials reports whether this entry can verify a token on its own.
+// Entries repopulated from the store after a restart carry no hash, because
+// Store.GetTunnel does not return one.
+func (a *activeTunnel) hasCredentials() bool {
+	return a.tokenHash != ""
+}
+
+// checkLive returns the appropriate error if a tunnel is no longer usable.
+func checkLive(t *Tunnel) error {
+	if t.IsClosed() {
+		return ErrTunnelClosed
+	}
+	if t.IsExpired() {
+		return ErrTunnelExpired
+	}
+	return nil
+}
+
+// cache inserts a tunnel into the in-memory lookup cache. An existing entry
+// that can already authenticate is never downgraded to one that cannot.
+func (m *TunnelManager) cache(t *Tunnel, tokenHash string, hashVersion int) {
+	m.tunnelsMu.Lock()
+	defer m.tunnelsMu.Unlock()
+
+	if existing, ok := m.tunnels[t.ID]; ok && existing.hasCredentials() {
+		return
+	}
+	m.tunnels[t.ID] = &activeTunnel{
+		Tunnel:      t,
+		tokenHash:   tokenHash,
+		hashVersion: hashVersion,
+	}
+}
+
 // URLGenerator generates public URLs for tunnels.
 type URLGenerator interface {
 	// GenerateURL generates a public URL for the given tunnel.
@@ -213,13 +247,15 @@ func (m *TunnelManager) Get(ctx context.Context, tunnelID string) (*Tunnel, erro
 		if err != nil {
 			return nil, err
 		}
-		// Check if closed or expired
-		if tunnel.IsClosed() {
-			return nil, ErrTunnelClosed
+		if err := checkLive(tunnel); err != nil {
+			return nil, err
 		}
-		if tunnel.IsExpired() {
-			return nil, ErrTunnelExpired
-		}
+
+		// Repopulate the cache so a tunnel created before a server restart
+		// stays reachable. No token hash is available here, so the entry
+		// cannot authenticate by itself; ValidateToken handles that case.
+		m.cache(tunnel, "", 0)
+
 		return tunnel, nil
 	}
 
@@ -320,30 +356,52 @@ func (m *TunnelManager) CloseBySession(ctx context.Context, sessionID string) er
 }
 
 // ValidateToken validates a tunnel token and returns the tunnel if valid.
-func (m *TunnelManager) ValidateToken(_ context.Context, tunnelID, token string) (*Tunnel, error) {
-	// Get tunnel from cache
+func (m *TunnelManager) ValidateToken(ctx context.Context, tunnelID, token string) (*Tunnel, error) {
 	m.tunnelsMu.RLock()
 	active, exists := m.tunnels[tunnelID]
 	m.tunnelsMu.RUnlock()
 
-	if !exists {
+	if exists && active.hasCredentials() {
+		if err := checkLive(active.Tunnel); err != nil {
+			return nil, err
+		}
+		if !cryptoutil.VerifyToken(token, active.tokenHash, active.hashVersion, nil) {
+			return nil, ErrInvalidToken
+		}
+		return active.Tunnel, nil
+	}
+
+	// Either the cache never saw this tunnel (server restarted) or the entry
+	// was repopulated without its hash. Fall back to the store.
+	if m.store == nil {
+		if exists {
+			return nil, ErrInvalidToken
+		}
 		return nil, ErrTunnelNotFound
 	}
 
-	// Check if closed or expired
-	if active.IsClosed() {
-		return nil, ErrTunnelClosed
+	// Resolve the tunnel first so a missing tunnel is reported as such rather
+	// than as a bad token.
+	tunnel, err := m.store.GetTunnel(ctx, tunnelID)
+	if err != nil {
+		return nil, ErrTunnelNotFound
 	}
-	if active.IsExpired() {
-		return nil, ErrTunnelExpired
+	if err := checkLive(tunnel); err != nil {
+		return nil, err
 	}
 
-	// Verify token
-	if !cryptoutil.VerifyToken(token, active.tokenHash, active.hashVersion, nil) {
+	// Looking the token up by its own hash both authenticates it and recovers
+	// the hash needed to cache an entry that can authenticate on its own.
+	// Only v1 (SHA-256) hashing is in use; v2 is reserved and unimplemented.
+	hash := cryptoutil.HashToken(token)
+	byHash, err := m.store.GetTunnelByHash(ctx, hash)
+	if err != nil || byHash.ID != tunnelID {
 		return nil, ErrInvalidToken
 	}
 
-	return active.Tunnel, nil
+	m.cache(tunnel, hash, cryptoutil.HashV1SHA256)
+
+	return tunnel, nil
 }
 
 // GetActiveCount returns the number of active tunnels.

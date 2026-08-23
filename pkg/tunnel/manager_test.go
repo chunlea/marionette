@@ -427,9 +427,10 @@ func TestTunnelManager_ValidateToken(t *testing.T) {
 		err = m.Close(context.Background(), closedTunnel.ID)
 		require.NoError(t, err)
 
+		// Reported as closed, not as missing: the store still knows about it.
 		_, err = m.ValidateToken(context.Background(), closedTunnel.ID, token)
 		require.Error(t, err)
-		assert.Equal(t, ErrTunnelNotFound, err)
+		assert.Equal(t, ErrTunnelClosed, err)
 	})
 }
 
@@ -730,4 +731,90 @@ func TestIsNotFoundError(t *testing.T) {
 	assert.True(t, isNotFoundError(ErrTunnelNotFound))
 	assert.False(t, isNotFoundError(errors.New("other error")))
 	assert.False(t, isNotFoundError(nil))
+}
+
+// TestTunnelManager_RestartSurvival covers the in-memory maps not surviving a
+// restart: a fresh manager backed by the same store must still resolve and
+// authenticate a tunnel created by the previous process.
+func TestTunnelManager_RestartSurvival(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+	ctx := context.Background()
+
+	// Process 1 creates a tunnel.
+	before := NewTunnelManager(WithStore(store), WithLogger(logger))
+	created, err := before.Create(ctx, CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeHTTP,
+		LocalPort: 3000,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, created.Token)
+
+	// Process 2 starts with an empty cache.
+	after := NewTunnelManager(WithStore(store), WithLogger(logger))
+	require.Equal(t, 0, after.GetActiveCount())
+
+	t.Run("get repopulates the cache", func(t *testing.T) {
+		got, err := after.Get(ctx, created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, created.ID, got.ID)
+
+		after.tunnelsMu.RLock()
+		_, cached := after.tunnels[created.ID]
+		after.tunnelsMu.RUnlock()
+		assert.True(t, cached, "a store hit must be cached, not re-fetched every time")
+	})
+
+	t.Run("token still validates after restart", func(t *testing.T) {
+		validated, err := after.ValidateToken(ctx, created.ID, created.Token)
+		require.NoError(t, err)
+		assert.Equal(t, created.ID, validated.ID)
+	})
+
+	t.Run("cached entry authenticates on the second call", func(t *testing.T) {
+		// The first ValidateToken upgraded the entry with its hash, so this
+		// one is served from cache.
+		validated, err := after.ValidateToken(ctx, created.ID, created.Token)
+		require.NoError(t, err)
+		assert.Equal(t, created.ID, validated.ID)
+	})
+
+	t.Run("wrong token is rejected", func(t *testing.T) {
+		_, err := after.ValidateToken(ctx, created.ID, "ttok_not_the_right_token")
+		require.Error(t, err)
+		assert.Equal(t, ErrInvalidToken, err)
+	})
+
+	t.Run("unknown tunnel is not found", func(t *testing.T) {
+		_, err := after.ValidateToken(ctx, "tun_missing", created.Token)
+		require.Error(t, err)
+	})
+}
+
+// TestTunnelManager_ValidateToken_CrossTunnelTokenRejected makes sure the
+// hash-based store lookup cannot authenticate a different tunnel.
+func TestTunnelManager_ValidateToken_CrossTunnelTokenRejected(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	store := newMockStore()
+	ctx := context.Background()
+
+	m := NewTunnelManager(WithStore(store), WithLogger(logger))
+
+	first, err := m.Create(ctx, CreateTunnelOptions{
+		SessionID: "sess_1", RunnerID: "run_1", Type: TypeHTTP, LocalPort: 3000,
+	})
+	require.NoError(t, err)
+
+	second, err := m.Create(ctx, CreateTunnelOptions{
+		SessionID: "sess_2", RunnerID: "run_2", Type: TypeHTTP, LocalPort: 3001,
+	})
+	require.NoError(t, err)
+
+	// Restart: empty cache, then present tunnel 1's token for tunnel 2.
+	fresh := NewTunnelManager(WithStore(store), WithLogger(logger))
+	_, err = fresh.ValidateToken(ctx, second.ID, first.Token)
+	require.Error(t, err)
+	assert.Equal(t, ErrInvalidToken, err)
 }
