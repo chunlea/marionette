@@ -530,6 +530,8 @@ CREATE TABLE public.runners (
     last_seen_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    claim_session_id text,
+    claimed_at timestamp with time zone,
     CONSTRAINT valid_runner_status CHECK ((status = ANY (ARRAY['offline'::text, 'idle'::text, 'busy'::text, 'paused'::text]))),
     CONSTRAINT valid_sandbox_mode CHECK ((sandbox_mode = ANY (ARRAY['runner-is-sandbox'::text, 'runner-creates-sandbox'::text, 'none'::text])))
 );
@@ -1309,6 +1311,12 @@ CREATE INDEX idx_runner_tokens_runner ON public.runner_tokens USING btree (runne
 --
 
 CREATE INDEX idx_runner_tokens_tenant ON public.runner_tokens USING btree (tenant_id);
+
+--
+-- Name: idx_runners_claim; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runners_claim ON public.runners USING btree (claim_session_id, claimed_at) WHERE (claim_session_id IS NOT NULL);
 
 --
 -- Name: idx_runners_labels; Type: INDEX; Schema: public; Owner: -
