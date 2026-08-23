@@ -1,0 +1,79 @@
+web/pnpm-lock.yaml
+  s_c8578aa5dbeab3::t_600715cf797698 81-83,812-821,1204-1207,1321-1323,1343-1345,1710-1713,1748-1751,1759-1762,1783-1785,1867-1870,1907-1912,1929-1932,1976-1979,2081-2084,2202-2205,2300-2303,2329-2331,2504-2510,2553,2647,2936,2952,3031-3053,3340,3350,3369,3384,3476-3477,3592-3593,3616-3617,3654,3657-3658,3829,3999,4003,4006,4027-4028,4053-4054,4061-4064,4073,4099-4100,4167-4170,4197-4206,4228-4233,4260-4261,4351-4352,4469-4470,4573-4574,4603-4604,4618,4666,4730-4733
+web/src/api/hooks/useAndroidStreams.ts
+  s_c8578aa5dbeab3::t_38585fb517bc56 10
+web/src/lib/features.ts
+  s_c8578aa5dbeab3::t_fbf15c6b3ee56d 1-12
+web/src/types/admin.ts
+  s_c8578aa5dbeab3::t_f546bdb96f3ccd 1-164
+web/src/types/api.gen.ts
+  s_c8578aa5dbeab3::t_f0ef9663a1bdc1 1-3489
+web/src/types/api.ts
+  s_c8578aa5dbeab3::t_1840751f3bef84 1-16,18-78
+web/src/types/stream.ts
+  s_c8578aa5dbeab3::t_1846228c1167ef 1-8,104-172
+web/src/vite-env.d.ts
+  s_c8578aa5dbeab3::t_23600505b1cc05 7-8
+web/eslint.config.js
+  s_c8578aa5dbeab3::t_a83f63cd24059e 8-10
+web/package.json
+  s_c8578aa5dbeab3::t_fa1f1023f7c197 8-10,43
+web/src/api/admin.ts
+  s_c8578aa5dbeab3::t_d1995a6579551c 13-17
+web/src/api/client.ts
+  s_c8578aa5dbeab3::t_758210d0ab6d85 13-17
+web/src/api/hooks/useAgentConfigs.ts
+  s_c8578aa5dbeab3::t_4cc5e0efde79d7 8
+web/src/api/hooks/useApiKeys.ts
+  s_c8578aa5dbeab3::t_254ab7c2f1f3dd 3,9
+web/src/api/hooks/useProviderConfigs.ts
+  s_c8578aa5dbeab3::t_0d24b138f4b1b4 8
+web/src/api/hooks/useRunnerTokens.ts
+  s_c8578aa5dbeab3::t_56a8ddc2ef6a7b 9
+web/src/components/DesktopStreamCard.tsx
+  s_c8578aa5dbeab3::t_8b8f345a0644d6 13,28,41,44-45,66,74,213,255
+web/src/components/DesktopViewer.tsx
+  s_c8578aa5dbeab3::t_090db438fef8bd 66,195
+web/src/components/android/AndroidViewer.tsx
+  s_c8578aa5dbeab3::t_b64ba54ee14d52 6,119
+web/src/components/android/DeviceSelector.tsx
+  s_c8578aa5dbeab3::t_3aaf0462799cce 1
+web/src/hooks/useAndroidInput.ts
+  s_c8578aa5dbeab3::t_5277a208775f52 2
+web/src/hooks/useLogStream.ts
+  s_c8578aa5dbeab3::t_858737f0e6e401 61
+web/src/hooks/useWebRTCStream.ts
+  s_c8578aa5dbeab3::t_b29b0698ecbb51 190-194,196
+web/src/routes/_layout/runners.tsx
+  s_c8578aa5dbeab3::t_6a4e30beed4cca 110-112
+web/src/routes/_layout/sessions/$sessionId.tsx
+  s_c8578aa5dbeab3::t_db6b6e92c7b877 7,166-173
+web/src/routes/_layout/sessions/$sessionId/android.tsx
+  s_c8578aa5dbeab3::t_4f598df5cf75de 14-15,18,21-45,165
+web/src/routes/_layout/tasks/$taskId.tsx
+  s_c8578aa5dbeab3::t_e792e74ec8a6ba 3
+web/src/routes/admin/_layout/agent-configs.tsx
+  s_c8578aa5dbeab3::t_50306a80c27bf8 12
+web/src/routes/admin/_layout/api-keys.tsx
+  s_c8578aa5dbeab3::t_c8f4c10990ec62 12
+web/src/routes/admin/_layout/provider-configs.tsx
+  s_c8578aa5dbeab3::t_c3efbcb726cdd2 12
+web/src/routes/admin/_layout/runner-tokens.tsx
+  s_c8578aa5dbeab3::t_75b5558e40045f 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "c8c7010bcb4747c1daab052df52a06ec9a9dc275",
+  "prompts": {},
+  "sessions": {
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
