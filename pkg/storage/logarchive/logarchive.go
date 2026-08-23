@@ -80,6 +80,13 @@ type Store struct {
 	blobs        storage.StorageProvider
 	encryptor    Encryptor
 	frameRecords int
+
+	// The zstd codecs are built once and shared. An encoder allocates its
+	// compression window on construction, so building one per frame would make
+	// a large archive's memory a multiple of its frame count for no reason.
+	// EncodeAll and DecodeAll are both safe to call concurrently.
+	encoder *zstd.Encoder
+	decoder *zstd.Decoder
 }
 
 // Option configures a Store.
@@ -103,11 +110,35 @@ func WithFrameRecords(n int) Option {
 
 // New returns a Store over a blob backend.
 func New(blobs storage.StorageProvider, opts ...Option) *Store {
-	s := &Store{blobs: blobs, frameRecords: DefaultFrameRecords}
+	s := &Store{
+		blobs:        blobs,
+		frameRecords: DefaultFrameRecords,
+		encoder:      newEncoder(),
+		decoder:      newDecoder(),
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
+}
+
+// newEncoder and newDecoder panic rather than return an error: neither can fail
+// for a nil destination and the default level, there is nothing a caller could
+// do about one, and a nil codec would panic far from the cause.
+func newEncoder() *zstd.Encoder {
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	if err != nil {
+		panic(fmt.Sprintf("logarchive: zstd encoder: %v", err))
+	}
+	return encoder
+}
+
+func newDecoder() *zstd.Decoder {
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		panic(fmt.Sprintf("logarchive: zstd decoder: %v", err))
+	}
+	return decoder
 }
 
 // Encrypts reports whether this Store writes encrypted frames. The archiver
@@ -280,12 +311,9 @@ func (w *Writer) flushFrame(ctx context.Context) error {
 	}
 	w.pending = w.pending[:0]
 
-	payload, err := compress(buf.Bytes())
-	if err != nil {
-		w.err = err
-		return err
-	}
+	payload := w.store.encoder.EncodeAll(buf.Bytes(), nil)
 
+	var err error
 	if w.store.encryptor != nil {
 		payload, err = w.store.encryptor.Encrypt(ctx, w.tenantID, payload)
 		if err != nil {
@@ -416,9 +444,9 @@ func (r *Reader) decodeFrame(ctx context.Context, payload []byte) ([]*store.Log,
 		payload = plain
 	}
 
-	raw, err := decompress(payload)
+	raw, err := r.store.decoder.DecodeAll(payload, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decompressing log archive frame: %w", err)
 	}
 
 	var records []*store.Log
@@ -457,36 +485,6 @@ func (f *frameReader) next() ([]byte, error) {
 		return nil, fmt.Errorf("%w: reading frame: %v", ErrBadFormat, err)
 	}
 	return payload, nil
-}
-
-// =============================================================================
-// Compression
-// =============================================================================
-
-func compress(data []byte) ([]byte, error) {
-	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
-	if err != nil {
-		return nil, fmt.Errorf("creating zstd encoder: %w", err)
-	}
-	out := enc.EncodeAll(data, nil)
-	if err := enc.Close(); err != nil {
-		return nil, fmt.Errorf("closing zstd encoder: %w", err)
-	}
-	return out, nil
-}
-
-func decompress(data []byte) ([]byte, error) {
-	dec, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating zstd decoder: %w", err)
-	}
-	defer dec.Close()
-
-	out, err := dec.DecodeAll(data, nil)
-	if err != nil {
-		return nil, fmt.Errorf("decompressing log archive frame: %w", err)
-	}
-	return out, nil
 }
 
 // =============================================================================
