@@ -1,0 +1,19 @@
+cmd/server/main.go
+  s_4e03746a1c3c16::t_2871a290b6c958 162-176,198,203-207,244-249,251,278-279,554-619
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "c01b18b631cb8b34159c068b298addc45467aacd",
+  "prompts": {},
+  "sessions": {
+    "s_4e03746a1c3c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60714d52-8636-4fc2-adaa-7b5018a4a131",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
