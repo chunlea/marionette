@@ -3,7 +3,6 @@ package tunnel
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"sync"
 	"time"
 
@@ -27,10 +26,6 @@ type TunnelManager struct {
 	tunnels   map[string]*activeTunnel
 	tunnelsMu sync.RWMutex
 
-	// Connection handlers by runner ID
-	handlers   map[string]ConnectionHandler
-	handlersMu sync.RWMutex
-
 	// ID generator (injectable for testing)
 	idGen func() string
 
@@ -46,22 +41,6 @@ type activeTunnel struct {
 	*Tunnel
 	tokenHash   string
 	hashVersion int
-	connections sync.WaitGroup
-}
-
-// ConnectionHandler handles tunnel connections to a specific runner.
-type ConnectionHandler interface {
-	// SendTunnelData sends data through the tunnel to the runner.
-	SendTunnelData(ctx context.Context, tunnelID string, data []byte) error
-
-	// ReceiveTunnelData receives data from the tunnel from the runner.
-	ReceiveTunnelData(ctx context.Context, tunnelID string) ([]byte, error)
-
-	// CloseTunnel notifies the runner to close the tunnel.
-	CloseTunnel(ctx context.Context, tunnelID string) error
-
-	// IsConnected returns true if the runner is connected.
-	IsConnected() bool
 }
 
 // URLGenerator generates public URLs for tunnels.
@@ -120,11 +99,10 @@ func WithURLGenerator(urlGen URLGenerator) ManagerOption {
 // NewTunnelManager creates a new TunnelManager.
 func NewTunnelManager(opts ...ManagerOption) *TunnelManager {
 	m := &TunnelManager{
-		logger:   zap.NewNop(),
-		tunnels:  make(map[string]*activeTunnel),
-		handlers: make(map[string]ConnectionHandler),
-		idGen:    id.Tunnel,
-		baseURL:  "http://localhost:8080",
+		logger:  zap.NewNop(),
+		tunnels: make(map[string]*activeTunnel),
+		idGen:   id.Tunnel,
+		baseURL: "http://localhost:8080",
 	}
 
 	for _, opt := range opts {
@@ -301,20 +279,10 @@ func (m *TunnelManager) Close(ctx context.Context, tunnelID string) error {
 		}
 	}
 
-	// Notify runner
-	m.handlersMu.RLock()
-	handler, hasHandler := m.handlers[active.RunnerID]
-	m.handlersMu.RUnlock()
-
-	if hasHandler && handler.IsConnected() {
-		if err := handler.CloseTunnel(ctx, tunnelID); err != nil {
-			m.logger.Warn("failed to notify runner of tunnel close",
-				zap.String("tunnel_id", tunnelID),
-				zap.String("runner_id", active.RunnerID),
-				zap.Error(err),
-			)
-		}
-	}
+	// TODO(lane-B/A2): the runner is never told the tunnel closed. This used
+	// to go through a ConnectionHandler that nothing ever registered, so the
+	// notification has never fired. The seam belongs on TunnelRouter (which
+	// owns the runner command stream) and needs main.go wiring.
 
 	m.logger.Info("tunnel closed",
 		zap.String("tunnel_id", tunnelID),
@@ -376,112 +344,6 @@ func (m *TunnelManager) ValidateToken(_ context.Context, tunnelID, token string)
 	}
 
 	return active.Tunnel, nil
-}
-
-// HandleHTTPRequest handles an incoming HTTP request for a tunnel.
-// It serializes the request, sends it to the runner, waits for the response,
-// and writes the response back to the client.
-func (m *TunnelManager) HandleHTTPRequest(ctx context.Context, tunnelID string, w http.ResponseWriter, r *http.Request) error {
-	// Get tunnel
-	m.tunnelsMu.RLock()
-	active, exists := m.tunnels[tunnelID]
-	m.tunnelsMu.RUnlock()
-
-	if !exists {
-		return ErrTunnelNotFound
-	}
-
-	// Check if closed or expired
-	if active.IsClosed() {
-		return ErrTunnelClosed
-	}
-	if active.IsExpired() {
-		return ErrTunnelExpired
-	}
-
-	// Verify tunnel type
-	if active.Type != TypeHTTP {
-		return fmt.Errorf("tunnel type mismatch: expected %s, got %s", TypeHTTP, active.Type)
-	}
-
-	// Get handler for runner
-	m.handlersMu.RLock()
-	handler, hasHandler := m.handlers[active.RunnerID]
-	m.handlersMu.RUnlock()
-
-	if !hasHandler || !handler.IsConnected() {
-		return ErrRunnerNotConnected
-	}
-
-	// Track active connection
-	active.connections.Add(1)
-	defer active.connections.Done()
-
-	// Proxy the HTTP request
-	return m.handleHTTPProxyRequest(ctx, tunnelID, handler, w, r)
-}
-
-// HandleTCPConnection handles an incoming TCP connection for a tunnel.
-func (m *TunnelManager) HandleTCPConnection(ctx context.Context, tunnelID string, conn Connection) error {
-	// Get tunnel
-	m.tunnelsMu.RLock()
-	active, exists := m.tunnels[tunnelID]
-	m.tunnelsMu.RUnlock()
-
-	if !exists {
-		return ErrTunnelNotFound
-	}
-
-	// Check if closed or expired
-	if active.IsClosed() {
-		return ErrTunnelClosed
-	}
-	if active.IsExpired() {
-		return ErrTunnelExpired
-	}
-
-	// Verify tunnel type
-	if active.Type != TypeTCP {
-		return fmt.Errorf("tunnel type mismatch: expected %s, got %s", TypeTCP, active.Type)
-	}
-
-	// Get handler for runner
-	m.handlersMu.RLock()
-	handler, hasHandler := m.handlers[active.RunnerID]
-	m.handlersMu.RUnlock()
-
-	if !hasHandler || !handler.IsConnected() {
-		return ErrRunnerNotConnected
-	}
-
-	// Track active connection
-	active.connections.Add(1)
-	defer active.connections.Done()
-
-	// Proxy the TCP connection
-	return m.handleTCPProxyConnection(ctx, tunnelID, handler, conn)
-}
-
-// RegisterHandler registers a connection handler for a runner.
-func (m *TunnelManager) RegisterHandler(runnerID string, handler ConnectionHandler) {
-	m.handlersMu.Lock()
-	m.handlers[runnerID] = handler
-	m.handlersMu.Unlock()
-
-	m.logger.Debug("handler registered",
-		zap.String("runner_id", runnerID),
-	)
-}
-
-// UnregisterHandler removes a connection handler for a runner.
-func (m *TunnelManager) UnregisterHandler(runnerID string) {
-	m.handlersMu.Lock()
-	delete(m.handlers, runnerID)
-	m.handlersMu.Unlock()
-
-	m.logger.Debug("handler unregistered",
-		zap.String("runner_id", runnerID),
-	)
 }
 
 // GetActiveCount returns the number of active tunnels.

@@ -3,7 +3,6 @@ package tunnel
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,63 +98,4 @@ func (p *HTTPProxy) WriteResponse(w http.ResponseWriter, resp *http.Response) er
 	}
 
 	return nil
-}
-
-// ProxyHTTPRequest proxies an HTTP request through the tunnel.
-func (p *HTTPProxy) ProxyHTTPRequest(
-	ctx context.Context,
-	tunnelID string,
-	handler ConnectionHandler,
-	w http.ResponseWriter,
-	r *http.Request,
-) error {
-	// Serialize the request
-	reqData, err := p.SerializeRequest(r)
-	if err != nil {
-		return fmt.Errorf("failed to serialize request: %w", err)
-	}
-
-	// Send request to runner
-	if err := handler.SendTunnelData(ctx, tunnelID, reqData); err != nil {
-		return fmt.Errorf("failed to send request to runner: %w", err)
-	}
-
-	// Wait for response with timeout
-	respCtx, cancel := context.WithTimeout(ctx, p.config.WriteTimeout)
-	defer cancel()
-
-	respData, err := handler.ReceiveTunnelData(respCtx, tunnelID)
-	if err != nil {
-		return fmt.Errorf("failed to receive response from runner: %w", err)
-	}
-
-	// Deserialize response
-	resp, err := p.DeserializeResponse(respData)
-	if err != nil {
-		return fmt.Errorf("failed to deserialize response: %w", err)
-	}
-	defer func() {
-		if resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-	}()
-
-	// Write response to client
-	if err := p.WriteResponse(w, resp); err != nil {
-		return fmt.Errorf("failed to write response: %w", err)
-	}
-
-	return nil
-}
-
-// handleHTTPProxyRequest is the internal implementation for HTTP proxying.
-func (m *TunnelManager) handleHTTPProxyRequest(
-	ctx context.Context,
-	tunnelID string,
-	handler ConnectionHandler,
-	w http.ResponseWriter,
-	r *http.Request,
-) error {
-	proxy := NewHTTPProxy(DefaultHTTPProxyConfig())
-	return proxy.ProxyHTTPRequest(ctx, tunnelID, handler, w, r)
 }

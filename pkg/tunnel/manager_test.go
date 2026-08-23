@@ -3,9 +3,6 @@ package tunnel
 import (
 	"context"
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -115,73 +112,6 @@ func (s *mockStore) DeleteExpiredTunnels(_ context.Context) (int64, error) {
 }
 
 // mockConnectionHandler implements ConnectionHandler for testing.
-type mockConnectionHandler struct {
-	connected    bool
-	responseData []byte
-	mu           sync.RWMutex
-}
-
-func newMockConnectionHandler() *mockConnectionHandler {
-	return &mockConnectionHandler{connected: true}
-}
-
-func (h *mockConnectionHandler) SendTunnelData(_ context.Context, _ string, _ []byte) error {
-	return nil
-}
-
-func (h *mockConnectionHandler) ReceiveTunnelData(_ context.Context, _ string) ([]byte, error) {
-	if h.responseData != nil {
-		return h.responseData, nil
-	}
-	return nil, nil
-}
-
-func (h *mockConnectionHandler) CloseTunnel(_ context.Context, _ string) error {
-	return nil
-}
-
-func (h *mockConnectionHandler) IsConnected() bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.connected
-}
-
-func (h *mockConnectionHandler) SetConnected(connected bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.connected = connected
-}
-
-// mockManagerConnection implements Connection for testing in manager tests.
-type mockManagerConnection struct {
-	closed bool
-}
-
-func (m *mockManagerConnection) Read(_ []byte) (n int, err error) {
-	return 0, io.EOF
-}
-
-func (m *mockManagerConnection) Write(_ []byte) (n int, err error) {
-	return 0, nil
-}
-
-func (m *mockManagerConnection) Close() error {
-	m.closed = true
-	return nil
-}
-
-func (m *mockManagerConnection) SetDeadline(_ time.Time) error {
-	return nil
-}
-
-func (m *mockManagerConnection) SetReadDeadline(_ time.Time) error {
-	return nil
-}
-
-func (m *mockManagerConnection) SetWriteDeadline(_ time.Time) error {
-	return nil
-}
-
 func TestNewTunnelManager(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
@@ -189,7 +119,6 @@ func TestNewTunnelManager(t *testing.T) {
 		m := NewTunnelManager()
 		assert.NotNil(t, m)
 		assert.NotNil(t, m.tunnels)
-		assert.NotNil(t, m.handlers)
 		assert.NotNil(t, m.idGen)
 		assert.Equal(t, "http://localhost:8080", m.baseURL)
 	})
@@ -388,10 +317,6 @@ func TestTunnelManager_Close(t *testing.T) {
 		WithLogger(logger),
 	)
 
-	// Create and register a handler
-	handler := newMockConnectionHandler()
-	m.RegisterHandler("run_456", handler)
-
 	// Create a tunnel
 	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
 		SessionID: "sess_123",
@@ -508,36 +433,6 @@ func TestTunnelManager_ValidateToken(t *testing.T) {
 	})
 }
 
-func TestTunnelManager_RegisterHandler(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-
-	m := NewTunnelManager(
-		WithLogger(logger),
-	)
-
-	handler := newMockConnectionHandler()
-
-	t.Run("register handler", func(t *testing.T) {
-		m.RegisterHandler("run_123", handler)
-
-		m.handlersMu.RLock()
-		_, exists := m.handlers["run_123"]
-		m.handlersMu.RUnlock()
-
-		assert.True(t, exists)
-	})
-
-	t.Run("unregister handler", func(t *testing.T) {
-		m.UnregisterHandler("run_123")
-
-		m.handlersMu.RLock()
-		_, exists := m.handlers["run_123"]
-		m.handlersMu.RUnlock()
-
-		assert.False(t, exists)
-	})
-}
-
 func TestTunnelManager_GetActiveCount(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	store := newMockStore()
@@ -615,73 +510,6 @@ func TestTunnelManager_CleanupExpired(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3, cleaned)
 	assert.Equal(t, 1, m.GetActiveCount())
-}
-
-func TestTunnelManager_HandleHTTPRequest(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	store := newMockStore()
-
-	m := NewTunnelManager(
-		WithStore(store),
-		WithLogger(logger),
-	)
-
-	// Create a tunnel
-	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
-		SessionID: "sess_123",
-		RunnerID:  "run_456",
-		Type:      TypeHTTP,
-		LocalPort: 3000,
-	})
-	require.NoError(t, err)
-
-	t.Run("without handler", func(t *testing.T) {
-		err := m.HandleHTTPRequest(context.Background(), tunnel.ID, nil, nil)
-		assert.Equal(t, ErrRunnerNotConnected, err)
-	})
-
-	t.Run("with disconnected handler", func(t *testing.T) {
-		handler := newMockConnectionHandler()
-		handler.SetConnected(false)
-		m.RegisterHandler("run_456", handler)
-
-		err := m.HandleHTTPRequest(context.Background(), tunnel.ID, nil, nil)
-		assert.Equal(t, ErrRunnerNotConnected, err)
-	})
-
-	t.Run("non-existent tunnel", func(t *testing.T) {
-		err := m.HandleHTTPRequest(context.Background(), "non_existent", nil, nil)
-		assert.Equal(t, ErrTunnelNotFound, err)
-	})
-}
-
-func TestTunnelManager_HandleTCPConnection(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	store := newMockStore()
-
-	m := NewTunnelManager(
-		WithStore(store),
-		WithLogger(logger),
-	)
-
-	// Create a tunnel
-	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
-		SessionID: "sess_123",
-		RunnerID:  "run_456",
-		Type:      TypeTCP,
-		LocalPort: 5432,
-	})
-	require.NoError(t, err)
-
-	t.Run("without handler", func(t *testing.T) {
-		err := m.HandleTCPConnection(context.Background(), tunnel.ID, nil)
-		assert.Equal(t, ErrRunnerNotConnected, err)
-	})
-
-	t.Run("non-existent tunnel", func(t *testing.T) {
-		err := m.HandleTCPConnection(context.Background(), "non_existent", nil)
-		assert.Equal(t, ErrTunnelNotFound, err)
-	})
 }
 
 func TestDefaultURLGenerator(t *testing.T) {
@@ -868,152 +696,6 @@ func TestTunnelManager_Get_ExpiredInStore(t *testing.T) {
 	assert.Equal(t, ErrTunnelExpired, err)
 }
 
-func TestTunnelManager_HandleHTTPRequest_ClosedTunnel(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	store := newMockStore()
-
-	m := NewTunnelManager(
-		WithStore(store),
-		WithLogger(logger),
-	)
-
-	// Create a tunnel
-	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
-		SessionID: "sess_123",
-		RunnerID:  "run_456",
-		Type:      TypeHTTP,
-		LocalPort: 3000,
-	})
-	require.NoError(t, err)
-
-	// Close the tunnel
-	err = m.Close(context.Background(), tunnel.ID)
-	require.NoError(t, err)
-
-	// HandleHTTPRequest should return error
-	err = m.HandleHTTPRequest(context.Background(), tunnel.ID, nil, nil)
-	assert.Equal(t, ErrTunnelNotFound, err)
-}
-
-func TestTunnelManager_HandleHTTPRequest_ExpiredTunnel(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	store := newMockStore()
-
-	m := NewTunnelManager(
-		WithStore(store),
-		WithLogger(logger),
-	)
-
-	// Create a tunnel with expired TTL
-	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
-		SessionID: "sess_123",
-		RunnerID:  "run_456",
-		Type:      TypeHTTP,
-		LocalPort: 3000,
-		TTL:       -time.Hour,
-	})
-	require.NoError(t, err)
-
-	// Manually expire the tunnel
-	m.tunnelsMu.Lock()
-	if active, ok := m.tunnels[tunnel.ID]; ok {
-		active.ExpiresAt = time.Now().Add(-time.Hour)
-	}
-	m.tunnelsMu.Unlock()
-
-	// HandleHTTPRequest should return expired error
-	err = m.HandleHTTPRequest(context.Background(), tunnel.ID, nil, nil)
-	assert.Equal(t, ErrTunnelExpired, err)
-}
-
-func TestTunnelManager_HandleHTTPRequest_WithConnectedHandler(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	store := newMockStore()
-
-	m := NewTunnelManager(
-		WithStore(store),
-		WithLogger(logger),
-	)
-
-	// Create an HTTP tunnel
-	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
-		SessionID: "sess_123",
-		RunnerID:  "run_456",
-		Type:      TypeHTTP,
-		LocalPort: 3000,
-	})
-	require.NoError(t, err)
-
-	// Register a connected handler that returns a valid HTTP response
-	handler := newMockConnectionHandler()
-	handler.responseData = []byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK")
-	m.RegisterHandler("run_456", handler)
-
-	// HandleHTTPRequest with proper writer/request
-	w := httptest.NewRecorder()
-	r, _ := http.NewRequest("GET", "http://localhost:3000/test", nil)
-	err = m.HandleHTTPRequest(context.Background(), tunnel.ID, w, r)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, w.Code)
-}
-
-func TestTunnelManager_HandleTCPConnection_ClosedTunnel(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	store := newMockStore()
-
-	m := NewTunnelManager(
-		WithStore(store),
-		WithLogger(logger),
-	)
-
-	// Create a tunnel
-	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
-		SessionID: "sess_123",
-		RunnerID:  "run_456",
-		Type:      TypeTCP,
-		LocalPort: 5432,
-	})
-	require.NoError(t, err)
-
-	// Close the tunnel
-	err = m.Close(context.Background(), tunnel.ID)
-	require.NoError(t, err)
-
-	// HandleTCPConnection should return error
-	err = m.HandleTCPConnection(context.Background(), tunnel.ID, nil)
-	assert.Equal(t, ErrTunnelNotFound, err)
-}
-
-func TestTunnelManager_HandleTCPConnection_ExpiredTunnel(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	store := newMockStore()
-
-	m := NewTunnelManager(
-		WithStore(store),
-		WithLogger(logger),
-	)
-
-	// Create a tunnel
-	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
-		SessionID: "sess_123",
-		RunnerID:  "run_456",
-		Type:      TypeTCP,
-		LocalPort: 5432,
-	})
-	require.NoError(t, err)
-
-	// Manually expire the tunnel
-	m.tunnelsMu.Lock()
-	if active, ok := m.tunnels[tunnel.ID]; ok {
-		active.ExpiresAt = time.Now().Add(-time.Hour)
-	}
-	m.tunnelsMu.Unlock()
-
-	// HandleTCPConnection should return expired error
-	err = m.HandleTCPConnection(context.Background(), tunnel.ID, nil)
-	assert.Equal(t, ErrTunnelExpired, err)
-}
-
 func TestTunnelManager_ValidateToken_ExpiredTunnel(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	store := newMockStore()
@@ -1048,37 +730,4 @@ func TestIsNotFoundError(t *testing.T) {
 	assert.True(t, isNotFoundError(ErrTunnelNotFound))
 	assert.False(t, isNotFoundError(errors.New("other error")))
 	assert.False(t, isNotFoundError(nil))
-}
-
-func TestTunnelManager_HandleTCPConnection_WithConnectedHandler(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	store := newMockStore()
-
-	m := NewTunnelManager(
-		WithStore(store),
-		WithLogger(logger),
-	)
-
-	// Create a TCP tunnel
-	tunnel, err := m.Create(context.Background(), CreateTunnelOptions{
-		SessionID: "sess_123",
-		RunnerID:  "run_456",
-		Type:      TypeTCP,
-		LocalPort: 5432,
-	})
-	require.NoError(t, err)
-
-	// Register a connected handler
-	handler := newMockConnectionHandler()
-	m.RegisterHandler("run_456", handler)
-
-	// Create a mock connection
-	mockConn := &mockManagerConnection{}
-
-	// HandleTCPConnection - verify handler lookup works and proxy starts
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	err = m.HandleTCPConnection(ctx, tunnel.ID, mockConn)
-	// Error is expected due to timeout or mock behavior, but not ErrRunnerNotConnected
-	assert.NotEqual(t, ErrRunnerNotConnected, err)
 }

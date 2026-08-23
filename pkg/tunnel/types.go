@@ -33,7 +33,6 @@ package tunnel
 import (
 	"context"
 	"errors"
-	"net/http"
 	"time"
 )
 
@@ -172,35 +171,6 @@ type Manager interface {
 
 	// ValidateToken validates a tunnel token and returns the tunnel if valid.
 	ValidateToken(ctx context.Context, tunnelID, token string) (*Tunnel, error)
-
-	// HandleHTTPRequest handles an incoming HTTP request for a tunnel.
-	HandleHTTPRequest(ctx context.Context, tunnelID string, w http.ResponseWriter, r *http.Request) error
-
-	// HandleTCPConnection handles an incoming TCP connection for a tunnel.
-	// The connection should already be upgraded (e.g., from WebSocket).
-	HandleTCPConnection(ctx context.Context, tunnelID string, conn Connection) error
-}
-
-// Connection represents a bidirectional byte stream.
-// This interface abstracts WebSocket, raw TCP, or other connection types.
-type Connection interface {
-	// Read reads data from the connection.
-	Read(p []byte) (n int, err error)
-
-	// Write writes data to the connection.
-	Write(p []byte) (n int, err error)
-
-	// Close closes the connection.
-	Close() error
-
-	// SetDeadline sets the read and write deadlines.
-	SetDeadline(t time.Time) error
-
-	// SetReadDeadline sets the read deadline.
-	SetReadDeadline(t time.Time) error
-
-	// SetWriteDeadline sets the write deadline.
-	SetWriteDeadline(t time.Time) error
 }
 
 // Relay defines the interface for relaying traffic between connections.
