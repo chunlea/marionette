@@ -17,7 +17,6 @@ import { Button } from '@/components/Button'
 import { Badge } from '@/components/Badge'
 import { useWebRTCStream } from '@/hooks/useWebRTCStream'
 import { InputForwarder } from '@/lib/input-forwarder'
-import type { ConnectionState } from '@/types/stream'
 
 export interface DesktopViewerProps {
   streamId: string
@@ -63,7 +62,7 @@ export function DesktopViewer({
     onConnected,
     onDisconnected,
     onError,
-    onTrack: (track, streams) => {
+    onTrack: (_track, streams) => {
       if (videoRef.current && streams.length > 0) {
         videoRef.current.srcObject = streams[0]
       }
@@ -192,7 +191,7 @@ export function DesktopViewer({
       case 'failed':
       case 'closed':
         return (
-          <Badge variant="secondary" className="flex items-center gap-1">
+          <Badge variant="default" className="flex items-center gap-1">
             <WifiOff className="h-3 w-3" />
             Disconnected
           </Badge>
@@ -342,40 +341,4 @@ export function DesktopViewer({
       )}
     </div>
   )
-}
-
-// Export connection state utilities
-export function getConnectionStateColor(state: ConnectionState): string {
-  switch (state) {
-    case 'connected':
-      return 'text-green-500'
-    case 'connecting':
-      return 'text-yellow-500'
-    case 'disconnected':
-    case 'closed':
-      return 'text-gray-500'
-    case 'failed':
-      return 'text-red-500'
-    default:
-      return 'text-gray-500'
-  }
-}
-
-export function getConnectionStateLabel(state: ConnectionState): string {
-  switch (state) {
-    case 'new':
-      return 'Initializing'
-    case 'connecting':
-      return 'Connecting'
-    case 'connected':
-      return 'Connected'
-    case 'disconnected':
-      return 'Disconnected'
-    case 'failed':
-      return 'Failed'
-    case 'closed':
-      return 'Closed'
-    default:
-      return 'Unknown'
-  }
 }

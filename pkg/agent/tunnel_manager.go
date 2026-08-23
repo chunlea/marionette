@@ -14,7 +14,6 @@ import (
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
-	"github.com/chunlea/marionette/pkg/tunnel"
 	"go.uber.org/zap"
 )
 
@@ -24,9 +23,8 @@ const defaultTunnelCreateTimeout = 30 * time.Second
 // TunnelManager manages tunnel lifecycle on the agent side.
 // It handles tunnel creation requests and data relay.
 type TunnelManager struct {
-	logger       *zap.Logger
-	relayManager *tunnel.RelayManager
-	sender       MessageSender
+	logger *zap.Logger
+	sender MessageSender
 
 	// Pending tunnel requests waiting for response
 	pendingRequests   map[string]chan *pb.CreateTunnelResponse
@@ -97,33 +95,7 @@ func NewTunnelManager(opts ...TunnelManagerOption) *TunnelManager {
 		opt(m)
 	}
 
-	// Create relay manager for handling tunnel data
-	// The sendFrame callback sends data back to the server
-	m.relayManager = tunnel.NewRelayManager(
-		m.logger.Named("relay"),
-		m.sendFrame,
-	)
-
 	return m
-}
-
-// sendFrame sends a tunnel frame to the server.
-func (m *TunnelManager) sendFrame(frame *tunnel.Frame) error {
-	if m.sender == nil {
-		return errors.New("message sender not configured")
-	}
-
-	msg := &pb.RunnerMessage{
-		Payload: &pb.RunnerMessage_TunnelData{
-			TunnelData: &pb.TunnelData{
-				TunnelId: frame.TunnelID,
-				Data:     frame.Payload,
-				Eof:      frame.Type == tunnel.FrameTypeClose,
-			},
-		},
-	}
-	m.sender.Send(msg)
-	return nil
 }
 
 // SetSessionID sets the current session ID.
@@ -252,19 +224,6 @@ func (m *TunnelManager) CreateTunnel(ctx context.Context, params *CreateTunnelPa
 			zap.Time("expires_at", info.ExpiresAt),
 		)
 
-		// For HTTP tunnels, we don't start a persistent relay connection.
-		// Each HTTP request is handled independently in handleHTTPRequest.
-		// For TCP tunnels, we need a persistent relay connection.
-		if tunnelType != "http" {
-			if err := m.startRelay(resp.TunnelId, params.LocalPort); err != nil {
-				m.logger.Warn("failed to start relay",
-					zap.String("tunnel_id", resp.TunnelId),
-					zap.Error(err),
-				)
-				// Don't fail - the tunnel is created, relay can be retried
-			}
-		}
-
 		return &CreateTunnelResult{
 			TunnelID:  resp.TunnelId,
 			Token:     resp.Token,
@@ -328,16 +287,7 @@ func (m *TunnelManager) HandleTunnelData(ctx context.Context, data *pb.TunnelDat
 	m.persistentConnsMu.RUnlock()
 
 	if hasPersistent {
-		// Forward data to existing persistent connection
-		if _, err := pc.conn.Write(data.GetData()); err != nil {
-			m.logger.Error("failed to write to persistent connection",
-				zap.String("connection_id", connectionID),
-				zap.Error(err),
-			)
-			m.closePersistentConn(connectionID)
-			return err
-		}
-		return nil
+		return m.writeToPersistentConn(connectionID, pc, data.GetData())
 	}
 
 	// Get tunnel info
@@ -356,12 +306,94 @@ func (m *TunnelManager) HandleTunnelData(ctx context.Context, data *pb.TunnelDat
 		return nil
 	}
 
-	// For TCP tunnels, use the relay manager (persistent connection)
-	return m.relayManager.HandleFrame(&tunnel.Frame{
-		Type:     tunnel.FrameTypeData,
-		TunnelID: tunnelID,
-		Payload:  data.GetData(),
-	})
+	// For TCP tunnels, open a persistent connection keyed by connection_id.
+	// The server routes replies exclusively on connection_id, so every TCP
+	// connection needs its own local socket rather than one relay per tunnel.
+	return m.openTCPConnection(ctx, tunnelID, connectionID, info.LocalPort, data.GetData())
+}
+
+// writeToPersistentConn forwards data to an established local connection.
+func (m *TunnelManager) writeToPersistentConn(connectionID string, pc *persistentConn, data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if _, err := pc.conn.Write(data); err != nil {
+		m.logger.Error("failed to write to persistent connection",
+			zap.String("connection_id", connectionID),
+			zap.Error(err),
+		)
+		m.closePersistentConn(connectionID)
+		return err
+	}
+	return nil
+}
+
+// openTCPConnection dials the local service for a new TCP tunnel connection
+// and relays it back to the server under the same connection id.
+//
+// TCP connections are established lazily, on the first frame for a given
+// connection id, because one tunnel can carry many concurrent connections.
+func (m *TunnelManager) openTCPConnection(ctx context.Context, tunnelID, connectionID string, localPort int, initial []byte) error {
+	localAddr := fmt.Sprintf("localhost:%d", localPort)
+
+	conn, err := net.DialTimeout("tcp", localAddr, 5*time.Second)
+	if err != nil {
+		m.logger.Error("failed to connect to local service for TCP tunnel",
+			zap.String("tunnel_id", tunnelID),
+			zap.String("connection_id", connectionID),
+			zap.String("local_addr", localAddr),
+			zap.Error(err),
+		)
+		// Tell the server this connection is dead instead of leaving the
+		// caller hanging on a response that will never come.
+		m.sendTunnelData(tunnelID, connectionID, nil, true)
+		return err
+	}
+
+	connCtx, cancel := context.WithCancel(ctx)
+	pc := &persistentConn{
+		conn:      conn,
+		tunnelID:  tunnelID,
+		localPort: localPort,
+		cancel:    cancel,
+	}
+
+	m.persistentConnsMu.Lock()
+	existing, raced := m.persistentConns[connectionID]
+	if !raced {
+		m.persistentConns[connectionID] = pc
+	}
+	m.persistentConnsMu.Unlock()
+
+	if raced {
+		// Another frame established this connection first; keep that one.
+		cancel()
+		_ = conn.Close()
+		return m.writeToPersistentConn(connectionID, existing, initial)
+	}
+
+	m.logger.Debug("opened TCP tunnel connection",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("connection_id", connectionID),
+		zap.String("local_addr", localAddr),
+	)
+
+	if len(initial) > 0 {
+		if _, err := conn.Write(initial); err != nil {
+			m.logger.Error("failed to write initial TCP data to local service",
+				zap.String("tunnel_id", tunnelID),
+				zap.String("connection_id", connectionID),
+				zap.Error(err),
+			)
+			m.closePersistentConn(connectionID)
+			m.sendTunnelData(tunnelID, connectionID, nil, true)
+			return err
+		}
+	}
+
+	go m.relayFromLocalService(connCtx, tunnelID, connectionID, conn, bufio.NewReader(conn))
+
+	return nil
 }
 
 // handleHTTPRequest handles a single HTTP request-response cycle.
@@ -644,11 +676,6 @@ func (m *TunnelManager) sendHTTPErrorResponse(tunnelID, connectionID string, err
 	}
 }
 
-// startRelay starts the relay connection to the local port.
-func (m *TunnelManager) startRelay(tunnelID string, localPort int) error {
-	return m.relayManager.HandleConnect(tunnelID, localPort)
-}
-
 // HandleCreateTunnel handles a tunnel creation command from the server.
 // This is used when the server initiates tunnel creation (e.g., via API).
 func (m *TunnelManager) HandleCreateTunnel(tunnelID, tunnelType string, localPort int) error {
@@ -670,27 +697,15 @@ func (m *TunnelManager) HandleCreateTunnel(tunnelID, tunnelType string, localPor
 	m.tunnels[tunnelID] = info
 	m.tunnelsMu.Unlock()
 
-	// For HTTP tunnels, we don't start a persistent relay connection.
-	// Each HTTP request is handled independently in handleHTTPRequest.
-	// For TCP tunnels, we need a persistent relay connection.
-	if tunnelType != "http" {
-		if err := m.startRelay(tunnelID, localPort); err != nil {
-			// Clean up on failure
-			m.tunnelsMu.Lock()
-			delete(m.tunnels, tunnelID)
-			m.tunnelsMu.Unlock()
-			return err
-		}
-		m.logger.Info("tunnel relay started",
-			zap.String("tunnel_id", tunnelID),
-			zap.Int("local_port", localPort),
-		)
-	} else {
-		m.logger.Info("HTTP tunnel ready for requests",
-			zap.String("tunnel_id", tunnelID),
-			zap.Int("local_port", localPort),
-		)
-	}
+	// No connection is opened here for either type. HTTP requests each get a
+	// fresh connection in handleHTTPRequest, and TCP connections are opened
+	// lazily per connection id in openTCPConnection, so one tunnel can serve
+	// many concurrent connections.
+	m.logger.Info("tunnel ready for connections",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("type", tunnelType),
+		zap.Int("local_port", localPort),
+	)
 
 	return nil
 }
@@ -728,13 +743,8 @@ func (m *TunnelManager) CloseTunnel(tunnelID string, reason string) error {
 		return errors.New("tunnel not found")
 	}
 
-	// Close relay
-	if err := m.relayManager.HandleClose(tunnelID); err != nil {
-		m.logger.Warn("failed to close relay",
-			zap.String("tunnel_id", tunnelID),
-			zap.Error(err),
-		)
-	}
+	// Close every connection this tunnel still owns.
+	m.closeTunnelConns(tunnelID)
 
 	// Notify server
 	if m.sender != nil {
@@ -914,6 +924,22 @@ func (m *TunnelManager) relayFromLocalService(ctx context.Context, tunnelID, con
 			}
 			return
 		}
+	}
+}
+
+// closeTunnelConns closes every persistent connection belonging to a tunnel.
+func (m *TunnelManager) closeTunnelConns(tunnelID string) {
+	m.persistentConnsMu.RLock()
+	ids := make([]string, 0, len(m.persistentConns))
+	for id, pc := range m.persistentConns {
+		if pc.tunnelID == tunnelID {
+			ids = append(ids, id)
+		}
+	}
+	m.persistentConnsMu.RUnlock()
+
+	for _, id := range ids {
+		m.closePersistentConn(id)
 	}
 }
 

@@ -235,16 +235,7 @@ func (s *RunnerService) GetRunnerStatus(ctx context.Context, req *pb.GetRunnerSt
 
 // createConnection creates a new RunnerConnection from a runner and stream.
 func (s *RunnerService) createConnection(runner *store.Runner, stream grpc.BidiStreamingServer[pb.RunnerMessage, pb.ServerCommand]) *RunnerConnection {
-	return &RunnerConnection{
-		RunnerID:    runner.ID,
-		Name:        runner.Name,
-		Hostname:    runner.Hostname,
-		Status:      RunnerStatusIdle,
-		ConnectedAt: time.Now(),
-		LastSeen:    time.Now(),
-		commandCh:   make(chan *pb.ServerCommand, commandBufferSize),
-		stream:      stream,
-	}
+	return newRunnerConnection(runner.ID, runner.Name, runner.Hostname, stream)
 }
 
 // StreamLogs handles the log upload stream from runners.

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -326,7 +327,12 @@ func (m *mockCommandSender) SendCommand(_ string, cmd *pb.ServerCommand) error {
 }
 
 // mockSessionMgrForTask implements SessionManagerInterface for testing.
-type mockSessionMgrForTask struct{}
+type mockSessionMgrForTask struct {
+	// ensureRunnerErr, when set, makes EnsureRunner report that no runner
+	// could be allocated. The zero value succeeds.
+	ensureRunnerErr error
+	ensureCalls     int
+}
 
 func (m *mockSessionMgrForTask) Create(_ context.Context, _ CreateSessionOptions) (*store.Session, error) {
 	return nil, nil
@@ -1618,14 +1624,15 @@ func TestTaskManager_OnTaskCompleted_FailedWithRetry(t *testing.T) {
 	// Task run should be failed
 	assert.Equal(t, TaskRunStatusFailed, s.getTaskRun("trun_1").Status)
 
-	// Give goroutine time to retry (async retry)
-	time.Sleep(100 * time.Millisecond)
+	// The retry is scheduled on the background pool behind a jittered backoff,
+	// so wait for the effect rather than for a fixed duration.
+	require.Eventually(t, func() bool {
+		return s.getTask("task_1").RetryCount == 1
+	}, 10*time.Second, 20*time.Millisecond, "the failed run must be retried")
 
 	// Task should still be running (retry pending or in progress)
 	task := s.getTask("task_1")
 	assert.Equal(t, TaskStatusRunning, task.Status)
-	// RetryCount should be incremented by the Retry goroutine
-	assert.Equal(t, 1, task.RetryCount)
 }
 
 func TestTaskManager_OnTaskCompleted_FailedNoRetry(t *testing.T) {
@@ -1662,4 +1669,323 @@ func TestTaskManager_OnTaskCompleted_FailedNoRetry(t *testing.T) {
 
 	// Task should also be failed (no retries)
 	assert.Equal(t, TaskStatusFailed, s.tasks["task_1"].Status)
+}
+
+// BeginTx shadows the embedded implementation so the transaction is bound to
+// this store rather than the store it embeds. See storeTx.
+func (s *testTaskStore) BeginTx(_ context.Context) (store.Tx, error) {
+	return &storeTx{Store: s}, nil
+}
+
+// =============================================================================
+// Dispatch atomicity tests
+// =============================================================================
+
+// TestTaskManager_Execute_SendFailureUnwinds covers the invariant that a task
+// which never reached a runner is not left "running" forever. Execute used to
+// update the task status, then send, then only fail the run on error - leaving
+// the task running with nothing on the other end to finish it.
+func TestTaskManager_Execute_SendFailureUnwinds(t *testing.T) {
+	manager, s, cmdSender := setupTaskManagerTest()
+	cmdSender.sendErr = errors.New("runner disconnected")
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	}
+	s.tasks["task_123"] = &store.Task{
+		ID:             "task_123",
+		SessionID:      "sess_123",
+		Prompt:         "Build a REST API",
+		Status:         TaskStatusPending,
+		MaxRetries:     3,
+		TimeoutSeconds: 3600,
+	}
+
+	err := manager.Execute(context.Background(), "task_123")
+	require.Error(t, err)
+
+	task, err := s.GetTask(context.Background(), "task_123")
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusPending, task.Status,
+		"a task whose command never reached a runner must not stay running")
+	assert.Equal(t, 0, task.RetryCount, "a failed dispatch must not spend the retry budget")
+
+	runs, err := s.ListTaskRuns(context.Background(), store.ListTaskRunsOptions{})
+	require.NoError(t, err)
+	require.Len(t, runs.Items, 1, "the attempt must still be recorded for the audit trail")
+	assert.Equal(t, TaskRunStatusFailed, runs.Items[0].Status)
+	require.NotNil(t, runs.Items[0].Error)
+	assert.Contains(t, *runs.Items[0].Error, "runner disconnected")
+}
+
+// TestTaskManager_Retry_SendFailureRestoresBudget is the retry half of the same
+// invariant: an unreachable runner must not be able to burn a task's retries.
+func TestTaskManager_Retry_SendFailureRestoresBudget(t *testing.T) {
+	manager, s, cmdSender := setupTaskManagerTest()
+	cmdSender.sendErr = errors.New("runner disconnected")
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	}
+	s.tasks["task_123"] = &store.Task{
+		ID:             "task_123",
+		SessionID:      "sess_123",
+		Prompt:         "Build a REST API",
+		Status:         TaskStatusRunning,
+		MaxRetries:     3,
+		RetryCount:     1,
+		TimeoutSeconds: 3600,
+	}
+
+	_, err := manager.Retry(context.Background(), "task_123")
+	require.Error(t, err)
+
+	task, err := s.GetTask(context.Background(), "task_123")
+	require.NoError(t, err)
+	assert.Equal(t, 1, task.RetryCount, "retry budget must be handed back on a failed dispatch")
+}
+
+// TestTaskManager_Execute_NoRunRecordedWhenNoRunner proves the run and the task
+// status move together: a rejected dispatch leaves no orphan run behind.
+func TestTaskManager_Execute_NoRunRecordedWhenNoRunner(t *testing.T) {
+	manager, s, cmdSender := setupTaskManagerTest()
+
+	s.sessions["sess_123"] = &store.Session{
+		ID:     "sess_123",
+		Status: SessionStatusPending,
+	}
+	s.tasks["task_123"] = &store.Task{
+		ID:        "task_123",
+		SessionID: "sess_123",
+		Status:    TaskStatusPending,
+	}
+
+	err := manager.Execute(context.Background(), "task_123")
+	require.ErrorIs(t, err, ErrNoRunnerAttached)
+
+	runs, err := s.ListTaskRuns(context.Background(), store.ListTaskRunsOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, runs.Items)
+
+	task, err := s.GetTask(context.Background(), "task_123")
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusPending, task.Status)
+	assert.Empty(t, cmdSender.sentCommands)
+}
+
+// EnsureRunner satisfies SessionManagerInterface. These fakes never allocate.
+func (m *mockSessionMgrForTask) EnsureRunner(_ context.Context, sessionID string) (*store.Session, error) {
+	m.ensureCalls++
+	if m.ensureRunnerErr != nil {
+		return nil, m.ensureRunnerErr
+	}
+	return &store.Session{ID: sessionID, Status: SessionStatusActive}, nil
+}
+
+// =============================================================================
+// G2: automatic dispatch
+// =============================================================================
+
+func setupAutoDispatchTest() (*TaskManager, *testTaskStore, *mockCommandSender, *mockSessionMgrForTask) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	sessionMgr := &mockSessionMgrForTask{}
+	manager := NewTaskManager(s, cmdSender, sessionMgr, nil, zap.NewNop())
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	}
+	return manager, s, cmdSender, sessionMgr
+}
+
+// TestTaskManager_Create_AutoDispatches is G2: creating a task on an active
+// session with an idle runner executes it, with no separate POST /execute.
+func TestTaskManager_Create_AutoDispatches(t *testing.T) {
+	manager, s, cmdSender, sessionMgr := setupAutoDispatchTest()
+
+	task, err := manager.Create(context.Background(), CreateTaskOptions{
+		SessionID: "sess_123",
+		Prompt:    "echo marionette",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, sessionMgr.ensureCalls, "creation must ensure the session has a runner")
+	require.Len(t, cmdSender.sentCommands, 1, "the task must be dispatched on creation")
+	assert.Equal(t, task.ID, cmdSender.sentCommands[0].GetExecuteTask().GetTaskId())
+
+	stored, err := s.GetTask(context.Background(), task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusRunning, stored.Status)
+}
+
+// TestTaskManager_Create_StaysPendingWithoutRunner is the other half of G1:
+// with no runner to be had, the task is created and parks as pending.
+func TestTaskManager_Create_StaysPendingWithoutRunner(t *testing.T) {
+	manager, s, cmdSender, sessionMgr := setupAutoDispatchTest()
+	sessionMgr.ensureRunnerErr = ErrNoRunnerAvailable
+
+	task, err := manager.Create(context.Background(), CreateTaskOptions{
+		SessionID: "sess_123",
+		Prompt:    "echo marionette",
+	})
+	require.NoError(t, err, "creation must succeed even when nothing can run it")
+
+	assert.Empty(t, cmdSender.sentCommands)
+	stored, err := s.GetTask(context.Background(), task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusPending, stored.Status,
+		"a task with nowhere to run must say so, not look running")
+}
+
+// TestTaskManager_Create_DoesNotJumpTheQueue keeps execution sequential: a
+// session already running a task must not have a second one dispatched into it.
+func TestTaskManager_Create_DoesNotJumpTheQueue(t *testing.T) {
+	manager, s, cmdSender, _ := setupAutoDispatchTest()
+
+	s.tasks["task_running"] = &store.Task{
+		ID:        "task_running",
+		SessionID: "sess_123",
+		Status:    TaskStatusRunning,
+		Prompt:    "first",
+	}
+
+	_, err := manager.Create(context.Background(), CreateTaskOptions{
+		SessionID: "sess_123",
+		Prompt:    "second",
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, cmdSender.sentCommands,
+		"a session with a task in flight must not dispatch another")
+}
+
+// TestTaskManager_Create_FailedDispatchParksPending holds coordinator verdict
+// 3b: a dispatch that reached a runner and failed is not retried in a loop, it
+// parks as pending for manual re-trigger.
+func TestTaskManager_Create_FailedDispatchParksPending(t *testing.T) {
+	manager, s, cmdSender, _ := setupAutoDispatchTest()
+	cmdSender.sendErr = errors.New("runner disconnected")
+
+	task, err := manager.Create(context.Background(), CreateTaskOptions{
+		SessionID: "sess_123",
+		Prompt:    "echo marionette",
+	})
+	require.NoError(t, err)
+
+	stored, err := s.GetTask(context.Background(), task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusPending, stored.Status)
+	assert.Equal(t, 0, stored.RetryCount, "a failed dispatch must not spend the retry budget")
+}
+
+func TestTaskManager_DispatchNext_PicksOldestPendingTask(t *testing.T) {
+	manager, s, cmdSender, _ := setupAutoDispatchTest()
+
+	base := time.Now()
+	s.tasks["task_new"] = &store.Task{
+		ID: "task_new", SessionID: "sess_123", Status: TaskStatusPending,
+		Prompt: "second", CreatedAt: base,
+	}
+	s.tasks["task_old"] = &store.Task{
+		ID: "task_old", SessionID: "sess_123", Status: TaskStatusPending,
+		Prompt: "first", CreatedAt: base.Add(-time.Hour),
+	}
+
+	require.NoError(t, manager.DispatchNext(context.Background(), "sess_123"))
+
+	require.Len(t, cmdSender.sentCommands, 1)
+	assert.Equal(t, "task_old", cmdSender.sentCommands[0].GetExecuteTask().GetTaskId(),
+		"tasks are sequential, so the oldest pending goes first")
+}
+
+func TestTaskManager_DispatchNext_NothingPending(t *testing.T) {
+	manager, _, cmdSender, _ := setupAutoDispatchTest()
+
+	require.NoError(t, manager.DispatchNext(context.Background(), "sess_123"),
+		"an idle session is not an error")
+	assert.Empty(t, cmdSender.sentCommands)
+}
+
+// TestTaskManager_DispatchNext_ConcurrentCallersSendOnce closes the race that
+// automatic dispatch creates: creating a task activates the session, which
+// schedules a dispatch, while Create also dispatches directly. Both can see
+// "nothing running" and send the same task twice.
+func TestTaskManager_DispatchNext_ConcurrentCallersSendOnce(t *testing.T) {
+	for round := 0; round < 20; round++ {
+		manager, _, cmdSender, _ := setupAutoDispatchTest()
+		manager.store.(*testTaskStore).tasks["task_1"] = &store.Task{
+			ID:        "task_1",
+			SessionID: "sess_123",
+			Status:    TaskStatusPending,
+			Prompt:    "only once",
+			CreatedAt: time.Now(),
+		}
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				assert.NoError(t, manager.DispatchNext(context.Background(), "sess_123"))
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		assert.Len(t, cmdSender.sentCommands, 1,
+			"a pending task must be dispatched exactly once")
+	}
+}
+
+// =============================================================================
+// ListRuns
+// =============================================================================
+
+func TestTaskManager_ListRuns(t *testing.T) {
+	manager, s, _, _ := setupAutoDispatchTest()
+	s.tasks["task_1"] = &store.Task{ID: "task_1", SessionID: "sess_123", Status: TaskStatusFailed}
+
+	// Deliberately inserted out of order: attempt order is what callers read
+	// the history in, and it must not depend on the store's default sort.
+	s.setTaskRun("trun_2", &store.TaskRun{ID: "trun_2", TaskID: "task_1", Attempt: 2, Status: TaskRunStatusCompleted})
+	s.setTaskRun("trun_1", &store.TaskRun{ID: "trun_1", TaskID: "task_1", Attempt: 1, Status: TaskRunStatusFailed})
+
+	result, err := manager.ListRuns(context.Background(), "task_1", ListTaskRunsOptions{})
+	require.NoError(t, err)
+	require.Len(t, result.Items, 2)
+	assert.Equal(t, 1, result.Items[0].Attempt)
+	assert.Equal(t, 2, result.Items[1].Attempt)
+}
+
+// TestTaskManager_ListRuns_UnknownTask keeps an unknown ID a 404 rather than an
+// empty list, which would read as "this task has never run".
+func TestTaskManager_ListRuns_UnknownTask(t *testing.T) {
+	manager, _, _, _ := setupAutoDispatchTest()
+
+	_, err := manager.ListRuns(context.Background(), "task_missing", ListTaskRunsOptions{})
+	assert.ErrorIs(t, err, ErrTaskNotFound)
+}
+
+func TestTaskManager_ListRuns_ScopesToTheTask(t *testing.T) {
+	manager, s, _, _ := setupAutoDispatchTest()
+	s.tasks["task_1"] = &store.Task{ID: "task_1", SessionID: "sess_123"}
+	s.tasks["task_2"] = &store.Task{ID: "task_2", SessionID: "sess_123"}
+	s.setTaskRun("trun_1", &store.TaskRun{ID: "trun_1", TaskID: "task_1", Attempt: 1})
+	s.setTaskRun("trun_2", &store.TaskRun{ID: "trun_2", TaskID: "task_2", Attempt: 1})
+
+	result, err := manager.ListRuns(context.Background(), "task_1", ListTaskRunsOptions{})
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	assert.Equal(t, "trun_1", result.Items[0].ID)
 }

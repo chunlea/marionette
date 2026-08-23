@@ -161,15 +161,15 @@ func TestParseSuspendConfig(t *testing.T) {
 	tests := []struct {
 		name      string
 		input     string
-		checkFunc func(*testing.T, *SuspendConfig)
+		checkFunc func(*testing.T, *provider.SuspendConfig)
 	}{
 		{
 			name:  "defaults",
 			input: `{}`,
-			checkFunc: func(t *testing.T, cfg *SuspendConfig) {
+			checkFunc: func(t *testing.T, cfg *provider.SuspendConfig) {
 				assert.Equal(t, provider.SuspendStrategyTerminatePreserveStorage, cfg.Strategy)
-				assert.Equal(t, Duration(60*time.Second), cfg.MinDuration)
-				assert.Equal(t, Duration(24*time.Hour), cfg.MaxDuration)
+				assert.Equal(t, 60*time.Second, cfg.MinDuration)
+				assert.Equal(t, 24*time.Hour, cfg.MaxDuration)
 				assert.Equal(t, provider.SuspendStrategyTerminate, cfg.Fallback)
 			},
 		},
@@ -181,25 +181,25 @@ func TestParseSuspendConfig(t *testing.T) {
 				"max_duration": "12h",
 				"fallback": "terminate_preserve_storage"
 			}`,
-			checkFunc: func(t *testing.T, cfg *SuspendConfig) {
+			checkFunc: func(t *testing.T, cfg *provider.SuspendConfig) {
 				assert.Equal(t, provider.SuspendStrategyTerminate, cfg.Strategy)
-				assert.Equal(t, Duration(30*time.Second), cfg.MinDuration)
-				assert.Equal(t, Duration(12*time.Hour), cfg.MaxDuration)
+				assert.Equal(t, 30*time.Second, cfg.MinDuration)
+				assert.Equal(t, 12*time.Hour, cfg.MaxDuration)
 				assert.Equal(t, provider.SuspendStrategyTerminatePreserveStorage, cfg.Fallback)
 			},
 		},
 		{
 			name:  "duration as seconds",
 			input: `{"min_duration": 120}`,
-			checkFunc: func(t *testing.T, cfg *SuspendConfig) {
-				assert.Equal(t, Duration(120*time.Second), cfg.MinDuration)
+			checkFunc: func(t *testing.T, cfg *provider.SuspendConfig) {
+				assert.Equal(t, 120*time.Second, cfg.MinDuration)
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := ParseSuspendConfig(json.RawMessage(tt.input))
+			cfg, err := provider.ParseSuspendConfig(json.RawMessage(tt.input), defaultSuspendConfig())
 			require.NoError(t, err)
 			tt.checkFunc(t, cfg)
 		})
@@ -342,26 +342,6 @@ func TestIsValidDNSLabel(t *testing.T) {
 			assert.False(t, isValidDNSLabel(s))
 		})
 	}
-}
-
-func TestDurationMarshalUnmarshal(t *testing.T) {
-	original := Duration(5 * time.Minute)
-
-	// Marshal
-	data, err := json.Marshal(original)
-	require.NoError(t, err)
-	assert.Equal(t, `"5m0s"`, string(data))
-
-	// Unmarshal
-	var parsed Duration
-	err = json.Unmarshal(data, &parsed)
-	require.NoError(t, err)
-	assert.Equal(t, original, parsed)
-
-	// Unmarshal from number (seconds)
-	err = json.Unmarshal([]byte("300"), &parsed)
-	require.NoError(t, err)
-	assert.Equal(t, Duration(300*time.Second), parsed)
 }
 
 func TestConfigHelperMethods(t *testing.T) {

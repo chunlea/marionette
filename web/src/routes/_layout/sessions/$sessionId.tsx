@@ -4,6 +4,7 @@ import { Card, CardHeader, CardBody } from '@/components/Card'
 import { Badge } from '@/components/Badge'
 import { Button } from '@/components/Button'
 import { DesktopStreamCard } from '@/components/DesktopStreamCard'
+import { streamingEnabled } from '@/lib/features'
 import {
   Table,
   TableHeader,
@@ -162,12 +163,14 @@ function SessionDetailPage() {
           </CardBody>
         </Card>
 
-        {/* Desktop Stream */}
-        <DesktopStreamCard
-          sessionId={session.id}
-          sessionStatus={session.status}
-          runnerId={session.runner_id}
-        />
+        {/* Desktop stream — frozen subsystem, off unless enabled. */}
+        {streamingEnabled && (
+          <DesktopStreamCard
+            sessionId={session.id}
+            sessionStatus={session.status}
+            runnerId={session.runner_id}
+          />
+        )}
       </div>
 
       {/* Session Actions */}

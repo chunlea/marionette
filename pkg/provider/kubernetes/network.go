@@ -16,16 +16,26 @@ import (
 
 // createNetworkPolicy creates a NetworkPolicy for a runner based on the network policy settings.
 func (p *Provider) createNetworkPolicy(ctx context.Context, runnerID string, opts provider.SpawnOptions) error {
-	np := p.buildNetworkPolicy(runnerID, opts)
-	_, err := p.client.CreateNetworkPolicy(ctx, p.config.Namespace, np)
+	np, err := p.buildNetworkPolicy(runnerID, opts)
 	if err != nil {
+		return err
+	}
+	if np == nil {
+		// Policy "none": nothing to enforce.
+		return nil
+	}
+
+	if _, err := p.client.CreateNetworkPolicy(ctx, p.config.Namespace, np); err != nil {
 		return fmt.Errorf("creating network policy: %w", err)
 	}
 	return nil
 }
 
-// buildNetworkPolicy creates a NetworkPolicy based on the network policy settings.
-func (p *Provider) buildNetworkPolicy(runnerID string, opts provider.SpawnOptions) *networkingv1.NetworkPolicy {
+// buildNetworkPolicy creates a NetworkPolicy based on the network policy
+// settings. It returns (nil, nil) when no policy is required, and an error for
+// an unrecognised policy: silently returning nil sent a nil NetworkPolicy
+// straight to the Kubernetes API.
+func (p *Provider) buildNetworkPolicy(runnerID string, opts provider.SpawnOptions) (*networkingv1.NetworkPolicy, error) {
 	npName := p.networkPolicyName(runnerID)
 
 	labels := map[string]string{
@@ -68,15 +78,20 @@ func (p *Provider) buildNetworkPolicy(runnerID string, opts provider.SpawnOption
 	case "air_gapped":
 		// No egress allowed (empty egress rules = block all)
 		np.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{}
+	case "none", "":
+		// Allow all egress: no NetworkPolicy needed.
+		return nil, nil
 	default:
-		// "none" - allow all egress (don't create network policy)
-		return nil
+		return nil, &provider.ErrInvalidConfig{
+			Field:  "network_policy",
+			Reason: fmt.Sprintf("unknown policy %q", opts.NetworkPolicy),
+		}
 	}
 
 	// Always allow DNS resolution (kube-dns/coredns)
 	np.Spec.Egress = append(np.Spec.Egress, p.buildDNSEgressRule())
 
-	return np
+	return np, nil
 }
 
 // buildAllowListEgressRules builds egress rules from allowed host patterns.

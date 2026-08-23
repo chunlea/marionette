@@ -19,8 +19,6 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 30*time.Minute, cfg.IdleTimeout)
 	assert.Equal(t, 30*time.Second, cfg.HealthCheckInterval)
 	assert.Equal(t, 90*time.Second, cfg.StaleThreshold)
-	assert.Equal(t, 5*time.Minute, cfg.InitScriptTimeout)
-	assert.Equal(t, 5*time.Minute, cfg.CleanupScriptTimeout)
 	assert.Equal(t, 0, cfg.MaxTasksPerRunner)
 	assert.Equal(t, "lru", cfg.SelectionStrategy)
 }
@@ -97,14 +95,6 @@ func TestParseConfig(t *testing.T) {
 				return c.IdleTimeout == time.Hour &&
 					c.HealthCheckInterval == time.Minute &&
 					c.StaleThreshold == 2*time.Minute
-			},
-		},
-		{
-			name:  "parses script timeouts",
-			input: `{"pool_name": "test", "init_script_timeout": "10m", "cleanup_script_timeout": "3m"}`,
-			want: func(c *Config) bool {
-				return c.InitScriptTimeout == 10*time.Minute &&
-					c.CleanupScriptTimeout == 3*time.Minute
 			},
 		},
 		{
@@ -233,7 +223,7 @@ func TestConfigValidate(t *testing.T) {
 }
 
 func TestDefaultSuspendConfig(t *testing.T) {
-	cfg := DefaultSuspendConfig()
+	cfg := defaultSuspendConfig()
 
 	assert.Equal(t, provider.SuspendStrategyReleaseToPool, cfg.Strategy)
 	assert.Equal(t, 60*time.Second, cfg.MinDuration)
@@ -245,41 +235,41 @@ func TestParseSuspendConfig(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		want    func(*SuspendConfig) bool
+		want    func(*provider.SuspendConfig) bool
 		wantErr bool
 	}{
 		{
 			name:  "empty config uses defaults",
 			input: "{}",
-			want: func(c *SuspendConfig) bool {
+			want: func(c *provider.SuspendConfig) bool {
 				return c.Strategy == provider.SuspendStrategyReleaseToPool
 			},
 		},
 		{
 			name:  "null config uses defaults",
 			input: "null",
-			want: func(c *SuspendConfig) bool {
+			want: func(c *provider.SuspendConfig) bool {
 				return c.MinDuration == 60*time.Second
 			},
 		},
 		{
 			name:  "parses strategy",
 			input: `{"strategy": "terminate"}`,
-			want: func(c *SuspendConfig) bool {
+			want: func(c *provider.SuspendConfig) bool {
 				return c.Strategy == provider.SuspendStrategyTerminate
 			},
 		},
 		{
 			name:  "parses durations",
 			input: `{"min_duration": "30s", "max_duration": "12h"}`,
-			want: func(c *SuspendConfig) bool {
+			want: func(c *provider.SuspendConfig) bool {
 				return c.MinDuration == 30*time.Second && c.MaxDuration == 12*time.Hour
 			},
 		},
 		{
 			name:  "parses sync_workspace",
 			input: `{"sync_workspace": false}`,
-			want: func(c *SuspendConfig) bool {
+			want: func(c *provider.SuspendConfig) bool {
 				return !c.SyncWorkspace
 			},
 		},
@@ -297,7 +287,7 @@ func TestParseSuspendConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := ParseSuspendConfig(json.RawMessage(tt.input))
+			cfg, err := provider.ParseSuspendConfig(json.RawMessage(tt.input), defaultSuspendConfig())
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -306,20 +296,4 @@ func TestParseSuspendConfig(t *testing.T) {
 			assert.True(t, tt.want(cfg))
 		})
 	}
-}
-
-func TestSuspendConfigToProviderSuspendConfig(t *testing.T) {
-	cfg := &SuspendConfig{
-		Strategy:      provider.SuspendStrategyReleaseToPool,
-		MinDuration:   30 * time.Second,
-		MaxDuration:   12 * time.Hour,
-		SyncWorkspace: true,
-	}
-
-	providerCfg := cfg.ToProviderSuspendConfig()
-
-	assert.Equal(t, provider.SuspendStrategyReleaseToPool, providerCfg.Strategy)
-	assert.Equal(t, 30*time.Second, providerCfg.MinDuration)
-	assert.Equal(t, 12*time.Hour, providerCfg.MaxDuration)
-	assert.True(t, providerCfg.SyncWorkspace)
 }

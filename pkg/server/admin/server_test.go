@@ -2,7 +2,6 @@ package admin
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +10,8 @@ import (
 	"time"
 
 	"github.com/chunlea/marionette/pkg/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -22,7 +23,11 @@ func newTestServer(opts ...Option) *Server {
 		Username: "admin",
 		Password: "secret",
 	}
-	return New(cfg, logger, opts...)
+	srv, err := New(cfg, logger, opts...)
+	if err != nil {
+		panic(err)
+	}
+	return srv
 }
 
 func TestBasicAuthMiddleware(t *testing.T) {
@@ -745,313 +750,6 @@ func TestWriteJSONNil(t *testing.T) {
 	if rr.Body.Len() != 0 {
 		t.Errorf("expected empty body, got %s", rr.Body.String())
 	}
-}
-
-func TestMockServices(t *testing.T) {
-	t.Run("MockAPIKeyService filters by labels", func(t *testing.T) {
-		svc := NewMockAPIKeyService()
-		ctx := context.Background()
-
-		// Create keys with labels
-		svc.AddKey(&store.APIKey{
-			ID:     "key1",
-			Name:   "key1",
-			Labels: json.RawMessage(`{"env":"prod"}`),
-		})
-		svc.AddKey(&store.APIKey{
-			ID:     "key2",
-			Name:   "key2",
-			Labels: json.RawMessage(`{"env":"staging"}`),
-		})
-
-		// Filter by label
-		result, err := svc.List(ctx, ListAPIKeysOptions{
-			Labels: map[string]string{"env": "prod"},
-		})
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(result.Items) != 1 {
-			t.Errorf("expected 1 item, got %d", len(result.Items))
-		}
-	})
-
-	t.Run("MockAPIKeyService Create with annotations", func(t *testing.T) {
-		svc := NewMockAPIKeyService()
-		ctx := context.Background()
-
-		key, token, err := svc.Create(ctx, CreateAPIKeyOptions{
-			Name:        "test-key",
-			Scopes:      []string{"read"},
-			Labels:      map[string]string{"env": "prod"},
-			Annotations: map[string]string{"note": "test"},
-		})
-		if err != nil {
-			t.Fatalf("Create failed: %v", err)
-		}
-		if key.Name != "test-key" {
-			t.Errorf("expected name 'test-key', got %q", key.Name)
-		}
-		if token == "" {
-			t.Error("expected token to be set")
-		}
-	})
-
-	t.Run("MockAgentConfigService filters by agent", func(t *testing.T) {
-		svc := NewMockAgentConfigService()
-		ctx := context.Background()
-
-		svc.AddConfig(&store.AgentConfig{
-			ID:    "cfg1",
-			Name:  "cfg1",
-			Agent: "claude",
-		})
-		svc.AddConfig(&store.AgentConfig{
-			ID:    "cfg2",
-			Name:  "cfg2",
-			Agent: "codex",
-		})
-
-		result, err := svc.List(ctx, ListAgentConfigsOptions{
-			Agent: "claude",
-		})
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(result.Items) != 1 {
-			t.Errorf("expected 1 item, got %d", len(result.Items))
-		}
-	})
-
-	t.Run("MockAgentConfigService Update all fields", func(t *testing.T) {
-		svc := NewMockAgentConfigService()
-		ctx := context.Background()
-
-		svc.AddConfig(&store.AgentConfig{
-			ID:    "cfg1",
-			Name:  "old-name",
-			Agent: "claude",
-		})
-
-		newName := "new-name"
-		newKey := "new-key"
-		newModel := "claude-4"
-		newBaseURL := "https://api.example.com"
-		newExtra := map[string]any{"foo": "bar"}
-		isDefault := true
-		newLabels := map[string]string{"env": "prod"}
-
-		updated, err := svc.Update(ctx, "cfg1", UpdateAgentConfigOptions{
-			Name:      &newName,
-			APIKey:    &newKey,
-			Model:     &newModel,
-			BaseURL:   &newBaseURL,
-			Extra:     &newExtra,
-			IsDefault: &isDefault,
-			Labels:    &newLabels,
-		})
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-		if updated.Name != "new-name" {
-			t.Errorf("expected name 'new-name', got %q", updated.Name)
-		}
-	})
-
-	t.Run("MockProviderConfigService filters by provider", func(t *testing.T) {
-		svc := NewMockProviderConfigService()
-		ctx := context.Background()
-
-		svc.AddConfig(&store.ProviderConfig{
-			ID:       "cfg1",
-			Name:     "cfg1",
-			Provider: "docker",
-		})
-		svc.AddConfig(&store.ProviderConfig{
-			ID:       "cfg2",
-			Name:     "cfg2",
-			Provider: "kubernetes",
-		})
-
-		result, err := svc.List(ctx, ListProviderConfigsOptions{
-			Provider: "docker",
-		})
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(result.Items) != 1 {
-			t.Errorf("expected 1 item, got %d", len(result.Items))
-		}
-	})
-
-	t.Run("MockProviderConfigService Update all fields", func(t *testing.T) {
-		svc := NewMockProviderConfigService()
-		ctx := context.Background()
-
-		svc.AddConfig(&store.ProviderConfig{
-			ID:       "cfg1",
-			Name:     "old-name",
-			Provider: "docker",
-		})
-
-		newName := "new-name"
-		newConfig := map[string]any{"image": "latest"}
-		newSuspend := map[string]any{"strategy": "pause"}
-		isDefault := true
-		newLabels := map[string]string{"env": "prod"}
-
-		updated, err := svc.Update(ctx, "cfg1", UpdateProviderConfigOptions{
-			Name:          &newName,
-			Config:        &newConfig,
-			SuspendConfig: &newSuspend,
-			IsDefault:     &isDefault,
-			Labels:        &newLabels,
-		})
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-		if updated.Name != "new-name" {
-			t.Errorf("expected name 'new-name', got %q", updated.Name)
-		}
-	})
-
-	t.Run("MockRunnerAdminService filters by status", func(t *testing.T) {
-		svc := NewMockRunnerAdminService()
-		ctx := context.Background()
-
-		svc.AddRunner(&store.Runner{
-			ID:     "run1",
-			Name:   "run1",
-			Status: "idle",
-		})
-		svc.AddRunner(&store.Runner{
-			ID:     "run2",
-			Name:   "run2",
-			Status: "busy",
-		})
-
-		result, err := svc.List(ctx, ListRunnersOptions{
-			Status: []string{"idle"},
-		})
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(result.Items) != 1 {
-			t.Errorf("expected 1 item, got %d", len(result.Items))
-		}
-	})
-
-	t.Run("MockRunnerAdminService filters by pool name", func(t *testing.T) {
-		svc := NewMockRunnerAdminService()
-		ctx := context.Background()
-
-		poolName := "test-pool"
-		svc.AddRunner(&store.Runner{
-			ID:       "run1",
-			Name:     "run1",
-			Status:   "idle",
-			PoolName: &poolName,
-		})
-		svc.AddRunner(&store.Runner{
-			ID:     "run2",
-			Name:   "run2",
-			Status: "idle",
-		})
-
-		result, err := svc.List(ctx, ListRunnersOptions{
-			PoolName: "test-pool",
-		})
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(result.Items) != 1 {
-			t.Errorf("expected 1 item, got %d", len(result.Items))
-		}
-	})
-
-	t.Run("MockRunnerAdminService filters by labels", func(t *testing.T) {
-		svc := NewMockRunnerAdminService()
-		ctx := context.Background()
-
-		svc.AddRunner(&store.Runner{
-			ID:     "run1",
-			Name:   "run1",
-			Status: "idle",
-			Labels: json.RawMessage(`{"env":"prod"}`),
-		})
-		svc.AddRunner(&store.Runner{
-			ID:     "run2",
-			Name:   "run2",
-			Status: "idle",
-			Labels: json.RawMessage(`{"env":"staging"}`),
-		})
-
-		result, err := svc.List(ctx, ListRunnersOptions{
-			Labels: map[string]string{"env": "prod"},
-		})
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(result.Items) != 1 {
-			t.Errorf("expected 1 item, got %d", len(result.Items))
-		}
-	})
-
-	t.Run("MockRunnerAdminService Spawn with labels", func(t *testing.T) {
-		svc := NewMockRunnerAdminService()
-		ctx := context.Background()
-
-		runner, err := svc.Spawn(ctx, SpawnRunnerOptions{
-			Name:   "test-runner",
-			Labels: map[string]string{"env": "test"},
-		})
-		if err != nil {
-			t.Fatalf("Spawn failed: %v", err)
-		}
-		if runner.Name != "test-runner" {
-			t.Errorf("expected name 'test-runner', got %q", runner.Name)
-		}
-	})
-
-	t.Run("MockRunnerAdminService Get not found", func(t *testing.T) {
-		svc := NewMockRunnerAdminService()
-		ctx := context.Background()
-
-		_, err := svc.Get(ctx, "nonexistent")
-		if err != store.ErrNotFound {
-			t.Errorf("expected ErrNotFound, got %v", err)
-		}
-	})
-
-	t.Run("MockAgentConfigService Delete not found", func(t *testing.T) {
-		svc := NewMockAgentConfigService()
-		ctx := context.Background()
-
-		err := svc.Delete(ctx, "nonexistent")
-		if err != store.ErrNotFound {
-			t.Errorf("expected ErrNotFound, got %v", err)
-		}
-	})
-
-	t.Run("MockProviderConfigService Delete not found", func(t *testing.T) {
-		svc := NewMockProviderConfigService()
-		ctx := context.Background()
-
-		err := svc.Delete(ctx, "nonexistent")
-		if err != store.ErrNotFound {
-			t.Errorf("expected ErrNotFound, got %v", err)
-		}
-	})
-
-	t.Run("MockRunnerAdminService Destroy not found", func(t *testing.T) {
-		svc := NewMockRunnerAdminService()
-		ctx := context.Background()
-
-		err := svc.Destroy(ctx, "nonexistent")
-		if err != store.ErrNotFound {
-			t.Errorf("expected ErrNotFound, got %v", err)
-		}
-	})
 }
 
 func TestGetRunnerNotFound(t *testing.T) {
@@ -2673,267 +2371,62 @@ func TestProfileHandlersInternalErrors(t *testing.T) {
 	})
 }
 
-func TestMockProfileService(t *testing.T) {
-	t.Run("MockProfileService filters by provider_config_id", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
+func TestNew_FailsClosedWithoutCredentials(t *testing.T) {
+	logger := zap.NewNop()
 
-		providerConfigID := "pcfg_test"
-		svc.AddProfile(&store.Profile{
-			ID:               "prof1",
-			Name:             "prof1",
-			ProviderConfigID: &providerConfigID,
+	tests := []struct {
+		name     string
+		username string
+		password string
+	}{
+		{"no credentials at all", "", ""},
+		{"username only", "admin", ""},
+		{"password only", "", "secret"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, err := New(Config{
+				Host:     "localhost",
+				Port:     8081,
+				Username: tt.username,
+				Password: tt.password,
+			}, logger)
+
+			require.ErrorIs(t, err, ErrCredentialsRequired)
+			assert.Nil(t, srv)
 		})
-		svc.AddProfile(&store.Profile{
-			ID:   "prof2",
-			Name: "prof2",
-		})
+	}
+}
 
-		result, err := svc.List(ctx, ListProfilesOptions{
-			ProviderConfigID: "pcfg_test",
-		})
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(result.Items) != 1 {
-			t.Errorf("expected 1 item, got %d", len(result.Items))
-		}
-	})
+// TestNew_AllowInsecureSkipsAuth documents the explicit development opt-out.
+func TestNew_AllowInsecureSkipsAuth(t *testing.T) {
+	logger := zap.NewNop()
 
-	t.Run("MockProfileService excludes builtin by default", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
+	srv, err := New(Config{
+		Host:          "localhost",
+		Port:          8081,
+		AllowInsecure: true,
+	}, logger, WithAPIKeyService(NewMockAPIKeyService()))
+	require.NoError(t, err)
+	require.NotNil(t, srv)
 
-		svc.AddProfile(&store.Profile{
-			ID:        "prof1",
-			Name:      "user-profile",
-			IsBuiltin: false,
-		})
-		svc.AddProfile(&store.Profile{
-			ID:        "prof2",
-			Name:      "builtin-profile",
-			IsBuiltin: true,
-		})
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/keys", nil)
+	rec := httptest.NewRecorder()
+	srv.router.ServeHTTP(rec, req)
 
-		result, err := svc.List(ctx, ListProfilesOptions{})
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(result.Items) != 1 {
-			t.Errorf("expected 1 item, got %d", len(result.Items))
-		}
+	assert.NotEqual(t, http.StatusUnauthorized, rec.Code,
+		"AllowInsecure must serve the admin API without credentials")
+}
 
-		// Include builtin
-		result, err = svc.List(ctx, ListProfilesOptions{IncludeBuiltin: true})
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(result.Items) != 2 {
-			t.Errorf("expected 2 items, got %d", len(result.Items))
-		}
-	})
+// TestNew_AuthEnforcedWhenCredentialsSet is the other half of the contract:
+// with credentials present, every admin route is behind basic auth.
+func TestNew_AuthEnforcedWhenCredentialsSet(t *testing.T) {
+	srv := newTestServer(WithAPIKeyService(NewMockAPIKeyService()))
 
-	t.Run("MockProfileService Update all fields", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/v1/keys", nil)
+	rec := httptest.NewRecorder()
+	srv.router.ServeHTTP(rec, req)
 
-		svc.AddProfile(&store.Profile{
-			ID:   "prof1",
-			Name: "old-name",
-		})
-
-		newName := "new-name"
-		newDesc := "new description"
-		newProviderConfigID := "pcfg_new"
-		newResources := map[string]any{"cpu": "4"}
-		newNetwork := map[string]any{"policy": "allow_list"}
-		newInitScript := "echo init"
-		newCleanupScript := "echo cleanup"
-		newTunnels := []map[string]any{{"type": "http", "port": 8080}}
-		newSelector := map[string]any{"region": "us-east"}
-		newLabels := map[string]string{"env": "prod"}
-		newAnnotations := map[string]string{"note": "updated"}
-
-		updated, err := svc.Update(ctx, "prof1", UpdateProfileOptions{
-			Name:             &newName,
-			Description:      &newDesc,
-			ProviderConfigID: &newProviderConfigID,
-			Resources:        &newResources,
-			Network:          &newNetwork,
-			InitScript:       &newInitScript,
-			CleanupScript:    &newCleanupScript,
-			Tunnels:          &newTunnels,
-			Selector:         &newSelector,
-			Labels:           &newLabels,
-			Annotations:      &newAnnotations,
-		})
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-		if updated.Name != "new-name" {
-			t.Errorf("expected name 'new-name', got %q", updated.Name)
-		}
-	})
-
-	t.Run("MockProfileService Get not found", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
-
-		_, err := svc.Get(ctx, "nonexistent")
-		if err != store.ErrNotFound {
-			t.Errorf("expected ErrNotFound, got %v", err)
-		}
-	})
-
-	t.Run("MockProfileService Delete not found", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
-
-		err := svc.Delete(ctx, "nonexistent")
-		if err != store.ErrNotFound {
-			t.Errorf("expected ErrNotFound, got %v", err)
-		}
-	})
-
-	t.Run("MockProfileService internal error", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
-		svc.SetInternalError(errors.New("database error"))
-
-		_, err := svc.Create(ctx, CreateProfileOptions{Name: "test"})
-		if err == nil || err.Error() != "database error" {
-			t.Errorf("expected 'database error', got %v", err)
-		}
-	})
-
-	t.Run("MockProfileService validation error", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
-
-		svc.AddProfile(&store.Profile{ID: "prof1", Name: "test"})
-		svc.SetValidationError("name", "name already exists")
-
-		_, err := svc.Update(ctx, "prof1", UpdateProfileOptions{})
-		if !IsValidation(err) {
-			t.Errorf("expected validation error, got %v", err)
-		}
-	})
-
-	t.Run("MockProfileService ClearValidationError", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
-
-		svc.AddProfile(&store.Profile{ID: "prof_clear_valid", Name: "test"})
-		svc.SetValidationError("name", "name already exists")
-		svc.ClearValidationError()
-
-		newName := "new-name"
-		updated, err := svc.Update(ctx, "prof_clear_valid", UpdateProfileOptions{Name: &newName})
-		if err != nil {
-			t.Errorf("expected no error after ClearValidationError, got %v", err)
-		}
-		if updated.Name != "new-name" {
-			t.Errorf("expected name 'new-name', got %q", updated.Name)
-		}
-	})
-
-	t.Run("MockProfileService ClearInternalError", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
-
-		svc.SetInternalError(errors.New("database error"))
-		svc.ClearInternalError()
-
-		profile, err := svc.Create(ctx, CreateProfileOptions{Name: "test-clear"})
-		if err != nil {
-			t.Errorf("expected no error after ClearInternalError, got %v", err)
-		}
-		if profile == nil {
-			t.Error("expected profile to be created")
-		}
-	})
-
-	t.Run("MockProfileService Create with all optional fields", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
-
-		profile, err := svc.Create(ctx, CreateProfileOptions{
-			Name:             "full-profile",
-			Description:      "A full description",
-			ProviderConfigID: "pcfg_test",
-			Resources:        map[string]any{"cpu": "4"},
-			Network:          map[string]any{"policy": "allow_list"},
-			InitScript:       "echo init",
-			CleanupScript:    "echo cleanup",
-			Tunnels:          []map[string]any{{"type": "http"}},
-			Selector:         map[string]any{"region": "us-east"},
-			Labels:           map[string]string{"env": "prod"},
-			Annotations:      map[string]string{"note": "test"},
-		})
-		if err != nil {
-			t.Fatalf("Create failed: %v", err)
-		}
-		if profile.Name != "full-profile" {
-			t.Errorf("expected name 'full-profile', got %q", profile.Name)
-		}
-		if profile.Description == nil || *profile.Description != "A full description" {
-			t.Error("expected description to be set")
-		}
-		if profile.ProviderConfigID == nil || *profile.ProviderConfigID != "pcfg_test" {
-			t.Error("expected provider_config_id to be set")
-		}
-		if profile.InitScript == nil || *profile.InitScript != "echo init" {
-			t.Error("expected init_script to be set")
-		}
-		if profile.CleanupScript == nil || *profile.CleanupScript != "echo cleanup" {
-			t.Error("expected cleanup_script to be set")
-		}
-	})
-
-	t.Run("MockProfileService Create duplicate name", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
-
-		_, err := svc.Create(ctx, CreateProfileOptions{Name: "dup-name"})
-		if err != nil {
-			t.Fatalf("First create failed: %v", err)
-		}
-
-		_, err = svc.Create(ctx, CreateProfileOptions{Name: "dup-name"})
-		if !IsValidation(err) {
-			t.Errorf("expected validation error for duplicate name, got %v", err)
-		}
-	})
-
-	t.Run("MockProfileService List with limit", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
-
-		// Add many profiles
-		for i := 0; i < 10; i++ {
-			svc.AddProfile(&store.Profile{
-				ID:   "prof_limit" + string(rune('0'+i)),
-				Name: "profile" + string(rune('0'+i)),
-			})
-		}
-
-		result, err := svc.List(ctx, ListProfilesOptions{Limit: 3})
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(result.Items) > 3 {
-			t.Errorf("expected at most 3 items, got %d", len(result.Items))
-		}
-	})
-
-	t.Run("MockProfileService Update not found", func(t *testing.T) {
-		svc := NewMockProfileService()
-		ctx := context.Background()
-
-		newName := "new-name"
-		_, err := svc.Update(ctx, "nonexistent", UpdateProfileOptions{Name: &newName})
-		if err != store.ErrNotFound {
-			t.Errorf("expected ErrNotFound, got %v", err)
-		}
-	})
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }

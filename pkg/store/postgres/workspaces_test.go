@@ -50,8 +50,15 @@ func TestWorkspaceCRUD(t *testing.T) {
 	err = testStore.DeleteWorkspace(ctx, workspace.ID)
 	require.NoError(t, err)
 
+	// Order newest-first: the default is created_at ASC with a 50-row page, so
+	// this workspace falls off the first page as soon as the suite has created
+	// enough workspaces, and both assertions below would pass vacuously.
+	newestFirst := store.BaseListOptions{OrderDesc: true}
+
 	// Should not appear in list without IncludeDeleted
-	list, err := testStore.ListWorkspaces(ctx, store.ListWorkspacesOptions{})
+	list, err := testStore.ListWorkspaces(ctx, store.ListWorkspacesOptions{
+		BaseListOptions: newestFirst,
+	})
 	require.NoError(t, err)
 	for _, w := range list.Items {
 		assert.NotEqual(t, workspace.ID, w.ID)
@@ -59,7 +66,8 @@ func TestWorkspaceCRUD(t *testing.T) {
 
 	// Should appear with IncludeDeleted
 	list, err = testStore.ListWorkspaces(ctx, store.ListWorkspacesOptions{
-		IncludeDeleted: true,
+		BaseListOptions: newestFirst,
+		IncludeDeleted:  true,
 	})
 	require.NoError(t, err)
 	found := false

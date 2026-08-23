@@ -9,7 +9,7 @@ import { Card } from '@/components/Card'
 import { Badge } from '@/components/Badge'
 import { formatRelativeTime } from '@/lib/utils'
 import { Plus, Trash2 } from 'lucide-react'
-import type { CreateAgentConfigRequest } from '@/types/api'
+import type { CreateAgentConfigRequest } from '@/types/admin'
 
 export const Route = createFileRoute('/admin/_layout/agent-configs')({
   component: AgentConfigsPage,

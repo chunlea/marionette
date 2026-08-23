@@ -9,7 +9,7 @@ import { Card } from '@/components/Card'
 import { Badge } from '@/components/Badge'
 import { formatRelativeTime } from '@/lib/utils'
 import { Plus, Trash2 } from 'lucide-react'
-import type { CreateProviderConfigRequest } from '@/types/api'
+import type { CreateProviderConfigRequest } from '@/types/admin'
 
 export const Route = createFileRoute('/admin/_layout/provider-configs')({
   component: ProviderConfigsPage,

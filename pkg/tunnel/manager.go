@@ -3,7 +3,6 @@ package tunnel
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"sync"
 	"time"
 
@@ -27,10 +26,6 @@ type TunnelManager struct {
 	tunnels   map[string]*activeTunnel
 	tunnelsMu sync.RWMutex
 
-	// Connection handlers by runner ID
-	handlers   map[string]ConnectionHandler
-	handlersMu sync.RWMutex
-
 	// ID generator (injectable for testing)
 	idGen func() string
 
@@ -46,22 +41,40 @@ type activeTunnel struct {
 	*Tunnel
 	tokenHash   string
 	hashVersion int
-	connections sync.WaitGroup
 }
 
-// ConnectionHandler handles tunnel connections to a specific runner.
-type ConnectionHandler interface {
-	// SendTunnelData sends data through the tunnel to the runner.
-	SendTunnelData(ctx context.Context, tunnelID string, data []byte) error
+// hasCredentials reports whether this entry can verify a token on its own.
+// Entries repopulated from the store after a restart carry no hash, because
+// Store.GetTunnel does not return one.
+func (a *activeTunnel) hasCredentials() bool {
+	return a.tokenHash != ""
+}
 
-	// ReceiveTunnelData receives data from the tunnel from the runner.
-	ReceiveTunnelData(ctx context.Context, tunnelID string) ([]byte, error)
+// checkLive returns the appropriate error if a tunnel is no longer usable.
+func checkLive(t *Tunnel) error {
+	if t.IsClosed() {
+		return ErrTunnelClosed
+	}
+	if t.IsExpired() {
+		return ErrTunnelExpired
+	}
+	return nil
+}
 
-	// CloseTunnel notifies the runner to close the tunnel.
-	CloseTunnel(ctx context.Context, tunnelID string) error
+// cache inserts a tunnel into the in-memory lookup cache. An existing entry
+// that can already authenticate is never downgraded to one that cannot.
+func (m *TunnelManager) cache(t *Tunnel, tokenHash string, hashVersion int) {
+	m.tunnelsMu.Lock()
+	defer m.tunnelsMu.Unlock()
 
-	// IsConnected returns true if the runner is connected.
-	IsConnected() bool
+	if existing, ok := m.tunnels[t.ID]; ok && existing.hasCredentials() {
+		return
+	}
+	m.tunnels[t.ID] = &activeTunnel{
+		Tunnel:      t,
+		tokenHash:   tokenHash,
+		hashVersion: hashVersion,
+	}
 }
 
 // URLGenerator generates public URLs for tunnels.
@@ -120,11 +133,10 @@ func WithURLGenerator(urlGen URLGenerator) ManagerOption {
 // NewTunnelManager creates a new TunnelManager.
 func NewTunnelManager(opts ...ManagerOption) *TunnelManager {
 	m := &TunnelManager{
-		logger:   zap.NewNop(),
-		tunnels:  make(map[string]*activeTunnel),
-		handlers: make(map[string]ConnectionHandler),
-		idGen:    id.Tunnel,
-		baseURL:  "http://localhost:8080",
+		logger:  zap.NewNop(),
+		tunnels: make(map[string]*activeTunnel),
+		idGen:   id.Tunnel,
+		baseURL: "http://localhost:8080",
 	}
 
 	for _, opt := range opts {
@@ -235,13 +247,15 @@ func (m *TunnelManager) Get(ctx context.Context, tunnelID string) (*Tunnel, erro
 		if err != nil {
 			return nil, err
 		}
-		// Check if closed or expired
-		if tunnel.IsClosed() {
-			return nil, ErrTunnelClosed
+		if err := checkLive(tunnel); err != nil {
+			return nil, err
 		}
-		if tunnel.IsExpired() {
-			return nil, ErrTunnelExpired
-		}
+
+		// Repopulate the cache so a tunnel created before a server restart
+		// stays reachable. No token hash is available here, so the entry
+		// cannot authenticate by itself; ValidateToken handles that case.
+		m.cache(tunnel, "", 0)
+
 		return tunnel, nil
 	}
 
@@ -301,20 +315,10 @@ func (m *TunnelManager) Close(ctx context.Context, tunnelID string) error {
 		}
 	}
 
-	// Notify runner
-	m.handlersMu.RLock()
-	handler, hasHandler := m.handlers[active.RunnerID]
-	m.handlersMu.RUnlock()
-
-	if hasHandler && handler.IsConnected() {
-		if err := handler.CloseTunnel(ctx, tunnelID); err != nil {
-			m.logger.Warn("failed to notify runner of tunnel close",
-				zap.String("tunnel_id", tunnelID),
-				zap.String("runner_id", active.RunnerID),
-				zap.Error(err),
-			)
-		}
-	}
+	// TODO(lane-B/A2): the runner is never told the tunnel closed. This used
+	// to go through a ConnectionHandler that nothing ever registered, so the
+	// notification has never fired. The seam belongs on TunnelRouter (which
+	// owns the runner command stream) and needs main.go wiring.
 
 	m.logger.Info("tunnel closed",
 		zap.String("tunnel_id", tunnelID),
@@ -352,136 +356,52 @@ func (m *TunnelManager) CloseBySession(ctx context.Context, sessionID string) er
 }
 
 // ValidateToken validates a tunnel token and returns the tunnel if valid.
-func (m *TunnelManager) ValidateToken(_ context.Context, tunnelID, token string) (*Tunnel, error) {
-	// Get tunnel from cache
+func (m *TunnelManager) ValidateToken(ctx context.Context, tunnelID, token string) (*Tunnel, error) {
 	m.tunnelsMu.RLock()
 	active, exists := m.tunnels[tunnelID]
 	m.tunnelsMu.RUnlock()
 
-	if !exists {
+	if exists && active.hasCredentials() {
+		if err := checkLive(active.Tunnel); err != nil {
+			return nil, err
+		}
+		if !cryptoutil.VerifyToken(token, active.tokenHash, active.hashVersion, nil) {
+			return nil, ErrInvalidToken
+		}
+		return active.Tunnel, nil
+	}
+
+	// Either the cache never saw this tunnel (server restarted) or the entry
+	// was repopulated without its hash. Fall back to the store.
+	if m.store == nil {
+		if exists {
+			return nil, ErrInvalidToken
+		}
 		return nil, ErrTunnelNotFound
 	}
 
-	// Check if closed or expired
-	if active.IsClosed() {
-		return nil, ErrTunnelClosed
+	// Resolve the tunnel first so a missing tunnel is reported as such rather
+	// than as a bad token.
+	tunnel, err := m.store.GetTunnel(ctx, tunnelID)
+	if err != nil {
+		return nil, ErrTunnelNotFound
 	}
-	if active.IsExpired() {
-		return nil, ErrTunnelExpired
+	if err := checkLive(tunnel); err != nil {
+		return nil, err
 	}
 
-	// Verify token
-	if !cryptoutil.VerifyToken(token, active.tokenHash, active.hashVersion, nil) {
+	// Looking the token up by its own hash both authenticates it and recovers
+	// the hash needed to cache an entry that can authenticate on its own.
+	// Only v1 (SHA-256) hashing is in use; v2 is reserved and unimplemented.
+	hash := cryptoutil.HashToken(token)
+	byHash, err := m.store.GetTunnelByHash(ctx, hash)
+	if err != nil || byHash.ID != tunnelID {
 		return nil, ErrInvalidToken
 	}
 
-	return active.Tunnel, nil
-}
+	m.cache(tunnel, hash, cryptoutil.HashV1SHA256)
 
-// HandleHTTPRequest handles an incoming HTTP request for a tunnel.
-// It serializes the request, sends it to the runner, waits for the response,
-// and writes the response back to the client.
-func (m *TunnelManager) HandleHTTPRequest(ctx context.Context, tunnelID string, w http.ResponseWriter, r *http.Request) error {
-	// Get tunnel
-	m.tunnelsMu.RLock()
-	active, exists := m.tunnels[tunnelID]
-	m.tunnelsMu.RUnlock()
-
-	if !exists {
-		return ErrTunnelNotFound
-	}
-
-	// Check if closed or expired
-	if active.IsClosed() {
-		return ErrTunnelClosed
-	}
-	if active.IsExpired() {
-		return ErrTunnelExpired
-	}
-
-	// Verify tunnel type
-	if active.Type != TypeHTTP {
-		return fmt.Errorf("tunnel type mismatch: expected %s, got %s", TypeHTTP, active.Type)
-	}
-
-	// Get handler for runner
-	m.handlersMu.RLock()
-	handler, hasHandler := m.handlers[active.RunnerID]
-	m.handlersMu.RUnlock()
-
-	if !hasHandler || !handler.IsConnected() {
-		return ErrRunnerNotConnected
-	}
-
-	// Track active connection
-	active.connections.Add(1)
-	defer active.connections.Done()
-
-	// Proxy the HTTP request
-	return m.handleHTTPProxyRequest(ctx, tunnelID, handler, w, r)
-}
-
-// HandleTCPConnection handles an incoming TCP connection for a tunnel.
-func (m *TunnelManager) HandleTCPConnection(ctx context.Context, tunnelID string, conn Connection) error {
-	// Get tunnel
-	m.tunnelsMu.RLock()
-	active, exists := m.tunnels[tunnelID]
-	m.tunnelsMu.RUnlock()
-
-	if !exists {
-		return ErrTunnelNotFound
-	}
-
-	// Check if closed or expired
-	if active.IsClosed() {
-		return ErrTunnelClosed
-	}
-	if active.IsExpired() {
-		return ErrTunnelExpired
-	}
-
-	// Verify tunnel type
-	if active.Type != TypeTCP {
-		return fmt.Errorf("tunnel type mismatch: expected %s, got %s", TypeTCP, active.Type)
-	}
-
-	// Get handler for runner
-	m.handlersMu.RLock()
-	handler, hasHandler := m.handlers[active.RunnerID]
-	m.handlersMu.RUnlock()
-
-	if !hasHandler || !handler.IsConnected() {
-		return ErrRunnerNotConnected
-	}
-
-	// Track active connection
-	active.connections.Add(1)
-	defer active.connections.Done()
-
-	// Proxy the TCP connection
-	return m.handleTCPProxyConnection(ctx, tunnelID, handler, conn)
-}
-
-// RegisterHandler registers a connection handler for a runner.
-func (m *TunnelManager) RegisterHandler(runnerID string, handler ConnectionHandler) {
-	m.handlersMu.Lock()
-	m.handlers[runnerID] = handler
-	m.handlersMu.Unlock()
-
-	m.logger.Debug("handler registered",
-		zap.String("runner_id", runnerID),
-	)
-}
-
-// UnregisterHandler removes a connection handler for a runner.
-func (m *TunnelManager) UnregisterHandler(runnerID string) {
-	m.handlersMu.Lock()
-	delete(m.handlers, runnerID)
-	m.handlersMu.Unlock()
-
-	m.logger.Debug("handler unregistered",
-		zap.String("runner_id", runnerID),
-	)
+	return tunnel, nil
 }
 
 // GetActiveCount returns the number of active tunnels.

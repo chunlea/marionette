@@ -8,6 +8,12 @@ server:
   admin:
     port: 8081
     host: "127.0.0.1"
+    # The admin API mints API keys, registers runners and reads every session.
+    # It fails closed: the server refuses to start unless basic auth credentials
+    # are present in the environment:
+    #   MARIONETTE_UI_USERNAME=admin MARIONETTE_UI_PASSWORD=<secret>
+    # To run without authentication in local development, start the server with
+    # --dev-insecure-admin. Never do that on anything reachable from a network.
   grpc:
     port: 9090
     host: "0.0.0.0"
@@ -40,3 +46,13 @@ logging:
 dev:
   hot_reload: true
   skip_tls: true  # Skip TLS verification in development
+
+# Tunnel subsystem (HTTP proxy + TCP relay)
+tunnels:
+  enabled: true
+
+# Streaming subsystem (desktop/browser)
+# Frozen: the SFU has no media source, no renegotiation and never reads RTCP,
+# so it cannot deliver a frame. Leave disabled unless you are working on it.
+streaming:
+  enabled: false

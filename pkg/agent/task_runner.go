@@ -15,6 +15,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// defaultTaskTimeout applies when the server sends no timeout for a task.
+const defaultTaskTimeout = 1 * time.Hour
+
 // MessageSender is an interface for sending messages to the server.
 type MessageSender interface {
 	Send(msg *pb.RunnerMessage)
@@ -96,6 +99,11 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 	r.currentCtx = ctx
 	r.mu.Unlock()
 
+	// The command dispatcher holds the queue until this fires. From here the
+	// task is registered, so ApprovePermission and KillTask for it can be
+	// delivered without racing the registration.
+	TaskAccepted(ctx)
+
 	defer func() {
 		// Only set status back to idle if we actually started executing
 		// If the executor was already running (from another task), we shouldn't
@@ -165,8 +173,18 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 	// Get workspace path - resolve relative path to absolute
 	workspacePath := filepath.Join(r.workspaceMgr.BaseDir(), session.WorkspacePath)
 
-	// Default timeout if not specified
-	timeout := 1 * time.Hour
+	// Honor the server-supplied timeout. It arrives on the sandbox config;
+	// hardcoding an hour here meant a task the server expected to cap at, say,
+	// five minutes ran twelve times longer than it was allowed to.
+	timeout := defaultTaskTimeout
+	if cmd.Sandbox != nil && cmd.Sandbox.TimeoutSeconds > 0 {
+		timeout = time.Duration(cmd.Sandbox.TimeoutSeconds) * time.Second
+	} else {
+		r.logger.Debug("no server-supplied timeout, using default",
+			zap.String("task_id", cmd.TaskId),
+			zap.Duration("timeout", timeout),
+		)
+	}
 
 	// Build executor task
 	task := &executor.Task{
@@ -183,6 +201,7 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 	r.logger.Debug("executor task built",
 		zap.String("task_id", task.ID),
 		zap.String("prompt", task.Prompt),
+		zap.Duration("timeout", task.Timeout),
 		zap.Int("context_snapshot_len", len(session.ContextSnapshot)),
 		zap.ByteString("context_snapshot", session.ContextSnapshot),
 	)
@@ -247,19 +266,30 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 		zap.String("task_id", cmd.TaskId),
 		zap.Bool("success", result.Success),
 		zap.Int("exit_code", result.ExitCode),
+		zap.String("error", result.Error),
+		zap.Int64("tokens_input", result.TokensInput),
+		zap.Int64("tokens_output", result.TokensOutput),
 	)
 
 	return &pb.RunnerMessage{
 		Payload: &pb.RunnerMessage_TaskCompleted{
 			TaskCompleted: &pb.TaskCompleted{
-				TaskId:       cmd.TaskId,
-				RunId:        cmd.RunId,
-				Attempt:      cmd.Attempt,
-				Success:      result.Success,
-				ExitCode:     int32(result.ExitCode),
+				TaskId:   cmd.TaskId,
+				RunId:    cmd.RunId,
+				Attempt:  cmd.Attempt,
+				Success:  result.Success,
+				ExitCode: int32(result.ExitCode),
+				// Carries the agent's own reason when it reported a failure
+				// (error_max_turns, error_during_execution, is_error), not
+				// just an exit code.
 				Error:        result.Error,
 				TokensInput:  result.TokensInput,
 				TokensOutput: result.TokensOutput,
+				// The executor derives this from the CLI session id, so the
+				// next task in the session can --resume. Previously only the
+				// mid-run ContextUpdate carried it, which is lost if the run
+				// ends before one is sent.
+				ContextSnapshot: result.ContextSnapshot,
 			},
 		},
 	}, nil

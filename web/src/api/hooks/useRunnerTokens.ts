@@ -6,7 +6,7 @@ import type {
   CreateRunnerTokenRequest,
   CreateRunnerTokenResponse,
   RunnerTokensQueryParams,
-} from '@/types/api'
+} from '@/types/admin'
 
 // Query keys
 export const runnerTokenKeys = {

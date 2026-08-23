@@ -11,9 +11,9 @@ import (
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
-	"github.com/chunlea/marionette/pkg/tunnel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -28,7 +28,6 @@ func TestNewTunnelManager(t *testing.T) {
 
 	require.NotNil(t, tm)
 	assert.NotNil(t, tm.logger)
-	assert.NotNil(t, tm.relayManager)
 	assert.NotNil(t, tm.pendingRequests)
 	assert.NotNil(t, tm.tunnels)
 }
@@ -390,25 +389,6 @@ func TestTunnelManager_HandleCreateTunnelResponse_NoMatchingRequest(t *testing.T
 	})
 
 	// No assertion needed - just verify it doesn't panic
-}
-
-func TestTunnelManager_SendFrame_NoSender(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	// Create TunnelManager without sender
-	tm := NewTunnelManager(
-		WithTMLogger(logger),
-	)
-
-	// Call sendFrame directly via relayManager callback
-	// The relayManager was initialized with sendFrame as callback
-	err := tm.sendFrame(&tunnel.Frame{
-		Type:     tunnel.FrameTypeData,
-		TunnelID: "tun_test",
-		Payload:  []byte("test"),
-	})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "message sender not configured")
 }
 
 func TestTunnelManager_IsWebSocketUpgrade(t *testing.T) {
@@ -1276,56 +1256,6 @@ func TestTunnelManager_HandleHTTPRequest_WebSocketDetection(t *testing.T) {
 	assert.Contains(t, response, "101 Switching Protocols")
 }
 
-func TestTunnelManager_SendFrame_WithSender(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	sender := &mockMessageSender{}
-	tm := NewTunnelManager(
-		WithTMLogger(logger),
-		WithTMSender(sender),
-	)
-
-	// Send a frame
-	err := tm.sendFrame(&tunnel.Frame{
-		Type:     tunnel.FrameTypeData,
-		TunnelID: "tun_test",
-		Payload:  []byte("test data"),
-	})
-
-	require.NoError(t, err)
-	require.Len(t, sender.Messages(), 1)
-
-	msg := sender.Messages()[0]
-	data := msg.GetTunnelData()
-	require.NotNil(t, data)
-	assert.Equal(t, "tun_test", data.TunnelId)
-	assert.Equal(t, []byte("test data"), data.Data)
-	assert.False(t, data.Eof)
-}
-
-func TestTunnelManager_SendFrame_CloseType(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	sender := &mockMessageSender{}
-	tm := NewTunnelManager(
-		WithTMLogger(logger),
-		WithTMSender(sender),
-	)
-
-	// Send a close frame
-	err := tm.sendFrame(&tunnel.Frame{
-		Type:     tunnel.FrameTypeClose,
-		TunnelID: "tun_test",
-		Payload:  nil,
-	})
-
-	require.NoError(t, err)
-	require.Len(t, sender.Messages(), 1)
-
-	msg := sender.Messages()[0]
-	data := msg.GetTunnelData()
-	require.NotNil(t, data)
-	assert.True(t, data.Eof)
-}
-
 func TestTunnelManager_HandleRegularResponse_UnknownContentLength(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	sender := &mockMessageSender{}
@@ -1369,17 +1299,32 @@ func TestTunnelManager_HandleCreateTunnel_TCPTunnel(t *testing.T) {
 		WithTMSender(sender),
 	)
 
-	// TCP tunnels will try to start a relay, which will fail since no local service
-	// is running. This tests the TCP path.
+	// Registering a TCP tunnel no longer dials the local service: connections
+	// are opened lazily per connection id, so registration succeeds even when
+	// nothing is listening yet.
 	err := tm.HandleCreateTunnel("tun_test", "tcp", 59998)
+	require.NoError(t, err)
 
-	// The relay will fail since there's no local service, but the tunnel should still be created
-	// Actually HandleCreateTunnel cleans up on relay failure for non-HTTP tunnels
-	assert.Error(t, err)
+	info, ok := tm.GetTunnel("tun_test")
+	require.True(t, ok)
+	assert.Equal(t, "tcp", info.Type)
+	assert.Equal(t, 59998, info.LocalPort)
 
-	// Tunnel should not exist because relay failed
-	_, ok := tm.GetTunnel("tun_test")
-	assert.False(t, ok)
+	// The dial failure surfaces on the first frame instead.
+	err = tm.HandleTunnelData(context.Background(), &pb.TunnelData{
+		TunnelId:     "tun_test",
+		ConnectionId: "conn_dead",
+		Data:         []byte("ping"),
+	})
+	require.Error(t, err)
+
+	// The server is told the connection is dead rather than left waiting.
+	msgs := sender.Messages()
+	require.NotEmpty(t, msgs)
+	last := msgs[len(msgs)-1].GetTunnelData()
+	require.NotNil(t, last)
+	assert.Equal(t, "conn_dead", last.GetConnectionId())
+	assert.True(t, last.GetEof())
 }
 
 func TestTunnelManager_HandleWebSocketUpgrade_ConnectionError(t *testing.T) {
@@ -1536,15 +1481,6 @@ func TestTunnelManager_HandleTunnelData_PersistentConnectionWriteError(t *testin
 	_, exists := tm.persistentConns["conn_123"]
 	tm.persistentConnsMu.RUnlock()
 	assert.False(t, exists)
-}
-
-func TestTunnelManager_StartRelay(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	tm := NewTunnelManager(WithTMLogger(logger))
-
-	// startRelay will fail because there's no local service
-	err := tm.startRelay("tun_test", 59997)
-	assert.Error(t, err)
 }
 
 func TestTunnelManager_HandleStreamingResponse_ContextCancel(t *testing.T) {
@@ -1853,4 +1789,136 @@ func TestTunnelManager_HandleHTTPRequest_NegativeContentLength(t *testing.T) {
 
 	// Should have received data
 	require.NotEmpty(t, sender.Messages())
+}
+
+// TestTunnelManager_TCPTunnel_PreservesConnectionID is the regression test for
+// the dropped connection id on the TCP relay path. The old RelayManager was
+// keyed by tunnel id and had no notion of a connection, so every frame it sent
+// back reached the server with an empty ConnectionId and was discarded as
+// "data for unknown connection".
+func TestTunnelManager_TCPTunnel_PreservesConnectionID(t *testing.T) {
+	// nop logger: the relay goroutine may log after the test returns.
+	logger := zap.NewNop()
+	sender := &mockMessageSender{}
+
+	// Local service that echoes a banner back.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+
+	served := make(chan []byte, 1)
+	go func() {
+		conn, aerr := listener.Accept()
+		if aerr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		buf := make([]byte, 64)
+		n, rerr := conn.Read(buf)
+		if rerr == nil {
+			served <- append([]byte(nil), buf[:n]...)
+		}
+		_, _ = conn.Write([]byte("PONG"))
+		// Hold the connection open long enough for the relay to read.
+		time.Sleep(200 * time.Millisecond)
+	}()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	tm := NewTunnelManager(WithTMLogger(logger), WithTMSender(sender))
+	require.NoError(t, tm.HandleCreateTunnel("tun_tcp", "tcp", port))
+	t.Cleanup(func() { _ = tm.CloseTunnel("tun_tcp", "test done") })
+
+	const connID = "conn_tcp_1"
+	require.NoError(t, tm.HandleTunnelData(context.Background(), &pb.TunnelData{
+		TunnelId:     "tun_tcp",
+		ConnectionId: connID,
+		Data:         []byte("PING"),
+	}))
+
+	// The local service saw our bytes.
+	select {
+	case got := <-served:
+		assert.Equal(t, []byte("PING"), got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("local service never received the tunnel data")
+	}
+
+	// The reply must come back tagged with the same connection id.
+	deadline := time.After(2 * time.Second)
+	for {
+		msgs := sender.Messages()
+		for _, msg := range msgs {
+			data := msg.GetTunnelData()
+			if data == nil || len(data.GetData()) == 0 {
+				continue
+			}
+			require.Equal(t, connID, data.GetConnectionId(),
+				"every TCP frame must carry the connection id the server routes on")
+			require.Equal(t, "tun_tcp", data.GetTunnelId())
+			assert.Equal(t, []byte("PONG"), data.GetData())
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("no tunnel data returned to the server")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+// TestTunnelManager_TCPTunnel_PerConnectionSockets verifies that two connection
+// ids on one tunnel get independent local sockets. The tunnel-keyed relay could
+// only ever hold one.
+func TestTunnelManager_TCPTunnel_PerConnectionSockets(t *testing.T) {
+	// nop logger: the relay goroutine may log after the test returns.
+	logger := zap.NewNop()
+	sender := &mockMessageSender{}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+
+	accepted := make(chan struct{}, 4)
+	go func() {
+		for {
+			conn, aerr := listener.Accept()
+			if aerr != nil {
+				return
+			}
+			accepted <- struct{}{}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				time.Sleep(200 * time.Millisecond)
+			}()
+		}
+	}()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	tm := NewTunnelManager(WithTMLogger(logger), WithTMSender(sender))
+	require.NoError(t, tm.HandleCreateTunnel("tun_tcp", "tcp", port))
+	t.Cleanup(func() { _ = tm.CloseTunnel("tun_tcp", "test done") })
+
+	for _, connID := range []string{"conn_a", "conn_b"} {
+		require.NoError(t, tm.HandleTunnelData(context.Background(), &pb.TunnelData{
+			TunnelId:     "tun_tcp",
+			ConnectionId: connID,
+			Data:         []byte("hello"),
+		}))
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-accepted:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d of 2 connections reached the local service", i)
+		}
+	}
+
+	tm.persistentConnsMu.RLock()
+	n := len(tm.persistentConns)
+	tm.persistentConnsMu.RUnlock()
+	assert.Equal(t, 2, n, "each connection id needs its own local socket")
 }

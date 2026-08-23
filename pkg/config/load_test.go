@@ -148,3 +148,20 @@ func TestLoadWithDefaults(t *testing.T) {
 		t.Errorf("Logging format = %s, want json (default)", cfg.Logging.Format)
 	}
 }
+
+func TestLoad_StreamingAndTunnelDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join("testdata", "minimal.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Streaming is frozen: it must stay off unless explicitly enabled.
+	if cfg.Streaming.Enabled {
+		t.Error("streaming.enabled must default to false")
+	}
+
+	// Tunnels are a live product path.
+	if !cfg.Tunnels.Enabled {
+		t.Error("tunnels.enabled must default to true")
+	}
+}

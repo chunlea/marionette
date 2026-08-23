@@ -5,6 +5,9 @@ import (
 	"net/http"
 )
 
+// openapiSpec is generated from the route table and the apitypes package by
+// `make openapi`; TestOpenAPIDocumentIsUpToDate fails if it is stale.
+//
 //go:embed openapi.yaml
 var openapiSpec []byte
 
@@ -48,11 +51,10 @@ const swaggerUIHTML = `<!DOCTYPE html>
   <script>
     window.onload = function() {
       SwaggerUIBundle({
-        urls: [
-          { url: "/openapi.yaml", name: "Public API (Port 8080)" },
-          { url: "http://localhost:8081/openapi.yaml", name: "Admin API (Port 8081)" }
-        ],
-        "urls.primaryName": "Public API (Port 8080)",
+        // Relative, so the page works wherever the server is reached from.
+        // It used to also list the admin spec at a hardcoded localhost:8081,
+        // which was broken in every deployment but a developer's laptop.
+        url: "/openapi.yaml",
         dom_id: '#swagger-ui',
         presets: [
           SwaggerUIBundle.presets.apis,

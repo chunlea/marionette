@@ -424,9 +424,11 @@ func (w *testStoreWrapper) CleanupExpiredStreams(_ context.Context) (int, error)
 	return 0, nil
 }
 
-func (w *testStoreWrapper) BeginTx(_ context.Context) (store.Tx, error) { return nil, nil }
-func (w *testStoreWrapper) Ping(_ context.Context) error                { return nil }
-func (w *testStoreWrapper) Close() error                                { return nil }
+func (w *testStoreWrapper) BeginTx(_ context.Context) (store.Tx, error) {
+	return &storeTx{Store: w}, nil
+}
+func (w *testStoreWrapper) Ping(_ context.Context) error { return nil }
+func (w *testStoreWrapper) Close() error                 { return nil }
 
 func (w *testStoreWrapper) GetDueScheduledSessions(_ context.Context, _ time.Time, _ int) ([]*store.Session, error) {
 	return nil, nil
@@ -1796,4 +1798,17 @@ func TestRunnerManager_DetachSessions_SuspendError(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, sessionMgr.suspendCalled)
+}
+
+// EnsureRunner satisfies SessionManagerInterface. These fakes never allocate.
+func (m *mockSessionMgrForRunner) EnsureRunner(_ context.Context, _ string) (*store.Session, error) {
+	return nil, ErrNoRunnerAvailable
+}
+
+// DispatchNext satisfies TaskManagerInterface. These fakes dispatch nothing.
+func (m *mockTaskMgrForRunner) DispatchNext(_ context.Context, _ string) error { return nil }
+
+// ListRuns satisfies TaskManagerInterface. These fakes keep no run history.
+func (m *mockTaskMgrForRunner) ListRuns(_ context.Context, _ string, _ ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	return &store.ListResult[store.TaskRun]{}, nil
 }

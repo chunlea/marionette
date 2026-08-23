@@ -28,7 +28,7 @@ import { Card } from '@/components/Card'
 import { Badge } from '@/components/Badge'
 import { formatRelativeTime, copyToClipboard } from '@/lib/utils'
 import { Plus, Copy, Check, Trash2, RefreshCw } from 'lucide-react'
-import type { CreateRunnerTokenRequest, RunnerTokenStatus } from '@/types/api'
+import type { CreateRunnerTokenRequest, RunnerTokenStatus } from '@/types/admin'
 
 export const Route = createFileRoute('/admin/_layout/runner-tokens')({
   component: RunnerTokensPage,

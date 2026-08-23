@@ -1,4 +1,5 @@
 import '@testing-library/react'
+import { vi } from 'vitest'
 
 // Mock window.location for WebSocket URL building
 Object.defineProperty(window, 'location', {
@@ -51,9 +52,8 @@ class MockWebSocket {
 // @ts-expect-error - MockWebSocket doesn't implement full WebSocket interface
 global.WebSocket = MockWebSocket
 
-// Mock import.meta.env
-// @ts-expect-error - Vitest provides import.meta.env
-import.meta.env = {
-  ...import.meta.env,
-  VITE_WS_HOST: undefined,
-}
+// buildWebSocketUrl falls back to window.location.host when VITE_WS_HOST is
+// unset, which is what the URL tests exercise. Assigning to import.meta.env
+// wholesale is not something Vitest 4 can rewrite; stubEnv is the supported
+// way to pin one variable.
+vi.stubEnv('VITE_WS_HOST', '')

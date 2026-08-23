@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  # Pinned so a CI run is reproducible and an upstream release cannot break the
+  # build overnight. protoc-gen-go tracks google.golang.org/protobuf in go.mod;
+  # bump them together.
+  BUF_VERSION: v1.72.0
+  PROTOC_GEN_GO_VERSION: v1.36.11
+  PROTOC_GEN_GO_GRPC_VERSION: v1.6.2
+  GOLANGCI_LINT_VERSION: v2.13.1
+
 jobs:
   lint:
     name: Lint
@@ -15,6 +24,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # buf breaking compares against origin/main; a shallow clone has no
+          # such ref.
+          fetch-depth: 0
 
       - name: Configure git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -23,18 +36,23 @@ jobs:
         run: |
           apt-get update && apt-get install -y curl
           # Install buf
-          curl -sSL https://github.com/bufbuild/buf/releases/latest/download/buf-Linux-x86_64 -o /usr/local/bin/buf
+          curl -sSL "https://github.com/bufbuild/buf/releases/download/${BUF_VERSION}/buf-Linux-x86_64" -o /usr/local/bin/buf
           chmod +x /usr/local/bin/buf
           # Install golangci-lint
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin latest
+          curl -sSfL "https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh" | sh -s -- -b /usr/local/bin "${GOLANGCI_LINT_VERSION}"
 
       - name: Install protoc plugins
         run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+          go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}"
+          go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}"
 
       - name: Buf lint
         run: buf lint
+
+      - name: Buf breaking change detection
+        # Skipped on main itself, where there is nothing to compare against.
+        if: github.event_name == 'pull_request'
+        run: buf breaking --against '.git#branch=main'
 
       - name: Generate protobuf
         run: buf generate
@@ -58,13 +76,13 @@ jobs:
         run: |
           apt-get update && apt-get install -y curl
           # Install buf
-          curl -sSL https://github.com/bufbuild/buf/releases/latest/download/buf-Linux-x86_64 -o /usr/local/bin/buf
+          curl -sSL "https://github.com/bufbuild/buf/releases/download/${BUF_VERSION}/buf-Linux-x86_64" -o /usr/local/bin/buf
           chmod +x /usr/local/bin/buf
 
       - name: Install protoc plugins
         run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+          go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}"
+          go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}"
 
       - name: Generate protobuf
         run: buf generate
@@ -80,6 +98,68 @@ jobs:
           name: coverage
           path: coverage.out
         if: always()
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        # Pinned to 9 deliberately: pnpm 10+ fails the install on
+        # ERR_PNPM_IGNORED_BUILDS. Keep in sync with the packageManager field
+        # in web/package.json.
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check the generated API types match the OpenAPI document
+        # The Go side has its own drift check (TestOpenAPIDocumentIsUpToDate in
+        # the test job) for the document itself; this one catches a document
+        # that changed without src/types/api.gen.ts being regenerated.
+        run: |
+          pnpm generate:api
+          git diff --exit-code src/types/api.gen.ts \
+            || { echo "::error::run 'pnpm generate:api' and commit src/types/api.gen.ts"; exit 1; }
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        # `pnpm build` runs vite build and then the typecheck, in that order:
+        # the router plugin writes src/routeTree.gen.ts during the build and
+        # tsc needs it. It also exercises the bundle the server embeds, which
+        # nothing in CI used to do.
+        run: pnpm build
+
+  schema:
+    name: Schema drift
+    runs-on: ubuntu-latest
+    # No job container: the script drives Docker itself so CI and a developer's
+    # `make schema` render byte-identical output.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check docs/schema.sql matches migrations/
+        run: make schema-check
 
   build:
     name: Build
@@ -97,13 +177,13 @@ jobs:
         run: |
           apt-get update && apt-get install -y curl
           # Install buf
-          curl -sSL https://github.com/bufbuild/buf/releases/latest/download/buf-Linux-x86_64 -o /usr/local/bin/buf
+          curl -sSL "https://github.com/bufbuild/buf/releases/download/${BUF_VERSION}/buf-Linux-x86_64" -o /usr/local/bin/buf
           chmod +x /usr/local/bin/buf
 
       - name: Install protoc plugins
         run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+          go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}"
+          go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}"
 
       - name: Generate protobuf
         run: buf generate

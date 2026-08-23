@@ -2,6 +2,8 @@ package grpc
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -316,4 +318,107 @@ func TestConnectionManager_SendCommand_Success(t *testing.T) {
 	default:
 		t.Fatal("expected command in channel")
 	}
+}
+
+// TestSendCommandVsDisconnect_NoPanic is the regression test for the
+// send-on-closed-channel panic. handleDisconnect used to close commandCh while
+// SendCommand had already released the connection map's read lock but had not
+// yet published its command; losing that race killed the whole process.
+// Run with -race.
+func TestSendCommandVsDisconnect_NoPanic(t *testing.T) {
+	const (
+		rounds          = 50
+		senders         = 8
+		sendsPerRoutine = 100
+	)
+
+	logger := zap.NewNop()
+
+	for round := 0; round < rounds; round++ {
+		cm := NewConnectionManager(logger)
+		svc := NewRunnerService(logger, WithConnectionManager(cm))
+
+		conn := newRunnerConnection("run_race", "race-runner", "localhost", nil)
+		require.NoError(t, cm.Register("run_race", conn))
+
+		// Drain queued commands so senders keep hitting the publish path
+		// instead of bouncing off a full buffer.
+		drained := make(chan struct{})
+		go func() {
+			defer close(drained)
+			for {
+				select {
+				case <-conn.Done():
+					return
+				case <-conn.commandCh:
+				}
+			}
+		}()
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+
+		for i := 0; i < senders; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				for j := 0; j < sendsPerRoutine; j++ {
+					err := cm.SendCommand("run_race", &pb.ServerCommand{
+						Payload: &pb.ServerCommand_KillTask{
+							KillTask: &pb.KillTask{TaskId: "task_race"},
+						},
+					})
+					switch {
+					case err == nil,
+						errors.Is(err, ErrRunnerNotFound),
+						errors.Is(err, ErrRunnerDisconnected),
+						errors.Is(err, ErrCommandQueueFull):
+					default:
+						assert.NoError(t, err, "unexpected SendCommand error")
+						return
+					}
+				}
+			}()
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			svc.handleDisconnect(context.Background(), "run_race")
+		}()
+
+		close(start)
+		wg.Wait()
+		<-drained
+	}
+}
+
+// TestRunnerConnectionClose_Idempotent guards the once-semantics of Close: the
+// disconnect path can be reached from both the deferred cleanup and an explicit
+// teardown, and a double close would panic.
+func TestRunnerConnectionClose_Idempotent(t *testing.T) {
+	conn := newRunnerConnection("run_123", "test-runner", "localhost", nil)
+
+	select {
+	case <-conn.Done():
+		t.Fatal("connection reported done before Close")
+	default:
+	}
+
+	conn.Close()
+	conn.Close()
+
+	select {
+	case <-conn.Done():
+	default:
+		t.Fatal("connection did not report done after Close")
+	}
+
+	// A connection built without the constructor has a nil done channel; Close
+	// must not panic on it.
+	bare := &RunnerConnection{RunnerID: "run_bare"}
+	bare.Close()
+	assert.Nil(t, bare.Done())
 }

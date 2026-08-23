@@ -72,9 +72,10 @@ func (s *RunnerService) Connect(stream grpc.BidiStreamingServer[pb.RunnerMessage
 		}
 	}
 
-	// Start command sender goroutine
-	sendErrCh := make(chan error, 1)
-	go s.sendCommands(ctx, conn, sendErrCh)
+	// Start command sender goroutine. A send failure tears the connection down
+	// via conn.Close(), which is what the receive loop below observes; there is
+	// no separate error channel to read.
+	go s.sendCommands(ctx, conn)
 
 	// Receive messages from runner
 	for {
@@ -116,22 +117,26 @@ func (s *RunnerService) Connect(stream grpc.BidiStreamingServer[pb.RunnerMessage
 }
 
 // sendCommands sends queued commands to the runner via the stream.
-func (s *RunnerService) sendCommands(ctx context.Context, conn *RunnerConnection, errCh chan<- error) {
+//
+// It used to report failures on an error channel that nobody ever read, so a
+// broken stream was noticed only when the receive side happened to fail too.
+// Now a failed send closes the connection, which stops SendCommand from
+// queueing into a stream that is already gone.
+func (s *RunnerService) sendCommands(ctx context.Context, conn *RunnerConnection) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case cmd, ok := <-conn.commandCh:
-			if !ok {
-				// Channel closed
-				return
-			}
+		case <-conn.Done():
+			// Connection torn down; drop anything still queued.
+			return
+		case cmd := <-conn.commandCh:
 			if err := conn.stream.Send(cmd); err != nil {
 				s.logger.Error("failed to send command",
 					zap.String("runner_id", conn.RunnerID),
 					zap.Error(err),
 				)
-				errCh <- err
+				conn.Close()
 				return
 			}
 		}
@@ -143,10 +148,12 @@ func (s *RunnerService) sendCommands(ctx context.Context, conn *RunnerConnection
 func (s *RunnerService) handleDisconnect(_ context.Context, runnerID string) {
 	s.logger.Info("runner disconnecting", zap.String("runner_id", runnerID))
 
-	// Close command channel to stop sender goroutine
-	conn, ok := s.connManager.Get(runnerID)
-	if ok && conn.commandCh != nil {
-		close(conn.commandCh)
+	// Signal the sender goroutine to stop. The command channel is deliberately
+	// never closed: SendCommand publishes to it without holding a lock that this
+	// path takes, so closing it would let a send race into a closed channel and
+	// panic the process.
+	if conn, ok := s.connManager.Get(runnerID); ok {
+		conn.Close()
 	}
 
 	// Unregister from connection manager

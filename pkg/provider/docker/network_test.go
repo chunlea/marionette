@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewNetworkIsolation(t *testing.T) {
-	ni := NewNetworkIsolation()
+	ni := NewNetworkIsolation(nil)
 	assert.NotNil(t, ni)
 	assert.NotNil(t, ni.resolver)
 	assert.NotNil(t, ni.iptables)
@@ -20,7 +20,7 @@ func TestNewNetworkIsolation(t *testing.T) {
 
 func TestNewNetworkIsolationWithExecutor(t *testing.T) {
 	mock := iptables.NewMockExecutor()
-	ni := NewNetworkIsolationWithExecutor(mock)
+	ni := NewNetworkIsolationWithExecutor(mock, nil)
 	assert.NotNil(t, ni)
 	assert.NotNil(t, ni.resolver)
 	assert.NotNil(t, ni.iptables)
@@ -28,7 +28,7 @@ func TestNewNetworkIsolationWithExecutor(t *testing.T) {
 
 func TestNetworkIsolation_ApplyPolicy_NoPolicy(t *testing.T) {
 	mock := iptables.NewMockExecutor()
-	ni := NewNetworkIsolationWithExecutor(mock)
+	ni := NewNetworkIsolationWithExecutor(mock, nil)
 
 	// Empty policy should be a no-op
 	err := ni.ApplyPolicy(context.Background(), "abc123def456", provider.SpawnOptions{
@@ -47,7 +47,7 @@ func TestNetworkIsolation_ApplyPolicy_NoPolicy(t *testing.T) {
 
 func TestNetworkIsolation_ApplyPolicy_InvalidPolicy(t *testing.T) {
 	mock := iptables.NewMockExecutor()
-	ni := NewNetworkIsolationWithExecutor(mock)
+	ni := NewNetworkIsolationWithExecutor(mock, nil)
 
 	err := ni.ApplyPolicy(context.Background(), "abc123def456", provider.SpawnOptions{
 		NetworkPolicy: "invalid_policy",
@@ -58,7 +58,7 @@ func TestNetworkIsolation_ApplyPolicy_InvalidPolicy(t *testing.T) {
 
 func TestNetworkIsolation_ApplyPolicy_AllowListNoHosts(t *testing.T) {
 	mock := iptables.NewMockExecutor()
-	ni := NewNetworkIsolationWithExecutor(mock)
+	ni := NewNetworkIsolationWithExecutor(mock, nil)
 
 	// allow_list without hosts should fail validation
 	err := ni.ApplyPolicy(context.Background(), "abc123def456", provider.SpawnOptions{
@@ -71,7 +71,7 @@ func TestNetworkIsolation_ApplyPolicy_AllowListNoHosts(t *testing.T) {
 
 func TestNetworkIsolation_CleanupPolicy(t *testing.T) {
 	mock := iptables.NewMockExecutor()
-	ni := NewNetworkIsolationWithExecutor(mock)
+	ni := NewNetworkIsolationWithExecutor(mock, nil)
 
 	err := ni.CleanupPolicy(context.Background(), "abc123def456")
 	require.NoError(t, err)
@@ -82,7 +82,7 @@ func TestNetworkIsolation_CleanupPolicy(t *testing.T) {
 }
 
 func TestNetworkIsolation_PolicySummary(t *testing.T) {
-	ni := NewNetworkIsolation()
+	ni := NewNetworkIsolation(nil)
 
 	// Nil policy
 	summary := ni.PolicySummary(nil)
@@ -105,7 +105,7 @@ func TestNetworkIsolation_PolicySummary(t *testing.T) {
 // Integration test helper - verifies the iptables chain name generation
 func TestNetworkIsolation_ChainName(t *testing.T) {
 	mock := iptables.NewMockExecutor()
-	ni := NewNetworkIsolationWithExecutor(mock)
+	ni := NewNetworkIsolationWithExecutor(mock, nil)
 
 	// Cleanup uses the same chain naming logic
 	containerID := "abc123def456789"

@@ -7,7 +7,7 @@ import type {
   CreateAndroidStreamRequest,
   AndroidInputEvent,
   AndroidStreamsQueryParams,
-} from '@/types/api'
+} from '@/types/stream'
 
 // Query keys
 export const androidStreamKeys = {

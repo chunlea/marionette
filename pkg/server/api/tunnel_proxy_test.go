@@ -1504,6 +1504,14 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 			expected:   true,
 		},
 		{
+			// Browsers send a token list, not a bare "Upgrade". Matching the
+			// whole header exactly missed every real browser handshake.
+			name:       "browser token list",
+			connection: "keep-alive, Upgrade",
+			upgrade:    "websocket",
+			expected:   true,
+		},
+		{
 			name:       "missing connection header",
 			connection: "",
 			upgrade:    "websocket",

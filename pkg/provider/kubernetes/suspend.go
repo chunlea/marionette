@@ -3,8 +3,6 @@ package kubernetes
 import (
 	"context"
 	"fmt"
-	"slices"
-	"time"
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,69 +10,24 @@ import (
 	"github.com/chunlea/marionette/pkg/provider"
 )
 
+// suspendDispatcher maps this provider's supported strategies to their
+// implementations. Kubernetes cannot pause a pod, so there is no pause handler.
+func (p *Provider) suspendDispatcher() provider.SuspendDispatcher {
+	return provider.SuspendDispatcher{
+		Provider: p.name,
+		Config:   *p.suspendConfig,
+		Handlers: map[provider.SuspendStrategy]provider.SuspendFunc{
+			provider.SuspendStrategyTerminatePreserveStorage: p.suspendWithTerminatePreserveStorage,
+			provider.SuspendStrategyTerminate:                p.suspendWithTerminate,
+		},
+	}
+}
+
 // Suspend suspends the runner using the configured or specified strategy.
 // Kubernetes only supports terminate_preserve_storage (delete Pod, keep PVC)
 // and terminate (delete Pod and PVC).
 func (p *Provider) Suspend(ctx context.Context, runnerID string, opts provider.SuspendOptions) (*provider.SuspendResult, error) {
-	// Determine strategy to use
-	strategy := opts.Strategy
-	if strategy == "" {
-		strategy = p.suspendConfig.Strategy
-	}
-
-	// Validate strategy is supported
-	if !p.supportsStrategy(strategy) {
-		return nil, &provider.ErrStrategyNotSupported{
-			Strategy: strategy,
-			Provider: p.name,
-		}
-	}
-
-	// Execute suspend based on strategy
-	var err error
-	switch strategy {
-	case provider.SuspendStrategyTerminatePreserveStorage:
-		err = p.suspendWithTerminatePreserveStorage(ctx, runnerID)
-	case provider.SuspendStrategyTerminate:
-		err = p.suspendWithTerminate(ctx, runnerID)
-	default:
-		// Try fallback if available
-		if p.suspendConfig.Fallback != "" && p.supportsStrategy(p.suspendConfig.Fallback) {
-			return p.Suspend(ctx, runnerID, provider.SuspendOptions{
-				Strategy:      p.suspendConfig.Fallback,
-				SaveSnapshot:  opts.SaveSnapshot,
-				SyncWorkspace: opts.SyncWorkspace,
-				Timeout:       opts.Timeout,
-			})
-		}
-		return nil, &provider.ErrStrategyNotSupported{
-			Strategy: strategy,
-			Provider: p.name,
-		}
-	}
-
-	if err != nil {
-		// Try fallback if primary strategy fails
-		if p.suspendConfig.Fallback != "" && p.suspendConfig.Fallback != strategy {
-			return p.Suspend(ctx, runnerID, provider.SuspendOptions{
-				Strategy:      p.suspendConfig.Fallback,
-				SaveSnapshot:  opts.SaveSnapshot,
-				SyncWorkspace: opts.SyncWorkspace,
-				Timeout:       opts.Timeout,
-			})
-		}
-		return nil, &provider.ErrSuspendFailed{
-			RunnerID: runnerID,
-			Strategy: strategy,
-			Cause:    err,
-		}
-	}
-
-	return &provider.SuspendResult{
-		Strategy:        strategy,
-		WorkspaceSynced: opts.SyncWorkspace, // TODO: implement actual sync to CAS
-		SuspendedAt:     time.Now(),
-	}, nil
+	return p.suspendDispatcher().Suspend(ctx, runnerID, opts)
 }
 
 // Resume restores a suspended runner by creating a new Pod with the existing PVC.
@@ -171,9 +124,4 @@ func (p *Provider) suspendWithTerminatePreserveStorage(ctx context.Context, runn
 // suspendWithTerminate deletes both the pod and the PVC.
 func (p *Provider) suspendWithTerminate(ctx context.Context, runnerID string) error {
 	return p.destroyPod(ctx, runnerID, true)
-}
-
-// supportsStrategy checks if a strategy is supported by this provider.
-func (p *Provider) supportsStrategy(strategy provider.SuspendStrategy) bool {
-	return slices.Contains(p.Capabilities().Suspend.Strategies, strategy)
 }

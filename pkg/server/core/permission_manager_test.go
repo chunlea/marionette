@@ -423,3 +423,8 @@ func TestPermissionManager_List_FilterByStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, result.Items, 2)
 }
+
+// EnsureRunner satisfies SessionManagerInterface. These fakes never allocate.
+func (m *mockSessionMgrForPerm) EnsureRunner(_ context.Context, _ string) (*store.Session, error) {
+	return nil, ErrNoRunnerAvailable
+}

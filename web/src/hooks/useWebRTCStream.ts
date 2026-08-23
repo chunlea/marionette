@@ -187,8 +187,13 @@ export function useWebRTCStream({
     createPeerConnection()
 
     // Connect to signaling server
+    // NOTE: the admin signalling endpoint is protected by HTTP basic auth,
+    // which a browser cannot attach to a WebSocket handshake, so this
+    // connection cannot succeed from the dashboard today. Unfreezing desktop
+    // streaming means giving the endpoint a query-token path of its own, the
+    // way the public log and event streams have one.
     const url = buildWebSocketUrl(
-      `/admin/api/v1/streams/${streamId}/signaling?token=${encodeURIComponent(apiKey)}`
+      `/admin/api/v1/signaling?stream_id=${encodeURIComponent(streamId)}&token=${encodeURIComponent(apiKey)}`
     )
 
     wsClientRef.current = new WebSocketClient({

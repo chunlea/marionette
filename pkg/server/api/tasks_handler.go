@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/chunlea/marionette/pkg/server/api/apitypes"
 )
 
 // handleCreateTask handles POST /api/v1/tasks.
@@ -36,7 +38,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, task)
+	WriteJSON(w, http.StatusCreated, toTaskResponse(task))
 }
 
 // handleListTasks handles GET /api/v1/tasks.
@@ -59,7 +61,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toTaskResponse))
 }
 
 // handleGetTask handles GET /api/v1/tasks/{taskID}.
@@ -81,7 +83,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, task)
+	WriteJSON(w, http.StatusOK, toTaskResponse(task))
 }
 
 // handleExecuteTask handles POST /api/v1/tasks/{taskID}/execute.
@@ -102,7 +104,7 @@ func (s *Server) handleExecuteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusAccepted, map[string]string{"status": "executing"})
+	WriteJSON(w, http.StatusAccepted, apitypes.TaskExecutionAccepted{Status: "executing"})
 }
 
 // handleCancelTask handles POST /api/v1/tasks/{taskID}/cancel.
@@ -148,6 +150,34 @@ func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetTaskLogs handles GET /api/v1/tasks/{taskID}/logs.
+// handleListTaskRuns handles GET /api/v1/tasks/{taskID}/runs.
+func (s *Server) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {
+	if s.tasks == nil {
+		WriteError(w, http.StatusInternalServerError, "service_unavailable", "Task service not configured")
+		return
+	}
+
+	taskID := chi.URLParam(r, "taskID")
+	if taskID == "" {
+		WriteError(w, http.StatusBadRequest, "invalid_id", "Task ID is required")
+		return
+	}
+
+	opts := ListTaskRunsOptions{
+		Limit:  parseIntQuery(r, "limit", 50),
+		Cursor: r.URL.Query().Get("cursor"),
+		Status: r.URL.Query()["status"],
+	}
+
+	result, err := s.tasks.ListRuns(r.Context(), taskID, opts)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, toListResponse(result, toTaskRunResponse))
+}
+
 func (s *Server) handleGetTaskLogs(w http.ResponseWriter, r *http.Request) {
 	if s.tasks == nil {
 		WriteError(w, http.StatusInternalServerError, "service_unavailable", "Task service not configured")
@@ -173,5 +203,5 @@ func (s *Server) handleGetTaskLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toLogResponse))
 }

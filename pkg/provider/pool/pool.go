@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -27,15 +26,14 @@ type RunnerStore interface {
 type Provider struct {
 	name          string
 	config        *Config
-	suspendConfig *SuspendConfig
+	suspendConfig *provider.SuspendConfig
 	store         RunnerStore
 	selector      *Selector
 	logger        *zap.Logger
 
 	// Statistics
-	mu          sync.RWMutex
-	taskCounts  map[string]int // runnerID -> task count
-	lastRelease map[string]time.Time
+	mu         sync.RWMutex
+	taskCounts map[string]int // runnerID -> task count
 }
 
 // Compile-time interface checks.
@@ -55,7 +53,7 @@ func New(cfg *store.ProviderConfig, st RunnerStore, logger *zap.Logger) (*Provid
 		return nil, fmt.Errorf("validating pool config: %w", err)
 	}
 
-	suspendCfg, err := ParseSuspendConfig(cfg.SuspendConfig)
+	suspendCfg, err := provider.ParseSuspendConfig(cfg.SuspendConfig, defaultSuspendConfig())
 	if err != nil {
 		return nil, fmt.Errorf("parsing suspend config: %w", err)
 	}
@@ -72,18 +70,18 @@ func New(cfg *store.ProviderConfig, st RunnerStore, logger *zap.Logger) (*Provid
 		selector:      NewSelector(st, poolCfg.PoolName, poolCfg.SelectionStrategy),
 		logger:        logger.With(zap.String("provider", cfg.Name), zap.String("pool", poolCfg.PoolName)),
 		taskCounts:    make(map[string]int),
-		lastRelease:   make(map[string]time.Time),
 	}, nil
 }
 
 // NewWithConfig creates a pool provider with explicit configuration.
-func NewWithConfig(name string, cfg *Config, suspendCfg *SuspendConfig, st RunnerStore, logger *zap.Logger) (*Provider, error) {
+func NewWithConfig(name string, cfg *Config, suspendCfg *provider.SuspendConfig, st RunnerStore, logger *zap.Logger) (*Provider, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validating pool config: %w", err)
 	}
 
 	if suspendCfg == nil {
-		suspendCfg = DefaultSuspendConfig()
+		defaults := defaultSuspendConfig()
+		suspendCfg = &defaults
 	}
 
 	if logger == nil {
@@ -98,7 +96,6 @@ func NewWithConfig(name string, cfg *Config, suspendCfg *SuspendConfig, st Runne
 		selector:      NewSelector(st, cfg.PoolName, cfg.SelectionStrategy),
 		logger:        logger.With(zap.String("provider", name), zap.String("pool", cfg.PoolName)),
 		taskCounts:    make(map[string]int),
-		lastRelease:   make(map[string]time.Time),
 	}, nil
 }
 
@@ -117,13 +114,11 @@ func (p *Provider) Capabilities() provider.ProviderCapabilities {
 	return provider.ProviderCapabilities{
 		Pause:    false, // Pool providers don't support pause
 		Snapshot: false, // Pool providers don't support snapshots
-		Suspend: provider.SuspendCapability{
-			Strategies: []provider.SuspendStrategy{
-				provider.SuspendStrategyReleaseToPool,
-				provider.SuspendStrategyTerminate,
-			},
-			Default: provider.SuspendStrategyReleaseToPool,
-		},
+		// No suspend strategies: this provider implements neither Suspend nor
+		// Resume, so advertising release_to_pool made callers believe a
+		// capability that does not exist. ReleaseRunner/AcquireFromPool are
+		// the pieces a real implementation would use.
+		Suspend: provider.SuspendCapability{},
 	}
 }
 
@@ -265,20 +260,12 @@ func (p *Provider) AcquireRunner(ctx context.Context, opts AcquireOptions) (*sto
 
 // ReleaseRunner releases a runner back to the pool.
 func (p *Provider) ReleaseRunner(ctx context.Context, runnerID string, tainted bool, taintReason string) error {
-	// Check min duration since last release
-	p.mu.RLock()
-	lastRelease, hasLast := p.lastRelease[runnerID]
-	p.mu.RUnlock()
-
-	if hasLast && p.suspendConfig.MinDuration > 0 {
-		if time.Since(lastRelease) < p.suspendConfig.MinDuration {
-			p.logger.Debug("skipping release due to min duration",
-				zap.String("runner_id", runnerID),
-				zap.Duration("since_last", time.Since(lastRelease)),
-				zap.Duration("min_duration", p.suspendConfig.MinDuration),
-			)
-		}
-	}
+	// suspendConfig.MinDuration is deliberately not consulted here. This used
+	// to log "skipping release due to min duration" and then release anyway.
+	// Debouncing a release is also wrong: a second task finishing on the same
+	// runner is a real release, and suppressing it breaks the task counting
+	// that drives max-tasks tainting. If MinDuration is ever enforced for
+	// pools it belongs in acquisition, not release.
 
 	updates := store.RunnerUpdates{}
 
@@ -299,7 +286,6 @@ func (p *Provider) ReleaseRunner(ctx context.Context, runnerID string, tainted b
 		p.mu.Lock()
 		p.taskCounts[runnerID]++
 		taskCount := p.taskCounts[runnerID]
-		p.lastRelease[runnerID] = time.Now()
 		p.mu.Unlock()
 
 		// Check if runner should be recycled
@@ -404,7 +390,7 @@ func (p *Provider) Config() *Config {
 
 // SuspendConfig returns the suspend configuration.
 func (p *Provider) SuspendConfig() provider.SuspendConfig {
-	return p.suspendConfig.ToProviderSuspendConfig()
+	return *p.suspendConfig
 }
 
 // AcquireOptions contains options for acquiring a runner.

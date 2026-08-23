@@ -1,4 +1,4 @@
-import type { AndroidDevice } from '@/types/api'
+import type { AndroidDevice } from '@/types/stream'
 
 interface DeviceSelectorProps {
   devices: AndroidDevice[]

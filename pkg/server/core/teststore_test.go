@@ -557,9 +557,33 @@ func (s *testStore) GetLatestManifest(_ context.Context, _ string) (*store.Manif
 }
 func (s *testStore) DeleteManifest(_ context.Context, _ string) error { return nil }
 
-// BeginTx starts a mock transaction (not implemented for simple tests).
+// storeTx adapts an in-memory test store to store.Tx.
+//
+// The in-memory stores have no real rollback: writes go straight through and
+// Rollback only records that it happened. That is enough for the core unit
+// tests, which assert the ordering guarantee (no command is sent before the
+// database work is done) and the compensating writes that follow a failed
+// dispatch. Real atomicity belongs to the postgres store and is covered by
+// pkg/store's own tests.
+type storeTx struct {
+	store.Store
+	committed  bool
+	rolledBack bool
+}
+
+func (t *storeTx) Commit(_ context.Context) error {
+	t.committed = true
+	return nil
+}
+
+func (t *storeTx) Rollback(_ context.Context) error {
+	t.rolledBack = true
+	return nil
+}
+
+// BeginTx starts a write-through transaction. See storeTx.
 func (s *testStore) BeginTx(_ context.Context) (store.Tx, error) {
-	return nil, nil
+	return &storeTx{Store: s}, nil
 }
 
 // Ping implements store.Store.
@@ -638,3 +662,14 @@ func (s *testStore) GetPendingWebhookEvents(_ context.Context, _ int) ([]*store.
 	return nil, nil
 }
 func (s *testStore) CancelWebhookEventsByWebhook(_ context.Context, _ string) error { return nil }
+
+// MaintainLogPartitions and DropOldLogPartitions make testStore satisfy
+// jobs.LogPartitioner, so Wire builds the partition maintainer in tests the
+// same way it does against postgres.
+func (s *testStore) MaintainLogPartitions(_ context.Context, _ int) error {
+	return nil
+}
+
+func (s *testStore) DropOldLogPartitions(_ context.Context, _ int) error {
+	return nil
+}

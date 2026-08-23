@@ -75,8 +75,9 @@ type querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// NOTE: Compile-time interface check is deferred until all CRUD methods are implemented.
-// var _ store.Store = (*Store)(nil)
+// Compile-time check: adding a method to store.Store must fail the build here,
+// not at the first call site that needs it.
+var _ store.Store = (*Store)(nil)
 
 // New creates a new PostgreSQL store.
 func New(ctx context.Context, cfg Config, logger *zap.Logger) (*Store, error) {

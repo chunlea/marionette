@@ -139,13 +139,9 @@ func listAgentConfigs(ctx context.Context, q querier, opts store.ListAgentConfig
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	page, err := agentConfigSortColumns.page(opts.BaseListOptions, argNum)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM agent_configs %s", whereClause)
@@ -156,10 +152,11 @@ func listAgentConfigs(ctx context.Context, q querier, opts store.ListAgentConfig
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM agent_configs %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		agentConfigColumns, whereClause, orderBy, orderDir, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		agentConfigColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -185,10 +182,17 @@ func listAgentConfigs(ctx context.Context, q querier, opts store.ListAgentConfig
 		configs = configs[:limit]
 	}
 
+	var nextCursor string
+	if len(configs) > 0 {
+		last := configs[len(configs)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.AgentConfig]{
 		Items:      configs,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -436,13 +440,9 @@ func listProviderConfigs(ctx context.Context, q querier, opts store.ListProvider
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	page, err := providerConfigSortColumns.page(opts.BaseListOptions, argNum)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM provider_configs %s", whereClause)
@@ -453,10 +453,11 @@ func listProviderConfigs(ctx context.Context, q querier, opts store.ListProvider
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM provider_configs %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		providerConfigColumns, whereClause, orderBy, orderDir, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		providerConfigColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -482,10 +483,17 @@ func listProviderConfigs(ctx context.Context, q querier, opts store.ListProvider
 		configs = configs[:limit]
 	}
 
+	var nextCursor string
+	if len(configs) > 0 {
+		last := configs[len(configs)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.ProviderConfig]{
 		Items:      configs,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -713,13 +721,9 @@ func listProfiles(ctx context.Context, q querier, opts store.ListProfilesOptions
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	page, err := profileSortColumns.page(opts.BaseListOptions, argNum)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM profiles %s", whereClause)
@@ -730,10 +734,11 @@ func listProfiles(ctx context.Context, q querier, opts store.ListProfilesOptions
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM profiles %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		profileColumns, whereClause, orderBy, orderDir, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		profileColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -759,10 +764,17 @@ func listProfiles(ctx context.Context, q querier, opts store.ListProfilesOptions
 		profiles = profiles[:limit]
 	}
 
+	var nextCursor string
+	if len(profiles) > 0 {
+		last := profiles[len(profiles)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Profile]{
 		Items:      profiles,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

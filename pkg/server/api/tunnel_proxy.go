@@ -96,12 +96,6 @@ func NewTunnelProxyHandler(opts ...TunnelProxyOption) *TunnelProxyHandler {
 	return h
 }
 
-// isWebSocketUpgrade checks if the request is a WebSocket upgrade request.
-func isWebSocketUpgrade(r *http.Request) bool {
-	return strings.EqualFold(r.Header.Get("Connection"), "upgrade") &&
-		strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
-}
-
 // ServeHTTP handles HTTP requests to the tunnel proxy.
 // Route: ANY /tunnels/{tunnelID}/*
 // Supports: regular HTTP, WebSocket upgrades, SSE, and chunked responses.

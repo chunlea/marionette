@@ -68,23 +68,26 @@ type WorkspaceManager struct {
 	store  WorkspaceStore
 	config config.WorkspaceStorageConfig
 	logger *zap.Logger
-	mu     sync.RWMutex
 
-	// Track host directories created during this server's lifetime
-	// for cleanup on shutdown or when workspaces are deleted
-	createdDirs map[string]bool
+	// mu serialises host directory creation and removal so two sessions
+	// starting on the same workspace cannot race mkdir against RemoveAll.
+	mu sync.Mutex
 }
 
 // NewWorkspaceManager creates a new WorkspaceManager.
-func NewWorkspaceManager(store store.Store, cfg config.WorkspaceStorageConfig, logger *zap.Logger) *WorkspaceManager {
+//
+// It takes the narrow WorkspaceStore rather than the full store.Store: the
+// manager only ever reads and writes workspaces and looks up the sessions using
+// them, and the half-applied narrow-interface refactor left the field narrow
+// while the constructor still demanded everything.
+func NewWorkspaceManager(store WorkspaceStore, cfg config.WorkspaceStorageConfig, logger *zap.Logger) *WorkspaceManager {
 	if cfg.BaseDir == "" {
 		cfg.BaseDir = DefaultWorkspaceBaseDir
 	}
 	return &WorkspaceManager{
-		store:       store,
-		config:      cfg,
-		logger:      logger,
-		createdDirs: make(map[string]bool),
+		store:  store,
+		config: cfg,
+		logger: logger,
 	}
 }
 
@@ -283,7 +286,6 @@ func (m *WorkspaceManager) EnsureHostDirectory(ctx context.Context, workspaceID 
 
 	// Check if directory already exists
 	if _, err := os.Stat(hostPath); err == nil {
-		m.createdDirs[workspaceID] = true
 		return hostPath, nil
 	}
 
@@ -292,8 +294,6 @@ func (m *WorkspaceManager) EnsureHostDirectory(ctx context.Context, workspaceID 
 	if err := os.MkdirAll(hostPath, 0755); err != nil {
 		return "", err
 	}
-
-	m.createdDirs[workspaceID] = true
 
 	m.logger.Debug("workspace host directory created",
 		zap.String("workspace_id", workspaceID),
@@ -315,7 +315,6 @@ func (m *WorkspaceManager) CleanupHostDirectory(ctx context.Context, workspaceID
 
 	// Check if directory exists
 	if _, err := os.Stat(hostPath); os.IsNotExist(err) {
-		delete(m.createdDirs, workspaceID)
 		return nil
 	}
 
@@ -323,8 +322,6 @@ func (m *WorkspaceManager) CleanupHostDirectory(ctx context.Context, workspaceID
 	if err := os.RemoveAll(hostPath); err != nil {
 		return err
 	}
-
-	delete(m.createdDirs, workspaceID)
 
 	m.logger.Debug("workspace host directory cleaned up",
 		zap.String("workspace_id", workspaceID),
@@ -336,25 +333,27 @@ func (m *WorkspaceManager) CleanupHostDirectory(ctx context.Context, workspaceID
 
 // IsInUse checks if a workspace is currently being used by any active session.
 func (m *WorkspaceManager) IsInUse(ctx context.Context, workspaceID string) (bool, error) {
-	// Query for sessions using this workspace that are not terminated
+	// Filter to live sessions in the query rather than after it. Fetching one
+	// row and then discarding it for being terminated reported "not in use"
+	// whenever the terminated session happened to come back first - and callers
+	// act on that by deleting the directory.
 	result, err := m.store.ListSessions(ctx, store.ListSessionsOptions{
 		BaseListOptions: store.BaseListOptions{
 			Limit: 1,
 		},
 		WorkspaceID: &workspaceID,
+		Status: []string{
+			SessionStatusPending,
+			SessionStatusActive,
+			SessionStatusSuspended,
+			SessionStatusResuming,
+		},
 	})
 	if err != nil {
 		return false, err
 	}
 
-	// Check if any non-terminated session is using this workspace
-	for _, session := range result.Items {
-		if session.Status != SessionStatusTerminated {
-			return true, nil
-		}
-	}
-
-	return false, nil
+	return len(result.Items) > 0, nil
 }
 
 // GetBaseDir returns the configured base directory for workspaces.

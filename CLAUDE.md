@@ -46,10 +46,13 @@ make dev
 
 ## Documentation
 
-Core reference (always loaded):
-- @docs/schema.sql - Database schema (source of truth for data models)
+**The schema source of truth is `migrations/*.up.sql`, not `docs/schema.sql`.**
+`docs/schema.sql` is generated from the migrations (`make schema`, drift-checked
+in CI) and is a rendered reference only — never edit it, and never provision a
+database from it. Schema changes are made by adding a migration.
 
 Read on-demand when working on specific features:
+- `docs/schema.sql` - Full rendered schema (generated; ~1.8k lines)
 - `docs/id.md` - ID generation (Stripe-style prefixed IDs)
 - `docs/auth.md` - Authentication and token design
 - `docs/runner.proto` - gRPC protocol definitions

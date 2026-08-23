@@ -307,13 +307,13 @@ func TestSupportsStrategy(t *testing.T) {
 
 	for _, s := range supported {
 		t.Run("supported:"+string(s), func(t *testing.T) {
-			assert.True(t, p.supportsStrategy(s))
+			assert.True(t, p.suspendDispatcher().Supports(s))
 		})
 	}
 
 	for _, s := range unsupported {
 		t.Run("unsupported:"+string(s), func(t *testing.T) {
-			assert.False(t, p.supportsStrategy(s))
+			assert.False(t, p.suspendDispatcher().Supports(s))
 		})
 	}
 }

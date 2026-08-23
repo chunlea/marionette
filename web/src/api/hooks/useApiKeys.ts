@@ -1,12 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminClient } from '../admin'
+import type { PaginationParams } from '@/types/api'
 import type {
   APIKey,
   CreateAPIKeyResponse,
   APIKeyList,
   CreateAPIKeyRequest,
-  PaginationParams,
-} from '@/types/api'
+} from '@/types/admin'
 
 // Query keys
 export const apiKeyKeys = {

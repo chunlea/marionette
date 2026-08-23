@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -51,6 +52,7 @@ var (
 	ErrAgentRequired            = errors.New("agent is required")
 	ErrRunnerNotIdle            = errors.New("runner is not idle")
 	ErrScheduleCronRequired     = errors.New("schedule_cron is required for scheduled lifecycle mode")
+	ErrNoRunnerAvailable        = errors.New("no runner available for session")
 )
 
 // ProfileResources defines the resource configuration from a profile.
@@ -163,6 +165,7 @@ type SessionManagerInterface interface {
 	Resume(ctx context.Context, sessionID string) error
 	Terminate(ctx context.Context, sessionID string) error
 	AttachRunner(ctx context.Context, sessionID, runnerID string) error
+	EnsureRunner(ctx context.Context, sessionID string) (*store.Session, error)
 	DetachRunner(ctx context.Context, sessionID string) error
 	UpdateContextSnapshot(ctx context.Context, sessionID string, snapshot *ContextSnapshot) error
 }
@@ -185,6 +188,7 @@ type SessionManager struct {
 	providerRegistry ProviderRegistryInterface
 	taskManager      TaskManagerInterface
 	webhooks         *WebhookIntegration
+	background       *backgroundTasks
 	logger           *zap.Logger
 }
 
@@ -196,7 +200,11 @@ type SessionManagerConfig struct {
 	WorkspaceManager WorkspaceManagerInterface
 	AuditLog         audit.Logger
 	ProviderRegistry ProviderRegistryInterface
-	Logger           *zap.Logger
+	Webhooks         *WebhookIntegration
+	// Background runs work that must outlive the request that started it.
+	// Wire supplies the shared pool; when nil the manager makes its own.
+	Background *backgroundTasks
+	Logger     *zap.Logger
 }
 
 // NewSessionManager creates a new SessionManager.
@@ -205,12 +213,17 @@ func NewSessionManager(store store.Store, connManager ConnectionManagerInterface
 		store:       store,
 		connManager: connManager,
 		cmdSender:   cmdSender,
+		background:  newBackgroundTasks(context.Background(), 0, logger),
 		logger:      logger,
 	}
 }
 
 // NewSessionManagerWithConfig creates a new SessionManager with full configuration.
 func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
+	background := cfg.Background
+	if background == nil {
+		background = newBackgroundTasks(context.Background(), 0, cfg.Logger)
+	}
 	return &SessionManager{
 		store:            cfg.Store,
 		connManager:      cfg.ConnManager,
@@ -218,28 +231,22 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 		workspaceManager: cfg.WorkspaceManager,
 		auditLog:         cfg.AuditLog,
 		providerRegistry: cfg.ProviderRegistry,
+		webhooks:         cfg.Webhooks,
+		background:       background,
 		logger:           cfg.Logger,
 	}
 }
 
-// SetWorkspaceManager sets the workspace manager. This allows optional injection.
-func (m *SessionManager) SetWorkspaceManager(wm WorkspaceManagerInterface) {
-	m.workspaceManager = wm
-}
-
-// SetProviderRegistry sets the provider registry. This allows optional injection.
-func (m *SessionManager) SetProviderRegistry(pr ProviderRegistryInterface) {
-	m.providerRegistry = pr
-}
-
-// SetTaskManager sets the task manager. This allows optional injection.
-func (m *SessionManager) SetTaskManager(tm TaskManagerInterface) {
+// setTaskManager injects the task manager after construction.
+//
+// SessionManager and TaskManager reference each other: TaskManager needs the
+// session manager to look up a session's runner, SessionManager needs the task
+// manager to re-execute running tasks after a resume. That value-level cycle
+// cannot be resolved by constructor arguments alone, so Wire builds the session
+// manager first and closes the loop here. This is deliberately package-private:
+// production wiring happens exactly once, in Wire.
+func (m *SessionManager) setTaskManager(tm TaskManagerInterface) {
 	m.taskManager = tm
-}
-
-// SetWebhookIntegration sets the webhook integration for dispatching events.
-func (m *SessionManager) SetWebhookIntegration(wi *WebhookIntegration) {
-	m.webhooks = wi
 }
 
 // CreateSessionOptions contains options for creating a new session.
@@ -428,14 +435,17 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 		return ErrRunnerNotIdle
 	}
 
-	// Detach any existing sessions from this runner
-	// This ensures only one session is attached to a runner at a time
+	// Detach any session still holding this runner. A failure here used to be
+	// logged and ignored, which let two sessions own one runner: both would
+	// then dispatch tasks to it and interleave in the same workspace.
+	// A partial detach must therefore abort the activation.
 	if err := m.detachSessionsFromRunner(ctx, runnerID, sessionID); err != nil {
 		m.logger.Error("failed to detach existing sessions from runner",
+			zap.String("session_id", sessionID),
 			zap.String("runner_id", runnerID),
 			zap.Error(err),
 		)
-		// Continue with activation - don't fail because of cleanup issues
+		return err
 	}
 
 	// Update session
@@ -451,7 +461,20 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 		updates.ResumedAt = &now
 	}
 
-	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
+	// The partial unique index on sessions(runner_id) WHERE status = 'active'
+	// is the real guard: two concurrent activations both pass the checks above,
+	// and the database rejects the loser here.
+	if err := store.WithTx(ctx, m.store, func(tx store.Tx) error {
+		return tx.UpdateSession(ctx, sessionID, updates)
+	}); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) || errors.Is(err, store.ErrConflict) {
+			m.logger.Warn("runner was claimed by another session during activation",
+				zap.String("session_id", sessionID),
+				zap.String("runner_id", runnerID),
+				zap.Error(err),
+			)
+			return ErrRunnerNotIdle
+		}
 		return err
 	}
 
@@ -486,10 +509,40 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 				m.webhooks.DispatchSessionEvent(ctx, "session.resumed", updatedSession)
 			}
 		}
-		go m.reExecuteRunningTasks(ctx, sessionID, runnerID)
+		// Deliberately not the request context: re-execution outlives the
+		// activation call, and cancelling it when the handler returns is how
+		// resumed tasks used to silently never restart.
+		m.background.Go("session-reexecute", func(bgCtx context.Context) {
+			m.reExecuteRunningTasks(bgCtx, sessionID, runnerID)
+			// A session that comes back with nothing running should pick up
+			// its backlog rather than wait for another API call.
+			m.dispatchPendingTask(bgCtx, sessionID)
+		})
+		return nil
 	}
 
+	// A session that just became active for the first time takes its backlog
+	// too: the task may well have been created before any runner existed.
+	m.background.Go("session-dispatch", func(bgCtx context.Context) {
+		m.dispatchPendingTask(bgCtx, sessionID)
+	})
+
 	return nil
+}
+
+// dispatchPendingTask hands the session's backlog to the task manager.
+// DispatchNext is a no-op when a task is already in flight, so this is safe to
+// call after re-executing running tasks.
+func (m *SessionManager) dispatchPendingTask(ctx context.Context, sessionID string) {
+	if m.taskManager == nil {
+		return
+	}
+	if err := m.taskManager.DispatchNext(ctx, sessionID); err != nil {
+		m.logger.Warn("failed to dispatch pending task after activation",
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+	}
 }
 
 // reExecuteRunningTasks finds and re-executes any running tasks for a resumed session.
@@ -533,9 +586,8 @@ func (m *SessionManager) reExecuteRunningTasks(ctx context.Context, sessionID, r
 		zap.Int("task_count", len(tasks.Items)),
 	)
 
-	// Re-execute each running task
-	// Use a fresh context since the original request context may be canceled
-	execCtx := context.Background()
+	// ctx is the application background context supplied by the caller, so it
+	// is already independent of any request.
 	for _, task := range tasks.Items {
 		m.logger.Info("re-executing task after resume",
 			zap.String("session_id", sessionID),
@@ -543,7 +595,7 @@ func (m *SessionManager) reExecuteRunningTasks(ctx context.Context, sessionID, r
 		)
 
 		// Use ReExecute to reuse the existing task_run instead of creating a new one
-		if err := m.taskManager.ReExecute(execCtx, task.ID); err != nil {
+		if err := m.taskManager.ReExecute(ctx, task.ID); err != nil {
 			m.logger.Error("failed to re-execute task after resume",
 				zap.String("session_id", sessionID),
 				zap.String("task_id", task.ID),
@@ -567,6 +619,14 @@ type SuspendOptions struct {
 
 	// SnapshotID is the ID of any snapshot created during suspend.
 	SnapshotID string
+
+	// KeepRunner suspends the session without releasing its runner to the
+	// provider.
+	//
+	// Set this when the runner is being handed to another session rather than
+	// given up: releasing it there would pause, release or destroy the very
+	// instance the next session is about to attach to.
+	KeepRunner bool
 }
 
 // Suspend transitions a session from active to suspended.
@@ -593,15 +653,6 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 			zap.String("to", SessionStatusSuspended),
 		)
 		return ErrInvalidSessionTransition
-	}
-
-	// Send DetachSession command to runner before updating database
-	// This notifies the agent to clean up and save context
-	if err := m.sendDetachSession(ctx, session, opts); err != nil {
-		m.logger.Warn("failed to send DetachSession command, continuing with suspend",
-			zap.String("session_id", sessionID),
-			zap.Error(err),
-		)
 	}
 
 	// Store previous runner ID before detaching
@@ -670,7 +721,12 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 	emptyStr := ""
 	updates.RunnerID = &emptyStr
 
-	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
+	// The database write comes first. Sending DetachSession before it meant a
+	// failed or partial write left the runner detached from a session the
+	// database still believed was active, with no way to reconcile the two.
+	if err := store.WithTx(ctx, m.store, func(tx store.Tx) error {
+		return tx.UpdateSession(ctx, sessionID, updates)
+	}); err != nil {
 		return err
 	}
 
@@ -680,6 +736,31 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 		zap.Stringp("previous_runner_id", previousRunnerID),
 		zap.Bool("workspace_synced", opts.WorkspaceSynced),
 	)
+
+	// Now tell the runner to detach. The session is already suspended, so a
+	// failed send is not fatal: the runner has no session to report against and
+	// will be reaped when its heartbeat goes stale. Recovery is therefore
+	// "do nothing" - the database is authoritative and already correct.
+	if err := m.sendDetachSession(ctx, session, opts); err != nil {
+		m.logger.Warn("session suspended but the runner was not notified",
+			zap.String("session_id", sessionID),
+			zap.Stringp("runner_id", previousRunnerID),
+			zap.Error(err),
+		)
+	}
+
+	// Release the underlying infrastructure. Until this landed, "suspended"
+	// only ever meant a row in the database: no provider was resolved, no
+	// Suspend was called, and every container, pod and E2B sandbox kept running
+	// (and billing) for the whole life of the "suspended" session.
+	if opts.KeepRunner {
+		m.logger.Debug("keeping runner: it is being handed to another session",
+			zap.String("session_id", sessionID),
+			zap.Stringp("runner_id", previousRunnerID),
+		)
+	} else {
+		m.releaseRunner(ctx, sessionID, previousRunnerID, opts)
+	}
 
 	// Log audit event
 	if m.auditLog != nil {
@@ -708,6 +789,263 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 	}
 
 	return nil
+}
+
+// providerSuspendTimeout bounds a single provider suspend call. Suspend runs on
+// the caller's path, so a wedged provider must not hold the request open.
+const providerSuspendTimeout = 60 * time.Second
+
+// releaseRunner releases the infrastructure behind a suspended session.
+//
+// The strategy recorded on the session drives the call:
+//
+//	pool provider            -> ReleaseToPool
+//	SuspendableProvider      -> Suspend (provider picks the actual strategy)
+//	PausableProvider + pause  -> Pause
+//	any other managed provider -> Destroy
+//
+// The last line is the documented fallback: a provider that cannot suspend has
+// only two honest options, stop paying or keep paying, and "suspended" must
+// mean the former. External providers are left alone - we do not own them.
+//
+// Failures are logged and not propagated: the session is already suspended in
+// the database, and an orphaned runner is picked up by the Reaper.
+func (m *SessionManager) releaseRunner(ctx context.Context, sessionID string, runnerID *string, opts SuspendOptions) {
+	if runnerID == nil || *runnerID == "" {
+		return
+	}
+	if m.providerRegistry == nil {
+		m.logger.Debug("no provider registry configured, leaving runner running",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", *runnerID),
+		)
+		return
+	}
+
+	prov, err := m.providerForRunner(ctx, *runnerID)
+	if err != nil {
+		m.logger.Warn("could not resolve provider to release runner",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", *runnerID),
+			zap.Error(err),
+		)
+		return
+	}
+	if prov == nil {
+		// External or manually registered runner: not ours to release.
+		return
+	}
+
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerSuspendTimeout)
+	defer cancel()
+
+	strategy := provider.SuspendStrategy(opts.Strategy)
+	actual, err := m.applySuspendStrategy(releaseCtx, prov, sessionID, *runnerID, strategy, opts)
+	if err != nil {
+		m.logger.Error("failed to release runner on suspend",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", *runnerID),
+			zap.String("provider", prov.Name()),
+			zap.String("strategy", string(strategy)),
+			zap.Error(err),
+		)
+		return
+	}
+
+	m.logger.Info("runner released on suspend",
+		zap.String("session_id", sessionID),
+		zap.String("runner_id", *runnerID),
+		zap.String("provider", prov.Name()),
+		zap.String("requested_strategy", string(strategy)),
+		zap.String("actual_strategy", string(actual.Strategy)),
+	)
+
+	m.recordSuspendResult(releaseCtx, sessionID, *runnerID, actual)
+}
+
+// applySuspendStrategy performs the provider-side release and reports the
+// strategy that was actually used.
+func (m *SessionManager) applySuspendStrategy(
+	ctx context.Context,
+	prov provider.Provider,
+	sessionID, runnerID string,
+	strategy provider.SuspendStrategy,
+	opts SuspendOptions,
+) (*provider.SuspendResult, error) {
+	now := time.Now()
+
+	if prov.Type() == provider.ProviderTypeExternal {
+		return &provider.SuspendResult{Strategy: strategy, SuspendedAt: now}, nil
+	}
+
+	if pool, ok := prov.(provider.PoolAcquirer); ok {
+		if err := pool.ReleaseToPool(ctx, runnerID, false, ""); err != nil {
+			return nil, err
+		}
+		return &provider.SuspendResult{
+			Strategy:    provider.SuspendStrategyReleaseToPool,
+			SuspendedAt: now,
+		}, nil
+	}
+
+	if susp, ok := prov.(provider.SuspendableProvider); ok {
+		return susp.Suspend(ctx, runnerID, provider.SuspendOptions{
+			Strategy:      strategy,
+			SaveSnapshot:  opts.SnapshotID != "" || strategy == provider.SuspendStrategySnapshot,
+			SyncWorkspace: opts.WorkspaceSynced,
+			Timeout:       providerSuspendTimeout,
+		})
+	}
+
+	if pausable, ok := prov.(provider.PausableProvider); ok && strategy == provider.SuspendStrategyPause {
+		if err := pausable.Pause(ctx, runnerID); err != nil {
+			return nil, err
+		}
+		return &provider.SuspendResult{
+			Strategy:    provider.SuspendStrategyPause,
+			SuspendedAt: now,
+		}, nil
+	}
+
+	// Documented fallback: the provider cannot suspend, so terminate rather
+	// than leave the instance running and billing against a session nobody is
+	// using.
+	//
+	// Sessions outlive runners by design, so this is only safe while the
+	// workspace lives outside the runner. If it does not, keep paying rather
+	// than destroy the user's only copy of their work.
+	if survives, reason := m.workspaceSurvivesRunner(ctx, sessionID); !survives {
+		m.logger.Error("refusing to destroy runner on suspend: workspace would not survive it",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", runnerID),
+			zap.String("provider", prov.Name()),
+			zap.String("reason", reason),
+		)
+		return nil, fmt.Errorf("cannot destroy runner %s: %s", runnerID, reason)
+	}
+
+	m.logger.Warn("destroying runner on suspend: provider cannot suspend",
+		zap.String("session_id", sessionID),
+		zap.String("runner_id", runnerID),
+		zap.String("provider", prov.Name()),
+		zap.String("requested_strategy", string(strategy)),
+		zap.String("reason", "provider implements neither SuspendableProvider nor a usable Pause"),
+	)
+
+	if err := prov.Destroy(ctx, runnerID); err != nil {
+		return nil, err
+	}
+	return &provider.SuspendResult{
+		Strategy:    provider.SuspendStrategyTerminate,
+		SuspendedAt: now,
+	}, nil
+}
+
+// workspaceSurvivesRunner reports whether a session's workspace lives outside
+// its runner, and why not when it does not.
+//
+// Sessions outlive runners, so destroying a runner is only acceptable while the
+// files are somewhere else: a host mount, a volume, shared storage or object
+// sync. When the answer cannot be established, the answer is no - leaking a
+// container costs money, losing a workspace loses work.
+func (m *SessionManager) workspaceSurvivesRunner(ctx context.Context, sessionID string) (bool, string) {
+	if m.workspaceManager == nil {
+		return false, "no workspace manager configured, cannot establish where the workspace lives"
+	}
+
+	session, err := m.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return false, "could not load session: " + err.Error()
+	}
+
+	ws, err := m.workspaceManager.Get(ctx, session.WorkspaceID)
+	if err != nil {
+		return false, "could not load workspace: " + err.Error()
+	}
+	if ws == nil {
+		return false, "workspace not found"
+	}
+
+	// An explicitly ephemeral workspace has nothing to preserve.
+	if !ws.Persist {
+		return true, ""
+	}
+
+	// Shared and object-synced workspaces are external by definition.
+	if ws.Mobility == WorkspaceMobilityShared || ws.Mobility == WorkspaceMobilityObjectSync {
+		return true, ""
+	}
+
+	// Otherwise the workspace must be mounted from the host.
+	hostPath, err := m.workspaceManager.GetHostPath(ctx, session.WorkspaceID)
+	if err != nil {
+		return false, "could not resolve workspace host path: " + err.Error()
+	}
+	if hostPath == "" {
+		return false, "workspace is runner-local (persisted, no host mount, mobility=" + ws.Mobility + ")"
+	}
+
+	return true, ""
+}
+
+// recordSuspendResult writes back what the provider actually did, so a resume
+// knows whether it is unpausing, restoring a snapshot or spawning fresh.
+func (m *SessionManager) recordSuspendResult(
+	ctx context.Context,
+	sessionID, runnerID string,
+	result *provider.SuspendResult,
+) {
+	strategy := string(result.Strategy)
+	updates := store.SessionUpdates{SuspendStrategy: &strategy}
+	if result.SnapshotID != "" {
+		updates.SuspendSnapshotID = &result.SnapshotID
+	}
+	if result.WorkspaceSynced {
+		synced := true
+		updates.SuspendWorkspaceSynced = &synced
+	}
+
+	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
+		m.logger.Warn("failed to record the suspend strategy the provider used",
+			zap.String("session_id", sessionID),
+			zap.String("strategy", strategy),
+			zap.Error(err),
+		)
+	}
+
+	// Keep the runner row honest about what happened to the instance.
+	runnerStatus := StatusOffline
+	if result.Strategy == provider.SuspendStrategyPause {
+		runnerStatus = StatusPaused
+	}
+	if err := m.store.UpdateRunner(ctx, runnerID, store.RunnerUpdates{
+		Status: stringPtr(runnerStatus),
+	}); err != nil {
+		m.logger.Warn("failed to update runner status after release",
+			zap.String("runner_id", runnerID),
+			zap.String("status", runnerStatus),
+			zap.Error(err),
+		)
+	}
+}
+
+// providerForRunner resolves the provider that owns a runner.
+// Returns (nil, nil) for runners with no provider config: those are external
+// or manually registered and are not ours to manage.
+func (m *SessionManager) providerForRunner(ctx context.Context, runnerID string) (provider.Provider, error) {
+	runner, err := m.store.GetRunner(ctx, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	if runner.ProviderConfigID == nil || *runner.ProviderConfigID == "" {
+		return nil, nil
+	}
+
+	provConfig, err := m.store.GetProviderConfig(ctx, *runner.ProviderConfigID)
+	if err != nil {
+		return nil, err
+	}
+	return m.providerRegistry.Get(ctx, provConfig.Name)
 }
 
 // ResumeResult contains information about a resumed session.
@@ -1015,9 +1353,17 @@ func (m *SessionManager) requestRunnerForResume(ctx context.Context, session *st
 	// via the normal AttachRunner flow
 }
 
-// requestRunnerFromPool acquires a runner from a pool provider for session resume.
-func (m *SessionManager) requestRunnerFromPool(ctx context.Context, session *store.Session, poolProv provider.PoolAcquirer, profile *store.Profile) {
-	// Build pool acquire options
+// acquireFromPool asks a pool provider for a runner that satisfies the
+// session's profile, and returns its ID without attaching it.
+//
+// Both the resume path and the allocate-for-a-pending-session path go through
+// here, so a pool sees one consistent set of requirements either way.
+func (m *SessionManager) acquireFromPool(
+	ctx context.Context,
+	session *store.Session,
+	poolProv provider.PoolAcquirer,
+	profile *store.Profile,
+) (string, error) {
 	opts := provider.PoolAcquireOptions{
 		SessionID: session.ID,
 	}
@@ -1031,14 +1377,7 @@ func (m *SessionManager) requestRunnerFromPool(ctx context.Context, session *sto
 	if profile != nil {
 		opts.ProfileID = profile.ID
 
-		// Parse profile selector for required labels
-		selector, err := parseProfileSelector(profile.Selector)
-		if err != nil {
-			m.logger.Warn("failed to parse profile selector",
-				zap.String("profile_id", profile.ID),
-				zap.Error(err),
-			)
-		} else if selector != nil {
+		if selector := m.profileSelector(profile); selector != nil {
 			opts.RequiredLabels = make(map[string]string)
 			if selector.OS != "" {
 				opts.RequiredLabels["os"] = selector.OS
@@ -1057,19 +1396,14 @@ func (m *SessionManager) requestRunnerFromPool(ctx context.Context, session *sto
 		)
 	}
 
-	m.logger.Info("requesting runner from pool for resume",
-		zap.String("session_id", session.ID),
-		zap.String("provider", poolProv.Name()),
-	)
-
-	// Acquire runner from pool
 	runnerInfo, err := poolProv.AcquireFromPool(ctx, opts)
 	if err != nil {
 		m.logger.Error("failed to acquire runner from pool",
 			zap.String("session_id", session.ID),
+			zap.String("provider", poolProv.Name()),
 			zap.Error(err),
 		)
-		return
+		return "", err
 	}
 
 	m.logger.Info("runner acquired from pool",
@@ -1077,23 +1411,281 @@ func (m *SessionManager) requestRunnerFromPool(ctx context.Context, session *sto
 		zap.String("runner_id", runnerInfo.ID),
 		zap.String("runner_name", runnerInfo.Name),
 	)
+	return runnerInfo.ID, nil
+}
+
+// requestRunnerFromPool acquires a runner from a pool provider for session resume.
+func (m *SessionManager) requestRunnerFromPool(ctx context.Context, session *store.Session, poolProv provider.PoolAcquirer, profile *store.Profile) {
+	m.logger.Info("requesting runner from pool for resume",
+		zap.String("session_id", session.ID),
+		zap.String("provider", poolProv.Name()),
+	)
+
+	runnerID, err := m.acquireFromPool(ctx, session, poolProv, profile)
+	if err != nil {
+		return
+	}
 
 	// Attach runner to session
-	if err := m.AttachRunner(ctx, session.ID, runnerInfo.ID); err != nil {
+	if err := m.AttachRunner(ctx, session.ID, runnerID); err != nil {
 		m.logger.Error("failed to attach pool runner to session",
 			zap.String("session_id", session.ID),
-			zap.String("runner_id", runnerInfo.ID),
+			zap.String("runner_id", runnerID),
 			zap.Error(err),
 		)
 		// Release runner back to pool on failure
-		if releaseErr := poolProv.ReleaseToPool(ctx, runnerInfo.ID, false, ""); releaseErr != nil {
+		if releaseErr := poolProv.ReleaseToPool(ctx, runnerID, false, ""); releaseErr != nil {
 			m.logger.Error("failed to release runner back to pool",
-				zap.String("runner_id", runnerInfo.ID),
+				zap.String("runner_id", runnerID),
 				zap.Error(releaseErr),
 			)
 		}
 		return
 	}
+}
+
+// runnerSelectionBatch bounds one pass over candidate runners.
+const runnerSelectionBatch = 100
+
+// EnsureRunner makes sure a session has a runner it can execute on, and returns
+// the session as it stands afterwards.
+//
+// A pending session is activated here by allocating a runner, which is what
+// makes "create a task" enough on its own: before this, a pending session sat
+// there until an operator called the admin activate endpoint with a runner_id
+// they had looked up by hand.
+//
+// It deliberately does not resume a suspended session - that is an explicit
+// user action with its own cost - and it does not race an in-flight resume.
+func (m *SessionManager) EnsureRunner(ctx context.Context, sessionID string) (*store.Session, error) {
+	session, err := m.store.GetSession(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrSessionNotFound
+		}
+		return nil, err
+	}
+
+	switch session.Status {
+	case SessionStatusTerminated:
+		return nil, ErrSessionAlreadyTerminated
+	case SessionStatusSuspended:
+		// Resuming costs a runner acquisition and possibly a workspace
+		// restore; that stays an explicit action.
+		return nil, ErrSessionNotActive
+	case SessionStatusResuming:
+		// A resume is already acquiring a runner. Attaching a second one here
+		// would leave two runners believing they own the session.
+		return nil, ErrNoRunnerAvailable
+	case SessionStatusActive:
+		if session.RunnerID != nil && *session.RunnerID != "" {
+			return session, nil
+		}
+		// An active session with no runner is inconsistent; allocate one.
+	}
+
+	runnerID, err := m.allocateRunner(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := m.Activate(ctx, sessionID, runnerID); err != nil {
+		m.logger.Error("failed to activate session on allocated runner",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+
+	m.logger.Info("session activated on an allocated runner",
+		zap.String("session_id", sessionID),
+		zap.String("runner_id", runnerID),
+	)
+
+	return m.store.GetSession(ctx, sessionID)
+}
+
+// allocateRunner picks a runner for a session that has none.
+//
+// A session whose profile names a pool provider goes through that provider, so
+// the pool stays the authority on what it hands out. Everything else is served
+// from the runners that registered themselves with a runner token: those have
+// no provider config, so there is nobody to ask but the database.
+func (m *SessionManager) allocateRunner(ctx context.Context, session *store.Session) (string, error) {
+	profile := m.loadProfile(ctx, session)
+
+	if poolProv := m.poolProviderForProfile(ctx, profile); poolProv != nil {
+		runnerID, err := m.acquireFromPool(ctx, session, poolProv, profile)
+		if err != nil {
+			return "", err
+		}
+		return runnerID, nil
+	}
+
+	return m.selectIdleRunner(ctx, session, profile)
+}
+
+// loadProfile returns the session's profile, or nil when it has none or it
+// cannot be read. A missing profile means "no constraints", not "fail".
+func (m *SessionManager) loadProfile(ctx context.Context, session *store.Session) *store.Profile {
+	if session.ProfileID == nil || *session.ProfileID == "" {
+		return nil
+	}
+	profile, err := m.store.GetProfile(ctx, *session.ProfileID)
+	if err != nil {
+		m.logger.Warn("failed to load session profile, allocating without its constraints",
+			zap.String("session_id", session.ID),
+			zap.Stringp("profile_id", session.ProfileID),
+			zap.Error(err),
+		)
+		return nil
+	}
+	return profile
+}
+
+// poolProviderForProfile resolves the profile's provider when it is a pool.
+// Returns nil when there is no profile, no provider config, or the provider is
+// not a pool - all of which mean "select from self-registered runners instead".
+func (m *SessionManager) poolProviderForProfile(ctx context.Context, profile *store.Profile) provider.PoolAcquirer {
+	if profile == nil || profile.ProviderConfigID == nil || *profile.ProviderConfigID == "" {
+		return nil
+	}
+	if m.providerRegistry == nil {
+		return nil
+	}
+
+	provConfig, err := m.store.GetProviderConfig(ctx, *profile.ProviderConfigID)
+	if err != nil {
+		m.logger.Warn("failed to load provider config for profile",
+			zap.String("profile_id", profile.ID),
+			zap.Error(err),
+		)
+		return nil
+	}
+
+	prov, err := m.providerRegistry.Get(ctx, provConfig.Name)
+	if err != nil {
+		m.logger.Warn("failed to resolve provider for profile",
+			zap.String("profile_id", profile.ID),
+			zap.String("provider_name", provConfig.Name),
+			zap.Error(err),
+		)
+		return nil
+	}
+
+	poolProv, ok := prov.(provider.PoolAcquirer)
+	if !ok {
+		return nil
+	}
+	return poolProv
+}
+
+// selectIdleRunner picks a connected, idle, unclaimed runner that satisfies the
+// profile's selector.
+func (m *SessionManager) selectIdleRunner(ctx context.Context, session *store.Session, profile *store.Profile) (string, error) {
+	selector := m.profileSelector(profile)
+
+	opts := store.ListRunnersOptions{
+		BaseListOptions: store.BaseListOptions{Limit: runnerSelectionBatch},
+		Status:          []string{StatusIdle},
+	}
+	if selector != nil {
+		labels := map[string]string{}
+		if selector.OS != "" {
+			labels["os"] = selector.OS
+		}
+		if selector.Arch != "" {
+			labels["arch"] = selector.Arch
+		}
+		if len(labels) > 0 {
+			opts.Labels = labels
+		}
+	}
+
+	runners, err := m.store.ListRunners(ctx, opts)
+	if err != nil {
+		return "", err
+	}
+
+	for _, runner := range runners.Items {
+		if runner.Tainted {
+			continue
+		}
+		if selector != nil && !hasAllCapabilities(runner.Capabilities, selector.Capabilities) {
+			continue
+		}
+		// "idle" is the runner's connection state, not an assignment: a runner
+		// can be idle while a session still owns it.
+		if m.connManager != nil && !m.connManager.IsConnected(runner.ID) {
+			continue
+		}
+		claimed, err := m.runnerClaimed(ctx, runner.ID)
+		if err != nil {
+			m.logger.Warn("could not determine whether runner is claimed; skipping it",
+				zap.String("runner_id", runner.ID),
+				zap.Error(err),
+			)
+			continue
+		}
+		if claimed {
+			continue
+		}
+		return runner.ID, nil
+	}
+
+	m.logger.Warn("no runner available for session",
+		zap.String("session_id", session.ID),
+		zap.Int("candidates", len(runners.Items)),
+	)
+	return "", ErrNoRunnerAvailable
+}
+
+// profileSelector parses the profile's selector, treating an unparseable one as
+// no constraints rather than as a reason to strand the session.
+func (m *SessionManager) profileSelector(profile *store.Profile) *ProfileSelector {
+	if profile == nil {
+		return nil
+	}
+	selector, err := parseProfileSelector(profile.Selector)
+	if err != nil {
+		m.logger.Warn("failed to parse profile selector, allocating without it",
+			zap.String("profile_id", profile.ID),
+			zap.Error(err),
+		)
+		return nil
+	}
+	return selector
+}
+
+// runnerClaimed reports whether a live session already owns the runner.
+func (m *SessionManager) runnerClaimed(ctx context.Context, runnerID string) (bool, error) {
+	sessions, err := m.store.ListSessions(ctx, store.ListSessionsOptions{
+		BaseListOptions: store.BaseListOptions{Limit: 1},
+		RunnerID:        &runnerID,
+		Status:          liveSessionStatuses,
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(sessions.Items) > 0, nil
+}
+
+// hasAllCapabilities reports whether have covers every entry in want.
+func hasAllCapabilities(have, want []string) bool {
+	if len(want) == 0 {
+		return true
+	}
+	set := make(map[string]struct{}, len(have))
+	for _, c := range have {
+		set[c] = struct{}{}
+	}
+	for _, c := range want {
+		if _, ok := set[c]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // GetContextSnapshot retrieves the context snapshot for a session.
@@ -1194,22 +1786,47 @@ func (m *SessionManager) Terminate(ctx context.Context, sessionID string) error 
 		}
 	}
 
-	// Optionally cleanup workspace host directory
-	// Note: The workspace database record is NOT deleted here - only the host directory
-	// This is controlled by the WorkspaceManager's CleanupOnTerminate configuration
+	// Optionally cleanup workspace host directory.
+	// Note: the workspace database record is NOT deleted here - only the host
+	// directory, and only when no other session still uses the workspace.
+	// CleanupHostDirectory is an unconditional os.RemoveAll, so terminating one
+	// of N sessions sharing a workspace used to delete the other N-1's files.
 	if m.workspaceManager != nil {
-		// Cleanup is handled by WorkspaceManager based on its configuration
-		// We just log if cleanup fails, don't fail the termination
-		if err := m.workspaceManager.CleanupHostDirectory(ctx, session.WorkspaceID); err != nil {
-			m.logger.Warn("failed to cleanup workspace host directory on termination",
-				zap.String("session_id", sessionID),
-				zap.String("workspace_id", session.WorkspaceID),
-				zap.Error(err),
-			)
-		}
+		m.cleanupWorkspaceIfUnused(ctx, sessionID, session.WorkspaceID)
 	}
 
 	return nil
+}
+
+// cleanupWorkspaceIfUnused removes a session's workspace directory from the
+// host, but only once nothing else is using it. A failed IsInUse check is
+// treated as "in use": losing a workspace is unrecoverable, leaking a directory
+// is not.
+func (m *SessionManager) cleanupWorkspaceIfUnused(ctx context.Context, sessionID, workspaceID string) {
+	inUse, err := m.workspaceManager.IsInUse(ctx, workspaceID)
+	if err != nil {
+		m.logger.Warn("could not determine whether workspace is still in use; keeping it",
+			zap.String("session_id", sessionID),
+			zap.String("workspace_id", workspaceID),
+			zap.Error(err),
+		)
+		return
+	}
+	if inUse {
+		m.logger.Info("workspace still in use by another session, skipping cleanup",
+			zap.String("session_id", sessionID),
+			zap.String("workspace_id", workspaceID),
+		)
+		return
+	}
+
+	if err := m.workspaceManager.CleanupHostDirectory(ctx, workspaceID); err != nil {
+		m.logger.Warn("failed to cleanup workspace host directory on termination",
+			zap.String("session_id", sessionID),
+			zap.String("workspace_id", workspaceID),
+			zap.Error(err),
+		)
+	}
 }
 
 // AttachRunner attaches a runner to a session.
@@ -1580,8 +2197,13 @@ func (m *SessionManager) detachSessionsFromRunner(ctx context.Context, runnerID,
 			zap.String("new_session_id", exceptSessionID),
 		)
 
-		// Suspend the old session (this will clear runner_id and set status to suspended)
-		if err := m.Suspend(ctx, session.ID, "release_to_pool"); err != nil {
+		// KeepRunner: the runner is being handed to the session being
+		// activated, not given up. Releasing it to the provider here would
+		// pause, release or destroy the instance we are about to attach.
+		if err := m.SuspendWithOptions(ctx, session.ID, SuspendOptions{
+			Strategy:   "release_to_pool",
+			KeepRunner: true,
+		}); err != nil {
 			m.logger.Warn("failed to suspend old session during runner reattachment",
 				zap.String("session_id", session.ID),
 				zap.String("runner_id", runnerID),

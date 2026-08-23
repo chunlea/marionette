@@ -72,10 +72,25 @@ func TestPrinter_PrintTable_Unsupported(t *testing.T) {
 	buf := &bytes.Buffer{}
 	printer := NewPrinter("table", buf)
 
-	// Print() on table format returns error for arbitrary types
+	// A value with no table layout: the error should say so, and say which
+	// formats do work.
 	err := printer.Print(map[string]string{"key": "value"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot print type")
+	assert.Contains(t, err.Error(), "no table layout")
+	assert.Contains(t, err.Error(), "-o json")
+}
+
+func TestPrinter_UnknownFormat(t *testing.T) {
+	buf := &bytes.Buffer{}
+	printer := NewPrinter("wide", buf)
+
+	// A mistyped -o used to be reported as "cannot print type X as table",
+	// blaming the value for what is a bad flag and recommending JSON to a user
+	// who never asked for a table.
+	err := printer.Print(map[string]string{"key": "value"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown output format "wide"`)
+	assert.NotContains(t, err.Error(), "as table")
 }
 
 func TestPrinter_PrintTable(t *testing.T) {
@@ -382,7 +397,7 @@ func TestSessionToRow(t *testing.T) {
 			CreatedAt: time.Now(),
 		}
 
-		row := sessionToRow(session)
+		row := sessionView.row(session)
 		assert.Len(t, row, 6)
 		assert.Equal(t, "sess_123", row[0])
 		assert.Equal(t, "test-session", row[1])
@@ -401,7 +416,7 @@ func TestSessionToRow(t *testing.T) {
 			CreatedAt: time.Now(),
 		}
 
-		row := sessionToRow(session)
+		row := sessionView.row(session)
 		assert.Equal(t, "", row[1]) // name should be empty
 		assert.Equal(t, "", row[4]) // runner should be empty
 	})
@@ -417,7 +432,7 @@ func TestTaskToRow(t *testing.T) {
 			CreatedAt: time.Now(),
 		}
 
-		row := taskToRow(task)
+		row := taskView.row(task)
 		assert.Len(t, row, 5)
 		assert.Equal(t, "task_123", row[0])
 		assert.Equal(t, "sess_456", row[1])
@@ -435,7 +450,7 @@ func TestTaskToRow(t *testing.T) {
 			CreatedAt: time.Now(),
 		}
 
-		row := taskToRow(task)
+		row := taskView.row(task)
 		assert.Equal(t, prompt, row[3]) // Should not be truncated
 	})
 
@@ -449,7 +464,7 @@ func TestTaskToRow(t *testing.T) {
 			CreatedAt: time.Now(),
 		}
 
-		row := taskToRow(task)
+		row := taskView.row(task)
 		assert.Len(t, row[3], 40)
 		assert.True(t, len(row[3]) <= 40)
 		assert.Equal(t, "...", row[3][37:40])

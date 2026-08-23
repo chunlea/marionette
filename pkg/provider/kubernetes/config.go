@@ -136,55 +136,6 @@ type TolerationConfig struct {
 	TolerationSeconds *int64 `json:"toleration_seconds,omitempty"`
 }
 
-// SuspendConfig holds suspend behavior settings.
-type SuspendConfig struct {
-	// Strategy is the suspend strategy to use.
-	Strategy provider.SuspendStrategy `json:"strategy"`
-
-	// MinDuration prevents rapid suspend/resume cycles.
-	MinDuration Duration `json:"min_duration"`
-
-	// MaxDuration auto-terminates after this time suspended.
-	MaxDuration Duration `json:"max_duration"`
-
-	// Fallback is the strategy to use if primary fails.
-	Fallback provider.SuspendStrategy `json:"fallback"`
-}
-
-// Duration is a wrapper around time.Duration for JSON unmarshaling.
-type Duration time.Duration
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (d *Duration) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err != nil {
-		// Try as number (seconds)
-		var n int64
-		if err := json.Unmarshal(b, &n); err != nil {
-			return fmt.Errorf("invalid duration: %s", string(b))
-		}
-		*d = Duration(time.Duration(n) * time.Second)
-		return nil
-	}
-
-	dur, err := time.ParseDuration(s)
-	if err != nil {
-		return fmt.Errorf("invalid duration %q: %w", s, err)
-	}
-	*d = Duration(dur)
-	return nil
-}
-
-// MarshalJSON implements json.Marshaler.
-func (d Duration) MarshalJSON() ([]byte, error) {
-	return json.Marshal(time.Duration(d).String())
-}
-
-// Duration returns the underlying time.Duration.
-func (d Duration) Duration() time.Duration {
-	return time.Duration(d)
-}
-
 // ParseConfig parses raw JSON into Config with defaults applied.
 func ParseConfig(data json.RawMessage) (*Config, error) {
 	var cfg Config
@@ -198,18 +149,6 @@ func ParseConfig(data json.RawMessage) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
-}
-
-// ParseSuspendConfig parses suspend configuration with defaults applied.
-func ParseSuspendConfig(data json.RawMessage) (*SuspendConfig, error) {
-	cfg := &SuspendConfig{}
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, cfg); err != nil {
-			return nil, fmt.Errorf("parsing suspend config: %w", err)
-		}
-	}
-	cfg.applyDefaults()
-	return cfg, nil
 }
 
 func (c *Config) applyDefaults() {
@@ -309,32 +248,6 @@ func (c *Config) validate() error {
 	}
 
 	return nil
-}
-
-func (c *SuspendConfig) applyDefaults() {
-	if c.Strategy == "" {
-		// Kubernetes doesn't support pause, so default to terminate_preserve_storage
-		c.Strategy = provider.SuspendStrategyTerminatePreserveStorage
-	}
-	if c.MinDuration == 0 {
-		c.MinDuration = Duration(60 * time.Second)
-	}
-	if c.MaxDuration == 0 {
-		c.MaxDuration = Duration(24 * time.Hour)
-	}
-	if c.Fallback == "" {
-		c.Fallback = provider.SuspendStrategyTerminate
-	}
-}
-
-// ToProviderSuspendConfig converts to provider.SuspendConfig.
-func (c *SuspendConfig) ToProviderSuspendConfig() provider.SuspendConfig {
-	return provider.SuspendConfig{
-		Strategy:    c.Strategy,
-		MinDuration: c.MinDuration.Duration(),
-		MaxDuration: c.MaxDuration.Duration(),
-		Fallback:    c.Fallback,
-	}
 }
 
 // quantityPattern matches Kubernetes quantity strings like "2Gi", "500m", "1.5".
@@ -456,4 +369,15 @@ func (c *Config) CPUMillicores() (int64, error) {
 // StorageBytes returns the storage size in bytes.
 func (c *Config) StorageBytes() (int64, error) {
 	return ParseQuantity(c.Storage.Size)
+}
+
+// defaultSuspendConfig returns Kubernetes' suspend defaults. Kubernetes cannot
+// pause a pod, so the default strategy terminates while preserving the PVC.
+func defaultSuspendConfig() provider.SuspendConfig {
+	return provider.SuspendConfig{
+		Strategy:    provider.SuspendStrategyTerminatePreserveStorage,
+		MinDuration: 60 * time.Second,
+		MaxDuration: 24 * time.Hour,
+		Fallback:    provider.SuspendStrategyTerminate,
+	}
 }

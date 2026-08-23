@@ -1,14 +1,11 @@
 package tunnel
 
 import (
-	"bytes"
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -178,153 +175,4 @@ func TestHTTPProxy_WriteResponse(t *testing.T) {
 	body, err := io.ReadAll(result.Body)
 	require.NoError(t, err)
 	assert.Equal(t, "Hello World!", string(body))
-}
-
-// mockHTTPConnectionHandler implements ConnectionHandler for testing HTTP proxy.
-type mockHTTPConnectionHandler struct {
-	connected    bool
-	sentData     []byte
-	responseData []byte
-	sendErr      error
-	receiveErr   error
-}
-
-func (m *mockHTTPConnectionHandler) SendTunnelData(_ context.Context, _ string, data []byte) error {
-	if m.sendErr != nil {
-		return m.sendErr
-	}
-	m.sentData = data
-	return nil
-}
-
-func (m *mockHTTPConnectionHandler) ReceiveTunnelData(_ context.Context, _ string) ([]byte, error) {
-	if m.receiveErr != nil {
-		return nil, m.receiveErr
-	}
-	return m.responseData, nil
-}
-
-func (m *mockHTTPConnectionHandler) CloseTunnel(_ context.Context, _ string) error {
-	return nil
-}
-
-func (m *mockHTTPConnectionHandler) IsConnected() bool {
-	return m.connected
-}
-
-func TestHTTPProxy_ProxyHTTPRequest(t *testing.T) {
-	proxy := NewHTTPProxy(DefaultHTTPProxyConfig())
-
-	// Create a mock handler that returns a valid HTTP response
-	handler := &mockHTTPConnectionHandler{
-		connected:    true,
-		responseData: []byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 7\r\n\r\nSuccess"),
-	}
-
-	// Create a test request
-	req, err := http.NewRequest("GET", "http://localhost:3000/test", nil)
-	require.NoError(t, err)
-
-	// Create a recorder
-	w := httptest.NewRecorder()
-
-	// Proxy the request
-	err = proxy.ProxyHTTPRequest(context.Background(), "tun_test", handler, w, req)
-	require.NoError(t, err)
-
-	// Verify the request was sent
-	assert.NotEmpty(t, handler.sentData)
-	assert.Contains(t, string(handler.sentData), "GET /test")
-
-	// Verify the response
-	result := w.Result()
-	defer func() { _ = result.Body.Close() }()
-
-	assert.Equal(t, 200, result.StatusCode)
-	body, _ := io.ReadAll(result.Body)
-	assert.Equal(t, "Success", string(body))
-}
-
-func TestHTTPProxy_ProxyHTTPRequest_SendError(t *testing.T) {
-	proxy := NewHTTPProxy(DefaultHTTPProxyConfig())
-
-	handler := &mockHTTPConnectionHandler{
-		connected: true,
-		sendErr:   assert.AnError,
-	}
-
-	req, _ := http.NewRequest("GET", "http://localhost/", nil)
-	w := httptest.NewRecorder()
-
-	err := proxy.ProxyHTTPRequest(context.Background(), "tun_test", handler, w, req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to send request")
-}
-
-func TestHTTPProxy_ProxyHTTPRequest_ReceiveError(t *testing.T) {
-	proxy := NewHTTPProxy(DefaultHTTPProxyConfig())
-
-	handler := &mockHTTPConnectionHandler{
-		connected:  true,
-		receiveErr: assert.AnError,
-	}
-
-	req, _ := http.NewRequest("GET", "http://localhost/", nil)
-	w := httptest.NewRecorder()
-
-	err := proxy.ProxyHTTPRequest(context.Background(), "tun_test", handler, w, req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to receive response")
-}
-
-func TestHTTPProxy_ProxyHTTPRequest_InvalidResponse(t *testing.T) {
-	proxy := NewHTTPProxy(DefaultHTTPProxyConfig())
-
-	handler := &mockHTTPConnectionHandler{
-		connected:    true,
-		responseData: []byte("invalid http response"),
-	}
-
-	req, _ := http.NewRequest("GET", "http://localhost/", nil)
-	w := httptest.NewRecorder()
-
-	err := proxy.ProxyHTTPRequest(context.Background(), "tun_test", handler, w, req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to deserialize response")
-}
-
-func TestHTTPProxy_ProxyHTTPRequest_POSTWithBody(t *testing.T) {
-	proxy := NewHTTPProxy(DefaultHTTPProxyConfig())
-
-	handler := &mockHTTPConnectionHandler{
-		connected:    true,
-		responseData: []byte("HTTP/1.1 201 Created\r\nContent-Length: 7\r\n\r\nCreated"),
-	}
-
-	body := `{"name": "test"}`
-	req, err := http.NewRequest("POST", "http://localhost:3000/api/users", bytes.NewReader([]byte(body)))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-
-	err = proxy.ProxyHTTPRequest(context.Background(), "tun_test", handler, w, req)
-	require.NoError(t, err)
-
-	// Verify the request body was included
-	assert.Contains(t, string(handler.sentData), body)
-
-	// Verify response
-	result := w.Result()
-	defer func() { _ = result.Body.Close() }()
-	assert.Equal(t, 201, result.StatusCode)
-}
-
-func TestDefaultHTTPProxyConfig(t *testing.T) {
-	config := DefaultHTTPProxyConfig()
-
-	assert.Greater(t, config.ReadTimeout, time.Duration(0))
-	assert.Greater(t, config.WriteTimeout, time.Duration(0))
-	assert.Greater(t, config.MaxRequestSize, int64(0))
-	assert.Greater(t, config.MaxResponseSize, int64(0))
 }

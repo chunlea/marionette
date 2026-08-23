@@ -125,13 +125,9 @@ func listAPIKeys(ctx context.Context, q querier, opts store.ListAPIKeysOptions) 
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	page, err := apiKeySortColumns.page(opts.BaseListOptions, argNum)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM api_keys %s", whereClause)
@@ -142,10 +138,11 @@ func listAPIKeys(ctx context.Context, q querier, opts store.ListAPIKeysOptions) 
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM api_keys %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		apiKeyColumns, whereClause, orderBy, orderDir, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		apiKeyColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -171,10 +168,17 @@ func listAPIKeys(ctx context.Context, q querier, opts store.ListAPIKeysOptions) 
 		keys = keys[:limit]
 	}
 
+	var nextCursor string
+	if len(keys) > 0 {
+		last := keys[len(keys)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.APIKey]{
 		Items:      keys,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -415,13 +419,9 @@ func listRunnerTokens(ctx context.Context, q querier, opts store.ListRunnerToken
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	page, err := runnerTokenSortColumns.page(opts.BaseListOptions, argNum)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM runner_tokens %s", whereClause)
@@ -432,10 +432,11 @@ func listRunnerTokens(ctx context.Context, q querier, opts store.ListRunnerToken
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM runner_tokens %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		runnerTokenColumns, whereClause, orderBy, orderDir, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		runnerTokenColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -461,10 +462,17 @@ func listRunnerTokens(ctx context.Context, q querier, opts store.ListRunnerToken
 		tokens = tokens[:limit]
 	}
 
+	var nextCursor string
+	if len(tokens) > 0 {
+		last := tokens[len(tokens)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.RunnerToken]{
 		Items:      tokens,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

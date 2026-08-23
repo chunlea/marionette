@@ -412,7 +412,8 @@ type ManifestFile struct {
 
 ## Database Schema
 
-See @docs/schema.sql for the authoritative schema. Key tables:
+The authoritative schema is `migrations/*.up.sql`; `docs/schema.sql` renders it
+(generated, drift-checked in CI). Key tables:
 
 ```sql
 -- Tenant-scoped chunks (NOT globally deduplicated)

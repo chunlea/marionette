@@ -44,7 +44,7 @@ func (s *Server) handleCreateScheduledTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, task)
+	WriteJSON(w, http.StatusCreated, toScheduledTaskResponse(task))
 }
 
 // handleListScheduledTasks handles GET /api/v1/scheduled-tasks.
@@ -67,7 +67,7 @@ func (s *Server) handleListScheduledTasks(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toScheduledTaskResponse))
 }
 
 // handleGetScheduledTask handles GET /api/v1/scheduled-tasks/{scheduledTaskID}.
@@ -89,7 +89,7 @@ func (s *Server) handleGetScheduledTask(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, task)
+	WriteJSON(w, http.StatusOK, toScheduledTaskResponse(task))
 }
 
 // handleUpdateScheduledTask handles PATCH /api/v1/scheduled-tasks/{scheduledTaskID}.
@@ -117,7 +117,7 @@ func (s *Server) handleUpdateScheduledTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, task)
+	WriteJSON(w, http.StatusOK, toScheduledTaskResponse(task))
 }
 
 // handleDeleteScheduledTask handles DELETE /api/v1/scheduled-tasks/{scheduledTaskID}.
@@ -166,7 +166,7 @@ func (s *Server) handlePauseScheduledTask(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, task)
+	WriteJSON(w, http.StatusOK, toScheduledTaskResponse(task))
 }
 
 // handleResumeScheduledTask handles POST /api/v1/scheduled-tasks/{scheduledTaskID}/resume.
@@ -194,7 +194,7 @@ func (s *Server) handleResumeScheduledTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, task)
+	WriteJSON(w, http.StatusOK, toScheduledTaskResponse(task))
 }
 
 // handleTriggerScheduledTask handles POST /api/v1/scheduled-tasks/{scheduledTaskID}/trigger.
@@ -216,5 +216,5 @@ func (s *Server) handleTriggerScheduledTask(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, createdTask)
+	WriteJSON(w, http.StatusOK, toTaskResponse(createdTask))
 }

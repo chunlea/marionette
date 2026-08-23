@@ -38,7 +38,7 @@ const (
 type Provider struct {
 	name          string
 	config        *Config
-	suspendConfig *SuspendConfig
+	suspendConfig *provider.SuspendConfig
 	client        KubeClient
 
 	// namespaceOnce ensures namespace check is only done once.
@@ -59,7 +59,7 @@ func New(cfg *store.ProviderConfig) (*Provider, error) {
 		return nil, err
 	}
 
-	suspendCfg, err := ParseSuspendConfig(cfg.SuspendConfig)
+	suspendCfg, err := provider.ParseSuspendConfig(cfg.SuspendConfig, defaultSuspendConfig())
 	if err != nil {
 		return nil, err
 	}
@@ -78,10 +78,10 @@ func New(cfg *store.ProviderConfig) (*Provider, error) {
 }
 
 // NewWithClient creates a provider with an injected client (for testing).
-func NewWithClient(name string, cfg *Config, suspendCfg *SuspendConfig, client KubeClient) *Provider {
+func NewWithClient(name string, cfg *Config, suspendCfg *provider.SuspendConfig, client KubeClient) *Provider {
 	if suspendCfg == nil {
-		suspendCfg = &SuspendConfig{}
-		suspendCfg.applyDefaults()
+		suspendCfg = &provider.SuspendConfig{}
+		suspendCfg.ApplyDefaults(defaultSuspendConfig())
 	}
 	return &Provider{
 		name:          name,
@@ -107,11 +107,10 @@ func (p *Provider) Capabilities() provider.ProviderCapabilities {
 		Pause:    false, // Kubernetes doesn't support pod pause
 		Snapshot: false, // No native snapshot support
 		Suspend: provider.SuspendCapability{
-			Strategies: []provider.SuspendStrategy{
-				provider.SuspendStrategyTerminatePreserveStorage,
-				provider.SuspendStrategyTerminate,
-			},
-			Default: provider.SuspendStrategyTerminatePreserveStorage,
+			// Derived from the dispatcher so capabilities cannot claim a
+			// strategy the provider does not implement.
+			Strategies: p.suspendDispatcher().Strategies(),
+			Default:    provider.SuspendStrategyTerminatePreserveStorage,
 		},
 	}
 }
@@ -252,7 +251,7 @@ func (p *Provider) List(ctx context.Context) ([]*provider.RunnerInstance, error)
 
 // SuspendConfig returns the provider's suspend configuration.
 func (p *Provider) SuspendConfig() provider.SuspendConfig {
-	return p.suspendConfig.ToProviderSuspendConfig()
+	return *p.suspendConfig
 }
 
 // Helper methods
@@ -651,7 +650,7 @@ func NewFromJSON(name string, configJSON, suspendConfigJSON json.RawMessage) (*P
 		return nil, err
 	}
 
-	suspendCfg, err := ParseSuspendConfig(suspendConfigJSON)
+	suspendCfg, err := provider.ParseSuspendConfig(suspendConfigJSON, defaultSuspendConfig())
 	if err != nil {
 		return nil, err
 	}

@@ -27,7 +27,7 @@ func (s *Server) handleListRunners(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toRunnerResponse))
 }
 
 // handleGetRunner handles GET /api/v1/runners/{runnerID}.
@@ -49,5 +49,5 @@ func (s *Server) handleGetRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, runner)
+	WriteJSON(w, http.StatusOK, toRunnerResponse(runner))
 }

@@ -3,7 +3,6 @@ package docker
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/docker/docker/api/types/container"
 
@@ -13,69 +12,23 @@ import (
 // Compile-time interface check.
 var _ provider.SuspendableProvider = (*Provider)(nil)
 
+// suspendDispatcher maps this provider's supported strategies to their
+// implementations. It is the single source of truth for what Docker supports.
+func (p *Provider) suspendDispatcher() provider.SuspendDispatcher {
+	return provider.SuspendDispatcher{
+		Provider: p.name,
+		Config:   *p.suspendConfig,
+		Handlers: map[provider.SuspendStrategy]provider.SuspendFunc{
+			provider.SuspendStrategyPause:                    p.suspendWithPause,
+			provider.SuspendStrategyTerminatePreserveStorage: p.suspendWithTerminatePreserveStorage,
+			provider.SuspendStrategyTerminate:                p.suspendWithTerminate,
+		},
+	}
+}
+
 // Suspend suspends the runner using the configured or specified strategy.
 func (p *Provider) Suspend(ctx context.Context, runnerID string, opts provider.SuspendOptions) (*provider.SuspendResult, error) {
-	// Determine strategy to use.
-	strategy := opts.Strategy
-	if strategy == "" {
-		strategy = p.suspendConfig.Strategy
-	}
-
-	// Validate strategy is supported.
-	if !p.supportsStrategy(strategy) {
-		return nil, &provider.ErrStrategyNotSupported{
-			Strategy: strategy,
-			Provider: p.name,
-		}
-	}
-
-	// Execute suspend based on strategy.
-	var err error
-	switch strategy {
-	case provider.SuspendStrategyPause:
-		err = p.suspendWithPause(ctx, runnerID)
-	case provider.SuspendStrategyTerminatePreserveStorage:
-		err = p.suspendWithTerminatePreserveStorage(ctx, runnerID)
-	case provider.SuspendStrategyTerminate:
-		err = p.suspendWithTerminate(ctx, runnerID)
-	default:
-		// Try fallback if available.
-		if p.suspendConfig.Fallback != "" && p.supportsStrategy(p.suspendConfig.Fallback) {
-			return p.Suspend(ctx, runnerID, provider.SuspendOptions{
-				Strategy:      p.suspendConfig.Fallback,
-				SaveSnapshot:  opts.SaveSnapshot,
-				SyncWorkspace: opts.SyncWorkspace,
-				Timeout:       opts.Timeout,
-			})
-		}
-		return nil, &provider.ErrStrategyNotSupported{
-			Strategy: strategy,
-			Provider: p.name,
-		}
-	}
-
-	if err != nil {
-		// Try fallback if primary strategy fails.
-		if p.suspendConfig.Fallback != "" && p.suspendConfig.Fallback != strategy {
-			return p.Suspend(ctx, runnerID, provider.SuspendOptions{
-				Strategy:      p.suspendConfig.Fallback,
-				SaveSnapshot:  opts.SaveSnapshot,
-				SyncWorkspace: opts.SyncWorkspace,
-				Timeout:       opts.Timeout,
-			})
-		}
-		return nil, &provider.ErrSuspendFailed{
-			RunnerID: runnerID,
-			Strategy: strategy,
-			Cause:    err,
-		}
-	}
-
-	return &provider.SuspendResult{
-		Strategy:        strategy,
-		WorkspaceSynced: opts.SyncWorkspace, // TODO: implement actual sync
-		SuspendedAt:     time.Now(),
-	}, nil
+	return p.suspendDispatcher().Suspend(ctx, runnerID, opts)
 }
 
 // Resume restores a suspended runner.
@@ -188,15 +141,4 @@ func (p *Provider) resumeWithNewContainer(ctx context.Context, sessionID string,
 	}
 
 	return p.Spawn(ctx, *opts.SpawnOpts)
-}
-
-// supportsStrategy checks if a strategy is supported by this provider.
-func (p *Provider) supportsStrategy(strategy provider.SuspendStrategy) bool {
-	caps := p.Capabilities()
-	for _, s := range caps.Suspend.Strategies {
-		if s == strategy {
-			return true
-		}
-	}
-	return false
 }

@@ -16,6 +16,10 @@ import (
 	"github.com/chunlea/marionette/pkg/agent/executor"
 )
 
+// processWaitDelay bounds how long Wait blocks after the process is killed
+// while a surviving grandchild still holds stdout or stderr open.
+const processWaitDelay = 5 * time.Second
+
 var (
 	// ErrNotRunning is returned when trying to operate on a non-running executor.
 	ErrNotRunning = errors.New("executor not running")
@@ -43,6 +47,11 @@ type Executor struct {
 	// Parser for output
 	parser *Parser
 
+	// Permission gating
+	hookArgv       []string
+	permissionWait time.Duration
+	gatingDisabled bool
+
 	// Context for cancellation
 	cancelFunc context.CancelFunc
 }
@@ -54,6 +63,35 @@ type Option func(*Executor)
 func WithBinaryPath(path string) Option {
 	return func(e *Executor) {
 		e.binaryPath = path
+	}
+}
+
+// WithPermissionHookCommand sets the command the CLI runs as its PreToolUse
+// hook. It defaults to this binary re-invoked as `permission-hook`, which is
+// what the agent wants; tests override it.
+func WithPermissionHookCommand(argv ...string) Option {
+	return func(e *Executor) {
+		e.hookArgv = argv
+	}
+}
+
+// WithPermissionWait sets how long a gated tool call may wait for an operator
+// decision before it is denied.
+func WithPermissionWait(d time.Duration) Option {
+	return func(e *Executor) {
+		e.permissionWait = d
+	}
+}
+
+// WithoutPermissionGating disables pre-execution gating.
+//
+// Use it only where an operator has deliberately accepted that the agent runs
+// unsupervised. It must never be a fallback for a gate that failed to start:
+// running ungated while reporting success is the exact dishonesty this
+// executor is being repaired to remove.
+func WithoutPermissionGating() Option {
+	return func(e *Executor) {
+		e.gatingDisabled = true
 	}
 }
 
@@ -99,6 +137,32 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	// Build command arguments
 	args, hasResume := e.buildArgs(task, config)
 
+	// Real permission gating runs as a PreToolUse hook in a subprocess that
+	// calls back into this broker. Starting it is not optional: if the gate
+	// cannot run, the task fails rather than running unsupervised.
+	if !e.gatingDisabled {
+		broker, err := NewPermissionBroker(handler, e.permissionWait)
+		if err != nil {
+			return nil, fmt.Errorf("failed to start permission gate: %w", err)
+		}
+		defer func() { _ = broker.Close() }()
+
+		hookArgv, err := e.permissionHookArgv(broker.SocketPath())
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve permission hook command: %w", err)
+		}
+
+		settings, err := hookSettings(hookArgv, broker.Wait())
+		if err != nil {
+			return nil, fmt.Errorf("failed to build permission hook settings: %w", err)
+		}
+
+		args = append(args, "--settings", settings)
+		brokerCtx, brokerCancel := context.WithCancel(ctx)
+		defer brokerCancel()
+		broker.Serve(brokerCtx)
+	}
+
 	// Create cancellable context
 	ctx, cancel := context.WithCancel(ctx)
 	e.mu.Lock()
@@ -115,6 +179,14 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 
 	// Create command
 	cmd := exec.CommandContext(ctx, e.binaryPath, args...)
+
+	// Kill the whole process tree on cancel or timeout, not just the CLI: its
+	// tool subprocesses would otherwise keep running and keep our pipes open,
+	// so Wait would block long past the deadline we just enforced.
+	configureProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessTree(cmd.Process) }
+	// Backstop for a grandchild that survives the kill still holding a pipe.
+	cmd.WaitDelay = processWaitDelay
 
 	// Set working directory
 	workDir := task.WorkingDir
@@ -163,12 +235,6 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	handler.HandleOutput("system", []byte("Claude Code started"))
 	handler.HandleOutput("system", []byte(fmt.Sprintf("command: %s %s", e.binaryPath, strings.Join(args, " "))))
 
-	// Close stdin to signal no input is coming (for --print mode)
-	// Claude Code waits for stdin EOF before producing output
-	if !e.streamMode {
-		_ = stdin.Close()
-	}
-
 	// Process output in goroutines
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -185,42 +251,112 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 		e.processStderr(ctx, stderr, handler)
 	}()
 
+	if e.streamMode {
+		// With --input-format stream-json the CLI reads the prompt from stdin
+		// and ignores the positional prompt argument entirely (verified on
+		// 2.1.241), so the prompt must be delivered as the first user message.
+		if err := e.SendMessage([]byte(task.Prompt)); err != nil {
+			e.killProcess()
+			wg.Wait()
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("failed to send prompt to claude: %w", err)
+		}
+	} else {
+		// --print mode: the CLI waits for stdin EOF before producing output.
+		e.closeStdin()
+	}
+
 	// Wait for output processing to complete
 	wg.Wait()
 
 	// Wait for command to exit
 	err = cmd.Wait()
 
-	// Build result
+	return e.buildResult(ctx, err), nil
+}
+
+// buildResult derives the run outcome from the CLI's own result line and the
+// process exit status. The result line is authoritative for what the agent
+// did; the exit status only tells us whether the process itself survived.
+func (e *Executor) buildResult(ctx context.Context, waitErr error) *executor.Result {
 	result := &executor.Result{
 		CompletedAt:  time.Now(),
 		AgentSession: e.parser.SessionID(),
 	}
 
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			result.ExitCode = exitErr.ExitCode()
-			result.Success = false
-			result.Error = fmt.Sprintf("exit code %d", result.ExitCode)
-		} else if ctx.Err() != nil {
-			result.Success = false
-			result.Error = ctx.Err().Error()
-			if ctx.Err() == context.DeadlineExceeded {
-				result.Error = "timeout"
-			} else if ctx.Err() == context.Canceled {
-				result.Error = "canceled"
-			}
-		} else {
-			result.Success = false
-			result.Error = err.Error()
+	// Carry the CLI session id forward so the next task can --resume it.
+	if result.AgentSession != "" {
+		if snapshot, err := json.Marshal(contextSnapshot{ConversationID: result.AgentSession}); err == nil {
+			result.ContextSnapshot = snapshot
 		}
-	} else {
-		result.Success = true
-		result.ExitCode = 0
 	}
 
-	return result, nil
+	// Token counts come from the final result line's usage block, which is the
+	// authoritative per-run total. Input counts everything fed to the model,
+	// including the cached prefix, because the raw input_tokens field excludes
+	// cache hits and is close to meaningless on its own.
+	agentResult := e.parser.Result()
+	if agentResult != nil && agentResult.Usage != nil {
+		u := agentResult.Usage
+		result.TokensInput = u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+		result.TokensOutput = u.OutputTokens
+	}
+
+	// Process-level failures win: if the process died, nothing the agent said
+	// before dying makes the run a success.
+	if waitErr != nil {
+		result.Success = false
+
+		var exitErr *exec.ExitError
+		switch {
+		case ctx.Err() != nil:
+			result.Error = ctx.Err().Error()
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				result.Error = "timeout"
+			} else if errors.Is(ctx.Err(), context.Canceled) {
+				result.Error = "canceled"
+			}
+			if errors.As(waitErr, &exitErr) {
+				result.ExitCode = exitErr.ExitCode()
+			}
+		case errors.As(waitErr, &exitErr):
+			result.ExitCode = exitErr.ExitCode()
+			result.Error = fmt.Sprintf("exit code %d", result.ExitCode)
+			// Prefer the agent's own explanation when it managed to emit one.
+			if agentResult != nil && !agentResult.Succeeded() {
+				result.Error = agentResult.FailureReason()
+			}
+		default:
+			result.Error = waitErr.Error()
+		}
+
+		return result
+	}
+
+	result.ExitCode = 0
+
+	// The process exited cleanly. Now the result line decides the outcome.
+	// A clean exit with no result line means the CLI never finished its turn:
+	// reporting that as success is exactly the silent-failure mode this path
+	// used to have, so it is reported as a failure instead.
+	switch {
+	case agentResult == nil:
+		result.Success = false
+		result.Error = "claude exited without emitting a result message"
+	case !agentResult.Succeeded():
+		result.Success = false
+		result.Error = agentResult.FailureReason()
+	default:
+		result.Success = true
+	}
+
+	return result
+}
+
+// contextSnapshot is the shape the agent stores for session resume. buildArgs
+// reads it back to decide whether to pass --resume.
+type contextSnapshot struct {
+	ConversationID string `json:"conversation_id"`
 }
 
 // buildArgs constructs command line arguments for Claude Code.
@@ -269,12 +405,33 @@ func (e *Executor) buildArgs(task *executor.Task, config *executor.AgentConfig) 
 		}
 	}
 
+	if hasResume {
+		// Stream input keeps stdin open so further user messages can be sent
+		// during the turn. It requires --print, and it makes the CLI ignore a
+		// positional prompt, so the prompt goes over stdin instead.
+		args = append(args, "--input-format", "stream-json", "--print")
+		return args, hasResume
+	}
+
 	// Add prompt
 	if task.Prompt != "" {
 		args = append(args, "--print", task.Prompt)
 	}
 
 	return args, hasResume
+}
+
+// permissionHookArgv returns the command the CLI runs for each tool call.
+func (e *Executor) permissionHookArgv(socketPath string) ([]string, error) {
+	if len(e.hookArgv) > 0 {
+		return append(append([]string{}, e.hookArgv...), socketPath), nil
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	return []string{self, PermissionHookCommand, socketPath}, nil
 }
 
 // buildEnv constructs environment variables for Claude Code.
@@ -342,34 +499,23 @@ func (e *Executor) processOutput(ctx context.Context, r io.Reader, stream string
 			continue
 		}
 
-		// Process events (could emit to a separate event handler in the future)
-		for _, event := range events {
-			// Check for tool use that might require permission
-			if event.Type == executor.EventToolUse && event.ToolUse != nil {
-				if IsPermissionRequired(event.ToolUse.Name) {
-					// Create permission request
-					req := &executor.PermissionRequest{
-						ID:        event.ToolUse.ID,
-						Tool:      event.ToolUse.Name,
-						Action:    event.ToolUse.Input,
-						RiskLevel: executor.RiskMedium,
-					}
+		// In stream mode the CLI keeps reading stdin and would serve turn after
+		// turn until EOF. A task is one turn, so close stdin as soon as the
+		// turn's result arrives; without this the process never exits and the
+		// run hangs until its timeout.
+		if e.streamMode && e.parser.Result() != nil {
+			e.closeStdin()
+		}
 
-					// Send permission request and block until approved/denied
-					approved, err := handler.HandlePermissionRequest(ctx, req)
-					if err != nil {
-						handler.HandleOutput("system", []byte(fmt.Sprintf("permission_request_error: %s %v", req.ID, err)))
-						return // Context cancelled or other error - stop processing
-					}
-					if !approved {
-						handler.HandleOutput("system", []byte(fmt.Sprintf("permission_denied: %s %s", req.Tool, req.ID)))
-						// Note: With --permission-mode acceptEdits, Claude has already executed the tool.
-						// Denial here is for audit/tracking purposes. Future: use a permission mode
-						// that actually pauses Claude until approval.
-					} else {
-						handler.HandleOutput("system", []byte(fmt.Sprintf("permission_approved: %s %s", req.Tool, req.ID)))
-					}
-				}
+		// Permission gating is NOT done here. By the time a tool_use event
+		// appears in the output stream the tool has already run, so asking
+		// here could only ever produce a decision after the fact. The real
+		// gate is the PreToolUse hook wired up in Execute; see
+		// permission_broker.go.
+		for _, event := range events {
+			if event.Type == executor.EventToolUse && event.ToolUse != nil {
+				handler.HandleOutput("system", []byte(fmt.Sprintf(
+					"tool_use: %s %s", event.ToolUse.Name, event.ToolUse.ID)))
 			}
 		}
 	}
@@ -419,17 +565,55 @@ func (e *Executor) Kill() error {
 		e.cancelFunc()
 	}
 
-	// Then kill process
+	// Then kill the process tree
 	if e.cmd.Process != nil {
-		return e.cmd.Process.Kill()
+		return killProcessTree(e.cmd.Process)
 	}
 
 	return nil
 }
 
-// SendMessage sends a message to the running Claude process.
-// Only valid in stream mode (resume).
+// streamInputMessage is the stream-json envelope the CLI accepts on stdin when
+// started with --input-format stream-json. Verified against CLI 2.1.241: a
+// single line of this shape drives one turn, and the same process serves
+// further turns until stdin reaches EOF.
+type streamInputMessage struct {
+	Type    string          `json:"type"`
+	Message streamInputBody `json:"message"`
+}
+
+type streamInputBody struct {
+	Role    string               `json:"role"`
+	Content []streamInputContent `json:"content"`
+}
+
+type streamInputContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// userMessageEnvelope wraps plain text in the CLI's stream-json user message.
+func userMessageEnvelope(text string) ([]byte, error) {
+	return json.Marshal(streamInputMessage{
+		Type: "user",
+		Message: streamInputBody{
+			Role:    "user",
+			Content: []streamInputContent{{Type: "text", Text: text}},
+		},
+	})
+}
+
+// SendMessage sends a user message to the running Claude process.
+//
+// msg is the message TEXT; it is wrapped in the stream-json envelope the CLI
+// expects. Only valid in stream mode (resume), and only until the turn's
+// result arrives, after which stdin is closed so the process can exit.
 func (e *Executor) SendMessage(msg []byte) error {
+	envelope, err := userMessageEnvelope(string(msg))
+	if err != nil {
+		return fmt.Errorf("failed to encode user message: %w", err)
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -445,8 +629,37 @@ func (e *Executor) SendMessage(msg []byte) error {
 		return ErrNotRunning
 	}
 
-	_, err := e.stdin.Write(append(msg, '\n'))
+	_, err = e.stdin.Write(append(envelope, '\n'))
 	return err
+}
+
+// closeStdin closes the CLI's stdin exactly once. Further SendMessage calls
+// then fail with ErrNotRunning rather than writing to a closed pipe.
+func (e *Executor) closeStdin() {
+	e.mu.Lock()
+	stdin := e.stdin
+	e.stdin = nil
+	e.mu.Unlock()
+
+	if stdin != nil {
+		_ = stdin.Close()
+	}
+}
+
+// killProcess terminates the running process without touching Kill's
+// not-running bookkeeping.
+func (e *Executor) killProcess() {
+	e.mu.Lock()
+	cmd := e.cmd
+	cancel := e.cancelFunc
+	e.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if cmd != nil && cmd.Process != nil {
+		_ = killProcessTree(cmd.Process)
+	}
 }
 
 // IsStreamMode returns true if the executor is in stream mode.

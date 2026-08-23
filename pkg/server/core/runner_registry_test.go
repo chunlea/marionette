@@ -380,9 +380,11 @@ func (m *mockRunnerStore) CleanupExpiredStreams(_ context.Context) (int, error) 
 	return 0, nil
 }
 
-func (m *mockRunnerStore) BeginTx(_ context.Context) (store.Tx, error) { return nil, nil }
-func (m *mockRunnerStore) Ping(_ context.Context) error                { return nil }
-func (m *mockRunnerStore) Close() error                                { return nil }
+func (m *mockRunnerStore) BeginTx(_ context.Context) (store.Tx, error) {
+	return &storeTx{Store: m}, nil
+}
+func (m *mockRunnerStore) Ping(_ context.Context) error { return nil }
+func (m *mockRunnerStore) Close() error                 { return nil }
 
 func (m *mockRunnerStore) GetDueScheduledSessions(_ context.Context, _ time.Time, _ int) ([]*store.Session, error) {
 	return nil, nil

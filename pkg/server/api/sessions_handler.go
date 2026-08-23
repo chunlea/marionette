@@ -36,7 +36,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, session)
+	WriteJSON(w, http.StatusCreated, toSessionResponse(session))
 }
 
 // handleListSessions handles GET /api/v1/sessions.
@@ -61,7 +61,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toSessionResponse))
 }
 
 // handleGetSession handles GET /api/v1/sessions/{sessionID}.
@@ -83,7 +83,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, session)
+	WriteJSON(w, http.StatusOK, toSessionResponse(session))
 }
 
 // handleSuspendSession handles POST /api/v1/sessions/{sessionID}/suspend.

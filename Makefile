@@ -1,4 +1,5 @@
 .PHONY: deps build test lint proto migrate dev clean help \
+	schema schema-check openapi openapi-check generate test-store \
 	certs certs-clean certs-verify \
 	web-install web-dev web-build web-lint web-clean
 
@@ -29,17 +30,25 @@ help:
 	@echo "Targets:"
 	@sed -n 's/^## //p' $(MAKEFILE_LIST) | column -t -s ':'
 
+# Toolchain versions. Keep in sync with .github/workflows/ci.yml so a local
+# build and a CI build generate the same code. PROTOC_GEN_GO_VERSION tracks
+# google.golang.org/protobuf in go.mod; bump them together.
+BUF_VERSION=v1.72.0
+PROTOC_GEN_GO_VERSION=v1.36.11
+PROTOC_GEN_GO_GRPC_VERSION=v1.6.2
+GOLANGCI_LINT_VERSION=v2.13.1
+
 ## deps: Install dependencies and development tools
 deps:
 	$(GOMOD) download
 	$(GOMOD) tidy
 	@echo "Installing development tools..."
 	go install github.com/air-verse/air@latest
-	go install github.com/bufbuild/buf/cmd/buf@latest
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install golang.org/x/tools/gopls@latest
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
 	@echo "Done installing tools"
 
 ## build: Build all binaries
@@ -83,6 +92,10 @@ lint:
 lint-fix:
 	golangci-lint run --fix ./...
 
+## generate: Run go:generate across the tree (mocks etc.)
+generate:
+	$(GOCMD) generate ./...
+
 ## proto: Generate protobuf code
 proto:
 	buf generate
@@ -107,6 +120,22 @@ migrate-down:
 		exit 1; \
 	fi
 	migrate -path migrations -database "$(MARIONETTE_DATABASE_URL)" down 1
+
+## schema: Regenerate docs/schema.sql from migrations (requires Docker)
+schema:
+	./scripts/gen-schema.sh
+
+## schema-check: Fail if docs/schema.sql has drifted from migrations (requires Docker)
+schema-check:
+	./scripts/gen-schema.sh --check
+
+## openapi: Regenerate pkg/server/api/openapi.yaml from the Go route table and DTOs
+openapi:
+	$(GOCMD) run pkg/server/api/openapi_generate.go pkg/server/api/openapi.yaml
+
+## openapi-check: Fail if the OpenAPI document has drifted from the code
+openapi-check:
+	$(GOTEST) -run TestOpenAPIDocumentIsUpToDate ./pkg/server/api/
 
 ## migrate-create: Create a new migration (usage: make migrate-create name=migration_name)
 migrate-create:
@@ -169,10 +198,28 @@ test-executor-coverage:
 	@echo ""
 	@echo "Coverage report: coverage.html"
 
+# pkg/store/postgres drives testcontainers, which needs a reachable Docker
+# daemon. Inside the test container that means mounting the host socket, so the
+# PostgreSQL it starts is a sibling container rather than a nested one.
+#
+# Its published ports therefore live on the host, not on localhost inside the
+# test container: TESTCONTAINERS_HOST_OVERRIDE is what makes the connection
+# string point somewhere reachable. host.docker.internal is built in on Docker
+# Desktop; --add-host supplies it on Linux.
+#
+# Without the socket the store tests fail loudly rather than skipping, so these
+# targets can no longer go green while silently missing the only tests that
+# touch real SQL — which is exactly what they did before.
+DOCKER_TEST_FLAGS = --rm \
+	-v /var/run/docker.sock:/var/run/docker.sock \
+	--add-host host.docker.internal:host-gateway \
+	-e DOCKER_HOST=unix:///var/run/docker.sock \
+	-e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal
+
 ## test-linux: Run tests in Linux Docker container (for Linux-specific code)
 test-linux:
 	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
-	docker run --rm marionette/test:latest
+	docker run $(DOCKER_TEST_FLAGS) marionette/test:latest
 
 ## test-linux-pkg: Run tests for a specific package in Docker
 test-linux-pkg:
@@ -181,12 +228,16 @@ test-linux-pkg:
 		exit 1; \
 	fi
 	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
-	docker run --rm marionette/test:latest go test -race -v $(PKG)
+	docker run $(DOCKER_TEST_FLAGS) marionette/test:latest go test -race -v $(PKG)
 
 ## test-linux-root: Run tests as root in Linux Docker container (for namespace detection)
 test-linux-root:
 	docker build -t marionette/test:latest -f deploy/docker/test.Dockerfile .
-	docker run --rm --user root marionette/test:latest
+	docker run $(DOCKER_TEST_FLAGS) --user root marionette/test:latest
+
+## test-store: Run the store tests on the host (needs Docker; no container indirection)
+test-store:
+	$(GOTEST) -race -count=1 ./pkg/store/...
 
 ## docker-build: Build Docker images
 docker-build:
@@ -234,6 +285,10 @@ web-build:
 	cd web && pnpm build
 	rm -rf pkg/server/admin/dist
 	cp -r web/dist pkg/server/admin/dist
+	# The embed directive needs the directory to exist on a clean checkout, and
+	# .gitkeep is the only tracked thing in it. Copying over the top used to
+	# delete it, leaving `git status` claiming a tracked file had been removed.
+	touch pkg/server/admin/dist/.gitkeep
 	@echo "Frontend built and copied to pkg/server/admin/dist"
 
 ## web-lint: Lint frontend code

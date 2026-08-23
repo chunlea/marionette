@@ -3,20 +3,9 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/chunlea/marionette/pkg/server/api/apitypes"
 )
-
-// ErrorResponse represents an API error response.
-type ErrorResponse struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-// ListResponse represents a paginated list response.
-type ListResponse[T any] struct {
-	Items      []*T   `json:"items"`
-	TotalCount int    `json:"total_count"`
-	NextCursor string `json:"next_cursor,omitempty"`
-}
 
 // WriteJSON writes a JSON response with the given status code.
 func WriteJSON(w http.ResponseWriter, status int, v any) {
@@ -27,7 +16,7 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 
 // WriteError writes an error response with the given status code.
 func WriteError(w http.ResponseWriter, status int, code, message string) {
-	WriteJSON(w, status, ErrorResponse{
+	WriteJSON(w, status, apitypes.ErrorResponse{
 		Code:    code,
 		Message: message,
 	})

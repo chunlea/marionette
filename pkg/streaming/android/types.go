@@ -1,3 +1,7 @@
+// Frozen subsystem. Excluded from the default build (decision D1):
+// build with -tags streaming_extra to compile it.
+//go:build streaming_extra
+
 // Package android provides Android device streaming and input forwarding capabilities.
 // It uses scrcpy for screen mirroring and ADB for device management and input.
 package android

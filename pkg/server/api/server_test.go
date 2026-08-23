@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/chunlea/marionette/pkg/auth"
+	"github.com/chunlea/marionette/pkg/server/api/apitypes"
 	"github.com/chunlea/marionette/pkg/store"
 )
 
@@ -142,7 +143,7 @@ func TestAuthMiddleware(t *testing.T) {
 		srv.Router().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-		var resp ErrorResponse
+		var resp apitypes.ErrorResponse
 		err := json.NewDecoder(rec.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, "missing_auth", resp.Code)
@@ -591,7 +592,7 @@ func TestServiceUnavailable(t *testing.T) {
 		srv.Router().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
-		var resp ErrorResponse
+		var resp apitypes.ErrorResponse
 		err := json.NewDecoder(rec.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, "service_unavailable", resp.Code)
@@ -716,7 +717,7 @@ func TestHandleServiceError(t *testing.T) {
 			handleServiceError(rec, tt.err)
 
 			assert.Equal(t, tt.expectedStatus, rec.Code)
-			var resp ErrorResponse
+			var resp apitypes.ErrorResponse
 			err := json.NewDecoder(rec.Body).Decode(&resp)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectedCode, resp.Code)
@@ -736,7 +737,7 @@ func TestSessionsInvalidJSON(t *testing.T) {
 	srv.Router().ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	var resp ErrorResponse
+	var resp apitypes.ErrorResponse
 	err := json.NewDecoder(rec.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.Equal(t, "invalid_json", resp.Code)
@@ -840,7 +841,7 @@ func TestWriteError(t *testing.T) {
 	WriteError(rec, http.StatusBadRequest, "test_error", "Test error message")
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	var resp ErrorResponse
+	var resp apitypes.ErrorResponse
 	err := json.NewDecoder(rec.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.Equal(t, "test_error", resp.Code)
@@ -1161,6 +1162,7 @@ func TestTaskActionsNotFound(t *testing.T) {
 		{"cancel not found", http.MethodPost, "/api/v1/tasks/task_nonexistent/cancel"},
 		{"retry not found", http.MethodPost, "/api/v1/tasks/task_nonexistent/retry"},
 		{"logs not found", http.MethodGet, "/api/v1/tasks/task_nonexistent/logs"},
+		{"runs not found", http.MethodGet, "/api/v1/tasks/task_nonexistent/runs"},
 	}
 
 	for _, tt := range tests {
@@ -1245,7 +1247,7 @@ func TestServiceUnavailableActions(t *testing.T) {
 			srv.Router().ServeHTTP(rec, req)
 
 			assert.Equal(t, http.StatusInternalServerError, rec.Code)
-			var resp ErrorResponse
+			var resp apitypes.ErrorResponse
 			err := json.NewDecoder(rec.Body).Decode(&resp)
 			require.NoError(t, err)
 			assert.Equal(t, "service_unavailable", resp.Code)
@@ -1343,7 +1345,8 @@ func TestOpenAPIDocumentation(t *testing.T) {
 		assert.Equal(t, "application/yaml", rec.Header().Get("Content-Type"))
 		assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
 		assert.Contains(t, rec.Body.String(), "openapi:")
-		assert.Contains(t, rec.Body.String(), "Marionette Public API")
+		assert.Contains(t, rec.Body.String(), "title: Marionette API")
+		assert.Contains(t, rec.Body.String(), "GENERATED FILE")
 	})
 }
 
@@ -1398,7 +1401,7 @@ func TestWorkspaces(t *testing.T) {
 		srv.Router().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
-		var resp ErrorResponse
+		var resp apitypes.ErrorResponse
 		err := json.NewDecoder(rec.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, "invalid_json", resp.Code)
@@ -1574,7 +1577,7 @@ func TestWorkspaceServiceUnavailable(t *testing.T) {
 			srv.Router().ServeHTTP(rec, req)
 
 			assert.Equal(t, http.StatusInternalServerError, rec.Code)
-			var resp ErrorResponse
+			var resp apitypes.ErrorResponse
 			err := json.NewDecoder(rec.Body).Decode(&resp)
 			require.NoError(t, err)
 			assert.Equal(t, "service_unavailable", resp.Code)
@@ -1679,5 +1682,67 @@ func TestTunnelProxyRedirect(t *testing.T) {
 		// Should not be a redirect, should go to tunnel proxy (which returns 404 because mock says tunnel not found)
 		assert.NotEqual(t, http.StatusMovedPermanently, rec.Code)
 		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+}
+
+// TestListTaskRuns covers the run history endpoint. A task's row only carries
+// its latest status, so the runs are the only place a retry that failed before
+// a later attempt succeeded is visible - which is why the dashboard needed it.
+func TestListTaskRuns(t *testing.T) {
+	taskSvc := NewMockTaskService()
+	srv, _, token := testServer(t, WithTaskService(taskSvc))
+
+	task, err := taskSvc.Create(context.Background(), CreateTaskOptions{
+		SessionID: "sess_1",
+		Prompt:    "build it",
+	})
+	require.NoError(t, err)
+
+	exitCode := 1
+	taskSvc.AddRun(task.ID, &store.TaskRun{
+		ID: "trun_1", TaskID: task.ID, Attempt: 1, Status: "failed", ExitCode: &exitCode,
+	})
+	taskSvc.AddRun(task.ID, &store.TaskRun{
+		ID: "trun_2", TaskID: task.ID, Attempt: 2, Status: "completed",
+	})
+
+	t.Run("returns every attempt", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+task.ID+"/runs", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var got apitypes.ListResponse[apitypes.TaskRun]
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.Len(t, got.Items, 2)
+		assert.Equal(t, "trun_1", got.Items[0].ID)
+		assert.Equal(t, 1, got.Items[0].Attempt)
+		assert.Equal(t, "failed", got.Items[0].Status)
+		assert.Equal(t, "trun_2", got.Items[1].ID)
+		assert.Equal(t, "completed", got.Items[1].Status)
+	})
+
+	t.Run("filters by status", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+task.ID+"/runs?status=completed", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var got apitypes.ListResponse[apitypes.TaskRun]
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.Len(t, got.Items, 1)
+		assert.Equal(t, "trun_2", got.Items[0].ID)
+	})
+
+	t.Run("requires authentication", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+task.ID+"/runs", nil)
+		rec := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -20,6 +21,12 @@ const webhookColumns = `id, name, url, events, secret_encrypted, secret_hash, se
 const webhookEventColumns = `id, webhook_id, event_type, payload, status,
 	attempts, last_error, last_status_code, next_retry_at, delivered_at,
 	tenant_id, created_at, updated_at`
+
+// webhookEventClaimLease is how long a claimed batch of webhook events stays
+// invisible to other workers. It must comfortably exceed the time it takes to
+// attempt delivery of a whole batch; if it does not, the only cost is a
+// duplicate delivery attempt.
+const webhookEventClaimLease = 5 * time.Minute
 
 // Webhook operations
 
@@ -88,6 +95,16 @@ func getWebhookByName(ctx context.Context, q querier, name string, tenantID *str
 	return scanWebhook(row, name)
 }
 
+// webhookOffset resolves the two paging mechanisms these listings support.
+// Cursor and Offset both mean "skip what I already have"; applying them
+// together would skip a page twice, so a cursor wins.
+func webhookOffset(offset int, cursor string) int {
+	if cursor != "" || offset < 0 {
+		return 0
+	}
+	return offset
+}
+
 func (s *Store) ListWebhooks(ctx context.Context, opts store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
 	return listWebhooks(ctx, s.pool, opts)
 }
@@ -124,24 +141,34 @@ func listWebhooks(ctx context.Context, q querier, opts store.ListWebhooksOptions
 		where = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	// Get total count
+	// Get total count. Filters only: TotalCount reports how many webhooks match,
+	// not how many are left after the current page.
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM webhooks %s", where)
 	var total int64
 	if err := q.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 
-	// Get results
 	limit := 100
 	if opts.Limit > 0 && opts.Limit < limit {
 		limit = opts.Limit
 	}
-	offset := opts.Offset
 
-	query := fmt.Sprintf(`SELECT %s FROM webhooks %s ORDER BY created_at DESC LIMIT %d OFFSET %d`,
-		webhookColumns, where, limit, offset)
+	// Ordering is fixed to newest first, so only the cursor is caller-supplied.
+	page, err := webhookSortColumns.page(
+		store.BaseListOptions{Cursor: opts.Cursor, OrderDesc: true}, argNum)
+	if err != nil {
+		return nil, err
+	}
 
-	rows, err := q.Query(ctx, query, args...)
+	// Fetch one extra row to detect whether another page exists.
+	query := fmt.Sprintf(`SELECT %s FROM webhooks %s ORDER BY %s LIMIT $%d OFFSET $%d`,
+		webhookColumns, page.where(where), page.orderBy,
+		page.limitArg(argNum), page.limitArg(argNum)+1)
+	queryArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	queryArgs = append(queryArgs, limit+1, webhookOffset(opts.Offset, opts.Cursor))
+
+	rows, err := q.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -156,9 +183,26 @@ func listWebhooks(ctx context.Context, q querier, opts store.ListWebhooksOptions
 		items = append(items, webhook)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating webhooks: %w", err)
+	}
+
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+
+	var nextCursor string
+	if len(items) > 0 {
+		last := items[len(items)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Webhook]{
 		Items:      items,
 		TotalCount: total,
+		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -290,18 +334,13 @@ func (t *Tx) GetActiveWebhooksForEvent(ctx context.Context, eventType string, te
 	return getActiveWebhooksForEvent(ctx, t.tx, eventType, tenantID)
 }
 
-func getActiveWebhooksForEvent(_ context.Context, q querier, eventType string, tenantID *string) ([]*store.Webhook, error) {
-	// This query finds webhooks that:
-	// 1. Are active
-	// 2. Match the tenant (or are global if tenantID is nil)
-	// 3. Have an event pattern that matches the event type
-	// Pattern matching is done at application layer since SQL wildcards are complex
+// getActiveWebhooksForEvent returns every active webhook for the tenant, not
+// just the ones subscribed to eventType: subscriptions support wildcards
+// ("task.*"), and that matching is done by the WebhookManager. eventType is
+// accepted so the signature can narrow later without touching callers.
+func getActiveWebhooksForEvent(ctx context.Context, q querier, _ string, tenantID *string) ([]*store.Webhook, error) {
 	query := fmt.Sprintf(`SELECT %s FROM webhooks WHERE is_active = true AND COALESCE(tenant_id, '') = COALESCE($1, '')`, webhookColumns)
 
-	// Note: Event pattern matching (wildcards like task.*) should be done in application layer
-	// Here we just get all active webhooks for the tenant and let the WebhookManager filter
-
-	ctx := context.Background()
 	rows, err := q.Query(ctx, query, tenantID)
 	if err != nil {
 		return nil, err
@@ -315,6 +354,10 @@ func getActiveWebhooksForEvent(_ context.Context, q querier, eventType string, t
 			return nil, err
 		}
 		webhooks = append(webhooks, webhook)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating active webhooks: %w", err)
 	}
 
 	return webhooks, nil
@@ -402,6 +445,7 @@ func listWebhookEvents(ctx context.Context, q querier, opts store.ListWebhookEve
 	if opts.EventType != nil {
 		conditions = append(conditions, fmt.Sprintf("event_type = $%d", argNum))
 		args = append(args, *opts.EventType)
+		argNum++
 	}
 
 	where := ""
@@ -409,24 +453,34 @@ func listWebhookEvents(ctx context.Context, q querier, opts store.ListWebhookEve
 		where = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	// Get total count
+	// Get total count. Filters only: TotalCount reports how many events match,
+	// not how many are left after the current page.
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM webhook_events %s", where)
 	var total int64
 	if err := q.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 
-	// Get results
 	limit := 100
 	if opts.Limit > 0 && opts.Limit < limit {
 		limit = opts.Limit
 	}
-	offset := opts.Offset
 
-	query := fmt.Sprintf(`SELECT %s FROM webhook_events %s ORDER BY created_at DESC LIMIT %d OFFSET %d`,
-		webhookEventColumns, where, limit, offset)
+	// Ordering is fixed to newest first, so only the cursor is caller-supplied.
+	page, err := webhookEventSortColumns.page(
+		store.BaseListOptions{Cursor: opts.Cursor, OrderDesc: true}, argNum)
+	if err != nil {
+		return nil, err
+	}
 
-	rows, err := q.Query(ctx, query, args...)
+	// Fetch one extra row to detect whether another page exists.
+	query := fmt.Sprintf(`SELECT %s FROM webhook_events %s ORDER BY %s LIMIT $%d OFFSET $%d`,
+		webhookEventColumns, page.where(where), page.orderBy,
+		page.limitArg(argNum), page.limitArg(argNum)+1)
+	queryArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	queryArgs = append(queryArgs, limit+1, webhookOffset(opts.Offset, opts.Cursor))
+
+	rows, err := q.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -441,9 +495,26 @@ func listWebhookEvents(ctx context.Context, q querier, opts store.ListWebhookEve
 		items = append(items, event)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating webhook events: %w", err)
+	}
+
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+
+	var nextCursor string
+	if len(items) > 0 {
+		last := items[len(items)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.WebhookEvent]{
 		Items:      items,
 		TotalCount: total,
+		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -520,14 +591,38 @@ func (t *Tx) GetPendingWebhookEvents(ctx context.Context, limit int) ([]*store.W
 	return getPendingWebhookEvents(ctx, t.tx, limit)
 }
 
+// getPendingWebhookEvents claims a batch of events rather than merely reading
+// one. A plain SELECT hands the same rows to every replica on every tick, so
+// each event is delivered once per replica per tick.
+//
+// FOR UPDATE SKIP LOCKED keeps two concurrent claims from overlapping, and
+// pushing next_retry_at forward leases the batch: the claiming worker has that
+// long to attempt delivery before anyone else may look at it again. The
+// delivery path overwrites next_retry_at with its own backoff, and a worker
+// that dies mid-batch simply loses the lease and the events are retried.
+//
+// The lease is not a delivery guarantee: a batch that takes longer than the
+// lease can be picked up again. Webhook delivery is at-least-once by nature.
 func getPendingWebhookEvents(ctx context.Context, q querier, limit int) ([]*store.WebhookEvent, error) {
 	query := fmt.Sprintf(`
-		SELECT %s FROM webhook_events
-		WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-		ORDER BY created_at ASC
-		LIMIT $1`, webhookEventColumns)
+		WITH claimed AS (
+			SELECT id AS claimed_id FROM webhook_events
+			WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+			ORDER BY created_at ASC
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		), leased AS (
+			UPDATE webhook_events e
+			SET next_retry_at = NOW() + ($2::int * INTERVAL '1 second'),
+			    updated_at = NOW()
+			FROM claimed c
+			WHERE e.id = c.claimed_id
+			RETURNING %s
+		)
+		SELECT %s FROM leased ORDER BY created_at ASC`,
+		webhookEventColumns, webhookEventColumns)
 
-	rows, err := q.Query(ctx, query, limit)
+	rows, err := q.Query(ctx, query, limit, int(webhookEventClaimLease.Seconds()))
 	if err != nil {
 		return nil, err
 	}
@@ -540,6 +635,10 @@ func getPendingWebhookEvents(ctx context.Context, q querier, limit int) ([]*stor
 			return nil, err
 		}
 		events = append(events, event)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating pending webhook events: %w", err)
 	}
 
 	return events, nil

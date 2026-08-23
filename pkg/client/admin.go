@@ -145,9 +145,51 @@ type SpawnRunnerOptions struct {
 }
 
 // RunnerTokenWithSecret includes the raw token (only returned on creation/rotation).
+//
+// The admin API nests the token as {"token": {...}, "raw_token": "..."}, but
+// the fields are embedded here so callers can reach them directly. The JSON
+// methods below bridge the two shapes. Without them the embedded fields all
+// decoded as their zero values, which is why `mctl admin runner-tokens create`
+// printed a blank ID, pool and prefix while still showing the raw token.
 type RunnerTokenWithSecret struct {
 	store.RunnerToken
 	RawToken string `json:"raw_token"`
+}
+
+// runnerTokenWithSecretWire is the admin API's on-the-wire shape.
+// It must stay in sync with admin.CreateRunnerTokenResponse and
+// admin.RotateRunnerTokenResponse, which share this layout.
+type runnerTokenWithSecretWire struct {
+	Token    *store.RunnerToken `json:"token"`
+	RawToken string             `json:"raw_token"`
+}
+
+// UnmarshalJSON decodes the admin API's nested response into the flattened
+// struct. A response without a "token" object is rejected rather than decoded
+// into zero values: silent blanks are the failure this method exists to fix.
+func (r *RunnerTokenWithSecret) UnmarshalJSON(data []byte) error {
+	var wire runnerTokenWithSecretWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if wire.Token == nil {
+		return fmt.Errorf("runner token response has no %q object", "token")
+	}
+
+	r.RunnerToken = *wire.Token
+	r.RawToken = wire.RawToken
+
+	return nil
+}
+
+// MarshalJSON emits the same nested shape UnmarshalJSON accepts, so the type
+// round-trips.
+func (r RunnerTokenWithSecret) MarshalJSON() ([]byte, error) {
+	token := r.RunnerToken
+	return json.Marshal(runnerTokenWithSecretWire{
+		Token:    &token,
+		RawToken: r.RawToken,
+	})
 }
 
 // CreateRunnerTokenOptions contains options for creating a runner token.

@@ -1,3 +1,7 @@
+// Frozen subsystem. Excluded from the default build (decision D1):
+// build with -tags streaming_extra to compile it.
+//go:build streaming_extra
+
 package browser
 
 import (

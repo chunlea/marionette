@@ -10,6 +10,11 @@ export const apiClient: AxiosInstance = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  // Repeat array parameters as ?status=a&status=b. axios would otherwise send
+  // status[]=a, which Go's r.URL.Query()["status"] does not see at all — every
+  // filter was silently ignored, and the sidebar's pending-permission badge
+  // counted every permission ever raised.
+  paramsSerializer: { indexes: null },
 })
 
 // Request interceptor: Add API key to requests

@@ -13,7 +13,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,8 +22,58 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
+
+// assertHandshakeRejected asserts that an RPC never reached the service because
+// the server refused the connection.
+//
+// A rejected handshake reaches the client in more than one shape. Sometimes it
+// is the TLS error itself ("unknown authority", "certificate required");
+// sometimes the server closes the socket first and the client's write loses the
+// race, so the same rejection arrives as a broken pipe, a reset or an EOF.
+// Asserting on one particular string made these tests flake - which is exactly
+// how TestMTLS_RejectedWithWrongCA failed under Docker while passing on macOS.
+//
+// What actually matters is the gRPC status: a refused connection is a transport
+// failure (Unavailable), never an application-level response. Callers pair this
+// with a positive control so an Unavailable caused by a server that simply is
+// not listening cannot pass for a rejection.
+func assertHandshakeRejected(t *testing.T, err error) {
+	t.Helper()
+	require.Error(t, err)
+	assert.Equal(t, codes.Unavailable, status.Code(err),
+		"a refused connection must surface as Unavailable, got: %v", err)
+}
+
+// assertHandshakeAccepted is the positive control: the same server, reached
+// with valid credentials, lets the call through to the service. The RPC still
+// fails (the token is invalid) but it fails with an application-level status,
+// which proves the transport was established.
+func assertHandshakeAccepted(t *testing.T, addr string, certs mtlsCerts) {
+	t.Helper()
+
+	creds, err := loadClientCredentials(certs.clientCert, certs.clientKey, certs.caCert)
+	require.NoError(t, err)
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = pb.NewRunnerServiceClient(conn).RegisterRunner(ctx, &pb.RegisterRunnerRequest{
+		Name:     "control-runner",
+		Hostname: "control-host",
+		Token:    "invalid-token",
+	})
+	require.Error(t, err)
+	assert.NotEqual(t, codes.Unavailable, status.Code(err),
+		"positive control: a valid client must reach the service, got: %v", err)
+}
 
 // TestMTLS_SuccessfulConnection tests that a client with a valid certificate
 // can successfully connect to an mTLS-enabled server.
@@ -152,14 +201,8 @@ func TestMTLS_RejectedWithoutClientCert(t *testing.T) {
 	require.Error(t, err)
 	// The error should indicate certificate/TLS failure
 	// Error message varies by platform: "certificate required", "broken pipe", etc.
-	errStr := err.Error()
-	assert.True(t,
-		strings.Contains(errStr, "certificate required") ||
-			strings.Contains(errStr, "certificate") ||
-			strings.Contains(errStr, "tls:") ||
-			strings.Contains(errStr, "handshake") ||
-			strings.Contains(errStr, "broken pipe"),
-		"expected TLS/certificate error, got: %s", errStr)
+	assertHandshakeRejected(t, err)
+	assertHandshakeAccepted(t, server.listener.Addr().String(), certs)
 }
 
 // TestMTLS_RejectedWithWrongCA tests that a client with a certificate signed
@@ -228,16 +271,12 @@ func TestMTLS_RejectedWithWrongCA(t *testing.T) {
 		Hostname: "test-host",
 		Token:    "test-token",
 	})
-	require.Error(t, err)
-	// The error should indicate certificate verification failure
-	// (unknown authority, certificate signed by unknown authority, etc.)
-	errStr := err.Error()
-	assert.True(t,
-		strings.Contains(errStr, "unknown authority") ||
-			strings.Contains(errStr, "certificate") ||
-			strings.Contains(errStr, "tls:") ||
-			strings.Contains(errStr, "handshake"),
-		"expected TLS/certificate error, got: %s", errStr)
+	assertHandshakeRejected(t, err)
+
+	// Positive control: the same server accepts a client signed by the CA it
+	// trusts, so the rejection above was about the certificate and not about
+	// the server being unreachable.
+	assertHandshakeAccepted(t, server.listener.Addr().String(), certs)
 }
 
 // TestMTLS_RejectedWithExpiredCert tests that a client with an expired
@@ -370,16 +409,7 @@ func TestMTLS_RejectedWithExpiredCert(t *testing.T) {
 	require.Error(t, err)
 	// The error should indicate certificate is expired or TLS failure
 	// Error messages vary significantly across platforms and Go versions
-	errStr := err.Error()
-	assert.True(t,
-		strings.Contains(errStr, "expired") ||
-			strings.Contains(errStr, "certificate") ||
-			strings.Contains(errStr, "tls:") ||
-			strings.Contains(errStr, "handshake") ||
-			strings.Contains(errStr, "connection") ||
-			strings.Contains(errStr, "EOF") ||
-			strings.Contains(errStr, "broken pipe"),
-		"expected TLS/certificate error, got: %s", errStr)
+	assertHandshakeRejected(t, err)
 }
 
 // TestTLS_ServerOnlyNoClientVerification tests TLS without mTLS

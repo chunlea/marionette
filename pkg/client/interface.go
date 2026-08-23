@@ -4,29 +4,44 @@ package client
 import (
 	"context"
 
-	"github.com/chunlea/marionette/pkg/store"
+	"github.com/chunlea/marionette/pkg/server/api/apitypes"
 )
 
-// Session is an alias for store.Session.
-type Session = store.Session
+// The SDK's resource types are aliases of the API's wire contract, not of the
+// database models. Aliasing pkg/store meant the SDK promised fields the server
+// does not send (and vice versa) with nothing to catch the difference;
+// apitypes is the same package the server serializes and the OpenAPI document
+// is generated from, so the three cannot drift.
 
-// Task is an alias for store.Task.
-type Task = store.Task
+// Session is an alias for apitypes.Session.
+type Session = apitypes.Session
 
-// Log is an alias for store.Log.
-type Log = store.Log
+// Task is an alias for apitypes.Task.
+type Task = apitypes.Task
 
-// Runner is an alias for store.Runner.
-type Runner = store.Runner
+// TaskRun is an alias for apitypes.TaskRun.
+type TaskRun = apitypes.TaskRun
 
-// PermissionRequest is an alias for store.PermissionRequest.
-type PermissionRequest = store.PermissionRequest
+// Log is an alias for apitypes.Log.
+type Log = apitypes.Log
 
-// ScheduledTask is an alias for store.ScheduledTask.
-type ScheduledTask = store.ScheduledTask
+// Runner is an alias for apitypes.Runner.
+type Runner = apitypes.Runner
 
-// ListResult is an alias for store.ListResult.
-type ListResult[T any] = store.ListResult[T]
+// PermissionRequest is an alias for apitypes.PermissionRequest.
+type PermissionRequest = apitypes.PermissionRequest
+
+// Workspace is an alias for apitypes.Workspace.
+type Workspace = apitypes.Workspace
+
+// ScheduledTask is an alias for apitypes.ScheduledTask.
+type ScheduledTask = apitypes.ScheduledTask
+
+// Tunnel is an alias for apitypes.Tunnel.
+type Tunnel = apitypes.Tunnel
+
+// ListResult is an alias for the API's list envelope.
+type ListResult[T any] = apitypes.ListResponse[T]
 
 // Client provides access to the Marionette API.
 type Client interface {

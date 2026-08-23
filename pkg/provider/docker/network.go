@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strconv"
 	"strings"
 
 	"github.com/chunlea/marionette/pkg/network"
@@ -16,22 +15,28 @@ import (
 type NetworkIsolation struct {
 	resolver *network.DNSResolver
 	iptables *iptables.Manager
+
+	// client inspects containers. Without it, getContainerPID has to shell out
+	// to the docker CLI.
+	client DockerClient
 }
 
 // NewNetworkIsolation creates a new network isolation handler.
-func NewNetworkIsolation() *NetworkIsolation {
+func NewNetworkIsolation(client DockerClient) *NetworkIsolation {
 	return &NetworkIsolation{
 		resolver: network.NewDNSResolver(),
 		iptables: iptables.NewManager(iptables.NewRealExecutor()),
+		client:   client,
 	}
 }
 
 // NewNetworkIsolationWithExecutor creates a network isolation handler with a custom iptables executor.
 // This is useful for testing.
-func NewNetworkIsolationWithExecutor(executor iptables.Executor) *NetworkIsolation {
+func NewNetworkIsolationWithExecutor(executor iptables.Executor, client DockerClient) *NetworkIsolation {
 	return &NetworkIsolation{
 		resolver: network.NewDNSResolver(),
 		iptables: iptables.NewManager(executor),
+		client:   client,
 	}
 }
 
@@ -87,25 +92,26 @@ func containerIDToSessionID(containerID string) string {
 }
 
 // getContainerPID gets the PID of the main process in a container.
+//
+// This used to shell out to the docker CLI even though the provider already
+// holds an API client, which required the binary on PATH and gave worse errors.
 func (n *NetworkIsolation) getContainerPID(ctx context.Context, containerID string) (int, error) {
-	// Use docker inspect to get the container PID
-	cmd := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Pid}}", containerID)
-	output, err := cmd.Output()
+	if n.client == nil {
+		return 0, fmt.Errorf("docker client not configured")
+	}
+
+	info, err := n.client.ContainerInspect(ctx, containerID)
 	if err != nil {
-		return 0, fmt.Errorf("docker inspect failed: %w", err)
+		return 0, fmt.Errorf("inspecting container %s: %w", containerID, err)
+	}
+	if info.State == nil {
+		return 0, fmt.Errorf("container %s has no state", containerID)
+	}
+	if info.State.Pid == 0 {
+		return 0, fmt.Errorf("container %s is not running (PID is 0)", containerID)
 	}
 
-	pidStr := strings.TrimSpace(string(output))
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		return 0, fmt.Errorf("invalid PID %q: %w", pidStr, err)
-	}
-
-	if pid == 0 {
-		return 0, fmt.Errorf("container not running (PID is 0)")
-	}
-
-	return pid, nil
+	return info.State.Pid, nil
 }
 
 // applyIPTablesInNamespace applies iptables rules in a container's network namespace.

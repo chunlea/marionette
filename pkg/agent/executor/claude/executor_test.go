@@ -2,7 +2,6 @@ package claude
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -207,6 +206,38 @@ func TestExecutor_buildArgs_WithResume(t *testing.T) {
 	assert.Contains(t, args, "--resume")
 	assert.Contains(t, args, "sess_abc123")
 	assert.True(t, hasResume)
+
+	// Resume runs read the prompt from stdin as stream-json. Without this the
+	// CLI never reads stdin and SendMessage writes into a pipe nobody reads.
+	assertArgPair(t, args, "--input-format", "stream-json")
+	assert.Contains(t, args, "--print")
+	assert.NotContains(t, args, "Continue", "the prompt is delivered over stdin, not argv")
+}
+
+// assertArgPair asserts that flag is present and immediately followed by value.
+func assertArgPair(t *testing.T, args []string, flag, value string) {
+	t.Helper()
+
+	for i, arg := range args {
+		if arg == flag {
+			require.Less(t, i+1, len(args), "%s must have a value", flag)
+			assert.Equal(t, value, args[i+1])
+			return
+		}
+	}
+	t.Fatalf("args %v missing flag %s", args, flag)
+}
+
+// TestExecutor_buildArgs_NonResumeKeepsArgvPrompt pins that only stream mode
+// moves the prompt to stdin.
+func TestExecutor_buildArgs_NonResumeKeepsArgvPrompt(t *testing.T) {
+	e := New()
+
+	args, hasResume := e.buildArgs(&executor.Task{Prompt: "Do the thing"}, nil)
+
+	assert.False(t, hasResume)
+	assert.NotContains(t, args, "--input-format")
+	assertArgPair(t, args, "--print", "Do the thing")
 }
 
 func TestExecutor_buildArgs_WithResumeConversationID(t *testing.T) {
@@ -385,7 +416,7 @@ func TestExecutor_IsStreamMode_Default(t *testing.T) {
 }
 
 func TestExecutor_Execute_InvalidBinary(t *testing.T) {
-	e := New(WithBinaryPath("/nonexistent/binary"))
+	e := New(WithBinaryPath("/nonexistent/binary"), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -426,7 +457,7 @@ func TestExecutor_Execute_AlreadyRunning(t *testing.T) {
 
 func TestExecutor_Execute_ContextCanceled(t *testing.T) {
 	// Use a simple echo command to simulate claude
-	e := New(WithBinaryPath("echo"))
+	e := New(WithBinaryPath("echo"), WithoutPermissionGating())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -451,178 +482,6 @@ func TestExecutor_Interfaces(t *testing.T) {
 	// Verify interface implementation
 	var _ executor.Executor = e
 	var _ executor.StreamExecutor = e
-}
-
-func TestIsPermissionRequired(t *testing.T) {
-	tests := []struct {
-		tool     string
-		required bool
-	}{
-		{"Bash", true},
-		{"Write", true},
-		{"Edit", true},
-		{"NotebookEdit", true},
-		{"computer", true},
-		{"Read", false},
-		{"Glob", false},
-		{"Grep", false},
-		{"WebFetch", false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.tool, func(t *testing.T) {
-			assert.Equal(t, tc.required, IsPermissionRequired(tc.tool))
-		})
-	}
-}
-
-func TestPermissionToolNames(t *testing.T) {
-	assert.True(t, PermissionToolNames["Bash"])
-	assert.True(t, PermissionToolNames["Write"])
-	assert.True(t, PermissionToolNames["Edit"])
-	assert.False(t, PermissionToolNames["Read"])
-	assert.False(t, PermissionToolNames["nonexistent"])
-}
-
-func TestExecutor_processOutput_PermissionRequest(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-
-	// Simulate Claude output with a tool_use event for Bash (permission required)
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"Bash","input":"{\"command\":\"ls -la\"}"}]}}`
-
-	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify permission request was made
-	requests := handler.GetPermissionRequests()
-	require.Len(t, requests, 1)
-	assert.Equal(t, "toolu_123", requests[0].ID)
-	assert.Equal(t, "Bash", requests[0].Tool)
-	assert.Contains(t, requests[0].Action, "ls -la")
-	assert.Equal(t, executor.RiskMedium, requests[0].RiskLevel)
-}
-
-func TestExecutor_processOutput_PermissionApproved(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-	handler.permissionApprove = true
-
-	// Simulate Claude output with a tool_use event
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_456","name":"Write","input":"{\"file_path\":\"/tmp/test.txt\"}"}]}}`
-
-	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify permission was approved
-	outputs := handler.GetOutputs()
-	found := false
-	for _, o := range outputs {
-		if strings.Contains(string(o.data), "permission_approved: Write toolu_456") {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "Should emit permission_approved system message")
-}
-
-func TestExecutor_processOutput_PermissionDenied(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-	handler.permissionApprove = false
-
-	// Simulate Claude output with a tool_use event
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_789","name":"Edit","input":"{\"file_path\":\"/etc/passwd\"}"}]}}`
-
-	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify permission was denied
-	outputs := handler.GetOutputs()
-	found := false
-	for _, o := range outputs {
-		if strings.Contains(string(o.data), "permission_denied: Edit toolu_789") {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "Should emit permission_denied system message")
-}
-
-func TestExecutor_processOutput_PermissionError(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-	handler.permissionErr = errors.New("context canceled")
-
-	// Simulate Claude output with a tool_use event
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_err","name":"Bash","input":"{}"}]}}`
-
-	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify error message was emitted
-	outputs := handler.GetOutputs()
-	found := false
-	for _, o := range outputs {
-		if strings.Contains(string(o.data), "permission_request_error") {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "Should emit permission_request_error system message")
-}
-
-func TestExecutor_processOutput_NoPermissionForReadTools(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-
-	// Simulate Claude output with a tool_use event for Read (no permission required)
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":"{\"file_path\":\"/tmp/test.txt\"}"}]}}`
-
-	reader := strings.NewReader(toolUseJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify no permission request was made
-	requests := handler.GetPermissionRequests()
-	assert.Len(t, requests, 0, "Read tool should not require permission")
-}
-
-func TestExecutor_processOutput_MultipleToolUses(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	ctx := context.Background()
-	handler := newTestOutputHandler()
-	handler.permissionApprove = true
-
-	// Simulate multiple tool uses - one requiring permission, one not
-	bashJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":"{}"}]}}`
-	readJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Read","input":"{}"}]}}`
-	writeJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_3","name":"Write","input":"{}"}]}}`
-
-	reader := strings.NewReader(bashJSON + "\n" + readJSON + "\n" + writeJSON + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Verify only Bash and Write triggered permission requests
-	requests := handler.GetPermissionRequests()
-	require.Len(t, requests, 2)
-	assert.Equal(t, "Bash", requests[0].Tool)
-	assert.Equal(t, "Write", requests[1].Tool)
 }
 
 func TestExecutor_processOutput_ContextCanceled(t *testing.T) {
@@ -658,30 +517,6 @@ func TestExecutor_processOutput_ContextCanceled(t *testing.T) {
 		_ = writer.Close()
 		t.Fatal("processOutput did not return after context cancellation and pipe close")
 	}
-}
-
-func TestExecutor_processOutput_PermissionRequestStopsOnError(t *testing.T) {
-	e := New()
-	e.parser = NewParser().(*Parser)
-
-	// Use a cancelable context
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	handler := newTestOutputHandler()
-	handler.permissionErr = context.Canceled
-
-	// Simulate two tool uses that require permission
-	// After the first error, processing should stop
-	bashJSON1 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":"{}"}]}}`
-	bashJSON2 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":"{}"}]}}`
-
-	reader := strings.NewReader(bashJSON1 + "\n" + bashJSON2 + "\n")
-	e.processOutput(ctx, reader, "stdout", handler, testTask())
-
-	// Should only have one permission request since processing stops on error
-	requests := handler.GetPermissionRequests()
-	assert.Len(t, requests, 1, "Processing should stop after permission error")
 }
 
 func TestExecutor_processStderr(t *testing.T) {
@@ -811,11 +646,16 @@ func TestExecutor_SendMessage_Success(t *testing.T) {
 		done <- e.SendMessage([]byte("test message"))
 	}()
 
-	// Read from the pipe
+	// Read from the pipe. SendMessage takes plain text and writes the
+	// stream-json envelope the CLI expects, one message per line.
 	buf := make([]byte, 1024)
 	n, err := reader.Read(buf)
 	assert.NoError(t, err)
-	assert.Equal(t, "test message\n", string(buf[:n]))
+	written := string(buf[:n])
+	assert.True(t, strings.HasSuffix(written, "\n"), "each message is one line")
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"test message"}]}}`,
+		strings.TrimSpace(written))
 
 	// Check SendMessage returned without error
 	err = <-done
@@ -891,16 +731,16 @@ func TestExecutor_processOutput_ParseError(t *testing.T) {
 func TestExecutor_Execute_WithMockScript(t *testing.T) {
 	// Create a temp script that simulates Claude output
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"Claude Code started"}'
+echo '{"type":"system","subtype":"init","session_id":"sess_test123","model":"mock","claude_code_version":"2.1.241"}'
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Hello!"}]}}'
-echo '{"type":"result","result":{"success":true,"session_id":"sess_test123"}}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_test123","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}'
 `
 	scriptPath := "/tmp/claude/mock_claude.sh"
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -917,6 +757,15 @@ echo '{"type":"result","result":{"success":true,"session_id":"sess_test123"}}'
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, "sess_test123", result.AgentSession)
 
+	// Token counts come from the result line's usage block:
+	// input_tokens + cache_creation + cache_read, and output_tokens.
+	assert.Equal(t, int64(18), result.TokensInput)
+	assert.Equal(t, int64(20), result.TokensOutput)
+
+	// The context snapshot must carry the CLI session id so the next task
+	// can --resume it.
+	assert.JSONEq(t, `{"conversation_id":"sess_test123"}`, string(result.ContextSnapshot))
+
 	// Verify outputs were captured
 	outputs := handler.GetOutputs()
 	assert.Greater(t, len(outputs), 0)
@@ -925,15 +774,15 @@ echo '{"type":"result","result":{"success":true,"session_id":"sess_test123"}}'
 func TestExecutor_Execute_WithWorkingDir(t *testing.T) {
 	// Create a script that prints working directory
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"Started in '"$PWD"'"}'
-echo '{"type":"result","result":{"success":true}}'
+echo '{"type":"system","subtype":"init","session_id":"sess_wd","cwd":"'"$PWD"'"}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_wd","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}'
 `
 	scriptPath := "/tmp/claude/mock_claude_wd.sh"
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -960,7 +809,7 @@ sleep 100
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -969,7 +818,9 @@ sleep 100
 	}
 	handler := newTestOutputHandler()
 
+	started := time.Now()
 	result, err := e.Execute(ctx, task, nil, handler)
+	elapsed := time.Since(started)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -977,12 +828,19 @@ sleep 100
 	// When timeout kills the process, it may exit with -1 (signal)
 	// or the error might be "timeout" depending on timing
 	assert.NotEmpty(t, result.Error)
+
+	// The timeout must actually stop the work. The mock sleeps for 100s; if
+	// only the shell were signalled, its `sleep` child would survive holding
+	// our pipes and Execute would return once the sleep finished rather than
+	// once the deadline passed.
+	assert.Less(t, elapsed, 10*time.Second,
+		"timeout must kill the process tree, not just the top-level process")
 }
 
 func TestExecutor_Execute_NonZeroExit(t *testing.T) {
 	// Create a script that exits with error
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"Starting"}'
+echo '{"type":"system","subtype":"init","session_id":"sess_fail"}'
 exit 42
 `
 	scriptPath := "/tmp/claude/mock_claude_fail.sh"
@@ -990,7 +848,7 @@ exit 42
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -1007,19 +865,75 @@ exit 42
 	assert.Equal(t, 42, result.ExitCode)
 }
 
+// TestExecutor_Execute_NoResultLine pins the honesty rule: a CLI that exits 0
+// without ever emitting a result line has not completed the turn, and must not
+// be reported as a successful run.
+func TestExecutor_Execute_NoResultLine(t *testing.T) {
+	scriptContent := `#!/bin/bash
+echo '{"type":"system","subtype":"init","session_id":"sess_silent"}'
+exit 0
+`
+	scriptPath := "/tmp/claude/mock_claude_silent.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
+
+	result, err := e.Execute(context.Background(), &executor.Task{
+		Prompt:  "test",
+		Timeout: 10 * time.Second,
+	}, nil, newTestOutputHandler())
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.Equal(t, 0, result.ExitCode)
+	assert.Contains(t, result.Error, "without emitting a result message")
+}
+
+// TestExecutor_Execute_AgentReportedFailure pins the other half: a clean exit
+// whose result line says the agent failed is a failed run, with the CLI's own
+// reason carried through.
+func TestExecutor_Execute_AgentReportedFailure(t *testing.T) {
+	scriptContent := `#!/bin/bash
+echo '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"ran out of turns","session_id":"sess_maxturns","usage":{"input_tokens":1,"output_tokens":2}}'
+exit 0
+`
+	scriptPath := "/tmp/claude/mock_claude_maxturns.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
+
+	result, err := e.Execute(context.Background(), &executor.Task{
+		Prompt:  "test",
+		Timeout: 10 * time.Second,
+	}, nil, newTestOutputHandler())
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "max turns reached")
+	assert.Contains(t, result.Error, "ran out of turns")
+	assert.Equal(t, int64(1), result.TokensInput)
+	assert.Equal(t, int64(2), result.TokensOutput)
+}
+
 func TestExecutor_Execute_WithStderr(t *testing.T) {
 	// Create a script that outputs to stderr
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"Started"}' >&1
+echo '{"type":"system","subtype":"init","session_id":"sess_stderr"}' >&1
 echo "Warning: something" >&2
-echo '{"type":"result","result":{"success":true}}' >&1
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_stderr","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}' >&1
 `
 	scriptPath := "/tmp/claude/mock_claude_stderr.sh"
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -1049,15 +963,15 @@ echo '{"type":"result","result":{"success":true}}' >&1
 func TestExecutor_Execute_WithConfig(t *testing.T) {
 	// Create a script that prints environment variables
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"API_KEY='"${ANTHROPIC_API_KEY}"'"}'
-echo '{"type":"result","result":{"success":true}}'
+echo '{"type":"system","subtype":"init","session_id":"sess_env","apiKeySource":"'"${ANTHROPIC_API_KEY}"'"}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_env","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}'
 `
 	scriptPath := "/tmp/claude/mock_claude_env.sh"
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	require.NoError(t, err)
 	defer func() { _ = os.Remove(scriptPath) }()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
 	ctx := context.Background()
 	task := &executor.Task{
@@ -1077,30 +991,129 @@ echo '{"type":"result","result":{"success":true}}'
 	assert.True(t, result.Success)
 }
 
+// TestExecutor_Execute_StreamMode proves the resume path end to end: the
+// prompt is delivered as a stream-json user message on stdin, the turn's
+// result closes stdin, and the process exits instead of hanging.
 func TestExecutor_Execute_StreamMode(t *testing.T) {
-	// Create a script that just outputs
-	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"Started"}'
-echo '{"type":"result","result":{"success":true,"session_id":"sess_stream"}}'
-`
 	scriptPath := "/tmp/claude/mock_claude_stream.sh"
+	capturePath := scriptPath + ".stdin"
+	_ = os.Remove(capturePath)
+
+	// Reads the prompt from stdin, then answers. A script that ignored stdin
+	// would pass trivially, so it echoes what it read for the assertions.
+	scriptContent := `#!/bin/bash
+IFS= read -r prompt
+printf '%s\n' "$prompt" >> "$0.stdin"
+echo '{"type":"system","subtype":"init","session_id":"sess_stream"}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_stream","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}'
+# Block until stdin is closed; the executor must close it after the result.
+cat > /dev/null
+`
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	require.NoError(t, err)
-	defer func() { _ = os.Remove(scriptPath) }()
+	defer func() {
+		_ = os.Remove(scriptPath)
+		_ = os.Remove(capturePath)
+	}()
 
-	e := New(WithBinaryPath(scriptPath))
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
 
-	ctx := context.Background()
-	// Set ContextSnapshot to enable stream mode
 	task := &executor.Task{
-		Prompt:          "continue",
+		Prompt:          "continue please",
 		ContextSnapshot: []byte(`{"session_id":"sess_stream"}`),
 		Timeout:         10 * time.Second,
 	}
-	handler := newTestOutputHandler()
 
-	result, err := e.Execute(ctx, task, nil, handler)
+	result, err := e.Execute(context.Background(), task, nil, newTestOutputHandler())
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	assert.True(t, result.Success)
+	assert.Equal(t, "sess_stream", result.AgentSession)
+
+	captured, err := os.ReadFile(capturePath)
+	require.NoError(t, err, "the mock must have received the prompt on stdin")
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"continue please"}]}}`,
+		strings.TrimSpace(string(captured)))
+}
+
+// TestExecutor_SendMessage_RoundTrip queues a second user message during a
+// stream-mode run and proves it reaches the CLI's stdin in the envelope the
+// CLI actually accepts.
+func TestExecutor_SendMessage_RoundTrip(t *testing.T) {
+	scriptPath := "/tmp/claude/mock_claude_roundtrip.sh"
+	capturePath := scriptPath + ".stdin"
+	_ = os.Remove(capturePath)
+
+	// Reads two messages before finishing the turn, so the test can queue one
+	// while the run is still in flight.
+	scriptContent := `#!/bin/bash
+IFS= read -r first
+printf '%s\n' "$first" >> "$0.stdin"
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"ack"}]}}'
+IFS= read -r second
+printf '%s\n' "$second" >> "$0.stdin"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"sess_rt","usage":{"input_tokens":1,"output_tokens":1}}'
+cat > /dev/null
+`
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() {
+		_ = os.Remove(scriptPath)
+		_ = os.Remove(capturePath)
+	}()
+
+	e := New(WithBinaryPath(scriptPath), WithoutPermissionGating())
+	handler := newTestOutputHandler()
+
+	done := make(chan *executor.Result, 1)
+	go func() {
+		result, execErr := e.Execute(context.Background(), &executor.Task{
+			Prompt:          "first message",
+			ContextSnapshot: []byte(`{"conversation_id":"sess_rt"}`),
+			Timeout:         15 * time.Second,
+		}, nil, handler)
+		assert.NoError(t, execErr)
+		done <- result
+	}()
+
+	// Wait for the mock to acknowledge the first message, then queue another.
+	require.Eventually(t, func() bool {
+		data, readErr := os.ReadFile(capturePath)
+		return readErr == nil && strings.Contains(string(data), "first message")
+	}, 10*time.Second, 20*time.Millisecond, "mock never received the initial prompt")
+
+	require.NoError(t, e.SendMessage([]byte("second message")))
+
+	result := <-done
+	require.NotNil(t, result)
+	assert.True(t, result.Success)
+
+	captured, err := os.ReadFile(capturePath)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(captured)), "\n")
+	require.Len(t, lines, 2, "both messages must reach the CLI")
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"first message"}]}}`,
+		lines[0])
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"second message"}]}}`,
+		lines[1])
+
+	// Once the turn ends the executor closes stdin, so further sends fail
+	// rather than writing into a closed pipe.
+	assert.Error(t, e.SendMessage([]byte("too late")))
+}
+
+// TestExecutor_userMessageEnvelope pins the exact stdin contract verified
+// against CLI 2.1.241.
+func TestExecutor_userMessageEnvelope(t *testing.T) {
+	envelope, err := userMessageEnvelope("hello \"world\"")
+	require.NoError(t, err)
+
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello \"world\""}]}}`,
+		string(envelope))
+	assert.NotContains(t, string(envelope), "\n", "the envelope must be a single line")
 }

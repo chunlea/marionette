@@ -10,7 +10,7 @@ import {
   useStartDesktopStream,
   useStopDesktopStream,
 } from '@/api/hooks/useStreams'
-import type { Stream, StreamStatus } from '@/types/stream'
+import type { StreamStatus } from '@/types/stream'
 
 export interface DesktopStreamCardProps {
   sessionId: string
@@ -25,7 +25,7 @@ export function DesktopStreamCard({
 }: DesktopStreamCardProps) {
   const [isViewerOpen, setIsViewerOpen] = useState(false)
 
-  const { data: activeStream, streams, isLoading } = useActiveDesktopStream(sessionId)
+  const { data: activeStream, isLoading } = useActiveDesktopStream(sessionId)
   const startStream = useStartDesktopStream()
   const stopStream = useStopDesktopStream()
 
@@ -38,12 +38,12 @@ export function DesktopStreamCard({
         sessionId,
         runnerId,
         config: {
-          resolution: {
+          config: {
             width: 1920,
             height: 1080,
+            frame_rate: 30,
+            input_enabled: true,
           },
-          frame_rate: 30,
-          input_enabled: true,
         },
       })
     } catch (error) {
@@ -63,7 +63,7 @@ export function DesktopStreamCard({
   const renderStreamStatus = () => {
     if (isLoading) {
       return (
-        <Badge variant="secondary" className="flex items-center gap-1">
+        <Badge variant="default" className="flex items-center gap-1">
           <Loader2 className="h-3 w-3 animate-spin" />
           Loading
         </Badge>
@@ -71,7 +71,7 @@ export function DesktopStreamCard({
     }
 
     if (!activeStream) {
-      return <Badge variant="secondary">No Stream</Badge>
+      return <Badge variant="default">No Stream</Badge>
     }
 
     return <StreamStatusBadge status={activeStream.status} />
@@ -210,12 +210,7 @@ export function DesktopStreamCard({
       </Card>
 
       {/* Full-screen viewer dialog */}
-      <Dialog
-        open={isViewerOpen}
-        onClose={() => setIsViewerOpen(false)}
-        title="Desktop Viewer"
-        size="full"
-      >
+      <Dialog open={isViewerOpen} onClose={() => setIsViewerOpen(false)}>
         {activeStream && (
           <div className="h-[calc(100vh-120px)]">
             <DesktopViewer
@@ -257,7 +252,7 @@ function StreamStatusBadge({ status }: { status: StreamStatus }) {
       )
     case 'stopped':
       return (
-        <Badge variant="secondary" className="flex items-center gap-1">
+        <Badge variant="default" className="flex items-center gap-1">
           <Square className="h-3 w-3" />
           Stopped
         </Badge>

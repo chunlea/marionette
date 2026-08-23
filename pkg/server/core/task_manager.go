@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"sync"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -69,7 +71,9 @@ type TaskManagerInterface interface {
 	Cancel(ctx context.Context, taskID string) error
 	Execute(ctx context.Context, taskID string) error
 	ReExecute(ctx context.Context, taskID string) error
+	DispatchNext(ctx context.Context, sessionID string) error
 	CreateRun(ctx context.Context, taskID string) (*store.TaskRun, error)
+	ListRuns(ctx context.Context, taskID string, opts ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error)
 	OnTaskAccepted(ctx context.Context, runID string) error
 	OnTaskStarted(ctx context.Context, runID string) error
 	OnTaskProgress(ctx context.Context, runID string, progress int) error
@@ -96,12 +100,40 @@ type TaskManager struct {
 	sessionMgr SessionManagerInterface
 	auditLog   audit.Logger
 	webhooks   *WebhookIntegration
+	background *backgroundTasks
 	logger     *zap.Logger
+
+	// dispatchLocks serialises DispatchNext per session.
+	//
+	// Creating a task both activates the session (which schedules a dispatch)
+	// and dispatches directly, and a resume dispatches too. Without this,
+	// two of those can each see "nothing running" and both send the same
+	// pending task to the runner.
+	dispatchLocks sync.Map // sessionID -> *sync.Mutex
 }
 
-// SetWebhookIntegration sets the webhook integration for dispatching events.
-func (m *TaskManager) SetWebhookIntegration(wi *WebhookIntegration) {
-	m.webhooks = wi
+// dispatchLock returns the per-session dispatch mutex, creating it on first use.
+func (m *TaskManager) dispatchLock(sessionID string) *sync.Mutex {
+	lock, _ := m.dispatchLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+// TaskManagerOption is a functional option for TaskManager.
+type TaskManagerOption func(*TaskManager)
+
+// WithTaskBackground supplies the shared background worker pool.
+// When unset, the manager creates its own.
+func WithTaskBackground(b *backgroundTasks) TaskManagerOption {
+	return func(m *TaskManager) {
+		m.background = b
+	}
+}
+
+// WithTaskWebhooks sets the webhook integration for dispatching task events.
+func WithTaskWebhooks(wi *WebhookIntegration) TaskManagerOption {
+	return func(m *TaskManager) {
+		m.webhooks = wi
+	}
 }
 
 // NewTaskManager creates a new TaskManager.
@@ -111,14 +143,22 @@ func NewTaskManager(
 	sessionMgr SessionManagerInterface,
 	auditLog audit.Logger,
 	logger *zap.Logger,
+	opts ...TaskManagerOption,
 ) *TaskManager {
-	return &TaskManager{
+	m := &TaskManager{
 		store:      store,
 		cmdSender:  cmdSender,
 		sessionMgr: sessionMgr,
 		auditLog:   auditLog,
 		logger:     logger,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	if m.background == nil {
+		m.background = newBackgroundTasks(context.Background(), 0, logger)
+	}
+	return m
 }
 
 // CreateTaskOptions contains options for creating a new task.
@@ -231,7 +271,110 @@ func (m *TaskManager) Create(ctx context.Context, opts CreateTaskOptions) (*stor
 		m.webhooks.DispatchTaskEvent(ctx, "task.created", task, nil)
 	}
 
+	// Creating a task is enough to run it. Before this, a task sat pending
+	// until someone called POST /tasks/{id}/execute by hand.
+	m.autoDispatch(ctx, task)
+
 	return task, nil
+}
+
+// DispatchNext executes the oldest pending task of a session, if the session is
+// free to take one.
+//
+// Tasks within a session are sequential, so a session with a task already in
+// flight is left alone: the next one goes out when that finishes. Returns nil
+// when there is nothing to dispatch - an idle session is not an error.
+func (m *TaskManager) DispatchNext(ctx context.Context, sessionID string) error {
+	// Held across the whole dispatch, including Execute: Execute commits the
+	// task as running before it sends, so a caller that waits here then sees
+	// the task in flight and correctly does nothing.
+	lock := m.dispatchLock(sessionID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	running, err := m.store.ListTasks(ctx, ListTasksOptions{
+		BaseListOptions: store.BaseListOptions{Limit: 1},
+		SessionID:       &sessionID,
+		Status:          []string{TaskStatusRunning},
+	})
+	if err != nil {
+		return err
+	}
+	if len(running.Items) > 0 {
+		m.logger.Debug("session already has a task in flight, not dispatching",
+			zap.String("session_id", sessionID),
+			zap.String("running_task_id", running.Items[0].ID),
+		)
+		return nil
+	}
+
+	pending, err := m.store.ListTasks(ctx, ListTasksOptions{
+		BaseListOptions: store.BaseListOptions{Limit: dispatchScanLimit},
+		SessionID:       &sessionID,
+		Status:          []string{TaskStatusPending},
+	})
+	if err != nil {
+		return err
+	}
+
+	next := oldestTask(pending.Items)
+	if next == nil {
+		return nil
+	}
+
+	m.logger.Info("dispatching pending task",
+		zap.String("session_id", sessionID),
+		zap.String("task_id", next.ID),
+	)
+	return m.Execute(ctx, next.ID)
+}
+
+// dispatchScanLimit bounds how many pending tasks are considered when picking
+// the oldest. A session's backlog is small by construction - execution is
+// sequential - so this is a safety valve, not a page size.
+const dispatchScanLimit = 200
+
+// oldestTask returns the earliest-created task, or nil for an empty list.
+// The ordering is computed here rather than pushed into the query so the
+// behaviour does not depend on a store's default sort.
+func oldestTask(tasks []*store.Task) *store.Task {
+	var oldest *store.Task
+	for _, task := range tasks {
+		if oldest == nil || task.CreatedAt.Before(oldest.CreatedAt) {
+			oldest = task
+		}
+	}
+	return oldest
+}
+
+// autoDispatch gets a newly created task moving without a second API call.
+//
+// It asks the session manager for a runner first, which activates a pending
+// session by allocating one. When no runner can be had, the task and the
+// session both stay pending and say so - that is the honest state, and the user
+// re-triggers once capacity exists. A dispatch that reaches a runner and fails
+// is NOT retried here: it parks as pending for manual re-trigger.
+func (m *TaskManager) autoDispatch(ctx context.Context, task *store.Task) {
+	if m.sessionMgr == nil {
+		return
+	}
+
+	if _, err := m.sessionMgr.EnsureRunner(ctx, task.SessionID); err != nil {
+		m.logger.Warn("task created but no runner is available; it stays pending",
+			zap.String("task_id", task.ID),
+			zap.String("session_id", task.SessionID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	if err := m.DispatchNext(ctx, task.SessionID); err != nil {
+		m.logger.Warn("task created but dispatch failed; it stays pending",
+			zap.String("task_id", task.ID),
+			zap.String("session_id", task.SessionID),
+			zap.Error(err),
+		)
+	}
 }
 
 // Get retrieves a task by ID.
@@ -324,69 +467,168 @@ func (m *TaskManager) Cancel(ctx context.Context, taskID string) error {
 
 // Execute sends a task to a runner for execution.
 func (m *TaskManager) Execute(ctx context.Context, taskID string) error {
-	// Get task
-	task, err := m.store.GetTask(ctx, taskID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return ErrTaskNotFound
+	_, err := m.dispatch(ctx, taskID, dispatchOptions{})
+	return err
+}
+
+// dispatchOptions tunes a single dispatch attempt.
+type dispatchOptions struct {
+	// incrementRetry spends one unit of the task's retry budget. The budget is
+	// only spent when the dispatch actually reaches a runner.
+	incrementRetry bool
+}
+
+// dispatch records a task run and sends it to the session's runner.
+//
+// All database work happens in one transaction, and the command is sent only
+// after that transaction commits: a command must never be published for a run
+// the database has not durably recorded. Previously the run creation, the task
+// status update and the send were three independent steps, so a failed send
+// left the task "running" forever with a run nobody would ever finish, and
+// Retry burned a retry before it knew whether the dispatch would work at all.
+//
+// If the send fails, a compensating transaction unwinds the whole attempt: the
+// run is marked failed for the audit trail, the retry budget is handed back,
+// and the task returns to exactly the state it was in before the dispatch.
+func (m *TaskManager) dispatch(ctx context.Context, taskID string, opts dispatchOptions) (*store.TaskRun, error) {
+	var (
+		run      *store.TaskRun
+		runnerID string
+		cmd      *pb.ServerCommand
+	)
+
+	err := store.WithTx(ctx, m.store, func(tx store.Tx) error {
+		task, err := tx.GetTask(ctx, taskID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return ErrTaskNotFound
+			}
+			return err
 		}
-		return err
-	}
 
-	// Get session
-	session, err := m.store.GetSession(ctx, task.SessionID)
-	if err != nil {
-		return err
-	}
+		if opts.incrementRetry && task.RetryCount >= task.MaxRetries {
+			return ErrMaxRetriesExceeded
+		}
 
-	// Check if session has a runner
-	if session.RunnerID == nil || *session.RunnerID == "" {
-		return ErrNoRunnerAttached
-	}
+		session, err := tx.GetSession(ctx, task.SessionID)
+		if err != nil {
+			return err
+		}
+		if session.RunnerID == nil || *session.RunnerID == "" {
+			return ErrNoRunnerAttached
+		}
+		runnerID = *session.RunnerID
 
-	// Create a new task run
-	run, err := m.CreateRun(ctx, taskID)
-	if err != nil {
-		return err
-	}
+		retryCount := task.RetryCount
+		if opts.incrementRetry {
+			retryCount++
+		}
 
-	// Update task status to running
-	if err := m.store.UpdateTask(ctx, taskID, store.TaskUpdates{
-		Status: stringPtr(TaskStatusRunning),
-	}); err != nil {
-		return err
-	}
+		now := time.Now()
+		run = &store.TaskRun{
+			ID:        id.TaskRun(),
+			TaskID:    taskID,
+			Attempt:   retryCount + 1,
+			RunnerID:  session.RunnerID,
+			Status:    TaskRunStatusPending,
+			TenantID:  task.TenantID,
+			QueuedAt:  now,
+			UpdatedAt: now,
+		}
+		if err := tx.CreateTaskRun(ctx, run); err != nil {
+			return err
+		}
 
-	// Send ExecuteTask command to runner
-	// Note: Attempt is bounded by MaxRetries (small value), so int32 conversion is safe
-	cmd := &pb.ServerCommand{
-		Payload: &pb.ServerCommand_ExecuteTask{
-			ExecuteTask: &pb.ExecuteTask{
-				TaskId:    task.ID,
-				RunId:     run.ID,
-				Attempt:   int32(run.Attempt), //nolint:gosec // Attempt is bounded by MaxRetries
-				SessionId: session.ID,
-				Prompt:    task.Prompt,
-				Sandbox: &pb.SandboxConfig{
-					TimeoutSeconds: int64(task.TimeoutSeconds),
+		updates := store.TaskUpdates{Status: stringPtr(TaskStatusRunning)}
+		if opts.incrementRetry {
+			updates.RetryCount = &retryCount
+		}
+		if err := tx.UpdateTask(ctx, taskID, updates); err != nil {
+			return err
+		}
+
+		// Note: Attempt is bounded by MaxRetries (small value), so the int32
+		// conversion is safe.
+		cmd = &pb.ServerCommand{
+			Payload: &pb.ServerCommand_ExecuteTask{
+				ExecuteTask: &pb.ExecuteTask{
+					TaskId:    task.ID,
+					RunId:     run.ID,
+					Attempt:   int32(run.Attempt), //nolint:gosec // Attempt is bounded by MaxRetries
+					SessionId: session.ID,
+					Prompt:    task.Prompt,
+					Sandbox: &pb.SandboxConfig{
+						TimeoutSeconds: int64(task.TimeoutSeconds),
+					},
 				},
 			},
-		},
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	if err := m.cmdSender.SendCommand(*session.RunnerID, cmd); err != nil {
-		// If we can't send the command, fail the run
-		_ = m.FailRun(ctx, run.ID, "failed to send command to runner: "+err.Error())
-		return err
+	if sendErr := m.cmdSender.SendCommand(runnerID, cmd); sendErr != nil {
+		m.unwindDispatch(ctx, taskID, run.ID, opts, sendErr)
+		return nil, sendErr
 	}
 
 	m.logger.Info("task execution started",
 		zap.String("task_id", taskID),
 		zap.String("run_id", run.ID),
-		zap.String("runner_id", *session.RunnerID),
+		zap.String("runner_id", runnerID),
+		zap.Int("attempt", run.Attempt),
 	)
 
-	return nil
+	return run, nil
+}
+
+// unwindDispatch compensates for a dispatch whose command never reached a
+// runner. Best-effort: if the compensating write fails too, the stale
+// "running" task is picked up by the task timeout enforcer.
+func (m *TaskManager) unwindDispatch(ctx context.Context, taskID, runID string, opts dispatchOptions, cause error) {
+	reason := "failed to send command to runner: " + cause.Error()
+
+	err := store.WithTx(ctx, m.store, func(tx store.Tx) error {
+		now := time.Now()
+		if err := tx.UpdateTaskRun(ctx, runID, store.TaskRunUpdates{
+			Status:  stringPtr(TaskRunStatusFailed),
+			Error:   &reason,
+			EndedAt: &now,
+		}); err != nil {
+			return err
+		}
+
+		task, err := tx.GetTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+
+		// The task never reached a runner, so put it back exactly where it was:
+		// pending, with its retry budget intact.
+		updates := store.TaskUpdates{Status: stringPtr(TaskStatusPending)}
+		if opts.incrementRetry && task.RetryCount > 0 {
+			restored := task.RetryCount - 1
+			updates.RetryCount = &restored
+		}
+		return tx.UpdateTask(ctx, taskID, updates)
+	})
+
+	if err != nil {
+		m.logger.Error("failed to unwind task dispatch; task may be stuck running",
+			zap.String("task_id", taskID),
+			zap.String("run_id", runID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	m.logger.Warn("task dispatch unwound after send failure",
+		zap.String("task_id", taskID),
+		zap.String("run_id", runID),
+		zap.String("reason", reason),
+	)
 }
 
 // ReExecute re-sends a running task to a runner after session resume.
@@ -469,6 +711,36 @@ func (m *TaskManager) ReExecute(ctx context.Context, taskID string) error {
 	)
 
 	return nil
+}
+
+// ListRuns returns the execution attempts of a task, oldest attempt first.
+//
+// A task's history is its runs: which runner took it, how it ended, what it
+// cost. The task row only carries the latest status, so this is the only way to
+// see a retry that failed before the one that succeeded.
+func (m *TaskManager) ListRuns(ctx context.Context, taskID string, opts ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	// Confirm the task exists so an unknown ID is a 404 rather than an empty
+	// list that looks like a task which has never run.
+	if _, err := m.store.GetTask(ctx, taskID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+
+	opts.TaskID = &taskID
+	result, err := m.store.ListTaskRuns(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Attempt order is the meaningful one for a history, and it does not depend
+	// on a store's default sort.
+	sort.SliceStable(result.Items, func(i, j int) bool {
+		return result.Items[i].Attempt < result.Items[j].Attempt
+	})
+
+	return result, nil
 }
 
 // CreateRun creates a new task run.
@@ -671,16 +943,10 @@ func (m *TaskManager) OnTaskCompleted(ctx context.Context, result *TaskCompleted
 				zap.String("task_id", run.TaskID),
 				zap.String("run_id", result.RunID),
 			)
-			// Trigger retry asynchronously
-			go func() {
-				retryCtx := context.Background()
-				if _, err := m.Retry(retryCtx, run.TaskID); err != nil {
-					m.logger.Error("failed to retry task",
-						zap.String("task_id", run.TaskID),
-						zap.Error(err),
-					)
-				}
-			}()
+			// Trigger the retry on the bounded background pool. This used to
+			// be a bare goroutine per failed run: unbounded, immediate, with
+			// no backoff, no recover and nothing draining it on shutdown.
+			m.scheduleRetry(run.TaskID)
 			return nil
 		default:
 			taskStatus = TaskStatusFailed
@@ -756,50 +1022,59 @@ func (m *TaskManager) ShouldRetry(ctx context.Context, taskID string) (bool, err
 }
 
 // Retry creates a new run for a failed task.
+//
+// The retry budget is spent in the same transaction that records the new run,
+// and handed back if the dispatch never reaches a runner - so a runner that is
+// simply unreachable can no longer burn a task's entire retry budget.
 func (m *TaskManager) Retry(ctx context.Context, taskID string) (*store.TaskRun, error) {
-	task, err := m.store.GetTask(ctx, taskID)
+	run, err := m.dispatch(ctx, taskID, dispatchOptions{incrementRetry: true})
 	if err != nil {
-		return nil, err
-	}
-
-	// Validate retry is allowed
-	if task.RetryCount >= task.MaxRetries {
-		return nil, ErrMaxRetriesExceeded
-	}
-
-	// Increment retry count
-	newRetryCount := task.RetryCount + 1
-	if err := m.store.UpdateTask(ctx, taskID, store.TaskUpdates{
-		RetryCount: &newRetryCount,
-	}); err != nil {
 		return nil, err
 	}
 
 	m.logger.Info("retrying task",
 		zap.String("task_id", taskID),
-		zap.Int("attempt", newRetryCount+1),
-		zap.Int("max_retries", task.MaxRetries),
+		zap.String("run_id", run.ID),
+		zap.Int("attempt", run.Attempt),
 	)
 
-	// Execute the task again
-	if err := m.Execute(ctx, taskID); err != nil {
-		return nil, err
-	}
+	return run, nil
+}
 
-	// Get the newly created run
-	runs, err := m.store.ListTaskRuns(ctx, store.ListTaskRunsOptions{
-		TaskID: &taskID,
+// scheduleRetry queues a retry on the bounded background pool, after a jittered
+// backoff. A rejected schedule (pool saturated or shutting down) is logged: the
+// task stays running and the task timeout enforcer will pick it up.
+func (m *TaskManager) scheduleRetry(taskID string) {
+	delay := m.retryDelayFor(taskID)
+
+	accepted := m.background.Go("task-retry", func(ctx context.Context) {
+		if !sleepCtx(ctx, delay) {
+			m.logger.Debug("retry abandoned during shutdown", zap.String("task_id", taskID))
+			return
+		}
+		if _, err := m.Retry(ctx, taskID); err != nil {
+			m.logger.Error("failed to retry task",
+				zap.String("task_id", taskID),
+				zap.Error(err),
+			)
+		}
 	})
+
+	if !accepted {
+		m.logger.Warn("retry not scheduled; task will be picked up by the timeout enforcer",
+			zap.String("task_id", taskID),
+		)
+	}
+}
+
+// retryDelayFor derives the backoff from how many retries the task has already
+// spent, so repeated failures back off instead of hammering the runner.
+func (m *TaskManager) retryDelayFor(taskID string) time.Duration {
+	task, err := m.store.GetTask(context.Background(), taskID)
 	if err != nil {
-		return nil, err
+		return retryDelay(0)
 	}
-
-	if len(runs.Items) == 0 {
-		return nil, errors.New("no runs found after retry")
-	}
-
-	// Return the most recent run (last in list by default ordering)
-	return runs.Items[len(runs.Items)-1], nil
+	return retryDelay(task.RetryCount)
 }
 
 // cancelRun marks a task run as canceled.
@@ -1088,16 +1363,8 @@ func (e *TaskTimeoutEnforcer) timeoutRun(ctx context.Context, run *store.TaskRun
 			e.logger.Info("task will be retried after timeout",
 				zap.String("task_id", task.ID),
 			)
-			// Trigger retry asynchronously
-			go func() {
-				retryCtx := context.Background()
-				if _, err := e.taskMgr.Retry(retryCtx, task.ID); err != nil {
-					e.logger.Error("failed to retry timed out task",
-						zap.String("task_id", task.ID),
-						zap.Error(err),
-					)
-				}
-			}()
+			// Same bounded path as a failed run: see TaskManager.scheduleRetry.
+			e.taskMgr.scheduleRetry(task.ID)
 		default:
 			// No more retries - mark task as failed
 			if err := e.store.UpdateTask(ctx, task.ID, store.TaskUpdates{

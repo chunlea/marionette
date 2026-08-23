@@ -20,7 +20,7 @@ func TestProvider_Suspend_Pause(t *testing.T) {
 	p := NewWithClient("test", &Config{
 		Image:       "test:latest",
 		LabelPrefix: "marionette.io",
-	}, &SuspendConfig{
+	}, &provider.SuspendConfig{
 		Strategy: provider.SuspendStrategyPause,
 		Fallback: provider.SuspendStrategyTerminatePreserveStorage,
 	}, mockClient)
@@ -48,7 +48,7 @@ func TestProvider_Suspend_TerminatePreserveStorage(t *testing.T) {
 	p := NewWithClient("test", &Config{
 		Image:       "test:latest",
 		LabelPrefix: "marionette.io",
-	}, &SuspendConfig{
+	}, &provider.SuspendConfig{
 		Strategy: provider.SuspendStrategyTerminatePreserveStorage,
 	}, mockClient)
 
@@ -77,7 +77,7 @@ func TestProvider_Suspend_Terminate(t *testing.T) {
 	p := NewWithClient("test", &Config{
 		Image:       "test:latest",
 		LabelPrefix: "marionette.io",
-	}, &SuspendConfig{
+	}, &provider.SuspendConfig{
 		Strategy: provider.SuspendStrategyTerminate,
 	}, mockClient)
 
@@ -129,7 +129,7 @@ func TestProvider_Suspend_Fallback(t *testing.T) {
 	p := NewWithClient("test", &Config{
 		Image:       "test:latest",
 		LabelPrefix: "marionette.io",
-	}, &SuspendConfig{
+	}, &provider.SuspendConfig{
 		Strategy: provider.SuspendStrategyPause,
 		Fallback: provider.SuspendStrategyTerminatePreserveStorage,
 	}, mockClient)
@@ -322,11 +322,11 @@ func TestProvider_SupportsStrategy(t *testing.T) {
 		LabelPrefix: "marionette.io",
 	}, nil, mockClient)
 
-	assert.True(t, p.supportsStrategy(provider.SuspendStrategyPause))
-	assert.True(t, p.supportsStrategy(provider.SuspendStrategyTerminatePreserveStorage))
-	assert.True(t, p.supportsStrategy(provider.SuspendStrategyTerminate))
-	assert.False(t, p.supportsStrategy(provider.SuspendStrategySnapshot))
-	assert.False(t, p.supportsStrategy(provider.SuspendStrategyReleaseToPool))
+	assert.True(t, p.suspendDispatcher().Supports(provider.SuspendStrategyPause))
+	assert.True(t, p.suspendDispatcher().Supports(provider.SuspendStrategyTerminatePreserveStorage))
+	assert.True(t, p.suspendDispatcher().Supports(provider.SuspendStrategyTerminate))
+	assert.False(t, p.suspendDispatcher().Supports(provider.SuspendStrategySnapshot))
+	assert.False(t, p.suspendDispatcher().Supports(provider.SuspendStrategyReleaseToPool))
 }
 
 func TestProvider_SuspendConfigFromSuspend(t *testing.T) {
@@ -334,10 +334,10 @@ func TestProvider_SuspendConfigFromSuspend(t *testing.T) {
 	p := NewWithClient("test", &Config{
 		Image:       "test:latest",
 		LabelPrefix: "marionette.io",
-	}, &SuspendConfig{
+	}, &provider.SuspendConfig{
 		Strategy:    provider.SuspendStrategyPause,
-		MinDuration: Duration(60 * time.Second),
-		MaxDuration: Duration(24 * time.Hour),
+		MinDuration: 60 * time.Second,
+		MaxDuration: 24 * time.Hour,
 		Fallback:    provider.SuspendStrategyTerminatePreserveStorage,
 	}, mockClient)
 

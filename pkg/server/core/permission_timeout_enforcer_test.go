@@ -364,3 +364,8 @@ func TestPermissionTimeoutEnforcer_StartStop(t *testing.T) {
 
 	// Should complete without hanging
 }
+
+// EnsureRunner satisfies SessionManagerInterface. These fakes never allocate.
+func (m *mockSessionMgrForTimeout) EnsureRunner(_ context.Context, _ string) (*store.Session, error) {
+	return nil, ErrNoRunnerAvailable
+}

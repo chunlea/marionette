@@ -113,9 +113,14 @@ type Executor interface {
 type StreamExecutor interface {
 	Executor
 
-	// SendMessage sends a message to the running agent.
-	// Only valid when the executor is in stream mode.
-	// Returns ErrNotRunning if no task is running.
+	// SendMessage sends a user message to the running agent.
+	//
+	// msg is the message TEXT, not a wire envelope: each executor wraps it in
+	// whatever its agent expects on stdin.
+	//
+	// Only valid when the executor is in stream mode, and only while the
+	// current turn is still in flight.
+	// Returns ErrNotRunning if no task is running or input has been closed.
 	// Returns ErrNotStreamMode if not in stream mode.
 	SendMessage(msg []byte) error
 

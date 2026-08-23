@@ -57,19 +57,30 @@ func NewPermissionManager(
 	sessionMgr SessionManagerInterface,
 	auditLog audit.Logger,
 	logger *zap.Logger,
+	opts ...PermissionManagerOption,
 ) *PermissionManager {
-	return &PermissionManager{
+	m := &PermissionManager{
 		store:      store,
 		cmdSender:  cmdSender,
 		sessionMgr: sessionMgr,
 		auditLog:   auditLog,
 		logger:     logger,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
-// SetWebhookIntegration sets the webhook integration for dispatching events.
-func (m *PermissionManager) SetWebhookIntegration(wi *WebhookIntegration) {
-	m.webhooks = wi
+// PermissionManagerOption is a functional option for PermissionManager.
+type PermissionManagerOption func(*PermissionManager)
+
+// WithPermissionWebhooks sets the webhook integration for dispatching
+// permission events.
+func WithPermissionWebhooks(wi *WebhookIntegration) PermissionManagerOption {
+	return func(m *PermissionManager) {
+		m.webhooks = wi
+	}
 }
 
 // Create stores a new permission request from runner.

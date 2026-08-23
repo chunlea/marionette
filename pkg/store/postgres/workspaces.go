@@ -107,13 +107,9 @@ func listWorkspaces(ctx context.Context, q querier, opts store.ListWorkspacesOpt
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	page, err := workspaceSortColumns.page(opts.BaseListOptions, argNum)
+	if err != nil {
+		return nil, err
 	}
 
 	// Count query
@@ -126,10 +122,11 @@ func listWorkspaces(ctx context.Context, q querier, opts store.ListWorkspacesOpt
 	// Data query - fetch one extra to determine HasMore
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM workspaces %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		workspaceColumns, whereClause, orderBy, orderDir, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		workspaceColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -155,10 +152,17 @@ func listWorkspaces(ctx context.Context, q querier, opts store.ListWorkspacesOpt
 		workspaces = workspaces[:limit]
 	}
 
+	var nextCursor string
+	if len(workspaces) > 0 {
+		last := workspaces[len(workspaces)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Workspace]{
 		Items:      workspaces,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

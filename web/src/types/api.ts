@@ -1,413 +1,78 @@
-// API Types - Generated from OpenAPI spec
-// These types match the backend API schema
+// API types — derived from the OpenAPI spec.
+//
+// The header on this file used to be a lie: nothing generated anything, the
+// shapes were hand-written, and they had drifted from the server. Now
+// `api.gen.ts` really is generated (`pnpm generate:api`, checked for drift in
+// CI) and this module only gives its types short names.
+//
+// Add nothing here that the server does not describe. Admin API types are
+// hand-written and live in `./admin`, because the admin API has no generated
+// spec yet.
 
-// Common types
+import type { components, operations } from './api.gen'
+
+type Schemas = components['schemas']
+
+// Common
 export type Labels = Record<string, string>
+export type APIError = Schemas['ErrorResponse']
 
-// Session types
-export type SessionStatus = 'pending' | 'active' | 'suspended' | 'resuming' | 'terminated'
-export type LifecycleMode = 'on_demand' | 'always_on' | 'scheduled'
+// Sessions
+export type Session = Schemas['Session']
+export type SessionStatus = Session['status']
+export type LifecycleMode = Session['lifecycle_mode']
+export type NetworkPolicy = Session['network_policy']
+export type SessionList = Schemas['SessionList']
+export type CreateSessionRequest = Schemas['CreateSessionRequest']
 
-export interface Session {
-  id: string
-  name?: string
-  status: SessionStatus
-  agent: string
-  runner_id?: string
-  workspace_id: string
-  is_byok: boolean
-  network_policy: string
-  lifecycle_mode: LifecycleMode
-  labels: Labels
-  annotations: Record<string, unknown>
-  created_at: string
-  updated_at: string
-  last_activity_at?: string
-}
+// Tasks
+export type Task = Schemas['Task']
+export type TaskStatus = Task['status']
+export type TaskList = Schemas['TaskList']
+export type CreateTaskRequest = Schemas['CreateTaskRequest']
 
-export interface CreateSessionRequest {
-  name?: string
-  agent: string
-  agent_config_id?: string
-  agent_api_key?: string
-  lifecycle_mode?: LifecycleMode
-  idle_timeout_seconds?: number
-  labels?: Labels
-}
+// Logs
+export type Log = Schemas['Log']
+export type LogStream = Log['stream']
+export type LogLevel = Log['level']
+export type LogList = Schemas['LogList']
 
-export interface SessionList {
-  items: Session[]
-  next_cursor?: string
-}
+// Runners
+export type Runner = Schemas['Runner']
+export type RunnerStatus = Runner['status']
+export type SandboxMode = Runner['sandbox_mode']
+export type RunnerList = Schemas['RunnerList']
 
-// Task types
-export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
+// Permissions
+export type PermissionRequest = Schemas['PermissionRequest']
+export type PermissionStatus = PermissionRequest['status']
+export type RiskLevel = PermissionRequest['risk_level']
+export type PermissionList = Schemas['PermissionRequestList']
+export type PermissionResponse = Schemas['ApproveRequest']
 
-export interface Task {
-  id: string
-  session_id: string
-  prompt: string
-  status: TaskStatus
-  max_retries: number
-  retry_count: number
-  timeout_seconds: number
-  labels: Labels
-  annotations: Record<string, unknown>
-  created_at: string
-  updated_at: string
-}
+// Workspaces
+export type Workspace = Schemas['Workspace']
+export type WorkspaceList = Schemas['WorkspaceList']
+export type CreateWorkspaceRequest = Schemas['CreateWorkspaceRequest']
+export type UpdateWorkspaceRequest = Schemas['UpdateWorkspaceRequest']
 
-export interface CreateTaskRequest {
-  session_id: string
-  prompt: string
-  continue_from?: string
-  max_retries?: number
-  timeout_seconds?: number
-  labels?: Labels
-}
+// Scheduled tasks
+export type ScheduledTask = Schemas['ScheduledTask']
+export type ScheduledTaskStatus = ScheduledTask['status']
+export type ScheduledTaskList = Schemas['ScheduledTaskList']
+export type CreateScheduledTaskRequest = Schemas['CreateScheduledTaskRequest']
+export type UpdateScheduledTaskRequest = Schemas['UpdateScheduledTaskRequest']
 
-export interface TaskList {
-  items: Task[]
-  next_cursor?: string
-}
+// Tunnels
+export type Tunnel = Schemas['Tunnel']
+export type TunnelList = Schemas['TunnelList']
+export type CreateTunnelRequest = Schemas['CreateTunnelRequest']
 
-// Task Run types
-export type TaskRunStatus = 'pending' | 'assigned' | 'running' | 'completed' | 'failed' | 'timeout' | 'canceled'
-
-export interface TaskRun {
-  id: string
-  task_id: string
-  attempt: number
-  runner_id?: string
-  status: TaskRunStatus
-  error?: string
-  exit_code?: number
-  tokens_input?: number
-  tokens_output?: number
-  queued_at: string
-  assigned_at?: string
-  started_at?: string
-  ended_at?: string
-  updated_at: string
-}
-
-export interface TaskRunList {
-  items: TaskRun[]
-  next_cursor?: string
-}
-
-// Log types
-export type LogStream = 'stdout' | 'stderr' | 'system'
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
-
-export interface Log {
-  id: string
-  session_id: string
-  task_id: string
-  run_id: string
-  stream: LogStream
-  level: LogLevel
-  content: string
-  sequence: number
-  created_at: string
-}
-
-export interface LogList {
-  items: Log[]
-  next_cursor?: string
-}
-
-// Runner types
-export type RunnerStatus = 'offline' | 'idle' | 'busy' | 'paused'
-export type SandboxMode = 'runner-is-sandbox' | 'runner-creates-sandbox' | 'none'
-
-export interface Runner {
-  id: string
-  name: string
-  hostname: string
-  status: RunnerStatus
-  pool_name?: string
-  sandbox_mode: SandboxMode
-  labels: Labels
-  last_seen_at?: string
-  created_at: string
-}
-
-export interface RunnerList {
-  items: Runner[]
-  next_cursor?: string
-}
-
-export interface SpawnRunnerRequest {
-  name?: string
-  provider_config_id?: string
-  profile_id?: string
-  labels?: Labels
-}
-
-// Permission types
-export type RiskLevel = 'low' | 'medium' | 'high' | 'critical'
-export type PermissionStatus = 'pending' | 'approved' | 'denied' | 'canceled'
-
-export interface PermissionRequest {
-  id: string
-  session_id: string
-  task_id: string
-  run_id: string
-  tool: string
-  action: string
-  context?: string
-  risk_level: RiskLevel
-  status: PermissionStatus
-  responded_by?: string
-  response_reason?: string
-  responded_at?: string
-  created_at: string
-}
-
-export interface PermissionList {
-  items: PermissionRequest[]
-  next_cursor?: string
-}
-
-export interface PermissionResponse {
-  reason?: string
-}
-
-// API Key types
-export interface APIKey {
-  id: string
-  name: string
-  key_prefix: string
-  scopes: string[]
-  labels: Labels
-  created_at: string
-  last_used_at?: string
-  revoked_at?: string
-}
-
-// Response from creating an API key - includes the raw token shown once
-export interface CreateAPIKeyResponse {
-  key: APIKey
-  raw_token: string
-}
-
-export interface CreateAPIKeyRequest {
-  name: string
-  scopes?: string[]
-  labels?: Labels
-}
-
-export interface APIKeyList {
-  items: APIKey[]
-  next_cursor?: string
-}
-
-// Agent Config types
-export interface AgentConfig {
-  id: string
-  name: string
-  agent: string
-  model?: string
-  base_url?: string
-  is_default: boolean
-  labels: Labels
-  created_at: string
-  updated_at: string
-}
-
-export interface CreateAgentConfigRequest {
-  name: string
-  agent: string
-  api_key: string
-  model?: string
-  base_url?: string
-  is_default?: boolean
-  labels?: Labels
-}
-
-export interface UpdateAgentConfigRequest {
-  name?: string
-  api_key?: string
-  model?: string
-  base_url?: string
-  is_default?: boolean
-  labels?: Labels
-}
-
-export interface AgentConfigList {
-  items: AgentConfig[]
-  next_cursor?: string
-}
-
-// Provider Config types
-export interface ProviderConfig {
-  id: string
-  name: string
-  provider: string
-  config: Record<string, unknown>
-  suspend_config: Record<string, unknown>
-  is_default: boolean
-  labels: Labels
-  created_at: string
-  updated_at: string
-}
-
-export interface CreateProviderConfigRequest {
-  name: string
-  provider: string
-  config?: Record<string, unknown>
-  suspend_config?: Record<string, unknown>
-  is_default?: boolean
-  labels?: Labels
-}
-
-export interface UpdateProviderConfigRequest {
-  name?: string
-  config?: Record<string, unknown>
-  suspend_config?: Record<string, unknown>
-  is_default?: boolean
-  labels?: Labels
-}
-
-export interface ProviderConfigList {
-  items: ProviderConfig[]
-  next_cursor?: string
-}
-
-// Error types
-export interface APIError {
-  code: string
-  message: string
-}
-
-// Query parameters
-export interface PaginationParams {
-  limit?: number
-  cursor?: string
-}
-
-export interface SessionsQueryParams extends PaginationParams {
-  status?: SessionStatus[]
-  agent?: string
-}
-
-export interface TasksQueryParams extends PaginationParams {
-  session_id?: string
-  status?: TaskStatus[]
-}
-
-export interface RunnersQueryParams extends PaginationParams {
-  status?: RunnerStatus[]
-  pool_name?: string
-}
-
-export interface PermissionsQueryParams extends PaginationParams {
-  session_id?: string
-  task_id?: string
-  status?: PermissionStatus[]
-  risk_level?: RiskLevel[]
-}
-
-// Runner Token types
-export type RunnerTokenStatus = 'active' | 'rotating' | 'revoked' | 'expired'
-
-export interface RunnerToken {
-  id: string
-  token_prefix: string
-  runner_id?: string
-  pool_name: string
-  status: RunnerTokenStatus
-  rotation_deadline?: string
-  tenant_id?: string
-  labels: Labels
-  created_at: string
-  created_by?: string
-  last_used_at?: string
-  expires_at?: string
-  revoked_at?: string
-  revoke_reason?: string
-}
-
-export interface RunnerTokenList {
-  items: RunnerToken[]
-  next_cursor?: string
-  total_count?: number
-}
-
-export interface CreateRunnerTokenRequest {
-  pool_name: string
-  labels?: Labels
-  expires_at?: string
-}
-
-export interface CreateRunnerTokenResponse {
-  token: RunnerToken
-  raw_token: string
-}
-
-export interface RunnerTokensQueryParams extends PaginationParams {
-  pool_name?: string
-  status?: RunnerTokenStatus[]
-  include_revoked?: boolean
-}
-
-// Android Stream types
-export type AndroidStreamState = 'starting' | 'active' | 'paused' | 'closing' | 'closed' | 'failed'
-
-export interface AndroidStream {
-  id: string
-  session_id: string
-  runner_id?: string
-  device_serial: string
-  state: AndroidStreamState
-  width?: number
-  height?: number
-  video_codec?: string
-  audio_codec?: string
-  error_message?: string
-  created_at: string
-  started_at?: string
-  closed_at?: string
-}
-
-export interface AndroidStreamList {
-  items: AndroidStream[]
-  next_cursor?: string
-}
-
-export interface CreateAndroidStreamRequest {
-  device_serial: string
-  max_width?: number
-  max_height?: number
-  max_fps?: number
-  bitrate?: number
-  audio_enabled?: boolean
-}
-
-export interface AndroidDevice {
-  serial: string
-  state: string
-  product?: string
-  model?: string
-  device?: string
-}
-
-export interface AndroidDeviceList {
-  items: AndroidDevice[]
-}
-
-export interface AndroidInputEvent {
-  type: 'touch' | 'key' | 'text'
-  action?: 'down' | 'up' | 'move'
-  x?: number
-  y?: number
-  key_code?: number
-  key_action?: 'down' | 'up'
-  text?: string
-}
-
-export interface AndroidStreamsQueryParams extends PaginationParams {
-  state?: AndroidStreamState[]
-  include_closed?: boolean
-}
+// Query parameters, taken from the operations so a renamed or dropped filter
+// is a compile error rather than a request the server silently ignores.
+export type PaginationParams = { limit?: number; cursor?: string }
+export type SessionsQueryParams = operations['getSessions']['parameters']['query']
+export type TasksQueryParams = operations['getTasks']['parameters']['query']
+export type RunnersQueryParams = operations['getRunners']['parameters']['query']
+export type PermissionsQueryParams = operations['getPermissions']['parameters']['query']
+export type ScheduledTasksQueryParams = operations['getScheduledTasks']['parameters']['query']

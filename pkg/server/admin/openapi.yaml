@@ -6,16 +6,21 @@ info:
 
     ## Authentication
 
-    Use HTTP Basic Authentication for Admin WebUI, or API key with admin scopes for programmatic access:
+    HTTP Basic Authentication, with the credentials from
+    `MARIONETTE_UI_USERNAME` and `MARIONETTE_UI_PASSWORD`:
     ```
     Authorization: Basic base64(username:password)
     ```
-    or
-    ```
-    Authorization: Bearer mk_xxxxxxxxxxxxx
-    ```
 
-    > **Note**: API keys must have appropriate admin scopes (e.g., `admin:*`).
+    > **Note**: this document previously also offered `Authorization: Bearer
+    > mk_...` with admin scopes. The server has never implemented it — the
+    > admin middleware checks basic auth and nothing else — so it is removed
+    > rather than left as a documented way in that does not exist.
+
+    > **Warning**: this document is hand-written and covers 9 of the roughly 30
+    > routes the admin API serves. The public API's document is generated from
+    > the code (see `:8080/openapi.yaml`); this one will be too once the admin
+    > handlers stop serializing database models directly.
 
   version: 1.0.0
   contact:

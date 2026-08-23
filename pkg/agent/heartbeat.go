@@ -33,6 +33,7 @@ type HeartbeatLoop struct {
 
 	stopC    chan struct{}
 	stoppedC chan struct{}
+	stopOnce sync.Once
 }
 
 // NewHeartbeatLoop creates a new heartbeat loop.
@@ -169,14 +170,16 @@ func (h *HeartbeatLoop) SetStream(stream pb.RunnerService_ConnectClient) {
 }
 
 // Stop stops the heartbeat loop and waits for it to finish.
+// Safe to call more than once.
 func (h *HeartbeatLoop) Stop() {
-	close(h.stopC)
+	h.StopAsync()
 	<-h.stoppedC
 }
 
 // StopAsync stops the heartbeat loop without waiting.
+// Safe to call more than once.
 func (h *HeartbeatLoop) StopAsync() {
-	close(h.stopC)
+	h.stopOnce.Do(func() { close(h.stopC) })
 }
 
 // Wait waits for the heartbeat loop to stop.
