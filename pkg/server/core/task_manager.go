@@ -54,6 +54,14 @@ var (
 	ErrPromptRequired           = errors.New("prompt is required")
 	ErrNoRunnerAttached         = errors.New("no runner attached to session")
 	ErrMaxRetriesExceeded       = errors.New("max retries exceeded")
+
+	// ErrDispatchRaceLost means another dispatcher moved the task first.
+	//
+	// It is not a failure: the task is running, which is what the caller
+	// wanted. Triggers that fire opportunistically swallow it; the explicit
+	// execute endpoint surfaces it, because a user asking to run an
+	// already-running task should be told so.
+	ErrDispatchRaceLost = errors.New("task was dispatched by someone else")
 )
 
 // CommandSender defines the interface for sending commands to runners.
@@ -328,7 +336,20 @@ func (m *TaskManager) DispatchNext(ctx context.Context, sessionID string) error 
 		zap.String("session_id", sessionID),
 		zap.String("task_id", next.ID),
 	)
-	return m.Execute(ctx, next.ID)
+
+	if err := m.Execute(ctx, next.ID); err != nil {
+		if errors.Is(err, ErrDispatchRaceLost) {
+			// Somebody else got there first, which is the outcome this call
+			// wanted anyway.
+			m.logger.Debug("another dispatcher won the race",
+				zap.String("session_id", sessionID),
+				zap.String("task_id", next.ID),
+			)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // dispatchScanLimit bounds how many pending tasks are considered when picking
@@ -538,14 +559,31 @@ func (m *TaskManager) dispatch(ctx context.Context, taskID string, opts dispatch
 			UpdatedAt: now,
 		}
 		if err := tx.CreateTaskRun(ctx, run); err != nil {
+			// UNIQUE(task_id, attempt) is the second guard, and the only one on
+			// the retry path: two racing retries compute the same attempt from
+			// the same retry_count, so the loser trips the constraint.
+			if errors.Is(err, store.ErrAlreadyExists) {
+				return ErrDispatchRaceLost
+			}
 			return err
 		}
 
 		updates := store.TaskUpdates{Status: stringPtr(TaskStatusRunning)}
 		if opts.incrementRetry {
 			updates.RetryCount = &retryCount
+		} else {
+			// Compare-and-set on the status. Two dispatchers can both read
+			// "pending" under READ COMMITTED; only one can write past this,
+			// and the loser's whole transaction rolls back. The in-memory
+			// per-session lock is now a contention optimisation rather than
+			// the thing correctness rests on - which matters the moment there
+			// is a second server process.
+			updates.ExpectedStatus = stringPtr(TaskStatusPending)
 		}
 		if err := tx.UpdateTask(ctx, taskID, updates); err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				return ErrDispatchRaceLost
+			}
 			return err
 		}
 

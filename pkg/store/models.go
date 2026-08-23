@@ -173,6 +173,12 @@ type TaskUpdates struct {
 	RetryCount  *int
 	Labels      json.RawMessage
 	Annotations json.RawMessage
+
+	// ExpectedStatus makes the update conditional: it applies only if the row
+	// still has this status. It is how a pending -> running transition is made
+	// safe without a lock, so two servers racing to dispatch the same task
+	// cannot both win. A failed precondition is reported as ErrConflict.
+	ExpectedStatus *string
 }
 
 // TaskRun represents an execution attempt of a task.

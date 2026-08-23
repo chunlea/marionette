@@ -147,6 +147,11 @@ func (s *testTaskStore) UpdateTask(_ context.Context, id string, updates store.T
 	if !ok {
 		return store.ErrNotFound
 	}
+	// Honour the compare-and-set the way the real store does. Ignoring it here
+	// would make the dispatch race tests pass against a fake that cannot lose.
+	if updates.ExpectedStatus != nil && task.Status != *updates.ExpectedStatus {
+		return store.ErrConflict
+	}
 	if updates.Status != nil {
 		task.Status = *updates.Status
 	}
@@ -167,6 +172,13 @@ func (s *testTaskStore) DeleteTask(_ context.Context, id string) error {
 func (s *testTaskStore) CreateTaskRun(_ context.Context, run *store.TaskRun) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// UNIQUE(task_id, attempt) in the schema; without it here the retry race
+	// would have nothing to lose against.
+	for _, existing := range s.taskRuns {
+		if existing.TaskID == run.TaskID && existing.Attempt == run.Attempt {
+			return store.ErrAlreadyExists
+		}
+	}
 	s.taskRuns[run.ID] = copyTaskRun(run)
 	return nil
 }
@@ -1988,4 +2000,71 @@ func TestTaskManager_ListRuns_ScopesToTheTask(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, "trun_1", result.Items[0].ID)
+}
+
+// =============================================================================
+// Dispatch idempotency at the database
+// =============================================================================
+
+// TestTaskManager_Execute_SecondDispatchLosesTheRace goes straight at Execute,
+// bypassing the per-session lock DispatchNext holds. That lock lives in one
+// process; the compare-and-set is what holds when there are two.
+func TestTaskManager_Execute_SecondDispatchLosesTheRace(t *testing.T) {
+	manager, s, cmdSender, _ := setupAutoDispatchTest()
+	s.tasks["task_1"] = &store.Task{
+		ID: "task_1", SessionID: "sess_123", Status: TaskStatusPending, Prompt: "once",
+	}
+
+	require.NoError(t, manager.Execute(context.Background(), "task_1"))
+
+	err := manager.Execute(context.Background(), "task_1")
+	require.ErrorIs(t, err, ErrDispatchRaceLost,
+		"a task that is no longer pending must not be dispatched again")
+
+	assert.Len(t, cmdSender.sentCommands, 1, "the runner must be told exactly once")
+
+	runs, err := s.ListTaskRuns(context.Background(), store.ListTaskRunsOptions{})
+	require.NoError(t, err)
+	assert.Len(t, runs.Items, 1, "a lost race must not leave an orphan run behind")
+}
+
+// TestTaskManager_DispatchNext_SwallowsALostRace: opportunistic triggers fire
+// often and racing is their normal state, so losing is not an error there.
+func TestTaskManager_DispatchNext_SwallowsALostRace(t *testing.T) {
+	manager, s, cmdSender, _ := setupAutoDispatchTest()
+	s.tasks["task_1"] = &store.Task{
+		ID: "task_1", SessionID: "sess_123", Status: TaskStatusPending, Prompt: "once",
+	}
+
+	// Move it out from under the dispatcher, as a second server would.
+	running := TaskStatusRunning
+	require.NoError(t, s.UpdateTask(context.Background(), "task_1", store.TaskUpdates{Status: &running}))
+
+	require.NoError(t, manager.DispatchNext(context.Background(), "sess_123"),
+		"losing the race is the outcome this trigger wanted anyway")
+	assert.Empty(t, cmdSender.sentCommands)
+}
+
+// TestTaskManager_Retry_SecondRetryLosesOnTheAttemptConstraint: the retry path
+// has no status precondition to lean on, so UNIQUE(task_id, attempt) is what
+// stops two retries producing two concurrent runs of the same attempt.
+func TestTaskManager_Retry_SecondRetryLosesOnTheAttemptConstraint(t *testing.T) {
+	manager, s, cmdSender, _ := setupAutoDispatchTest()
+	s.tasks["task_1"] = &store.Task{
+		ID: "task_1", SessionID: "sess_123", Status: TaskStatusRunning,
+		Prompt: "once", MaxRetries: 5, RetryCount: 0,
+	}
+
+	_, err := manager.Retry(context.Background(), "task_1")
+	require.NoError(t, err)
+
+	// Rewind the counter the way a lost update would, so both retries compute
+	// the same attempt number.
+	zero := 0
+	require.NoError(t, s.UpdateTask(context.Background(), "task_1", store.TaskUpdates{RetryCount: &zero}))
+
+	_, err = manager.Retry(context.Background(), "task_1")
+	require.ErrorIs(t, err, ErrDispatchRaceLost)
+
+	assert.Len(t, cmdSender.sentCommands, 1)
 }

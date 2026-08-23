@@ -216,6 +216,15 @@ func updateTask(ctx context.Context, q querier, taskID string, updates store.Tas
 	query := fmt.Sprintf(`UPDATE tasks SET %s WHERE id = $%d`,
 		strings.Join(setClauses, ", "), argNum)
 	args = append(args, taskID)
+	argNum++
+
+	// The precondition turns this into a compare-and-set. Postgres arbitrates,
+	// so it holds across processes and across restarts - unlike an in-memory
+	// lock, which is all that stood between two dispatchers before.
+	if updates.ExpectedStatus != nil {
+		query += fmt.Sprintf(` AND status = $%d`, argNum)
+		args = append(args, *updates.ExpectedStatus)
+	}
 
 	result, err := q.Exec(ctx, query, args...)
 	if err != nil {
@@ -223,6 +232,14 @@ func updateTask(ctx context.Context, q querier, taskID string, updates store.Tas
 	}
 
 	if result.RowsAffected() == 0 {
+		// With a precondition, no rows means either the task is gone or
+		// somebody else moved it first. Both mean "do not proceed", and the
+		// caller cannot act differently on the difference, so it is reported
+		// as the conflict rather than as a lie about the task not existing.
+		if updates.ExpectedStatus != nil {
+			return fmt.Errorf("%w: task %s is no longer %s",
+				store.ErrConflict, taskID, *updates.ExpectedStatus)
+		}
 		return &store.NotFoundError{Resource: "task", ID: taskID}
 	}
 
