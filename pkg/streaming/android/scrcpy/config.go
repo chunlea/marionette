@@ -1,3 +1,7 @@
+// Frozen subsystem. Excluded from the default build (decision D1):
+// build with -tags streaming_extra to compile it.
+//go:build streaming_extra
+
 // Package scrcpy provides an Android streaming provider using scrcpy.
 // scrcpy is a free and open-source screen mirroring application that
 // provides high-performance, low-latency video streaming from Android devices.
