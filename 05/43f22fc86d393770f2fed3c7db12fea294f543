@@ -1,0 +1,19 @@
+pkg/provider/docker/network_test.go
+  s_2681c55641541f::t_27ef6676a206af 12-13,523-609
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "0543f22fc86d393770f2fed3c7db12fea294f543",
+  "prompts": {},
+  "sessions": {
+    "s_2681c55641541f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957a3a1-8aa9-4481-b571-119f14c7519e",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
