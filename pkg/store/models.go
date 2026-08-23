@@ -567,11 +567,40 @@ type LogArchive struct {
 	ArchivedAt       time.Time  `json:"archived_at"`
 	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
 	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
+
+	// Format is how the object is encoded. It is stored rather than assumed
+	// because the encoding may change and old objects must stay readable.
+	Format string `json:"format"`
+
+	// Encrypted records whether the object's frames are encrypted. Encryption
+	// is a deployment switch; an archive written before it was turned on has to
+	// remain readable after, so the reader consults the row, not the config.
+	Encrypted bool `json:"encrypted"`
+
+	// LastLogID and LastLogSequence complete the boundary that LastLogAt starts.
+	// Log rows share timestamps, so the archiver reads and deletes on the full
+	// (created_at, sequence, id) triple of the last record it wrote.
+	LastLogID       *string `json:"last_log_id,omitempty"`
+	LastLogSequence *int64  `json:"last_log_sequence,omitempty"`
 }
 
 // LogArchiveUpdates contains fields that can be updated on a log archive.
+//
+// Everything except DeletedAt exists for the append case: a session archived
+// while idle can produce more logs, and the next archiver pass rewrites the
+// object under a new key and moves the boundary forward.
 type LogArchiveUpdates struct {
-	DeletedAt *time.Time
+	DeletedAt        *time.Time
+	StorageKey       *string
+	StorageSizeBytes *int64
+	LogCount         *int64
+	FirstLogAt       *time.Time
+	LastLogAt        *time.Time
+	LastLogID        *string
+	LastLogSequence  *int64
+	ExpiresAt        *time.Time
+	Format           *string
+	Encrypted        *bool
 }
 
 // DataKey represents an encryption key record.
