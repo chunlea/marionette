@@ -1,0 +1,19 @@
+README.md
+  s_d7da100278f3de::t_add46a0174a7ea 3-7,36-67,70-72,368,374,382,389-390
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "1f469824f47925cb71f6a7905936dbba52b4db01",
+  "prompts": {},
+  "sessions": {
+    "s_d7da100278f3de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d25f03f-fcd3-47a0-8cec-a7ffad651de1",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
