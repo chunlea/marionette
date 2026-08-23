@@ -154,64 +154,26 @@ func main() {
 			api.WithEventStreamService(newEventStreamAdapter(app.Events, logger)),
 		)
 
-		// Create tunnel manager for HTTP tunnel proxy
 		baseURL := fmt.Sprintf("http://%s:%d", cfg.Server.API.Host, cfg.Server.API.Port)
 		if cfg.Server.API.Host == "" || cfg.Server.API.Host == "0.0.0.0" {
 			baseURL = fmt.Sprintf("http://localhost:%d", cfg.Server.API.Port)
 		}
-		tunnelMgr := tunnel.NewTunnelManager(
-			tunnel.WithLogger(logger),
-			tunnel.WithBaseURL(baseURL),
-		)
 
-		// Create tunnel router
-		tunnelRouter := grpcserver.NewTunnelRouter(
-			grpcserver.WithTRLogger(logger),
-			grpcserver.WithTRConnectionManager(connManager),
-			grpcserver.WithTRTunnelManager(tunnelMgr),
-		)
-
-		// Create tunnel proxy adapter and handler
-		tunnelProxyAdapter := api.NewTunnelProxyAdapter(
-			api.WithTPALogger(logger),
-			api.WithTPATunnelManager(tunnelMgr),
-			api.WithTPATunnelRouter(tunnelRouter),
-		)
-
-		tunnelProxyHandler := api.NewTunnelProxyHandler(
-			api.WithTPLogger(logger),
-			api.WithTPService(tunnelProxyAdapter),
-			api.WithTPAPIKeyAuth(func(r *http.Request) (bool, error) {
-				// Extract and validate API key
-				// Check X-Marionette-API-Key first (brand-prefixed header)
-				key := r.Header.Get("X-Marionette-API-Key")
-				if key == "" {
-					// Fallback to X-API-Key for backwards compatibility
-					key = r.Header.Get("X-API-Key")
-				}
-				if key == "" {
-					return false, nil
-				}
-				_, err := apiKeySvc.Validate(r.Context(), key)
-				return err == nil, nil
-			}),
-		)
-
-		// Create tunnel adapter for tunnel API endpoints
-		tunnelAdapter := api.NewTunnelAdapter(
-			api.WithTALogger(logger),
-			api.WithTATunnelManager(tunnelMgr),
-			api.WithTATunnelRouter(tunnelRouter),
-			api.WithTAStore(dbStore),
-		)
-
-		apiOpts = append(apiOpts,
-			api.WithTunnelProxy(tunnelProxyHandler),
-			api.WithTunnelService(tunnelAdapter),
-		)
-		logger.Info("tunnel proxy handler wired to API",
-			zap.String("base_url", baseURL),
-		)
+		// The tunnel subsystem is gated by tunnels.enabled (default true).
+		// When off, no tunnel routes are mounted and the message router has no
+		// tunnel router to forward runner data to.
+		var tunnelRouter *grpcserver.TunnelRouter
+		if cfg.Tunnels.Enabled {
+			tunnelRouter = wireTunnels(wireTunnelsDeps{
+				store:       dbStore,
+				connManager: connManager,
+				apiKeySvc:   apiKeySvc,
+				baseURL:     baseURL,
+				logger:      logger,
+			}, &apiOpts)
+		} else {
+			logger.Info("tunnel subsystem disabled (tunnels.enabled=false)")
+		}
 
 		// Create browser stream provider
 		browserStreamProvider := browser.NewBrowserStreamProvider(browser.BrowserStreamProviderConfig{
@@ -233,13 +195,16 @@ func main() {
 		// The message router lives in the gRPC package but is built here, from
 		// the managers core.Wire produced, so the gRPC server never constructs
 		// a half-wired manager of its own.
-		messageRouter := grpcserver.NewMessageRouter(logger, app.Runners,
+		routerOpts := []grpcserver.MessageRouterOption{
 			grpcserver.WithMRStore(dbStore),
 			grpcserver.WithMRPermissionManager(app.Permissions),
 			grpcserver.WithMRTaskManager(app.Tasks),
 			grpcserver.WithMRSessionManager(app.Sessions),
-			grpcserver.WithMRTunnelRouter(tunnelRouter),
-		)
+		}
+		if tunnelRouter != nil {
+			routerOpts = append(routerOpts, grpcserver.WithMRTunnelRouter(tunnelRouter))
+		}
+		messageRouter := grpcserver.NewMessageRouter(logger, app.Runners, routerOpts...)
 
 		grpcCfg.RunnerManager = app.Runners
 		grpcCfg.RunnerRegistry = app.RunnerRegistry
@@ -276,9 +241,14 @@ func main() {
 		)
 	}
 
-	// Create stream manager (for desktop streaming)
+	// Create stream manager (for desktop streaming).
+	//
+	// Streaming is frozen (decision D1): the SFU has no media source, no
+	// renegotiation and never reads RTCP, so it cannot deliver a frame. It
+	// stays compiled but registers nothing unless an operator opts in with
+	// streaming.enabled.
 	var streamMgr *core.StreamManager
-	if dbStore != nil {
+	if dbStore != nil && cfg.Streaming.Enabled {
 		var err error
 		streamMgr, err = core.NewStreamManager(core.DefaultStreamManagerConfig(), dbStore, logger)
 		if err != nil {
@@ -305,6 +275,8 @@ func main() {
 
 			logger.Info("stream manager created")
 		}
+	} else if dbStore != nil {
+		logger.Info("streaming subsystem disabled (streaming.enabled=false)")
 	}
 
 	// Create servers
@@ -577,6 +549,72 @@ func main() {
 	}
 
 	logger.Info("marionette server stopped")
+}
+
+// wireTunnelsDeps are the pieces the tunnel subsystem needs.
+type wireTunnelsDeps struct {
+	store       store.Store
+	connManager *grpcserver.ConnectionManager
+	apiKeySvc   *auth.APIKeyService
+	baseURL     string
+	logger      *zap.Logger
+}
+
+// wireTunnels builds the tunnel manager, router and HTTP handlers and appends
+// the tunnel API options. It returns the router so the gRPC message router can
+// forward runner tunnel data to it.
+func wireTunnels(deps wireTunnelsDeps, apiOpts *[]api.Option) *grpcserver.TunnelRouter {
+	tunnelMgr := tunnel.NewTunnelManager(
+		tunnel.WithLogger(deps.logger),
+		tunnel.WithBaseURL(deps.baseURL),
+	)
+
+	tunnelRouter := grpcserver.NewTunnelRouter(
+		grpcserver.WithTRLogger(deps.logger),
+		grpcserver.WithTRConnectionManager(deps.connManager),
+		grpcserver.WithTRTunnelManager(tunnelMgr),
+	)
+
+	tunnelProxyAdapter := api.NewTunnelProxyAdapter(
+		api.WithTPALogger(deps.logger),
+		api.WithTPATunnelManager(tunnelMgr),
+		api.WithTPATunnelRouter(tunnelRouter),
+	)
+
+	tunnelProxyHandler := api.NewTunnelProxyHandler(
+		api.WithTPLogger(deps.logger),
+		api.WithTPService(tunnelProxyAdapter),
+		api.WithTPAPIKeyAuth(func(r *http.Request) (bool, error) {
+			// Check X-Marionette-API-Key first (brand-prefixed header), then
+			// fall back to X-API-Key for backwards compatibility.
+			key := r.Header.Get("X-Marionette-API-Key")
+			if key == "" {
+				key = r.Header.Get("X-API-Key")
+			}
+			if key == "" {
+				return false, nil
+			}
+			_, err := deps.apiKeySvc.Validate(r.Context(), key)
+			return err == nil, nil
+		}),
+	)
+
+	tunnelAdapter := api.NewTunnelAdapter(
+		api.WithTALogger(deps.logger),
+		api.WithTATunnelManager(tunnelMgr),
+		api.WithTATunnelRouter(tunnelRouter),
+		api.WithTAStore(deps.store),
+	)
+
+	*apiOpts = append(*apiOpts,
+		api.WithTunnelProxy(tunnelProxyHandler),
+		api.WithTunnelService(tunnelAdapter),
+	)
+	deps.logger.Info("tunnel proxy handler wired to API",
+		zap.String("base_url", deps.baseURL),
+	)
+
+	return tunnelRouter
 }
 
 // webhookConfig returns the webhook delivery configuration.
