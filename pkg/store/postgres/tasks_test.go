@@ -638,3 +638,45 @@ func TestCreateTaskRun_DuplicateAttemptIsRejected(t *testing.T) {
 	})
 	require.ErrorIs(t, err, store.ErrAlreadyExists)
 }
+
+// TestUpdateScheduledTask_ExpectedNextRunAtIsACompareAndSet: the precondition
+// is what lets one replica claim a cron tick. Without it every replica polling
+// the same database sees the same task due and every one of them runs it.
+func TestUpdateScheduledTask_ExpectedNextRunAtIsACompareAndSet(t *testing.T) {
+	ctx := context.Background()
+
+	session := createTestSession(ctx, t)
+	due := time.Now().Add(-time.Minute).UTC().Truncate(time.Microsecond)
+
+	scheduled := &store.ScheduledTask{
+		SessionID:      session.ID,
+		Name:           "cas-" + time.Now().Format("150405.000000"),
+		CronExpression: "*/5 * * * *",
+		Timezone:       "UTC",
+		PromptTemplate: "run me",
+		Status:         "active",
+		OnFailure:      "continue",
+		NextRunAt:      &due,
+	}
+	require.NoError(t, testStore.CreateScheduledTask(ctx, scheduled))
+
+	first := due.Add(5 * time.Minute)
+	require.NoError(t, testStore.UpdateScheduledTask(ctx, scheduled.ID, store.ScheduledTaskUpdates{
+		NextRunAt:         &first,
+		ExpectedNextRunAt: &due,
+	}), "the first claim must win")
+
+	second := due.Add(10 * time.Minute)
+	err := testStore.UpdateScheduledTask(ctx, scheduled.ID, store.ScheduledTaskUpdates{
+		NextRunAt:         &second,
+		ExpectedNextRunAt: &due,
+	})
+	require.Error(t, err, "a second claim on the same tick must fail")
+	assert.ErrorIs(t, err, store.ErrConflict)
+
+	stored, err := testStore.GetScheduledTask(ctx, scheduled.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored.NextRunAt)
+	assert.WithinDuration(t, first, *stored.NextRunAt, time.Second,
+		"the loser must not have moved the schedule")
+}

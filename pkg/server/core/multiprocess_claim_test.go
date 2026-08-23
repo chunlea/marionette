@@ -396,3 +396,69 @@ func terminateAll(t *testing.T, a *testApp, sessionIDs ...string) {
 		}
 	}
 }
+
+// TestTwoProcesses_ScheduledTickRunsOnce: GetDueScheduledTasks is a plain
+// SELECT, so every replica sees the same cron task come due. Without a claim
+// they all execute it, and the user's prompt runs once per replica against one
+// workspace by an agent with shell access.
+func TestTwoProcesses_ScheduledTickRunsOnce(t *testing.T) {
+	dsn := startPostgres(t)
+	first := newTestApp(t, dsn)
+	second := newTestApp(t, dsn)
+	resetState(t, first)
+
+	ctx := context.Background()
+	sessionID := seedSession(t, first, "cron-session")
+
+	scheduled, err := first.app.ScheduledTasks.Create(ctx, CreateScheduledTaskOptions{
+		SessionID:      sessionID,
+		Name:           "daily-standup",
+		CronExpression: "*/5 * * * *",
+		PromptTemplate: "summarise yesterday",
+	})
+	require.NoError(t, err)
+
+	// Make it due now, the way the poller would find it.
+	due := time.Now().Add(-time.Minute)
+	require.NoError(t, first.store.UpdateScheduledTask(ctx, scheduled.ID, store.ScheduledTaskUpdates{
+		NextRunAt: &due,
+	}))
+
+	fresh, err := first.store.GetScheduledTask(ctx, scheduled.ID)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	results := make([]error, 2)
+
+	for i, app := range []*testApp{first, second} {
+		wg.Add(1)
+		go func(i int, app *testApp) {
+			defer wg.Done()
+			<-start
+			_, results[i] = app.app.ScheduledTasks.ExecuteDue(context.Background(), fresh)
+		}(i, app)
+	}
+	close(start)
+	wg.Wait()
+
+	ran := 0
+	for _, err := range results {
+		if err == nil {
+			ran++
+			continue
+		}
+		require.ErrorIs(t, err, ErrScheduledTickTaken,
+			"a replica that lost the tick must say so, not fail some other way")
+	}
+	assert.Equal(t, 1, ran, "exactly one replica may run a cron tick")
+
+	tasks, err := first.store.ListTasks(ctx, store.ListTasksOptions{
+		BaseListOptions: store.BaseListOptions{Limit: 100},
+		SessionID:       &sessionID,
+	})
+	require.NoError(t, err)
+	assert.Len(t, tasks.Items, 1, "the tick must have produced exactly one task")
+
+	terminateAll(t, first, sessionID)
+}

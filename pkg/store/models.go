@@ -263,16 +263,21 @@ type ScheduledTask struct {
 
 // ScheduledTaskUpdates contains fields that can be updated on a scheduled task.
 type ScheduledTaskUpdates struct {
-	Name                   *string
-	Description            *string
-	CronExpression         *string
-	Timezone               *string
-	PromptTemplate         *string
-	TimeoutSeconds         *int
-	MaxRetries             *int
-	Status                 *string
-	NextRunAt              *time.Time
-	LastRunAt              *time.Time
+	Name           *string
+	Description    *string
+	CronExpression *string
+	Timezone       *string
+	PromptTemplate *string
+	TimeoutSeconds *int
+	MaxRetries     *int
+	Status         *string
+	NextRunAt      *time.Time
+	LastRunAt      *time.Time
+	// ExpectedNextRunAt makes the update conditional: it applies only if the
+	// row still carries this next_run_at. Advancing the schedule under that
+	// precondition is how one replica claims a cron tick - without it every
+	// replica sees the same task due and every one of them runs it.
+	ExpectedNextRunAt      *time.Time
 	LastTaskID             *string
 	RunCount               *int
 	FailureCount           *int

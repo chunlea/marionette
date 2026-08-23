@@ -866,6 +866,15 @@ func updateScheduledTask(ctx context.Context, q querier, taskID string, updates 
 	query := fmt.Sprintf(`UPDATE scheduled_tasks SET %s WHERE id = $%d`,
 		strings.Join(setClauses, ", "), argNum)
 	args = append(args, taskID)
+	argNum++
+
+	// The precondition turns this into a compare-and-set, the same way
+	// ExpectedStatus does for tasks. It is what lets one replica claim a cron
+	// tick: whoever moves next_run_at away from the due time owns that run.
+	if updates.ExpectedNextRunAt != nil {
+		query += fmt.Sprintf(` AND next_run_at = $%d`, argNum)
+		args = append(args, *updates.ExpectedNextRunAt)
+	}
 
 	result, err := q.Exec(ctx, query, args...)
 	if err != nil {
@@ -873,6 +882,10 @@ func updateScheduledTask(ctx context.Context, q querier, taskID string, updates 
 	}
 
 	if result.RowsAffected() == 0 {
+		if updates.ExpectedNextRunAt != nil {
+			return fmt.Errorf("%w: scheduled task %s is no longer due at %s",
+				store.ErrConflict, taskID, updates.ExpectedNextRunAt.Format(time.RFC3339Nano))
+		}
 		return &store.NotFoundError{Resource: "scheduled_task", ID: taskID}
 	}
 
