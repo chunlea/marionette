@@ -16,9 +16,9 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@base-ui-components/react": "^1.0.0-alpha.10",
+    "@base-ui-components/react": "1.0.0-rc.0",
     "@tanstack/react-query": "^5.60.5",
-    "@tanstack/react-router": "^1.95.1",
+    "@tanstack/react-router": "^1.170.32",
     "axios": "^1.7.9",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.468.0",
@@ -28,8 +28,8 @@
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "@tailwindcss/postcss": "^4",
-    "@tanstack/router-devtools": "^1.95.1",
-    "@tanstack/router-plugin": "^1.95.1",
+    "@tanstack/router-devtools": "^1.167.1",
+    "@tanstack/router-plugin": "^1.168.35",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@types/node": "^25.0.3",
@@ -44,7 +44,7 @@
     "openapi-typescript": "^7.13.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^4.3.3",
-    "typescript": "~5.6.3",
+    "typescript": "~5.9.3",
     "typescript-eslint": "^8.18.2",
     "vite": "^7.3.6",
     "vitest": "^4.1.11"
