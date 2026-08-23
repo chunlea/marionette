@@ -1,0 +1,19 @@
+pkg/provider/e2b/live_test.go
+  s_922ee36a2ef105::t_8aa935159d59f9 1-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "938ced1d2965396a2490161eda5d66e43d636ab3",
+  "prompts": {},
+  "sessions": {
+    "s_922ee36a2ef105": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e4155e7b-3074-4ac3-9061-4d234659107f",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
