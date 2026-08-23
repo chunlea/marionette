@@ -1,0 +1,19 @@
+{
+  "key": {
+    "id": "key_0002xK9mNrX3UvIZT0",
+    "name": "ci",
+    "key_prefix": "mk_7Jc1lUo0",
+    "scopes": [
+      "sessions:*",
+      "tasks:*"
+    ],
+    "labels": {
+      "env": "prod"
+    },
+    "annotations": {},
+    "created_at": "2026-08-23T11:04:05Z",
+    "created_by": "admin",
+    "expires_at": "2026-09-22T11:04:05Z"
+  },
+  "raw_token": "mk_7Jc1lUo0SecretValueDoNotLog"
+}

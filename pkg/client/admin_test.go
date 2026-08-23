@@ -7,21 +7,19 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/chunlea/marionette/pkg/store"
 )
 
 func TestHTTPAdminClient_CreateAPIKey(t *testing.T) {
 	now := time.Now()
 	expected := &APIKeyWithSecret{
-		APIKey: store.APIKey{
+		APIKey: APIKey{
 			ID:        "key_test123",
 			Name:      "test-key",
 			KeyPrefix: "mk_testxxxx",
 			Scopes:    []string{"tasks:*"},
 			CreatedAt: now,
 		},
-		Key: "mk_full_secret_key_here",
+		RawToken: "mk_full_secret_key_here",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,15 +57,15 @@ func TestHTTPAdminClient_CreateAPIKey(t *testing.T) {
 	if result.ID != expected.ID {
 		t.Errorf("expected ID %s, got %s", expected.ID, result.ID)
 	}
-	if result.Key != expected.Key {
-		t.Errorf("expected Key %s, got %s", expected.Key, result.Key)
+	if result.RawToken != expected.RawToken {
+		t.Errorf("expected RawToken %s, got %s", expected.RawToken, result.RawToken)
 	}
 }
 
 func TestHTTPAdminClient_ListAPIKeys(t *testing.T) {
 	now := time.Now()
-	expected := &ListResult[store.APIKey]{
-		Items: []*store.APIKey{
+	expected := &ListResult[APIKey]{
+		Items: []*APIKey{
 			{ID: "key_1", Name: "key-1", KeyPrefix: "mk_xxx1", CreatedAt: now},
 			{ID: "key_2", Name: "key-2", KeyPrefix: "mk_xxx2", CreatedAt: now},
 		},
@@ -121,7 +119,7 @@ func TestHTTPAdminClient_RevokeAPIKey(t *testing.T) {
 
 func TestHTTPAdminClient_CreateAgentConfig(t *testing.T) {
 	now := time.Now()
-	expected := &store.AgentConfig{
+	expected := &AgentConfig{
 		ID:        "acfg_test123",
 		Name:      "claude-prod",
 		Agent:     "claude",
@@ -162,8 +160,8 @@ func TestHTTPAdminClient_CreateAgentConfig(t *testing.T) {
 
 func TestHTTPAdminClient_ListAgentConfigs(t *testing.T) {
 	now := time.Now()
-	expected := &ListResult[store.AgentConfig]{
-		Items: []*store.AgentConfig{
+	expected := &ListResult[AgentConfig]{
+		Items: []*AgentConfig{
 			{ID: "acfg_1", Name: "claude-dev", Agent: "claude", CreatedAt: now, UpdatedAt: now},
 			{ID: "acfg_2", Name: "claude-prod", Agent: "claude", CreatedAt: now, UpdatedAt: now},
 		},
@@ -216,7 +214,7 @@ func TestHTTPAdminClient_DeleteAgentConfig(t *testing.T) {
 
 func TestHTTPAdminClient_SpawnRunner(t *testing.T) {
 	now := time.Now()
-	expected := &store.Runner{
+	expected := &AdminRunner{
 		ID:        "run_test123",
 		Name:      "spawned-runner",
 		Hostname:  "localhost",

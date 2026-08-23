@@ -11,40 +11,38 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/chunlea/marionette/pkg/store"
 )
 
 // AdminClient provides access to the Marionette Admin API.
 type AdminClient interface {
 	// API Keys
 	CreateAPIKey(ctx context.Context, opts CreateAPIKeyOptions) (*APIKeyWithSecret, error)
-	GetAPIKey(ctx context.Context, id string) (*store.APIKey, error)
-	ListAPIKeys(ctx context.Context, opts ListAPIKeysOptions) (*ListResult[store.APIKey], error)
+	GetAPIKey(ctx context.Context, id string) (*APIKey, error)
+	ListAPIKeys(ctx context.Context, opts ListAPIKeysOptions) (*ListResult[APIKey], error)
 	RevokeAPIKey(ctx context.Context, id string, reason string) error
 
 	// Agent Configs
-	CreateAgentConfig(ctx context.Context, opts CreateAgentConfigOptions) (*store.AgentConfig, error)
-	GetAgentConfig(ctx context.Context, id string) (*store.AgentConfig, error)
-	ListAgentConfigs(ctx context.Context, opts ListAgentConfigsOptions) (*ListResult[store.AgentConfig], error)
-	UpdateAgentConfig(ctx context.Context, id string, opts UpdateAgentConfigOptions) (*store.AgentConfig, error)
+	CreateAgentConfig(ctx context.Context, opts CreateAgentConfigOptions) (*AgentConfig, error)
+	GetAgentConfig(ctx context.Context, id string) (*AgentConfig, error)
+	ListAgentConfigs(ctx context.Context, opts ListAgentConfigsOptions) (*ListResult[AgentConfig], error)
+	UpdateAgentConfig(ctx context.Context, id string, opts UpdateAgentConfigOptions) (*AgentConfig, error)
 	DeleteAgentConfig(ctx context.Context, id string) error
 
 	// Provider Configs
-	CreateProviderConfig(ctx context.Context, opts CreateProviderConfigOptions) (*store.ProviderConfig, error)
-	GetProviderConfig(ctx context.Context, id string) (*store.ProviderConfig, error)
-	ListProviderConfigs(ctx context.Context, opts ListProviderConfigsOptions) (*ListResult[store.ProviderConfig], error)
-	UpdateProviderConfig(ctx context.Context, id string, opts UpdateProviderConfigOptions) (*store.ProviderConfig, error)
+	CreateProviderConfig(ctx context.Context, opts CreateProviderConfigOptions) (*ProviderConfig, error)
+	GetProviderConfig(ctx context.Context, id string) (*ProviderConfig, error)
+	ListProviderConfigs(ctx context.Context, opts ListProviderConfigsOptions) (*ListResult[ProviderConfig], error)
+	UpdateProviderConfig(ctx context.Context, id string, opts UpdateProviderConfigOptions) (*ProviderConfig, error)
 	DeleteProviderConfig(ctx context.Context, id string) error
 
 	// Runners (admin operations)
-	SpawnRunner(ctx context.Context, opts SpawnRunnerOptions) (*store.Runner, error)
+	SpawnRunner(ctx context.Context, opts SpawnRunnerOptions) (*AdminRunner, error)
 	DestroyRunner(ctx context.Context, id string) error
 
 	// Runner Tokens
 	CreateRunnerToken(ctx context.Context, opts CreateRunnerTokenOptions) (*RunnerTokenWithSecret, error)
-	GetRunnerToken(ctx context.Context, id string) (*store.RunnerToken, error)
-	ListRunnerTokens(ctx context.Context, opts ListRunnerTokensOptions) (*ListResult[store.RunnerToken], error)
+	GetRunnerToken(ctx context.Context, id string) (*RunnerToken, error)
+	ListRunnerTokens(ctx context.Context, opts ListRunnerTokensOptions) (*ListResult[RunnerToken], error)
 	RevokeRunnerToken(ctx context.Context, id string, reason string) error
 	RotateRunnerToken(ctx context.Context, id string) (*RunnerTokenWithSecret, error)
 
@@ -53,17 +51,59 @@ type AdminClient interface {
 	SuspendSession(ctx context.Context, sessionID, strategy string) error
 
 	// Profiles
-	CreateProfile(ctx context.Context, opts CreateProfileOptions) (*store.Profile, error)
-	GetProfile(ctx context.Context, id string) (*store.Profile, error)
-	ListProfiles(ctx context.Context, opts ListProfilesOptions) (*ListResult[store.Profile], error)
-	UpdateProfile(ctx context.Context, id string, opts UpdateProfileOptions) (*store.Profile, error)
+	CreateProfile(ctx context.Context, opts CreateProfileOptions) (*Profile, error)
+	GetProfile(ctx context.Context, id string) (*Profile, error)
+	ListProfiles(ctx context.Context, opts ListProfilesOptions) (*ListResult[Profile], error)
+	UpdateProfile(ctx context.Context, id string, opts UpdateProfileOptions) (*Profile, error)
 	DeleteProfile(ctx context.Context, id string) error
 }
 
-// APIKeyWithSecret includes the raw API key (only returned on creation).
+// APIKeyWithSecret includes the raw token, which the server returns only when
+// the key is created.
+//
+// The admin API nests the key as {"key": {...}, "raw_token": "..."}, but the
+// fields are embedded here so callers can reach them directly, exactly as
+// RunnerTokenWithSecret does. Before the JSON methods below existed this type
+// declared `Key string` against an object, so decoding failed outright with
+// "cannot unmarshal object into Go struct field ... of type string" — the
+// SDK's CreateAPIKey had never once worked.
 type APIKeyWithSecret struct {
-	store.APIKey
-	Key string `json:"key"`
+	APIKey
+	RawToken string `json:"raw_token"`
+}
+
+// apiKeyWithSecretWire is the admin API's on-the-wire shape.
+type apiKeyWithSecretWire struct {
+	Key      *APIKey `json:"key"`
+	RawToken string  `json:"raw_token"`
+}
+
+// UnmarshalJSON decodes the admin API's nested response into the flattened
+// struct. A response without a "key" object is rejected rather than decoded
+// into zero values.
+func (k *APIKeyWithSecret) UnmarshalJSON(data []byte) error {
+	var wire apiKeyWithSecretWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if wire.Key == nil {
+		return fmt.Errorf("api key response has no %q object", "key")
+	}
+
+	k.APIKey = *wire.Key
+	k.RawToken = wire.RawToken
+
+	return nil
+}
+
+// MarshalJSON emits the same nested shape UnmarshalJSON accepts, so the type
+// round-trips.
+func (k APIKeyWithSecret) MarshalJSON() ([]byte, error) {
+	key := k.APIKey
+	return json.Marshal(apiKeyWithSecretWire{
+		Key:      &key,
+		RawToken: k.RawToken,
+	})
 }
 
 // CreateAPIKeyOptions contains options for creating an API key.
@@ -152,7 +192,7 @@ type SpawnRunnerOptions struct {
 // decoded as their zero values, which is why `mctl admin runner-tokens create`
 // printed a blank ID, pool and prefix while still showing the raw token.
 type RunnerTokenWithSecret struct {
-	store.RunnerToken
+	RunnerToken
 	RawToken string `json:"raw_token"`
 }
 
@@ -160,8 +200,8 @@ type RunnerTokenWithSecret struct {
 // It must stay in sync with admin.CreateRunnerTokenResponse and
 // admin.RotateRunnerTokenResponse, which share this layout.
 type runnerTokenWithSecretWire struct {
-	Token    *store.RunnerToken `json:"token"`
-	RawToken string             `json:"raw_token"`
+	Token    *RunnerToken `json:"token"`
+	RawToken string       `json:"raw_token"`
 }
 
 // UnmarshalJSON decodes the admin API's nested response into the flattened
@@ -351,8 +391,8 @@ func (c *HTTPAdminClient) CreateAPIKey(ctx context.Context, opts CreateAPIKeyOpt
 }
 
 // GetAPIKey retrieves an API key by ID.
-func (c *HTTPAdminClient) GetAPIKey(ctx context.Context, id string) (*store.APIKey, error) {
-	var result store.APIKey
+func (c *HTTPAdminClient) GetAPIKey(ctx context.Context, id string) (*APIKey, error) {
+	var result APIKey
 	if err := c.doRequest(ctx, http.MethodGet, "/admin/api/v1/keys/"+id, nil, &result); err != nil {
 		return nil, err
 	}
@@ -360,7 +400,7 @@ func (c *HTTPAdminClient) GetAPIKey(ctx context.Context, id string) (*store.APIK
 }
 
 // ListAPIKeys lists API keys with optional filtering.
-func (c *HTTPAdminClient) ListAPIKeys(ctx context.Context, opts ListAPIKeysOptions) (*ListResult[store.APIKey], error) {
+func (c *HTTPAdminClient) ListAPIKeys(ctx context.Context, opts ListAPIKeysOptions) (*ListResult[APIKey], error) {
 	params := url.Values{}
 	if opts.Limit > 0 {
 		params.Set("limit", strconv.Itoa(opts.Limit))
@@ -377,7 +417,7 @@ func (c *HTTPAdminClient) ListAPIKeys(ctx context.Context, opts ListAPIKeysOptio
 		path += "?" + params.Encode()
 	}
 
-	var result ListResult[store.APIKey]
+	var result ListResult[APIKey]
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
@@ -396,8 +436,8 @@ func (c *HTTPAdminClient) RevokeAPIKey(ctx context.Context, id string, reason st
 // Agent Configs
 
 // CreateAgentConfig creates a new agent configuration.
-func (c *HTTPAdminClient) CreateAgentConfig(ctx context.Context, opts CreateAgentConfigOptions) (*store.AgentConfig, error) {
-	var result store.AgentConfig
+func (c *HTTPAdminClient) CreateAgentConfig(ctx context.Context, opts CreateAgentConfigOptions) (*AgentConfig, error) {
+	var result AgentConfig
 	if err := c.doRequest(ctx, http.MethodPost, "/admin/api/v1/agent-configs", opts, &result); err != nil {
 		return nil, err
 	}
@@ -405,8 +445,8 @@ func (c *HTTPAdminClient) CreateAgentConfig(ctx context.Context, opts CreateAgen
 }
 
 // GetAgentConfig retrieves an agent configuration by ID.
-func (c *HTTPAdminClient) GetAgentConfig(ctx context.Context, id string) (*store.AgentConfig, error) {
-	var result store.AgentConfig
+func (c *HTTPAdminClient) GetAgentConfig(ctx context.Context, id string) (*AgentConfig, error) {
+	var result AgentConfig
 	if err := c.doRequest(ctx, http.MethodGet, "/admin/api/v1/agent-configs/"+id, nil, &result); err != nil {
 		return nil, err
 	}
@@ -414,7 +454,7 @@ func (c *HTTPAdminClient) GetAgentConfig(ctx context.Context, id string) (*store
 }
 
 // ListAgentConfigs lists agent configurations with optional filtering.
-func (c *HTTPAdminClient) ListAgentConfigs(ctx context.Context, opts ListAgentConfigsOptions) (*ListResult[store.AgentConfig], error) {
+func (c *HTTPAdminClient) ListAgentConfigs(ctx context.Context, opts ListAgentConfigsOptions) (*ListResult[AgentConfig], error) {
 	params := url.Values{}
 	if opts.Limit > 0 {
 		params.Set("limit", strconv.Itoa(opts.Limit))
@@ -434,7 +474,7 @@ func (c *HTTPAdminClient) ListAgentConfigs(ctx context.Context, opts ListAgentCo
 		path += "?" + params.Encode()
 	}
 
-	var result ListResult[store.AgentConfig]
+	var result ListResult[AgentConfig]
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
@@ -442,8 +482,8 @@ func (c *HTTPAdminClient) ListAgentConfigs(ctx context.Context, opts ListAgentCo
 }
 
 // UpdateAgentConfig updates an agent configuration.
-func (c *HTTPAdminClient) UpdateAgentConfig(ctx context.Context, id string, opts UpdateAgentConfigOptions) (*store.AgentConfig, error) {
-	var result store.AgentConfig
+func (c *HTTPAdminClient) UpdateAgentConfig(ctx context.Context, id string, opts UpdateAgentConfigOptions) (*AgentConfig, error) {
+	var result AgentConfig
 	if err := c.doRequest(ctx, http.MethodPut, "/admin/api/v1/agent-configs/"+id, opts, &result); err != nil {
 		return nil, err
 	}
@@ -458,8 +498,8 @@ func (c *HTTPAdminClient) DeleteAgentConfig(ctx context.Context, id string) erro
 // Provider Configs
 
 // CreateProviderConfig creates a new provider configuration.
-func (c *HTTPAdminClient) CreateProviderConfig(ctx context.Context, opts CreateProviderConfigOptions) (*store.ProviderConfig, error) {
-	var result store.ProviderConfig
+func (c *HTTPAdminClient) CreateProviderConfig(ctx context.Context, opts CreateProviderConfigOptions) (*ProviderConfig, error) {
+	var result ProviderConfig
 	if err := c.doRequest(ctx, http.MethodPost, "/admin/api/v1/provider-configs", opts, &result); err != nil {
 		return nil, err
 	}
@@ -467,8 +507,8 @@ func (c *HTTPAdminClient) CreateProviderConfig(ctx context.Context, opts CreateP
 }
 
 // GetProviderConfig retrieves a provider configuration by ID.
-func (c *HTTPAdminClient) GetProviderConfig(ctx context.Context, id string) (*store.ProviderConfig, error) {
-	var result store.ProviderConfig
+func (c *HTTPAdminClient) GetProviderConfig(ctx context.Context, id string) (*ProviderConfig, error) {
+	var result ProviderConfig
 	if err := c.doRequest(ctx, http.MethodGet, "/admin/api/v1/provider-configs/"+id, nil, &result); err != nil {
 		return nil, err
 	}
@@ -476,7 +516,7 @@ func (c *HTTPAdminClient) GetProviderConfig(ctx context.Context, id string) (*st
 }
 
 // ListProviderConfigs lists provider configurations with optional filtering.
-func (c *HTTPAdminClient) ListProviderConfigs(ctx context.Context, opts ListProviderConfigsOptions) (*ListResult[store.ProviderConfig], error) {
+func (c *HTTPAdminClient) ListProviderConfigs(ctx context.Context, opts ListProviderConfigsOptions) (*ListResult[ProviderConfig], error) {
 	params := url.Values{}
 	if opts.Limit > 0 {
 		params.Set("limit", strconv.Itoa(opts.Limit))
@@ -496,7 +536,7 @@ func (c *HTTPAdminClient) ListProviderConfigs(ctx context.Context, opts ListProv
 		path += "?" + params.Encode()
 	}
 
-	var result ListResult[store.ProviderConfig]
+	var result ListResult[ProviderConfig]
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
@@ -504,8 +544,8 @@ func (c *HTTPAdminClient) ListProviderConfigs(ctx context.Context, opts ListProv
 }
 
 // UpdateProviderConfig updates a provider configuration.
-func (c *HTTPAdminClient) UpdateProviderConfig(ctx context.Context, id string, opts UpdateProviderConfigOptions) (*store.ProviderConfig, error) {
-	var result store.ProviderConfig
+func (c *HTTPAdminClient) UpdateProviderConfig(ctx context.Context, id string, opts UpdateProviderConfigOptions) (*ProviderConfig, error) {
+	var result ProviderConfig
 	if err := c.doRequest(ctx, http.MethodPut, "/admin/api/v1/provider-configs/"+id, opts, &result); err != nil {
 		return nil, err
 	}
@@ -520,8 +560,8 @@ func (c *HTTPAdminClient) DeleteProviderConfig(ctx context.Context, id string) e
 // Runners (admin operations)
 
 // SpawnRunner spawns a new runner.
-func (c *HTTPAdminClient) SpawnRunner(ctx context.Context, opts SpawnRunnerOptions) (*store.Runner, error) {
-	var result store.Runner
+func (c *HTTPAdminClient) SpawnRunner(ctx context.Context, opts SpawnRunnerOptions) (*AdminRunner, error) {
+	var result AdminRunner
 	if err := c.doRequest(ctx, http.MethodPost, "/admin/api/v1/runners/spawn", opts, &result); err != nil {
 		return nil, err
 	}
@@ -562,8 +602,8 @@ func (c *HTTPAdminClient) CreateRunnerToken(ctx context.Context, opts CreateRunn
 }
 
 // GetRunnerToken retrieves a runner token by ID.
-func (c *HTTPAdminClient) GetRunnerToken(ctx context.Context, id string) (*store.RunnerToken, error) {
-	var result store.RunnerToken
+func (c *HTTPAdminClient) GetRunnerToken(ctx context.Context, id string) (*RunnerToken, error) {
+	var result RunnerToken
 	if err := c.doRequest(ctx, http.MethodGet, "/admin/api/v1/runner-tokens/"+id, nil, &result); err != nil {
 		return nil, err
 	}
@@ -571,7 +611,7 @@ func (c *HTTPAdminClient) GetRunnerToken(ctx context.Context, id string) (*store
 }
 
 // ListRunnerTokens lists runner tokens with optional filtering.
-func (c *HTTPAdminClient) ListRunnerTokens(ctx context.Context, opts ListRunnerTokensOptions) (*ListResult[store.RunnerToken], error) {
+func (c *HTTPAdminClient) ListRunnerTokens(ctx context.Context, opts ListRunnerTokensOptions) (*ListResult[RunnerToken], error) {
 	params := url.Values{}
 	if opts.Limit > 0 {
 		params.Set("limit", strconv.Itoa(opts.Limit))
@@ -597,7 +637,7 @@ func (c *HTTPAdminClient) ListRunnerTokens(ctx context.Context, opts ListRunnerT
 		path += "?" + params.Encode()
 	}
 
-	var result ListResult[store.RunnerToken]
+	var result ListResult[RunnerToken]
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
@@ -625,8 +665,8 @@ func (c *HTTPAdminClient) RotateRunnerToken(ctx context.Context, id string) (*Ru
 // Profiles
 
 // CreateProfile creates a new profile.
-func (c *HTTPAdminClient) CreateProfile(ctx context.Context, opts CreateProfileOptions) (*store.Profile, error) {
-	var result store.Profile
+func (c *HTTPAdminClient) CreateProfile(ctx context.Context, opts CreateProfileOptions) (*Profile, error) {
+	var result Profile
 	if err := c.doRequest(ctx, http.MethodPost, "/admin/api/v1/profiles", opts, &result); err != nil {
 		return nil, err
 	}
@@ -634,8 +674,8 @@ func (c *HTTPAdminClient) CreateProfile(ctx context.Context, opts CreateProfileO
 }
 
 // GetProfile retrieves a profile by ID.
-func (c *HTTPAdminClient) GetProfile(ctx context.Context, id string) (*store.Profile, error) {
-	var result store.Profile
+func (c *HTTPAdminClient) GetProfile(ctx context.Context, id string) (*Profile, error) {
+	var result Profile
 	if err := c.doRequest(ctx, http.MethodGet, "/admin/api/v1/profiles/"+id, nil, &result); err != nil {
 		return nil, err
 	}
@@ -643,7 +683,7 @@ func (c *HTTPAdminClient) GetProfile(ctx context.Context, id string) (*store.Pro
 }
 
 // ListProfiles lists profiles with optional filtering.
-func (c *HTTPAdminClient) ListProfiles(ctx context.Context, opts ListProfilesOptions) (*ListResult[store.Profile], error) {
+func (c *HTTPAdminClient) ListProfiles(ctx context.Context, opts ListProfilesOptions) (*ListResult[Profile], error) {
 	params := url.Values{}
 	if opts.Limit > 0 {
 		params.Set("limit", strconv.Itoa(opts.Limit))
@@ -666,7 +706,7 @@ func (c *HTTPAdminClient) ListProfiles(ctx context.Context, opts ListProfilesOpt
 		path += "?" + params.Encode()
 	}
 
-	var result ListResult[store.Profile]
+	var result ListResult[Profile]
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
@@ -674,8 +714,8 @@ func (c *HTTPAdminClient) ListProfiles(ctx context.Context, opts ListProfilesOpt
 }
 
 // UpdateProfile updates a profile.
-func (c *HTTPAdminClient) UpdateProfile(ctx context.Context, id string, opts UpdateProfileOptions) (*store.Profile, error) {
-	var result store.Profile
+func (c *HTTPAdminClient) UpdateProfile(ctx context.Context, id string, opts UpdateProfileOptions) (*Profile, error) {
+	var result Profile
 	if err := c.doRequest(ctx, http.MethodPut, "/admin/api/v1/profiles/"+id, opts, &result); err != nil {
 		return nil, err
 	}
