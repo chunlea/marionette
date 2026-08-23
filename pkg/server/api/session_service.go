@@ -28,6 +28,15 @@ type SessionService interface {
 
 	// Terminate terminates a session and cleans up resources.
 	Terminate(ctx context.Context, id string) error
+
+	// GetLogs returns the session's logs, hot rows and archive alike.
+	//
+	// Logs are archived per session, so the session is the level at which the
+	// whole history exists. The task endpoint answers "what did this task
+	// print"; this answers "what did this session ever print", which is the
+	// only question an archived session can still answer once its tasks'
+	// hot rows are gone.
+	GetLogs(ctx context.Context, id string, opts GetLogsOptions) (*store.ListResult[store.Log], error)
 }
 
 // CreateSessionOptions contains options for creating a session.

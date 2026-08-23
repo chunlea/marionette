@@ -190,11 +190,10 @@ func (s *Server) handleGetTaskLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := GetLogsOptions{
-		Limit:  parseIntQuery(r, "limit", 100),
-		Cursor: r.URL.Query().Get("cursor"),
-		Level:  r.URL.Query()["level"],
-		Stream: r.URL.Query()["stream"],
+	opts, err := parseGetLogsOptions(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
 	}
 
 	result, err := s.tasks.GetLogs(r.Context(), taskID, opts)

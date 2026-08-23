@@ -1047,6 +1047,87 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/sessions/{sessionID}/logs:
+    get:
+      tags:
+        - Sessions
+      summary: List session logs
+      description: 'Every log line the session ever produced, oldest first: the archived ones followed by the rows still in the database. This is the only view that survives archiving, because archives are written per session. `total_count` includes archived records, and for those it ignores the level and stream filters - counting them would mean decompressing the whole archive to answer a number.'
+      operationId: getSessionsLogs
+      security:
+        - ApiKeyAuth:
+            - tasks:read
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: level
+          in: query
+          description: Filter by log level.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items:
+              type: string
+        - name: stream
+          in: query
+          description: Filter by output stream.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items:
+              type: string
+        - name: archived
+          in: query
+          description: Which copy to read. Omit for both, oldest first. true reads only the archive; false reads only the rows still in the database.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogList'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The credential lacks the tasks:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/sessions/{sessionID}/resume:
     post:
       tags:
@@ -1519,6 +1600,7 @@ paths:
       tags:
         - Tasks
       summary: List task logs
+      description: Logs are archived per session once a session finishes, so a task's older logs may no longer be rows in the database. This reads both, in order, and `archived` narrows it to one side.
       operationId: getTasksLogs
       security:
         - ApiKeyAuth:
@@ -1558,6 +1640,11 @@ paths:
             type: array
             items:
               type: string
+        - name: archived
+          in: query
+          description: Which copy to read. Omit for both, oldest first. true reads only the archive; false reads only the rows still in the database.
+          schema:
+            type: boolean
       responses:
         "200":
           description: Success.

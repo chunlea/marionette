@@ -57,3 +57,20 @@ type LogPartitionDropResult struct {
 	Dropped  []string
 	Retained []string
 }
+
+// Boundary is the exact position an archive stops at.
+//
+// All three parts or none: a row missing one of them predates the columns that
+// carry the boundary, and guessing the missing part would either re-archive
+// rows the object already holds, delete rows it does not, or serve a line at
+// the seam twice.
+func (a *LogArchive) Boundary() *LogCursor {
+	if a == nil || a.LastLogAt == nil || a.LastLogID == nil || a.LastLogSequence == nil {
+		return nil
+	}
+	return &LogCursor{
+		CreatedAt: *a.LastLogAt,
+		Sequence:  *a.LastLogSequence,
+		ID:        *a.LastLogID,
+	}
+}

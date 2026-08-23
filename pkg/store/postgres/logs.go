@@ -189,6 +189,15 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 		args = append(args, opts.Level)
 		argNum++
 	}
+	if opts.After != nil {
+		// A row comparison, not three ANDed ones: the ordering logs are
+		// archived in is (created_at, sequence, id), and that is the only
+		// boundary that neither repeats nor skips a row at the seam.
+		conditions = append(conditions, fmt.Sprintf(
+			"(created_at, sequence, id) > ($%d, $%d, $%d)", argNum, argNum+1, argNum+2))
+		args = append(args, opts.After.CreatedAt, opts.After.Sequence, opts.After.ID)
+		argNum += 3
+	}
 
 	whereClause := ""
 	if len(conditions) > 0 {
