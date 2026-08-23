@@ -1,0 +1,19 @@
+pkg/store/postgres/workspaces_test.go
+  s_30fb41c4a911b8::t_e738a6107b7102 53-57,59-61,69-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "5070b84b463345631e2caa4f930d05711eb4c6c0",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
