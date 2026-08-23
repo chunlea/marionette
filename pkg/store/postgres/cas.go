@@ -605,6 +605,136 @@ func scanChunkFromRows(rows pgx.Rows) (*store.Chunk, error) {
 }
 
 // =============================================================================
+// Manifest commit
+// =============================================================================
+
+// CommitManifest registers every chunk, creates the manifest and takes a
+// reference on each chunk, in one transaction.
+//
+// The pieces existed separately but nothing performed them together, which left
+// two holes. A manifest could be created referring to chunks whose rows were
+// never written; and between registering a chunk and referencing it the
+// collector was free to reclaim it, so a commit could silently end up pointing
+// at a chunk that no longer exists. Inside one transaction the references are
+// taken before anything is visible, and referencing clears any deletion mark.
+//
+// Chunks must already be in blob storage: this records metadata only. Storing
+// the bytes first is what the grace period protects.
+func (s *Store) CommitManifest(ctx context.Context, manifest *store.Manifest, chunks []*store.Chunk) error {
+	if manifest == nil {
+		return &store.InvalidInputError{Field: "manifest", Message: "must not be nil"}
+	}
+	if manifest.TenantID == "" {
+		return &store.InvalidInputError{Field: "tenant_id", Message: "must not be empty"}
+	}
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	pgTx, ok := tx.(*Tx)
+	if !ok {
+		return fmt.Errorf("unexpected transaction type %T", tx)
+	}
+
+	// Deduplicate: a workspace commonly contains the same chunk more than once,
+	// and each occurrence must not inflate the reference count.
+	seen := make(map[string]struct{}, len(chunks))
+	for _, chunk := range chunks {
+		if chunk == nil || chunk.Hash == "" {
+			return &store.InvalidInputError{Field: "chunks", Message: "chunk hash must not be empty"}
+		}
+		if _, dup := seen[chunk.Hash]; dup {
+			continue
+		}
+		seen[chunk.Hash] = struct{}{}
+
+		if err := pgTx.RegisterChunk(ctx, manifest.TenantID, chunk.Hash, chunk.Size); err != nil {
+			return fmt.Errorf("registering chunk %s: %w", chunk.Hash, err)
+		}
+		if err := pgTx.IncrementChunkRef(ctx, manifest.TenantID, chunk.Hash); err != nil {
+			return fmt.Errorf("referencing chunk %s: %w", chunk.Hash, err)
+		}
+	}
+
+	if err := pgTx.CreateManifest(ctx, manifest); err != nil {
+		return fmt.Errorf("creating manifest: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+
+	return nil
+}
+
+// ReleaseManifest deletes a manifest and drops its references, in one
+// transaction. The chunks themselves are left to the collector: another
+// manifest may still reference them, and the grace period is what decides.
+func (s *Store) ReleaseManifest(ctx context.Context, manifestID string, chunks []*store.Chunk) error {
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	pgTx, ok := tx.(*Tx)
+	if !ok {
+		return fmt.Errorf("unexpected transaction type %T", tx)
+	}
+
+	manifest, err := pgTx.GetManifest(ctx, manifestID)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[string]struct{}, len(chunks))
+	for _, chunk := range chunks {
+		if chunk == nil || chunk.Hash == "" {
+			continue
+		}
+		if _, dup := seen[chunk.Hash]; dup {
+			continue
+		}
+		seen[chunk.Hash] = struct{}{}
+
+		if err := pgTx.DecrementChunkRef(ctx, manifest.TenantID, chunk.Hash); err != nil {
+			// A chunk that is already gone is not a reason to fail the release:
+			// the manifest is being torn down either way.
+			if !errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("releasing chunk %s: %w", chunk.Hash, err)
+			}
+		}
+	}
+
+	if err := pgTx.DeleteManifest(ctx, manifestID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+
+	return nil
+}
+
+// =============================================================================
 // Manifest CRUD
 // =============================================================================
 
