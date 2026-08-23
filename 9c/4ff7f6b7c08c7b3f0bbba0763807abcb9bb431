@@ -1,0 +1,19 @@
+docs/development/releasing.md
+  s_d7da100278f3de::t_760fb04bcd1463 47-49,85-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "9c4ff7f6b7c08c7b3f0bbba0763807abcb9bb431",
+  "prompts": {},
+  "sessions": {
+    "s_d7da100278f3de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d25f03f-fcd3-47a0-8cec-a7ffad651de1",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
