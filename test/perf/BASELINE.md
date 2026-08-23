@@ -18,7 +18,8 @@ Recorded **2026-08-23** on branch `restart/round-3`.
 | PostgreSQL | `postgres:15-alpine` (benchmarks) / `postgres:16-alpine` (load test), in a local container |
 
 A laptop is not a server. Treat the absolute numbers as a shape, and the ratios
-between them as the thing worth remembering. CI records its own on a shared
+between them as the thing worth remembering; repeat runs of the load test move
+by roughly 10%. CI records its own on a shared
 runner (`bench` job, artifact `benchmarks`), and those will be slower and
 noisier — which is exactly why that job does not gate.
 
@@ -166,17 +167,17 @@ This is the runner-freed trigger measured against the real stack rather than a
 fake store. From the server log for that run:
 
 ```
-wake triggers:          4 x runner_freed
+wake triggers:          runner_freed only (4-7 passes across repeat runs)
 parked sessions woken:  40
-sweeps that found work: 4
+sweeps:                 0
 ```
 
 All forty parked sessions were woken by the edge trigger, and the whole run
-finished in 5.4s — comfortably inside a single 60s sweep interval, so the
-backstop never had to carry it. The four coalesced `runner_freed` wakes covered
-all forty sessions between them, which is the coalescing design doing what it
-claims: a storm of triggers costs a bounded number of passes, not one per
-trigger.
+finished in 5-6s — comfortably inside a single 60s sweep interval, so the
+backstop never had to carry any of it. A handful of coalesced `runner_freed`
+passes covered all forty sessions between them, which is the coalescing design
+doing what it claims: a storm of triggers costs a bounded number of passes, not
+one per trigger.
 
 Latency is five seconds at p95 here **by construction**: a task whose session
 has no runner cannot start until one is handed back, so the number measures
