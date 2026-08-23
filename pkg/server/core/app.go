@@ -14,6 +14,7 @@ import (
 	"github.com/chunlea/marionette/pkg/storage/cas"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/webhook"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -92,6 +93,14 @@ type WireDeps struct {
 	// Logger is the root logger.
 	Logger *zap.Logger
 
+	// MetricsRegisterer registers the core's Prometheus collectors. Optional:
+	// with metrics disabled the counters still exist and are simply not
+	// scraped, so nothing incrementing them has to know.
+	MetricsRegisterer prometheus.Registerer
+	// MetricsNamespace prefixes the core's metric names. Defaults to
+	// "marionette".
+	MetricsNamespace string
+
 	// WorkspaceConfig configures on-host workspace directories.
 	WorkspaceConfig config.WorkspaceStorageConfig
 	// WebhookConfig configures webhook delivery.
@@ -126,6 +135,7 @@ type App struct {
 	LogSubscribers *LogSubscriberManager
 	Events         *EventBus
 	Reaper         *Reaper
+	DispatchWaker  *DispatchWaker
 
 	// Background jobs, started by Start and drained by Stop.
 	jobs []backgroundJob
@@ -193,6 +203,8 @@ func Wire(deps WireDeps) (*App, error) {
 		Logger:           logger.Named("session"),
 	})
 
+	redispatchMetrics := NewRedispatchMetrics(deps.MetricsRegisterer, deps.MetricsNamespace)
+
 	tasks := NewTaskManager(
 		deps.Store,
 		deps.CmdSender,
@@ -201,9 +213,20 @@ func Wire(deps WireDeps) (*App, error) {
 		logger.Named("task"),
 		WithTaskWebhooks(webhooks),
 		WithTaskBackground(background),
+		WithRedispatchMetrics(redispatchMetrics),
 	)
 	// Close the session <-> task cycle. See setTaskManager.
 	sessions.setTaskManager(tasks)
+
+	// The waker needs both managers, so it is built after both and injected
+	// back. Every trigger that frees or adds a runner routes through it, which
+	// is what lets them all be fired blindly: it coalesces, so a suspend, a
+	// disconnect and a sweep tick landing together cost one pass.
+	waker := NewDispatchWaker(
+		deps.Store, sessions, tasks, background, redispatchMetrics,
+		logger.Named("redispatch"),
+	)
+	sessions.setWaker(waker)
 
 	permissions := NewPermissionManager(
 		deps.Store,
@@ -225,6 +248,7 @@ func Wire(deps WireDeps) (*App, error) {
 		WithSessionManager(sessions),
 		WithRunnerWebhooks(webhooks),
 		WithRunnerBackground(background),
+		WithRunnerWaker(waker),
 	)
 
 	registry := NewRunnerRegistry(deps.Store, deps.RunnerTokenService, logger.Named("registry"))
@@ -244,6 +268,7 @@ func Wire(deps WireDeps) (*App, error) {
 		Webhooks:       webhookMgr,
 		LogSubscribers: logSubscribers,
 		Events:         events,
+		DispatchWaker:  waker,
 		ctx:            appCtx,
 		cancel:         cancel,
 		background:     background,
@@ -384,7 +409,7 @@ func (a *App) buildJobs(deps WireDeps) {
 		if cfg.RedispatchInterval > 0 {
 			opts = append(opts, WithRedispatchInterval(cfg.RedispatchInterval))
 		}
-		sweeper := NewRedispatchSweeper(a.Store, a.Tasks, a.Logger.Named("redispatch"), opts...)
+		sweeper := NewRedispatchSweeper(a.DispatchWaker, a.Logger.Named("redispatch-sweeper"), opts...)
 		a.jobs = append(a.jobs, backgroundJob{
 			name:  "redispatch-sweeper",
 			start: func(ctx context.Context) error { sweeper.Start(ctx); return nil },

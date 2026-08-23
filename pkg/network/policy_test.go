@@ -28,10 +28,11 @@ func TestParsePolicy(t *testing.T) {
 			wantErr:      false,
 		},
 		{
-			name:         "proxy policy",
+			name:         "proxy policy without a proxy is rejected",
 			level:        "proxy",
 			allowedHosts: nil,
-			wantErr:      false,
+			wantErr:      true,
+			errContains:  "proxy policy requires a proxy configuration",
 		},
 		{
 			name:         "air_gapped policy",
@@ -228,7 +229,7 @@ func TestNetworkPolicy_RequiresDNSPinning(t *testing.T) {
 	}{
 		{PolicyNone, false},
 		{PolicyAllowList, true},
-		{PolicyProxy, false},
+		{PolicyProxy, true},
 		{PolicyAirGapped, false},
 	}
 

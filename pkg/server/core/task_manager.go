@@ -115,6 +115,9 @@ type TaskManager struct {
 	// redispatchMaxAttempts bounds automatic redispatch before a task parks.
 	redispatchMaxAttempts int
 
+	// redispatchMetrics counts backoff and parking. Optional: nil is a no-op.
+	redispatchMetrics *RedispatchMetrics
+
 	// dispatchLocks serialises DispatchNext per session.
 	//
 	// Creating a task both activates the session (which schedules a dispatch)
@@ -138,6 +141,14 @@ type TaskManagerOption func(*TaskManager)
 func WithRedispatchMaxAttempts(n int) TaskManagerOption {
 	return func(m *TaskManager) {
 		m.redispatchMaxAttempts = n
+	}
+}
+
+// WithRedispatchMetrics supplies the counters that make dispatch failures and
+// parked tasks visible from outside the process.
+func WithRedispatchMetrics(m *RedispatchMetrics) TaskManagerOption {
+	return func(tm *TaskManager) {
+		tm.redispatchMetrics = m
 	}
 }
 

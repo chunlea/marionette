@@ -133,73 +133,96 @@ func TestDispatchNext_SkipsParkedTasks(t *testing.T) {
 	assert.Empty(t, cmdSender.sentCommands, "a parked task waits for a human, not a timer")
 }
 
+// redispatchFixture wires the pieces a trigger test needs: a store, a task
+// manager whose commands are observable, and the waker every trigger routes
+// through.
+type redispatchFixture struct {
+	store      *testTaskStore
+	tasks      *TaskManager
+	sessions   *mockSessionMgrForTask
+	cmdSender  *mockCommandSender
+	waker      *DispatchWaker
+	background *backgroundTasks
+}
+
+func newRedispatchFixture() *redispatchFixture {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	sessions := &mockSessionMgrForTask{store: s}
+	tasks := NewTaskManager(s, cmdSender, sessions, nil, zap.NewNop())
+	background := newBackgroundTasks(context.Background(), 0, zap.NewNop())
+	return &redispatchFixture{
+		store:      s,
+		tasks:      tasks,
+		sessions:   sessions,
+		cmdSender:  cmdSender,
+		waker:      NewDispatchWaker(s, sessions, tasks, background, nil, zap.NewNop()),
+		background: background,
+	}
+}
+
 // TestRedispatchSweeper_DispatchesDueWork is the backstop trigger: this is the
 // path that survives a restart, which every edge trigger does not.
 func TestRedispatchSweeper_DispatchesDueWork(t *testing.T) {
-	s := newTestTaskStore()
-	cmdSender := &mockCommandSender{}
-	manager := NewTaskManager(s, cmdSender, &mockSessionMgrForTask{}, nil, zap.NewNop())
+	f := newRedispatchFixture()
 
 	runnerID := "run_1"
-	s.sessions["sess_1"] = &store.Session{
+	f.store.sessions["sess_1"] = &store.Session{
 		ID: "sess_1", Status: SessionStatusActive, RunnerID: &runnerID,
 	}
 	past := time.Now().Add(-time.Minute)
-	s.tasks["task_1"] = &store.Task{
+	f.store.tasks["task_1"] = &store.Task{
 		ID: "task_1", SessionID: "sess_1", Status: TaskStatusPending, Prompt: "go",
 		DispatchAttempts: 1, NextDispatchAfter: &past,
 	}
 
-	sweeper := NewRedispatchSweeper(s, manager, zap.NewNop())
+	sweeper := NewRedispatchSweeper(f.waker, zap.NewNop())
 	require.NoError(t, sweeper.Sweep(context.Background()))
 
-	assert.Len(t, cmdSender.sentCommands, 1, "an expired backoff must be picked up")
+	assert.Len(t, f.cmdSender.sentCommands, 1, "an expired backoff must be picked up")
 }
 
 func TestRedispatchSweeper_LeavesUndueWorkAlone(t *testing.T) {
-	s := newTestTaskStore()
-	cmdSender := &mockCommandSender{}
-	manager := NewTaskManager(s, cmdSender, &mockSessionMgrForTask{}, nil, zap.NewNop())
+	f := newRedispatchFixture()
 
 	runnerID := "run_1"
-	s.sessions["sess_1"] = &store.Session{
+	f.store.sessions["sess_1"] = &store.Session{
 		ID: "sess_1", Status: SessionStatusActive, RunnerID: &runnerID,
 	}
 	future := time.Now().Add(time.Hour)
 	parked := "gave up"
-	s.tasks["backing_off"] = &store.Task{
+	f.store.tasks["backing_off"] = &store.Task{
 		ID: "backing_off", SessionID: "sess_1", Status: TaskStatusPending,
-		NextDispatchAfter: &future,
+		NextDispatchAfter: &future, CreatedAt: time.Now(),
 	}
-	s.tasks["parked"] = &store.Task{
+	f.store.tasks["parked"] = &store.Task{
 		ID: "parked", SessionID: "sess_1", Status: TaskStatusPending,
-		DispatchParkedReason: &parked,
+		DispatchParkedReason: &parked, CreatedAt: time.Now().Add(-time.Hour),
 	}
 
-	require.NoError(t, NewRedispatchSweeper(s, manager, zap.NewNop()).Sweep(context.Background()))
-	assert.Empty(t, cmdSender.sentCommands)
+	require.NoError(t, NewRedispatchSweeper(f.waker, zap.NewNop()).Sweep(context.Background()))
+	assert.Empty(t, f.cmdSender.sentCommands)
 }
 
-// TestRedispatchSweeper_SkipsSessionsWithoutARunner: dispatching into a session
-// with nowhere to run is the attach trigger's job, not the sweeper's.
-func TestRedispatchSweeper_SkipsSessionsWithoutARunner(t *testing.T) {
-	s := newTestTaskStore()
-	cmdSender := &mockCommandSender{}
-	manager := NewTaskManager(s, cmdSender, &mockSessionMgrForTask{}, nil, zap.NewNop())
+// TestRedispatchSweeper_SkipsSessionsWithNoRunnerToBeHad: a pass asks the
+// session manager for a runner, and when there is none the session stays parked
+// rather than being dispatched into nowhere.
+func TestRedispatchSweeper_SkipsSessionsWithNoRunnerToBeHad(t *testing.T) {
+	f := newRedispatchFixture()
+	f.sessions.ensureRunnerErr = ErrNoRunnerAvailable
 
-	s.sessions["sess_1"] = &store.Session{ID: "sess_1", Status: SessionStatusActive}
-	s.tasks["task_1"] = &store.Task{
+	f.store.sessions["sess_1"] = &store.Session{ID: "sess_1", Status: SessionStatusActive}
+	f.store.tasks["task_1"] = &store.Task{
 		ID: "task_1", SessionID: "sess_1", Status: TaskStatusPending, Prompt: "go",
 	}
 
-	require.NoError(t, NewRedispatchSweeper(s, manager, zap.NewNop()).Sweep(context.Background()))
-	assert.Empty(t, cmdSender.sentCommands)
+	require.NoError(t, NewRedispatchSweeper(f.waker, zap.NewNop()).Sweep(context.Background()))
+	assert.Empty(t, f.cmdSender.sentCommands)
 }
 
 func TestRedispatchSweeper_StartStop(t *testing.T) {
-	s := newTestTaskStore()
-	manager := NewTaskManager(s, &mockCommandSender{}, &mockSessionMgrForTask{}, nil, zap.NewNop())
-	sweeper := NewRedispatchSweeper(s, manager, zap.NewNop(), WithRedispatchInterval(time.Hour))
+	f := newRedispatchFixture()
+	sweeper := NewRedispatchSweeper(f.waker, zap.NewNop(), WithRedispatchInterval(time.Hour))
 
 	sweeper.Start(context.Background())
 	sweeper.Start(context.Background()) // second Start is a no-op

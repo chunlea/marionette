@@ -357,10 +357,19 @@ func (m *mockCommandSender) SendCommand(_ string, cmd *pb.ServerCommand) error {
 
 // mockSessionMgrForTask implements SessionManagerInterface for testing.
 type mockSessionMgrForTask struct {
+	// mu guards the counters: redispatch fires wakes concurrently.
+	mu sync.Mutex
 	// ensureRunnerErr, when set, makes EnsureRunner report that no runner
 	// could be allocated. The zero value succeeds.
 	ensureRunnerErr error
 	ensureCalls     int
+
+	// store and allocateRunnerID make EnsureRunner behave like the real one:
+	// it attaches a runner to a session that had none, which is the half of
+	// the wake path that lives outside the task manager. With no store set the
+	// mock keeps its old shape and reports a runner-less session.
+	store            *testTaskStore
+	allocateRunnerID string
 }
 
 func (m *mockSessionMgrForTask) Create(_ context.Context, _ CreateSessionOptions) (*store.Session, error) {
@@ -1809,12 +1818,39 @@ func TestTaskManager_Execute_NoRunRecordedWhenNoRunner(t *testing.T) {
 }
 
 // EnsureRunner satisfies SessionManagerInterface. These fakes never allocate.
-func (m *mockSessionMgrForTask) EnsureRunner(_ context.Context, sessionID string) (*store.Session, error) {
+func (m *mockSessionMgrForTask) EnsureRunner(ctx context.Context, sessionID string) (*store.Session, error) {
+	m.mu.Lock()
 	m.ensureCalls++
-	if m.ensureRunnerErr != nil {
-		return nil, m.ensureRunnerErr
+	err, st, runnerID := m.ensureRunnerErr, m.store, m.allocateRunnerID
+	m.mu.Unlock()
+
+	if err != nil {
+		return nil, err
 	}
-	return &store.Session{ID: sessionID, Status: SessionStatusActive}, nil
+	if st == nil {
+		return &store.Session{ID: sessionID, Status: SessionStatusActive}, nil
+	}
+
+	session, getErr := st.GetSession(ctx, sessionID)
+	if getErr != nil {
+		return nil, getErr
+	}
+	if runnerID != "" && (session.RunnerID == nil || *session.RunnerID == "") {
+		if updErr := st.UpdateSession(ctx, sessionID, store.SessionUpdates{
+			Status:   stringPtr(SessionStatusActive),
+			RunnerID: &runnerID,
+		}); updErr != nil {
+			return nil, updErr
+		}
+	}
+	return st.GetSession(ctx, sessionID)
+}
+
+// calls reports how many times EnsureRunner was called, safely under -race.
+func (m *mockSessionMgrForTask) calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ensureCalls
 }
 
 // =============================================================================
@@ -1847,7 +1883,7 @@ func TestTaskManager_Create_AutoDispatches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, sessionMgr.ensureCalls, "creation must ensure the session has a runner")
+	assert.Equal(t, 1, sessionMgr.calls(), "creation must ensure the session has a runner")
 	require.Len(t, cmdSender.sentCommands, 1, "the task must be dispatched on creation")
 	assert.Equal(t, task.ID, cmdSender.sentCommands[0].GetExecuteTask().GetTaskId())
 

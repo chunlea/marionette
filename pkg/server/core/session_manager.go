@@ -187,6 +187,7 @@ type SessionManager struct {
 	auditLog         audit.Logger
 	providerRegistry ProviderRegistryInterface
 	taskManager      TaskManagerInterface
+	waker            RunnerAvailableNotifier
 	webhooks         *WebhookIntegration
 	background       *backgroundTasks
 	logger           *zap.Logger
@@ -247,6 +248,24 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 // production wiring happens exactly once, in Wire.
 func (m *SessionManager) setTaskManager(tm TaskManagerInterface) {
 	m.taskManager = tm
+}
+
+// setWaker injects the redispatch waker after construction.
+//
+// The waker needs both managers, so it cannot exist when either is built. Like
+// setTaskManager this is package-private: production wiring happens once, in
+// Wire.
+func (m *SessionManager) setWaker(w RunnerAvailableNotifier) {
+	m.waker = w
+}
+
+// wake asks the redispatch waker for a pass after this session gave up a
+// runner. Safe with no waker wired.
+func (m *SessionManager) wake(ctx context.Context) {
+	if m.waker == nil {
+		return
+	}
+	m.waker.RunnerAvailable(ctx, WakeTriggerRunnerFreed)
 }
 
 // CreateSessionOptions contains options for creating a new session.
@@ -782,6 +801,14 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 		)
 	} else {
 		m.releaseRunner(ctx, sessionID, previousRunnerID, opts)
+
+		// Redispatch trigger 2. The runner this session was holding is gone -
+		// back to its pool, paused, or destroyed - and which of those it was is
+		// deliberately not checked here. A wake is two queries when it finds
+		// nothing, and guessing wrong in the other direction strands a session.
+		if previousRunnerID != nil && *previousRunnerID != "" {
+			m.wake(ctx)
+		}
 	}
 
 	// Log audit event
@@ -1634,6 +1661,15 @@ func (m *SessionManager) selectIdleRunner(ctx context.Context, session *store.Se
 		if runner.Tainted {
 			continue
 		}
+		// Runner selection runs under whatever context asked for it, and the
+		// background triggers run with system access so they can serve every
+		// tenant. That makes row level security no help here: without this
+		// check a redispatch pass could hand tenant A's runner to tenant B's
+		// session, and only Activate's tenant assertion would catch it - after
+		// the candidate had already been chosen and the alternatives skipped.
+		if !sameTenant(session.TenantID, runner.TenantID) {
+			continue
+		}
 		if selector != nil && !hasAllCapabilities(runner.Capabilities, selector.Capabilities) {
 			continue
 		}
@@ -1817,6 +1853,11 @@ func (m *SessionManager) Terminate(ctx context.Context, sessionID string) error 
 		m.cleanupWorkspaceIfUnused(ctx, sessionID, session.WorkspaceID)
 	}
 
+	// Redispatch trigger 2: a terminated session releases whatever it held.
+	if previousRunnerID != nil && *previousRunnerID != "" {
+		m.wake(ctx)
+	}
+
 	return nil
 }
 
@@ -1953,6 +1994,10 @@ func (m *SessionManager) DetachRunner(ctx context.Context, sessionID string) err
 		zap.String("session_id", sessionID),
 		zap.Stringp("runner_id", previousRunnerID),
 	)
+
+	// Redispatch trigger 2: an explicit detach hands the runner back with no
+	// suspend to carry the wake.
+	m.wake(ctx)
 
 	return nil
 }

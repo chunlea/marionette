@@ -39,6 +39,7 @@ import (
 	"github.com/chunlea/marionette/pkg/streaming/browser"
 	"github.com/chunlea/marionette/pkg/tunnel"
 	"github.com/chunlea/marionette/pkg/webhook"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -98,6 +99,19 @@ func main() {
 	// Initialize provider registry
 	providerRegistry := initProviderRegistry(dbStore, cfg, logger)
 
+	// The metrics registry is built before the core managers because they
+	// register collectors of their own; the middleware and the scrape endpoint
+	// are attached further down, once the servers exist.
+	var metricsRegistry *metrics.Registry
+	var metricsServer *metrics.Server
+	if cfg.Observability.Metrics.Enabled {
+		metricsRegistry = metrics.NewRegistry(cfg.Observability.Metrics.Namespace)
+	}
+	var metricsRegisterer prometheus.Registerer
+	if metricsRegistry != nil {
+		metricsRegisterer = metricsRegistry.PrometheusRegistry()
+	}
+
 	// Create core managers (only if database is available).
 	// core.Wire is the single production wiring point: every manager and every
 	// background job is built there, so the binary cannot drift away from what
@@ -136,6 +150,8 @@ func main() {
 			ProviderRegistry:   providerRegistry,
 			AuditLog:           auditLog,
 			Logger:             logger,
+			MetricsRegisterer:  metricsRegisterer,
+			MetricsNamespace:   cfg.Observability.Metrics.Namespace,
 			WorkspaceConfig:    cfg.Storage.Workspace,
 			WebhookConfig:      webhookConfig(),
 			Jobs: core.JobsConfig{
@@ -235,12 +251,8 @@ func main() {
 		logger.Info("core services initialized and wired to API")
 	}
 
-	// Create metrics registry and middleware (if enabled)
-	var metricsRegistry *metrics.Registry
-	var metricsServer *metrics.Server
-	if cfg.Observability.Metrics.Enabled {
-		metricsRegistry = metrics.NewRegistry(cfg.Observability.Metrics.Namespace)
-
+	// Attach the metrics middleware (if enabled)
+	if metricsRegistry != nil {
 		// Add metrics middleware to API and Admin servers
 		apiOpts = append(apiOpts, api.WithMiddleware(metrics.HTTPMiddleware(metricsRegistry)))
 
