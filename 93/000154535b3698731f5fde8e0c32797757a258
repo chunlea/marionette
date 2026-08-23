@@ -1,0 +1,19 @@
+web/src/types/api.gen.ts
+  s_4e03746a1c3c16::t_fa0484a87ae8a5 291-310,474-477,2282-2350,2932-2933
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "93000154535b3698731f5fde8e0c32797757a258",
+  "prompts": {},
+  "sessions": {
+    "s_4e03746a1c3c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60714d52-8636-4fc2-adaa-7b5018a4a131",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
