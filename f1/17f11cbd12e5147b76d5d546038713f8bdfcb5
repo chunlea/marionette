@@ -1,0 +1,29 @@
+pkg/server/core/workspace_manager.go
+  s_476c758fe5506c::t_409b0527658607 72-74,78-83,88-90
+pkg/server/core/workspace_manager_test.go
+  s_e995f4552d48c1::t_16f68e0173bd3f 158,475-476
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "f117f11cbd12e5147b76d5d546038713f8bdfcb5",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
