@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -373,6 +375,22 @@ func main() {
 		}
 	}
 
+	// The dashboard is served by the admin server but calls a relative
+	// /api/v1, which lives on the public API port. Forwarding that prefix
+	// gives the browser one origin: no CORS, no build-time URL baking, and
+	// WebSocket upgrades relay through. The direction matters - the admin API
+	// mints API keys and registers runners, so it must not be reachable
+	// through the public port, whereas the public API authenticates every
+	// request itself.
+	apiProxy, err := api.NewUpstreamProxy("/api/v1", localAPIAddr(cfg.Server.API), logger)
+	if err != nil {
+		logger.Fatal("failed to create the API proxy", zap.Error(err))
+	}
+	// Mounted ahead of the other admin middleware so proxied traffic is not
+	// counted as admin traffic, and so a relayed WebSocket does not sit in the
+	// admin latency histogram for its whole lifetime.
+	adminOpts = append([]admin.Option{admin.WithMiddleware(apiProxy)}, adminOpts...)
+
 	// The admin API mints API keys, registers runners and reads every session.
 	// It fails closed: without credentials the server refuses to start unless
 	// --dev-insecure-admin says otherwise.
@@ -615,6 +633,22 @@ func wireTunnels(deps wireTunnelsDeps, apiOpts *[]api.Option) *grpcserver.Tunnel
 	)
 
 	return tunnelRouter
+}
+
+// localAPIAddr is the address the admin server dials to reach the public API.
+//
+// Both servers live in one process, so this is a loopback call. The configured
+// host is a bind address, not a dial target: the usual 0.0.0.0 (or an empty
+// value, or the IPv6 wildcard) cannot be dialled, so those become the
+// loopback. A concrete bind address is used as-is, because an API bound to one
+// interface may not be listening on the loopback at all.
+func localAPIAddr(cfg config.EndpointConfig) string {
+	host := cfg.Host
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	return fmt.Sprintf("http://%s", net.JoinHostPort(host, strconv.Itoa(cfg.Port)))
 }
 
 // webhookConfig returns the webhook delivery configuration.
