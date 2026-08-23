@@ -200,7 +200,7 @@ func buildCASSyncer(cfg StorageConfig, logger *zap.Logger) (func(workspaceID str
 		}
 
 		chunkStore := cas.NewBlobChunkStore(provider, encryptor)
-		manifestStore := cas.NewBlobManifestStore(provider, encryptor)
+		manifestStore := cas.NewBlobManifestStoreWithTempDir(provider, encryptor, casCfg.TempDir)
 
 		return func(workspaceID string) cas.Syncer {
 			return cas.NewSync(casCfg, chunkStore, pinnedManifestStore{
@@ -274,6 +274,10 @@ func (p pinnedManifestStore) LoadManifest(ctx context.Context, tenantID, workspa
 
 func (p pinnedManifestStore) StreamManifestFiles(ctx context.Context, tenantID, workspaceID, manifestID string) (<-chan cas.ManifestFile, *cas.ManifestHeader, error) {
 	return p.ManifestStore.StreamManifestFiles(ctx, tenantID, p.resolve(workspaceID), manifestID)
+}
+
+func (p pinnedManifestStore) OpenManifest(ctx context.Context, tenantID, workspaceID, manifestID string) (*cas.ManifestEntries, error) {
+	return p.ManifestStore.OpenManifest(ctx, tenantID, p.resolve(workspaceID), manifestID)
 }
 
 func (p pinnedManifestStore) DeleteManifest(ctx context.Context, tenantID, workspaceID, manifestID string) error {
