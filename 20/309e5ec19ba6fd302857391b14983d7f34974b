@@ -1,0 +1,19 @@
+pkg/server/core/replica_registry_test.go
+  s_345440c29221e7::t_011d8dbd8530e0 1-212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "20309e5ec19ba6fd302857391b14983d7f34974b",
+  "prompts": {},
+  "sessions": {
+    "s_345440c29221e7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a030c2-2a53-79e2-baff-22144bbb43c0",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
