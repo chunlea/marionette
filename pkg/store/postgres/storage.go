@@ -125,7 +125,7 @@ func listSnapshots(ctx context.Context, q querier, opts store.ListSnapshotsOptio
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := snapshotSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := snapshotSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +140,9 @@ func listSnapshots(ctx context.Context, q querier, opts store.ListSnapshotsOptio
 		SELECT %s FROM snapshots %s
 		ORDER BY %s
 		LIMIT $%d`,
-		snapshotColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		snapshotColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -167,10 +168,17 @@ func listSnapshots(ctx context.Context, q querier, opts store.ListSnapshotsOptio
 		snapshots = snapshots[:limit]
 	}
 
+	var nextCursor string
+	if len(snapshots) > 0 {
+		last := snapshots[len(snapshots)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Snapshot]{
 		Items:      snapshots,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -408,7 +416,7 @@ func listTunnels(ctx context.Context, q querier, opts store.ListTunnelsOptions) 
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := tunnelSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := tunnelSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -423,8 +431,9 @@ func listTunnels(ctx context.Context, q querier, opts store.ListTunnelsOptions) 
 		SELECT %s FROM tunnels %s
 		ORDER BY %s
 		LIMIT $%d`,
-		tunnelColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		tunnelColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -450,10 +459,17 @@ func listTunnels(ctx context.Context, q querier, opts store.ListTunnelsOptions) 
 		tunnels = tunnels[:limit]
 	}
 
+	var nextCursor string
+	if len(tunnels) > 0 {
+		last := tunnels[len(tunnels)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Tunnel]{
 		Items:      tunnels,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

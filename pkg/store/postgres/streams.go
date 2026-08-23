@@ -150,7 +150,7 @@ func listStreams(ctx context.Context, q querier, opts store.ListStreamsOptions) 
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := streamSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := streamSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -167,8 +167,9 @@ func listStreams(ctx context.Context, q querier, opts store.ListStreamsOptions) 
 		SELECT %s FROM streams %s
 		ORDER BY %s
 		LIMIT $%d`,
-		streamColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		streamColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -194,10 +195,17 @@ func listStreams(ctx context.Context, q querier, opts store.ListStreamsOptions) 
 		streams = streams[:limit]
 	}
 
+	var nextCursor string
+	if len(streams) > 0 {
+		last := streams[len(streams)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Stream]{
 		Items:      streams,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

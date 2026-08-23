@@ -117,7 +117,7 @@ func listPermissionRequests(ctx context.Context, q querier, opts store.ListPermi
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := permissionSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := permissionSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +132,9 @@ func listPermissionRequests(ctx context.Context, q querier, opts store.ListPermi
 		SELECT %s FROM permission_requests %s
 		ORDER BY %s
 		LIMIT $%d`,
-		permissionRequestColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		permissionRequestColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -159,10 +160,17 @@ func listPermissionRequests(ctx context.Context, q querier, opts store.ListPermi
 		requests = requests[:limit]
 	}
 
+	var nextCursor string
+	if len(requests) > 0 {
+		last := requests[len(requests)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.PermissionRequest]{
 		Items:      requests,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

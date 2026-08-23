@@ -107,7 +107,7 @@ func listWorkspaces(ctx context.Context, q querier, opts store.ListWorkspacesOpt
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := workspaceSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := workspaceSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -124,8 +124,9 @@ func listWorkspaces(ctx context.Context, q querier, opts store.ListWorkspacesOpt
 		SELECT %s FROM workspaces %s
 		ORDER BY %s
 		LIMIT $%d`,
-		workspaceColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		workspaceColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -151,10 +152,17 @@ func listWorkspaces(ctx context.Context, q querier, opts store.ListWorkspacesOpt
 		workspaces = workspaces[:limit]
 	}
 
+	var nextCursor string
+	if len(workspaces) > 0 {
+		last := workspaces[len(workspaces)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Workspace]{
 		Items:      workspaces,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

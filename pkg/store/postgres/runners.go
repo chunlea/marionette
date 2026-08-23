@@ -131,7 +131,7 @@ func listRunners(ctx context.Context, q querier, opts store.ListRunnersOptions) 
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := runnerSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := runnerSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -148,8 +148,9 @@ func listRunners(ctx context.Context, q querier, opts store.ListRunnersOptions) 
 		SELECT %s FROM runners %s
 		ORDER BY %s
 		LIMIT $%d`,
-		runnerColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		runnerColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -175,10 +176,17 @@ func listRunners(ctx context.Context, q querier, opts store.ListRunnersOptions) 
 		runners = runners[:limit]
 	}
 
+	var nextCursor string
+	if len(runners) > 0 {
+		last := runners[len(runners)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Runner]{
 		Items:      runners,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

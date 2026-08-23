@@ -142,34 +142,54 @@ func derefInt(i *int) int {
 	return *i
 }
 
+// encodeCursorValue builds an opaque pagination cursor from a sort-key value
+// and the row ID. The ID is part of the cursor because the sort key alone is
+// not unique: without it a page boundary that falls inside a run of equal keys
+// either skips or repeats rows.
+func encodeCursorValue(value, id string) string {
+	return base64.URLEncoding.EncodeToString([]byte(value + "|" + id))
+}
+
+// decodeCursorValue splits a cursor back into its sort-key value and row ID.
+func decodeCursorValue(cursor string) (value, id string, err error) {
+	if cursor == "" {
+		return "", "", nil
+	}
+
+	data, err := base64.URLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid cursor encoding: %w", err)
+	}
+
+	parts := strings.SplitN(string(data), "|", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid cursor format")
+	}
+
+	return parts[0], parts[1], nil
+}
+
 // encodeCursor creates a cursor from timestamp and ID for pagination.
 // Format: base64(RFC3339Nano|id)
 func encodeCursor(t time.Time, id string) string {
-	data := fmt.Sprintf("%s|%s", t.Format(time.RFC3339Nano), id)
-	return base64.URLEncoding.EncodeToString([]byte(data))
+	return encodeCursorValue(t.Format(time.RFC3339Nano), id)
 }
 
 // decodeCursor extracts timestamp and ID from a cursor.
 // Returns zero values on error.
 func decodeCursor(cursor string) (time.Time, string, error) {
-	if cursor == "" {
+	value, id, err := decodeCursorValue(cursor)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	if value == "" && id == "" {
 		return time.Time{}, "", nil
 	}
 
-	data, err := base64.URLEncoding.DecodeString(cursor)
-	if err != nil {
-		return time.Time{}, "", fmt.Errorf("invalid cursor encoding: %w", err)
-	}
-
-	parts := strings.SplitN(string(data), "|", 2)
-	if len(parts) != 2 {
-		return time.Time{}, "", fmt.Errorf("invalid cursor format")
-	}
-
-	t, err := time.Parse(time.RFC3339Nano, parts[0])
+	t, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("invalid cursor timestamp: %w", err)
 	}
 
-	return t, parts[1], nil
+	return t, id, nil
 }

@@ -114,7 +114,7 @@ func listTasks(ctx context.Context, q querier, opts store.ListTasksOptions) (*st
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := taskSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := taskSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -129,8 +129,9 @@ func listTasks(ctx context.Context, q querier, opts store.ListTasksOptions) (*st
 		SELECT %s FROM tasks %s
 		ORDER BY %s
 		LIMIT $%d`,
-		taskColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		taskColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -156,10 +157,17 @@ func listTasks(ctx context.Context, q querier, opts store.ListTasksOptions) (*st
 		tasks = tasks[:limit]
 	}
 
+	var nextCursor string
+	if len(tasks) > 0 {
+		last := tasks[len(tasks)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Task]{
 		Items:      tasks,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -381,7 +389,7 @@ func listTaskRuns(ctx context.Context, q querier, opts store.ListTaskRunsOptions
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := taskRunSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := taskRunSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -396,8 +404,9 @@ func listTaskRuns(ctx context.Context, q querier, opts store.ListTaskRunsOptions
 		SELECT %s FROM task_runs %s
 		ORDER BY %s
 		LIMIT $%d`,
-		taskRunColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		taskRunColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -423,10 +432,17 @@ func listTaskRuns(ctx context.Context, q querier, opts store.ListTaskRunsOptions
 		runs = runs[:limit]
 	}
 
+	var nextCursor string
+	if len(runs) > 0 {
+		last := runs[len(runs)-1]
+		nextCursor = page.nextTime(hasMore, last.QueuedAt, last.ID)
+	}
+
 	return &store.ListResult[store.TaskRun]{
 		Items:      runs,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -633,7 +649,7 @@ func listScheduledTasks(ctx context.Context, q querier, opts store.ListScheduled
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := scheduledTaskSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := scheduledTaskSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -648,8 +664,9 @@ func listScheduledTasks(ctx context.Context, q querier, opts store.ListScheduled
 		SELECT %s FROM scheduled_tasks %s
 		ORDER BY %s
 		LIMIT $%d`,
-		scheduledTaskColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		scheduledTaskColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -675,10 +692,17 @@ func listScheduledTasks(ctx context.Context, q querier, opts store.ListScheduled
 		tasks = tasks[:limit]
 	}
 
+	var nextCursor string
+	if len(tasks) > 0 {
+		last := tasks[len(tasks)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.ScheduledTask]{
 		Items:      tasks,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

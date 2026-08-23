@@ -139,7 +139,7 @@ func listAgentConfigs(ctx context.Context, q querier, opts store.ListAgentConfig
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := agentConfigSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := agentConfigSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -154,8 +154,9 @@ func listAgentConfigs(ctx context.Context, q querier, opts store.ListAgentConfig
 		SELECT %s FROM agent_configs %s
 		ORDER BY %s
 		LIMIT $%d`,
-		agentConfigColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		agentConfigColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -181,10 +182,17 @@ func listAgentConfigs(ctx context.Context, q querier, opts store.ListAgentConfig
 		configs = configs[:limit]
 	}
 
+	var nextCursor string
+	if len(configs) > 0 {
+		last := configs[len(configs)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.AgentConfig]{
 		Items:      configs,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -432,7 +440,7 @@ func listProviderConfigs(ctx context.Context, q querier, opts store.ListProvider
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := providerConfigSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := providerConfigSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -447,8 +455,9 @@ func listProviderConfigs(ctx context.Context, q querier, opts store.ListProvider
 		SELECT %s FROM provider_configs %s
 		ORDER BY %s
 		LIMIT $%d`,
-		providerConfigColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		providerConfigColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -474,10 +483,17 @@ func listProviderConfigs(ctx context.Context, q querier, opts store.ListProvider
 		configs = configs[:limit]
 	}
 
+	var nextCursor string
+	if len(configs) > 0 {
+		last := configs[len(configs)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.ProviderConfig]{
 		Items:      configs,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -705,7 +721,7 @@ func listProfiles(ctx context.Context, q querier, opts store.ListProfilesOptions
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := profileSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := profileSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -720,8 +736,9 @@ func listProfiles(ctx context.Context, q querier, opts store.ListProfilesOptions
 		SELECT %s FROM profiles %s
 		ORDER BY %s
 		LIMIT $%d`,
-		profileColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		profileColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -747,10 +764,17 @@ func listProfiles(ctx context.Context, q querier, opts store.ListProfilesOptions
 		profiles = profiles[:limit]
 	}
 
+	var nextCursor string
+	if len(profiles) > 0 {
+		last := profiles[len(profiles)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Profile]{
 		Items:      profiles,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 

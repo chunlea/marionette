@@ -12,7 +12,7 @@ import (
 )
 
 func TestSortColumnsOrderClause(t *testing.T) {
-	columns := sortColumns{"created_at", "name", "status"}
+	columns := sortColumns{allowed: []string{"created_at", "name", "status"}}
 
 	tests := []struct {
 		name      string
@@ -21,10 +21,10 @@ func TestSortColumnsOrderClause(t *testing.T) {
 		want      string
 		wantErr   bool
 	}{
-		{name: "defaults to the first column, ascending", want: "created_at ASC"},
-		{name: "default column, descending", desc: true, want: "created_at DESC"},
-		{name: "allowed column", requested: "name", want: "name ASC"},
-		{name: "allowed column, descending", requested: "status", desc: true, want: "status DESC"},
+		{name: "defaults to the first column, ascending", want: "created_at ASC, id ASC"},
+		{name: "default column, descending", desc: true, want: "created_at DESC, id DESC"},
+		{name: "allowed column", requested: "name", want: "name ASC, id ASC"},
+		{name: "allowed column, descending", requested: "status", desc: true, want: "status DESC, id DESC"},
 		{name: "unknown column", requested: "secret", wantErr: true},
 		{name: "injection attempt", requested: "created_at; DROP TABLE sessions--", wantErr: true},
 		{name: "expression", requested: "(SELECT 1)", wantErr: true},
@@ -36,7 +36,11 @@ func TestSortColumnsOrderClause(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := columns.orderClause(tt.requested, tt.desc)
+			page, err := columns.page(store.BaseListOptions{
+				OrderBy:   tt.requested,
+				OrderDesc: tt.desc,
+			}, 1)
+			got := page.orderBy
 
 			if tt.wantErr {
 				if err == nil {
@@ -88,12 +92,12 @@ func allSortColumns() map[string]sortColumns {
 
 func TestSortColumnsAreNonEmptyAndUnique(t *testing.T) {
 	for table, columns := range allSortColumns() {
-		if len(columns) == 0 {
-			t.Errorf("%s: allowlist is empty, orderClause would panic on the default", table)
+		if len(columns.allowed) == 0 {
+			t.Errorf("%s: allowlist is empty, page() would panic on the default", table)
 			continue
 		}
-		seen := make(map[string]bool, len(columns))
-		for _, c := range columns {
+		seen := make(map[string]bool, len(columns.allowed))
+		for _, c := range columns.allowed {
 			if seen[c] {
 				t.Errorf("%s: duplicate column %q", table, c)
 			}
@@ -118,7 +122,7 @@ func TestSortColumnsExistInSchema(t *testing.T) {
 			t.Errorf("table %q is not in docs/schema.sql", table)
 			continue
 		}
-		for _, column := range columns {
+		for _, column := range columns.allowed {
 			if !tableColumns[column] {
 				t.Errorf("%s.%s does not exist in docs/schema.sql", table, column)
 			}

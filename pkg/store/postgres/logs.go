@@ -195,7 +195,7 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := logSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := logSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -210,8 +210,9 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 		SELECT %s FROM logs %s
 		ORDER BY %s
 		LIMIT $%d`,
-		logColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		logColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -237,10 +238,17 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 		logs = logs[:limit]
 	}
 
+	var nextCursor string
+	if len(logs) > 0 {
+		last := logs[len(logs)-1]
+		nextCursor = page.nextSeq(hasMore, last.Sequence, last.ID)
+	}
+
 	return &store.ListResult[store.Log]{
 		Items:      logs,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -386,7 +394,7 @@ func listLogArchives(ctx context.Context, q querier, opts store.ListLogArchivesO
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := logArchiveSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := logArchiveSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -401,8 +409,9 @@ func listLogArchives(ctx context.Context, q querier, opts store.ListLogArchivesO
 		SELECT %s FROM log_archives %s
 		ORDER BY %s
 		LIMIT $%d`,
-		logArchiveColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		logArchiveColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -428,10 +437,17 @@ func listLogArchives(ctx context.Context, q querier, opts store.ListLogArchivesO
 		archives = archives[:limit]
 	}
 
+	var nextCursor string
+	if len(archives) > 0 {
+		last := archives[len(archives)-1]
+		nextCursor = page.nextTime(hasMore, last.ArchivedAt, last.ID)
+	}
+
 	return &store.ListResult[store.LogArchive]{
 		Items:      archives,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
@@ -658,26 +674,13 @@ func listActionLogs(ctx context.Context, q querier, opts store.ListActionLogsOpt
 		argNum++
 	}
 
-	// Cursor-based pagination
-	if opts.Cursor != "" {
-		cursorTime, cursorID, err := decodeCursor(opts.Cursor)
-		if err == nil && !cursorTime.IsZero() {
-			// For descending order (newest first): get items older than cursor
-			conditions = append(conditions, fmt.Sprintf(
-				"(created_at < $%d OR (created_at = $%d AND id < $%d))",
-				argNum, argNum+1, argNum+2))
-			args = append(args, cursorTime, cursorTime, cursorID)
-			argNum += 3
-		}
-	}
-
 	whereClause := ""
 	if len(conditions) > 0 {
 		whereClause = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := actionLogSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := actionLogSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -692,8 +695,9 @@ func listActionLogs(ctx context.Context, q querier, opts store.ListActionLogsOpt
 		SELECT %s FROM action_logs %s
 		ORDER BY %s
 		LIMIT $%d`,
-		actionLogColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		actionLogColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -719,11 +723,10 @@ func listActionLogs(ctx context.Context, q querier, opts store.ListActionLogsOpt
 		logs = logs[:limit]
 	}
 
-	// Generate next cursor from last item
 	var nextCursor string
-	if hasMore && len(logs) > 0 {
-		lastLog := logs[len(logs)-1]
-		nextCursor = encodeCursor(lastLog.CreatedAt, lastLog.ID)
+	if len(logs) > 0 {
+		last := logs[len(logs)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
 	}
 
 	return &store.ListResult[store.ActionLog]{

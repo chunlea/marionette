@@ -133,7 +133,7 @@ func listSessions(ctx context.Context, q querier, opts store.ListSessionsOptions
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy, err := sessionSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	page, err := sessionSortColumns.page(opts.BaseListOptions, argNum)
 	if err != nil {
 		return nil, err
 	}
@@ -150,8 +150,9 @@ func listSessions(ctx context.Context, q querier, opts store.ListSessionsOptions
 		SELECT %s FROM sessions %s
 		ORDER BY %s
 		LIMIT $%d`,
-		sessionColumns, whereClause, orderBy, argNum)
-	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
+		sessionColumns, page.where(whereClause), page.orderBy, page.limitArg(argNum))
+	dataArgs := append(args, page.args...) //nolint:gocritic // intentionally creating new slice
+	dataArgs = append(dataArgs, limit+1)
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
 	if err != nil {
@@ -177,10 +178,17 @@ func listSessions(ctx context.Context, q querier, opts store.ListSessionsOptions
 		sessions = sessions[:limit]
 	}
 
+	var nextCursor string
+	if len(sessions) > 0 {
+		last := sessions[len(sessions)-1]
+		nextCursor = page.nextTime(hasMore, last.CreatedAt, last.ID)
+	}
+
 	return &store.ListResult[store.Session]{
 		Items:      sessions,
 		TotalCount: totalCount,
 		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }
 
