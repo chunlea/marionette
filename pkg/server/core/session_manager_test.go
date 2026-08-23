@@ -2845,3 +2845,8 @@ func TestSessionManager_Activate_DispatchesBacklogAfterResume(t *testing.T) {
 		return len(mockTM.dispatchedSessions()) == 1
 	}, 5*time.Second, 20*time.Millisecond, "a resumed session must dispatch its backlog")
 }
+
+// ListRuns satisfies TaskManagerInterface. These fakes keep no run history.
+func (m *mockTaskManagerForSession) ListRuns(_ context.Context, _ string, _ ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	return &store.ListResult[store.TaskRun]{}, nil
+}

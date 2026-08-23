@@ -1947,3 +1947,45 @@ func TestTaskManager_DispatchNext_ConcurrentCallersSendOnce(t *testing.T) {
 			"a pending task must be dispatched exactly once")
 	}
 }
+
+// =============================================================================
+// ListRuns
+// =============================================================================
+
+func TestTaskManager_ListRuns(t *testing.T) {
+	manager, s, _, _ := setupAutoDispatchTest()
+	s.tasks["task_1"] = &store.Task{ID: "task_1", SessionID: "sess_123", Status: TaskStatusFailed}
+
+	// Deliberately inserted out of order: attempt order is what callers read
+	// the history in, and it must not depend on the store's default sort.
+	s.setTaskRun("trun_2", &store.TaskRun{ID: "trun_2", TaskID: "task_1", Attempt: 2, Status: TaskRunStatusCompleted})
+	s.setTaskRun("trun_1", &store.TaskRun{ID: "trun_1", TaskID: "task_1", Attempt: 1, Status: TaskRunStatusFailed})
+
+	result, err := manager.ListRuns(context.Background(), "task_1", ListTaskRunsOptions{})
+	require.NoError(t, err)
+	require.Len(t, result.Items, 2)
+	assert.Equal(t, 1, result.Items[0].Attempt)
+	assert.Equal(t, 2, result.Items[1].Attempt)
+}
+
+// TestTaskManager_ListRuns_UnknownTask keeps an unknown ID a 404 rather than an
+// empty list, which would read as "this task has never run".
+func TestTaskManager_ListRuns_UnknownTask(t *testing.T) {
+	manager, _, _, _ := setupAutoDispatchTest()
+
+	_, err := manager.ListRuns(context.Background(), "task_missing", ListTaskRunsOptions{})
+	assert.ErrorIs(t, err, ErrTaskNotFound)
+}
+
+func TestTaskManager_ListRuns_ScopesToTheTask(t *testing.T) {
+	manager, s, _, _ := setupAutoDispatchTest()
+	s.tasks["task_1"] = &store.Task{ID: "task_1", SessionID: "sess_123"}
+	s.tasks["task_2"] = &store.Task{ID: "task_2", SessionID: "sess_123"}
+	s.setTaskRun("trun_1", &store.TaskRun{ID: "trun_1", TaskID: "task_1", Attempt: 1})
+	s.setTaskRun("trun_2", &store.TaskRun{ID: "trun_2", TaskID: "task_2", Attempt: 1})
+
+	result, err := manager.ListRuns(context.Background(), "task_1", ListTaskRunsOptions{})
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	assert.Equal(t, "trun_1", result.Items[0].ID)
+}

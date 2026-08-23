@@ -877,3 +877,8 @@ func TestJSONToMap(t *testing.T) {
 
 // DispatchNext satisfies TaskManagerInterface. These fakes dispatch nothing.
 func (m *mockTaskMgrForScheduled) DispatchNext(_ context.Context, _ string) error { return nil }
+
+// ListRuns satisfies TaskManagerInterface. These fakes keep no run history.
+func (m *mockTaskMgrForScheduled) ListRuns(_ context.Context, _ string, _ ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	return &store.ListResult[store.TaskRun]{}, nil
+}

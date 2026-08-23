@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -72,6 +73,7 @@ type TaskManagerInterface interface {
 	ReExecute(ctx context.Context, taskID string) error
 	DispatchNext(ctx context.Context, sessionID string) error
 	CreateRun(ctx context.Context, taskID string) (*store.TaskRun, error)
+	ListRuns(ctx context.Context, taskID string, opts ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error)
 	OnTaskAccepted(ctx context.Context, runID string) error
 	OnTaskStarted(ctx context.Context, runID string) error
 	OnTaskProgress(ctx context.Context, runID string, progress int) error
@@ -709,6 +711,36 @@ func (m *TaskManager) ReExecute(ctx context.Context, taskID string) error {
 	)
 
 	return nil
+}
+
+// ListRuns returns the execution attempts of a task, oldest attempt first.
+//
+// A task's history is its runs: which runner took it, how it ended, what it
+// cost. The task row only carries the latest status, so this is the only way to
+// see a retry that failed before the one that succeeded.
+func (m *TaskManager) ListRuns(ctx context.Context, taskID string, opts ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	// Confirm the task exists so an unknown ID is a 404 rather than an empty
+	// list that looks like a task which has never run.
+	if _, err := m.store.GetTask(ctx, taskID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+
+	opts.TaskID = &taskID
+	result, err := m.store.ListTaskRuns(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Attempt order is the meaningful one for a history, and it does not depend
+	// on a store's default sort.
+	sort.SliceStable(result.Items, func(i, j int) bool {
+		return result.Items[i].Attempt < result.Items[j].Attempt
+	})
+
+	return result, nil
 }
 
 // CreateRun creates a new task run.

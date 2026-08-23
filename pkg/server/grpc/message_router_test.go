@@ -1736,3 +1736,8 @@ func (m *mockSessionManager) EnsureRunner(_ context.Context, _ string) (*store.S
 
 // DispatchNext satisfies TaskManagerInterface. These fakes dispatch nothing.
 func (m *mockTaskManager) DispatchNext(_ context.Context, _ string) error { return nil }
+
+// ListRuns satisfies TaskManagerInterface. These fakes keep no run history.
+func (m *mockTaskManager) ListRuns(_ context.Context, _ string, _ core.ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	return &store.ListResult[store.TaskRun]{}, nil
+}
