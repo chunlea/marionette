@@ -185,6 +185,7 @@ type SessionManager struct {
 	providerRegistry ProviderRegistryInterface
 	taskManager      TaskManagerInterface
 	webhooks         *WebhookIntegration
+	background       *backgroundTasks
 	logger           *zap.Logger
 }
 
@@ -197,7 +198,10 @@ type SessionManagerConfig struct {
 	AuditLog         audit.Logger
 	ProviderRegistry ProviderRegistryInterface
 	Webhooks         *WebhookIntegration
-	Logger           *zap.Logger
+	// Background runs work that must outlive the request that started it.
+	// Wire supplies the shared pool; when nil the manager makes its own.
+	Background *backgroundTasks
+	Logger     *zap.Logger
 }
 
 // NewSessionManager creates a new SessionManager.
@@ -206,12 +210,17 @@ func NewSessionManager(store store.Store, connManager ConnectionManagerInterface
 		store:       store,
 		connManager: connManager,
 		cmdSender:   cmdSender,
+		background:  newBackgroundTasks(context.Background(), 0, logger),
 		logger:      logger,
 	}
 }
 
 // NewSessionManagerWithConfig creates a new SessionManager with full configuration.
 func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
+	background := cfg.Background
+	if background == nil {
+		background = newBackgroundTasks(context.Background(), 0, cfg.Logger)
+	}
 	return &SessionManager{
 		store:            cfg.Store,
 		connManager:      cfg.ConnManager,
@@ -220,6 +229,7 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 		auditLog:         cfg.AuditLog,
 		providerRegistry: cfg.ProviderRegistry,
 		webhooks:         cfg.Webhooks,
+		background:       background,
 		logger:           cfg.Logger,
 	}
 }
@@ -496,7 +506,12 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 				m.webhooks.DispatchSessionEvent(ctx, "session.resumed", updatedSession)
 			}
 		}
-		go m.reExecuteRunningTasks(ctx, sessionID, runnerID)
+		// Deliberately not the request context: re-execution outlives the
+		// activation call, and cancelling it when the handler returns is how
+		// resumed tasks used to silently never restart.
+		m.background.Go("session-reexecute", func(bgCtx context.Context) {
+			m.reExecuteRunningTasks(bgCtx, sessionID, runnerID)
+		})
 	}
 
 	return nil
@@ -543,9 +558,8 @@ func (m *SessionManager) reExecuteRunningTasks(ctx context.Context, sessionID, r
 		zap.Int("task_count", len(tasks.Items)),
 	)
 
-	// Re-execute each running task
-	// Use a fresh context since the original request context may be canceled
-	execCtx := context.Background()
+	// ctx is the application background context supplied by the caller, so it
+	// is already independent of any request.
 	for _, task := range tasks.Items {
 		m.logger.Info("re-executing task after resume",
 			zap.String("session_id", sessionID),
@@ -553,7 +567,7 @@ func (m *SessionManager) reExecuteRunningTasks(ctx context.Context, sessionID, r
 		)
 
 		// Use ReExecute to reuse the existing task_run instead of creating a new one
-		if err := m.taskManager.ReExecute(execCtx, task.ID); err != nil {
+		if err := m.taskManager.ReExecute(ctx, task.ID); err != nil {
 			m.logger.Error("failed to re-execute task after resume",
 				zap.String("session_id", sessionID),
 				zap.String("task_id", task.ID),

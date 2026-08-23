@@ -45,6 +45,7 @@ type RunnerManager struct {
 	sessionMgr  SessionManagerInterface
 	logger      *zap.Logger
 	webhooks    *WebhookIntegration
+	background  *backgroundTasks
 }
 
 // RunnerManagerOption is a functional option for RunnerManager.
@@ -64,6 +65,14 @@ func WithSessionManager(sm SessionManagerInterface) RunnerManagerOption {
 	}
 }
 
+// WithRunnerBackground supplies the shared background worker pool.
+// When unset, the manager creates its own.
+func WithRunnerBackground(b *backgroundTasks) RunnerManagerOption {
+	return func(m *RunnerManager) {
+		m.background = b
+	}
+}
+
 // WithRunnerWebhooks sets the webhook integration for dispatching runner events.
 func WithRunnerWebhooks(wi *WebhookIntegration) RunnerManagerOption {
 	return func(m *RunnerManager) {
@@ -80,6 +89,9 @@ func NewRunnerManager(store store.Store, connManager ConnectionManagerInterface,
 	}
 	for _, opt := range opts {
 		opt(m)
+	}
+	if m.background == nil {
+		m.background = newBackgroundTasks(context.Background(), 0, logger)
 	}
 	return m
 }
@@ -136,8 +148,12 @@ func (m *RunnerManager) OnConnect(ctx context.Context, runnerID string) error {
 		}
 	}
 
-	// Try to attach to a resuming session
-	go m.tryAttachToResumingSession(ctx, runnerID)
+	// Try to attach to a resuming session. Deliberately not on ctx: the attach
+	// outlives the connect RPC that triggered it, and cancelling it when that
+	// RPC returns is a race the lookup usually loses.
+	m.background.Go("runner-attach-resuming", func(bgCtx context.Context) {
+		m.tryAttachToResumingSession(bgCtx, runnerID)
+	})
 
 	return nil
 }

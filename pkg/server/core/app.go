@@ -47,6 +47,10 @@ type JobsConfig struct {
 	ReapInterval  time.Duration
 	ReapMinAge    time.Duration
 	DisableReaper bool
+
+	// BackgroundWorkers bounds fire-and-forget work (task retries, post-resume
+	// re-execution, runner attach). Zero uses the package default.
+	BackgroundWorkers int
 }
 
 // WireDeps are the external dependencies App needs. They are struct fields
@@ -104,6 +108,10 @@ type App struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	// background is the shared bounded pool the managers spawn onto, drained
+	// by Stop so no retry outlives the process it belongs to.
+	background *backgroundTasks
+
 	mu      sync.Mutex
 	started bool
 	stopped bool
@@ -136,6 +144,9 @@ func Wire(deps WireDeps) (*App, error) {
 
 	workspaces := NewWorkspaceManager(deps.Store, deps.WorkspaceConfig, logger.Named("workspace"))
 
+	appCtx, cancel := context.WithCancel(context.Background())
+	background := newBackgroundTasks(appCtx, deps.Jobs.BackgroundWorkers, logger.Named("background"))
+
 	sessions := NewSessionManagerWithConfig(SessionManagerConfig{
 		Store:            deps.Store,
 		ConnManager:      deps.ConnManager,
@@ -144,6 +155,7 @@ func Wire(deps WireDeps) (*App, error) {
 		AuditLog:         deps.AuditLog,
 		ProviderRegistry: deps.ProviderRegistry,
 		Webhooks:         webhooks,
+		Background:       background,
 		Logger:           logger.Named("session"),
 	})
 
@@ -154,6 +166,7 @@ func Wire(deps WireDeps) (*App, error) {
 		deps.AuditLog,
 		logger.Named("task"),
 		WithTaskWebhooks(webhooks),
+		WithTaskBackground(background),
 	)
 	// Close the session <-> task cycle. See setTaskManager.
 	sessions.setTaskManager(tasks)
@@ -177,13 +190,12 @@ func Wire(deps WireDeps) (*App, error) {
 		WithTaskManager(tasks),
 		WithSessionManager(sessions),
 		WithRunnerWebhooks(webhooks),
+		WithRunnerBackground(background),
 	)
 
 	registry := NewRunnerRegistry(deps.Store, deps.RunnerTokenService, logger.Named("registry"))
 	scheduledTasks := NewScheduledTaskService(deps.Store, tasks, deps.AuditLog, logger.Named("scheduled-task"))
 	logSubscribers := NewLogSubscriberManager(logger.Named("log-subscriber"))
-
-	appCtx, cancel := context.WithCancel(context.Background())
 
 	app := &App{
 		Store:          deps.Store,
@@ -200,6 +212,7 @@ func Wire(deps WireDeps) (*App, error) {
 		Events:         events,
 		ctx:            appCtx,
 		cancel:         cancel,
+		background:     background,
 	}
 
 	app.buildJobs(deps)
@@ -370,8 +383,15 @@ func (a *App) Stop(ctx context.Context) error {
 
 	select {
 	case <-done:
-		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("core: background jobs did not drain: %w", ctx.Err())
 	}
+
+	// Then the fire-and-forget pool: retries and post-resume re-execution used
+	// to be bare goroutines nothing waited for, so shutdown raced them to the
+	// database handle.
+	if err := a.background.Wait(ctx); err != nil {
+		return fmt.Errorf("core: background work did not drain: %w", err)
+	}
+	return nil
 }

@@ -72,9 +72,10 @@ func (s *RunnerService) Connect(stream grpc.BidiStreamingServer[pb.RunnerMessage
 		}
 	}
 
-	// Start command sender goroutine
-	sendErrCh := make(chan error, 1)
-	go s.sendCommands(ctx, conn, sendErrCh)
+	// Start command sender goroutine. A send failure tears the connection down
+	// via conn.Close(), which is what the receive loop below observes; there is
+	// no separate error channel to read.
+	go s.sendCommands(ctx, conn)
 
 	// Receive messages from runner
 	for {
@@ -116,7 +117,12 @@ func (s *RunnerService) Connect(stream grpc.BidiStreamingServer[pb.RunnerMessage
 }
 
 // sendCommands sends queued commands to the runner via the stream.
-func (s *RunnerService) sendCommands(ctx context.Context, conn *RunnerConnection, errCh chan<- error) {
+//
+// It used to report failures on an error channel that nobody ever read, so a
+// broken stream was noticed only when the receive side happened to fail too.
+// Now a failed send closes the connection, which stops SendCommand from
+// queueing into a stream that is already gone.
+func (s *RunnerService) sendCommands(ctx context.Context, conn *RunnerConnection) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -130,7 +136,7 @@ func (s *RunnerService) sendCommands(ctx context.Context, conn *RunnerConnection
 					zap.String("runner_id", conn.RunnerID),
 					zap.Error(err),
 				)
-				errCh <- err
+				conn.Close()
 				return
 			}
 		}

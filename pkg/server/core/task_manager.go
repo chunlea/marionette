@@ -96,11 +96,20 @@ type TaskManager struct {
 	sessionMgr SessionManagerInterface
 	auditLog   audit.Logger
 	webhooks   *WebhookIntegration
+	background *backgroundTasks
 	logger     *zap.Logger
 }
 
 // TaskManagerOption is a functional option for TaskManager.
 type TaskManagerOption func(*TaskManager)
+
+// WithTaskBackground supplies the shared background worker pool.
+// When unset, the manager creates its own.
+func WithTaskBackground(b *backgroundTasks) TaskManagerOption {
+	return func(m *TaskManager) {
+		m.background = b
+	}
+}
 
 // WithTaskWebhooks sets the webhook integration for dispatching task events.
 func WithTaskWebhooks(wi *WebhookIntegration) TaskManagerOption {
@@ -127,6 +136,9 @@ func NewTaskManager(
 	}
 	for _, opt := range opts {
 		opt(m)
+	}
+	if m.background == nil {
+		m.background = newBackgroundTasks(context.Background(), 0, logger)
 	}
 	return m
 }
@@ -780,16 +792,10 @@ func (m *TaskManager) OnTaskCompleted(ctx context.Context, result *TaskCompleted
 				zap.String("task_id", run.TaskID),
 				zap.String("run_id", result.RunID),
 			)
-			// Trigger retry asynchronously
-			go func() {
-				retryCtx := context.Background()
-				if _, err := m.Retry(retryCtx, run.TaskID); err != nil {
-					m.logger.Error("failed to retry task",
-						zap.String("task_id", run.TaskID),
-						zap.Error(err),
-					)
-				}
-			}()
+			// Trigger the retry on the bounded background pool. This used to
+			// be a bare goroutine per failed run: unbounded, immediate, with
+			// no backoff, no recover and nothing draining it on shutdown.
+			m.scheduleRetry(run.TaskID)
 			return nil
 		default:
 			taskStatus = TaskStatusFailed
@@ -882,6 +888,42 @@ func (m *TaskManager) Retry(ctx context.Context, taskID string) (*store.TaskRun,
 	)
 
 	return run, nil
+}
+
+// scheduleRetry queues a retry on the bounded background pool, after a jittered
+// backoff. A rejected schedule (pool saturated or shutting down) is logged: the
+// task stays running and the task timeout enforcer will pick it up.
+func (m *TaskManager) scheduleRetry(taskID string) {
+	delay := m.retryDelayFor(taskID)
+
+	accepted := m.background.Go("task-retry", func(ctx context.Context) {
+		if !sleepCtx(ctx, delay) {
+			m.logger.Debug("retry abandoned during shutdown", zap.String("task_id", taskID))
+			return
+		}
+		if _, err := m.Retry(ctx, taskID); err != nil {
+			m.logger.Error("failed to retry task",
+				zap.String("task_id", taskID),
+				zap.Error(err),
+			)
+		}
+	})
+
+	if !accepted {
+		m.logger.Warn("retry not scheduled; task will be picked up by the timeout enforcer",
+			zap.String("task_id", taskID),
+		)
+	}
+}
+
+// retryDelayFor derives the backoff from how many retries the task has already
+// spent, so repeated failures back off instead of hammering the runner.
+func (m *TaskManager) retryDelayFor(taskID string) time.Duration {
+	task, err := m.store.GetTask(context.Background(), taskID)
+	if err != nil {
+		return retryDelay(0)
+	}
+	return retryDelay(task.RetryCount)
 }
 
 // cancelRun marks a task run as canceled.
@@ -1170,16 +1212,8 @@ func (e *TaskTimeoutEnforcer) timeoutRun(ctx context.Context, run *store.TaskRun
 			e.logger.Info("task will be retried after timeout",
 				zap.String("task_id", task.ID),
 			)
-			// Trigger retry asynchronously
-			go func() {
-				retryCtx := context.Background()
-				if _, err := e.taskMgr.Retry(retryCtx, task.ID); err != nil {
-					e.logger.Error("failed to retry timed out task",
-						zap.String("task_id", task.ID),
-						zap.Error(err),
-					)
-				}
-			}()
+			// Same bounded path as a failed run: see TaskManager.scheduleRetry.
+			e.taskMgr.scheduleRetry(task.ID)
 		default:
 			// No more retries - mark task as failed
 			if err := e.store.UpdateTask(ctx, task.ID, store.TaskUpdates{

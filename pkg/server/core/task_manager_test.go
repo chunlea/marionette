@@ -1619,14 +1619,15 @@ func TestTaskManager_OnTaskCompleted_FailedWithRetry(t *testing.T) {
 	// Task run should be failed
 	assert.Equal(t, TaskRunStatusFailed, s.getTaskRun("trun_1").Status)
 
-	// Give goroutine time to retry (async retry)
-	time.Sleep(100 * time.Millisecond)
+	// The retry is scheduled on the background pool behind a jittered backoff,
+	// so wait for the effect rather than for a fixed duration.
+	require.Eventually(t, func() bool {
+		return s.getTask("task_1").RetryCount == 1
+	}, 10*time.Second, 20*time.Millisecond, "the failed run must be retried")
 
 	// Task should still be running (retry pending or in progress)
 	task := s.getTask("task_1")
 	assert.Equal(t, TaskStatusRunning, task.Status)
-	// RetryCount should be incremented by the Retry goroutine
-	assert.Equal(t, 1, task.RetryCount)
 }
 
 func TestTaskManager_OnTaskCompleted_FailedNoRetry(t *testing.T) {
