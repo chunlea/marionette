@@ -95,6 +95,10 @@ type Client interface {
 	CancelTask(ctx context.Context, id string) error
 	GetTaskLogs(ctx context.Context, id string, opts GetLogsOptions) (LogIterator, error)
 
+	// GetSessionLogs returns every log line a session produced, archived and
+	// live alike.
+	GetSessionLogs(ctx context.Context, id string, opts GetLogsOptions) (LogIterator, error)
+
 	// Runners (read-only)
 	GetRunner(ctx context.Context, id string) (*Runner, error)
 	ListRunners(ctx context.Context, opts ListRunnersOptions) (*ListResult[Runner], error)

@@ -16,9 +16,22 @@ const (
 
 	// MaxChainNameLength is the maximum length for iptables chain names.
 	MaxChainNameLength = 28
+
+	// DynChainSuffix marks the chain holding refreshable allow-list rules.
+	DynChainSuffix = "_D"
 )
 
 // Manager manages iptables rules for session network isolation.
+//
+// Rules live in two chains per runner. The main chain holds everything that
+// never changes while the runner lives: loopback, connection state, the
+// operator's pinned endpoints, the blocked ranges, and the default drop. The
+// dynamic chain holds only the allow-list addresses, which the DNS refresher
+// adds to and removes from as records rotate.
+//
+// The split is what makes refreshing safe. Appending to the dynamic chain can
+// never land an allow rule ahead of the metadata-endpoint block, because the
+// blocks are in the parent chain and are evaluated before the jump.
 type Manager struct {
 	executor    Executor
 	chainPrefix string
@@ -37,183 +50,331 @@ func NewManager(executor Executor) *Manager {
 	}
 }
 
-// ChainName generates a chain name for a session.
-// The name is prefixed and truncated to fit iptables limits.
-func (m *Manager) ChainName(sessionID string) string {
-	// Remove any common prefix from session ID
-	id := strings.TrimPrefix(sessionID, "sess_")
+// ChainName generates the main chain name for a runner key.
+//
+// The name is truncated with room for DynChainSuffix so both chains fit inside
+// the iptables limit.
+func (m *Manager) ChainName(key string) string {
+	id := strings.TrimPrefix(key, "sess_")
 
-	// Combine prefix and ID, truncate if needed
-	name := m.chainPrefix + id
-	if len(name) > MaxChainNameLength {
-		name = name[:MaxChainNameLength]
+	var sb strings.Builder
+	sb.WriteString(m.chainPrefix)
+	for _, r := range id {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_':
+			sb.WriteRune(r)
+		default:
+			sb.WriteRune('_')
+		}
 	}
 
+	name := sb.String()
+	if max := MaxChainNameLength - len(DynChainSuffix); len(name) > max {
+		name = name[:max]
+	}
 	return name
 }
 
-// CreateChain creates a new iptables chain for a session.
-func (m *Manager) CreateChain(ctx context.Context, sessionID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	chainName := m.ChainName(sessionID)
-
-	// Create IPv4 chain
-	if err := m.executor.Run(ctx, "-N", chainName); err != nil {
-		// Ignore "Chain already exists" error
-		if !strings.Contains(err.Error(), "Chain already exists") {
-			return fmt.Errorf("create chain %s: %w", chainName, err)
-		}
-	}
-
-	// Create IPv6 chain
-	if err := m.executor.RunIPv6(ctx, "-N", chainName); err != nil {
-		if !strings.Contains(err.Error(), "Chain already exists") {
-			return fmt.Errorf("create IPv6 chain %s: %w", chainName, err)
-		}
-	}
-
-	m.activeChains[chainName] = true
-	return nil
+// DynChainName returns the chain holding refreshable allow-list rules.
+func (m *Manager) DynChainName(key string) string {
+	return m.ChainName(key) + DynChainSuffix
 }
 
-// DeleteChain removes an iptables chain for a session.
-func (m *Manager) DeleteChain(ctx context.Context, sessionID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// BuildRuleSets renders a resolved policy into the main and dynamic chains.
+func (m *Manager) BuildRuleSets(key string, policy *network.ResolvedPolicy) (main, dyn *RuleSet) {
+	mainChain := m.ChainName(key)
+	dynChain := m.DynChainName(key)
 
-	chainName := m.ChainName(sessionID)
+	main = NewRuleSet(mainChain)
+	dyn = NewRuleSet(dynChain)
 
-	// Flush and delete IPv4 chain
-	_ = m.executor.Run(ctx, "-F", chainName)
-	if err := m.executor.Run(ctx, "-X", chainName); err != nil {
-		// Ignore "No chain" error
-		if !strings.Contains(err.Error(), "No chain") {
-			return fmt.Errorf("delete chain %s: %w", chainName, err)
+	// 1. Traffic that never leaves the sandbox.
+	main.AddAllowLoopback()
+
+	// 2. Replies to connections the sandbox already opened.
+	main.AddAllowEstablished()
+
+	// 3. Operator pins, ahead of the blanket blocks. The control plane, the
+	//    proxy and the resolvers normally sit on a private network, which is
+	//    itself a blocked range; ordering them after the blocks would cut the
+	//    runner off from the server it is supposed to report to.
+	for _, er := range policy.ControlPlane {
+		for _, ip := range er.IPs {
+			main.AddAllowIP(ip, er.Endpoint.Port, "Allow control plane "+er.Endpoint.String())
 		}
 	}
 
-	// Flush and delete IPv6 chain
-	_ = m.executor.RunIPv6(ctx, "-F", chainName)
-	if err := m.executor.RunIPv6(ctx, "-X", chainName); err != nil {
-		if !strings.Contains(err.Error(), "No chain") {
-			return fmt.Errorf("delete IPv6 chain %s: %w", chainName, err)
+	if policy.Proxy != nil {
+		for _, ip := range policy.Proxy.IPs {
+			main.AddAllowIP(ip, policy.Proxy.Endpoint.Port, "Allow proxy "+policy.Proxy.Endpoint.String())
 		}
 	}
 
-	delete(m.activeChains, chainName)
-	return nil
+	for _, ip := range policy.DNSServers {
+		main.AddAllowDNSServer(ip, "Allow DNS resolver "+ip.String())
+	}
+
+	// 4. Always-blocked ranges: cloud metadata, loopback by address, and the
+	//    private networks an agent could use for lateral movement.
+	for _, cidr := range policy.BlockedCIDRs {
+		main.AddBlockCIDR(cidr, "Block "+cidr.String())
+	}
+
+	// 5. If no resolver could be discovered, allow-list and proxy modes still
+	//    need name resolution to function at all. Air-gapped never does.
+	if len(policy.DNSServers) == 0 && policy.OriginalPolicy != nil && policy.OriginalPolicy.AllowsExternalDNS() {
+		main.AddAllowDNSAny("Allow DNS (no resolver pinned)")
+	}
+
+	// 6. The refreshable allow list. Empty for proxy and air_gapped, which
+	//    reach the outside world only through the pins above.
+	main.AddJump(dynChain, "Allow-list")
+
+	// 7. Everything else.
+	main.AddDefaultDrop()
+
+	for _, rule := range m.dynamicRules(dynChain, policy) {
+		if rule.IsIPv6 {
+			dyn.IPv6Rules = append(dyn.IPv6Rules, rule)
+		} else {
+			dyn.Rules = append(dyn.Rules, rule)
+		}
+	}
+
+	return main, dyn
 }
 
-// ApplyPolicy applies a resolved network policy to a session's chain.
-func (m *Manager) ApplyPolicy(ctx context.Context, sessionID string, policy *network.ResolvedPolicy) error {
+// dynamicRules renders the allow-list destinations for the dynamic chain.
+func (m *Manager) dynamicRules(dynChain string, policy *network.ResolvedPolicy) []Rule {
+	if policy.Level() != network.PolicyAllowList {
+		return nil
+	}
+
+	rules := allowRules(dynChain, policy.AllIPsFiltered(), policy.AllowedPorts)
+
+	// Network blocks are static: nothing resolves them, so the refresher never
+	// touches them and they are simply rewritten on every install.
+	return append(rules, allowCIDRRules(dynChain, policy.AllowedCIDRs(), policy.AllowedPorts)...)
+}
+
+// allowCIDRRules renders one accept rule per network block and port.
+func allowCIDRRules(chain string, cidrs []*net.IPNet, ports []int) []Rule {
+	rules := make([]Rule, 0, len(cidrs)*len(ports))
+	for _, cidr := range cidrs {
+		for _, port := range ports {
+			rules = append(rules, Rule{
+				Chain:    chain,
+				Action:   ActionAccept,
+				Protocol: ProtocolTCP,
+				DestCIDR: cidr,
+				DestPort: port,
+				Comment:  fmt.Sprintf("Allow %s:%d", cidr.String(), port),
+				IsIPv6:   cidr.IP.To4() == nil,
+			})
+		}
+	}
+	return rules
+}
+
+// allowRules renders one accept rule per address and port.
+func allowRules(chain string, ips []net.IP, ports []int) []Rule {
+	rules := make([]Rule, 0, len(ips)*len(ports))
+	for _, ip := range ips {
+		if network.IsBlockedIP(ip) {
+			continue
+		}
+		for _, port := range ports {
+			rules = append(rules, Rule{
+				Chain:    chain,
+				Action:   ActionAccept,
+				Protocol: ProtocolTCP,
+				DestIP:   ip,
+				DestPort: port,
+				Comment:  fmt.Sprintf("Allow %s:%d", ip.String(), port),
+				IsIPv6:   ip.To4() == nil,
+			})
+		}
+	}
+	return rules
+}
+
+// Install writes the complete rule set for a runner and links it into OUTPUT.
+//
+// It is idempotent: both chains are flushed first, so re-installing over a
+// partially configured namespace converges instead of stacking duplicates.
+func (m *Manager) Install(ctx context.Context, key string, policy *network.ResolvedPolicy) error {
 	if policy == nil {
 		return fmt.Errorf("policy is nil")
 	}
 
-	chainName := m.ChainName(sessionID)
-	ruleSet := m.GenerateRuleSet(chainName, policy)
-
-	if err := ruleSet.Validate(); err != nil {
+	main, dyn := m.BuildRuleSets(key, policy)
+	if err := main.Validate(); err != nil {
 		return fmt.Errorf("invalid rule set: %w", err)
 	}
+	if err := dyn.Validate(); err != nil {
+		return fmt.Errorf("invalid dynamic rule set: %w", err)
+	}
 
-	// Apply IPv4 rules
-	for _, rule := range ruleSet.Rules {
-		args := rule.ToArgs()
-		if err := m.executor.Run(ctx, args...); err != nil {
-			return fmt.Errorf("apply rule %s: %w", rule.String(), err)
+	// Both chains must exist before the main chain jumps to the dynamic one.
+	if err := m.createChain(ctx, main.ChainName); err != nil {
+		return err
+	}
+	if err := m.createChain(ctx, dyn.ChainName); err != nil {
+		return err
+	}
+
+	if err := m.flushChain(ctx, main.ChainName); err != nil {
+		return err
+	}
+	if err := m.flushChain(ctx, dyn.ChainName); err != nil {
+		return err
+	}
+
+	if err := m.applyRules(ctx, dyn); err != nil {
+		return err
+	}
+	if err := m.applyRules(ctx, main); err != nil {
+		return err
+	}
+
+	if err := m.LinkChainToOutput(ctx, key); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	m.activeChains[main.ChainName] = true
+	m.mu.Unlock()
+
+	return nil
+}
+
+// Uninstall removes a runner's chains and the OUTPUT jump.
+func (m *Manager) Uninstall(ctx context.Context, key string) error {
+	var firstErr error
+	record := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 
-	// Apply IPv6 rules
-	for _, rule := range ruleSet.IPv6Rules {
-		args := rule.ToArgs()
-		if err := m.executor.RunIPv6(ctx, args...); err != nil {
-			return fmt.Errorf("apply IPv6 rule %s: %w", rule.String(), err)
+	record(m.UnlinkChainFromOutput(ctx, key))
+	record(m.deleteChain(ctx, m.ChainName(key)))
+	record(m.deleteChain(ctx, m.DynChainName(key)))
+
+	m.mu.Lock()
+	delete(m.activeChains, m.ChainName(key))
+	m.mu.Unlock()
+
+	return firstErr
+}
+
+// Installed reports whether the runner's rules are still in place.
+//
+// A container restart inside a session hands the runner a brand new network
+// namespace with none of our rules in it. Without this check the refresher
+// would diff against its own memory, conclude nothing changed, and leave the
+// sandbox with unrestricted egress.
+func (m *Manager) Installed(ctx context.Context, key string) (bool, error) {
+	chain := m.ChainName(key)
+
+	if _, err := m.executor.Output(ctx, "-S", chain); err != nil {
+		if isMissingChain(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("listing chain %s: %w", chain, err)
+	}
+
+	jump := m.outputJumpRule(chain)
+	if err := m.executor.Run(ctx, jump.Args("-C")...); err != nil {
+		if isMissingRule(err) || isMissingChain(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking OUTPUT jump for %s: %w", chain, err)
+	}
+
+	return true, nil
+}
+
+// Allow appends accept rules for the given addresses to the dynamic chain.
+// Existing rules are left alone, so repeated calls converge.
+func (m *Manager) Allow(ctx context.Context, key string, ips []net.IP, ports []int) error {
+	for _, rule := range allowRules(m.DynChainName(key), ips, ports) {
+		rule := rule
+		if err := m.ensureRule(ctx, &rule); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Deny removes accept rules for the given addresses from the dynamic chain.
+// Rules that are already gone are not an error.
+func (m *Manager) Deny(ctx context.Context, key string, ips []net.IP, ports []int) error {
+	for _, rule := range allowRules(m.DynChainName(key), ips, ports) {
+		rule := rule
+		if err := m.removeRule(ctx, &rule); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LinkChainToOutput adds a jump rule from OUTPUT to the runner's chain.
+// The jump is inserted at the head so it runs before anything else.
+func (m *Manager) LinkChainToOutput(ctx context.Context, key string) error {
+	rule := m.outputJumpRule(m.ChainName(key))
+
+	if err := m.executor.Run(ctx, rule.Args("-C")...); err == nil {
+		return nil // already linked
+	} else if !isMissingRule(err) && !isMissingChain(err) {
+		return fmt.Errorf("checking OUTPUT jump: %w", err)
+	}
+
+	if err := m.executor.Run(ctx, rule.Args("-I")...); err != nil {
+		return fmt.Errorf("link chain to OUTPUT: %w", err)
+	}
+
+	v6 := rule
+	v6.IsIPv6 = true
+	if err := m.executor.RunIPv6(ctx, v6.Args("-C")...); err == nil {
+		return nil
+	} else if !isMissingRule(err) && !isMissingChain(err) {
+		return fmt.Errorf("checking IPv6 OUTPUT jump: %w", err)
+	}
+
+	if err := m.executor.RunIPv6(ctx, v6.Args("-I")...); err != nil {
+		return fmt.Errorf("link IPv6 chain to OUTPUT: %w", err)
+	}
+
+	return nil
+}
+
+// UnlinkChainFromOutput removes the jump rule from OUTPUT.
+func (m *Manager) UnlinkChainFromOutput(ctx context.Context, key string) error {
+	rule := m.outputJumpRule(m.ChainName(key))
+
+	if err := m.executor.Run(ctx, rule.Args("-D")...); err != nil {
+		if !isMissingRule(err) && !isMissingChain(err) {
+			return fmt.Errorf("unlink chain from OUTPUT: %w", err)
+		}
+	}
+
+	v6 := rule
+	v6.IsIPv6 = true
+	if err := m.executor.RunIPv6(ctx, v6.Args("-D")...); err != nil {
+		if !isMissingRule(err) && !isMissingChain(err) {
+			return fmt.Errorf("unlink IPv6 chain from OUTPUT: %w", err)
 		}
 	}
 
 	return nil
 }
 
-// GenerateRuleSet generates iptables rules for a resolved policy.
-func (m *Manager) GenerateRuleSet(chainName string, policy *network.ResolvedPolicy) *RuleSet {
-	rs := NewRuleSet(chainName)
-
-	// 1. Allow established connections
-	rs.AddAllowEstablished()
-
-	// 2. Block dangerous CIDRs first (metadata service, private networks)
-	for _, cidr := range policy.BlockedCIDRs {
-		comment := "Block " + cidr.String()
-		rs.AddBlockCIDR(cidr, comment)
-	}
-
-	// 3. Allow specific IPs and ports
-	for _, hr := range policy.AllowedIPs {
-		for _, ip := range hr.IPs {
-			// Skip blocked IPs
-			if network.IsBlockedIP(ip) {
-				continue
-			}
-
-			// Add allow rule for each allowed port
-			for _, port := range policy.AllowedPorts {
-				comment := fmt.Sprintf("Allow %s:%d", hr.Pattern, port)
-				rs.AddAllowIP(ip, port, comment)
-			}
-		}
-	}
-
-	// 4. Default drop all other traffic
-	rs.AddDefaultDrop()
-
-	return rs
-}
-
-// GenerateRules returns the list of iptables command arguments for a policy.
-// This is useful for debugging or generating scripts.
-func (m *Manager) GenerateRules(sessionID string, policy *network.ResolvedPolicy) ([][]string, [][]string) {
-	chainName := m.ChainName(sessionID)
-	ruleSet := m.GenerateRuleSet(chainName, policy)
-
-	ipv4Rules := make([][]string, 0, len(ruleSet.Rules))
-	for _, rule := range ruleSet.Rules {
-		ipv4Rules = append(ipv4Rules, rule.ToArgs())
-	}
-
-	ipv6Rules := make([][]string, 0, len(ruleSet.IPv6Rules))
-	for _, rule := range ruleSet.IPv6Rules {
-		ipv6Rules = append(ipv6Rules, rule.ToArgs())
-	}
-
-	return ipv4Rules, ipv6Rules
-}
-
-// FlushChain removes all rules from a chain.
-func (m *Manager) FlushChain(ctx context.Context, sessionID string) error {
-	chainName := m.ChainName(sessionID)
-
-	if err := m.executor.Run(ctx, "-F", chainName); err != nil {
-		return fmt.Errorf("flush chain %s: %w", chainName, err)
-	}
-
-	if err := m.executor.RunIPv6(ctx, "-F", chainName); err != nil {
-		return fmt.Errorf("flush IPv6 chain %s: %w", chainName, err)
-	}
-
-	return nil
-}
-
-// ChainExists checks if a chain exists.
-func (m *Manager) ChainExists(ctx context.Context, sessionID string) (bool, error) {
-	chainName := m.ChainName(sessionID)
-
-	_, err := m.executor.Output(ctx, "-L", chainName, "-n")
-	if err != nil {
-		if strings.Contains(err.Error(), "No chain") {
+// ChainExists checks if the runner's main chain exists.
+func (m *Manager) ChainExists(ctx context.Context, key string) (bool, error) {
+	chain := m.ChainName(key)
+	if _, err := m.executor.Output(ctx, "-S", chain); err != nil {
+		if isMissingChain(err) {
 			return false, nil
 		}
 		return false, err
@@ -233,88 +394,134 @@ func (m *Manager) ListActiveChains() []string {
 	return chains
 }
 
-// CleanupAllChains removes all chains created by this manager.
+// CleanupAllChains removes every chain this manager created.
 func (m *Manager) CleanupAllChains(ctx context.Context) error {
-	chains := m.ListActiveChains()
-
 	var lastErr error
-	for _, chain := range chains {
-		// Extract session ID from chain name
-		sessionID := strings.TrimPrefix(chain, m.chainPrefix)
-		if err := m.DeleteChain(ctx, sessionID); err != nil {
+	for _, chain := range m.ListActiveChains() {
+		key := strings.TrimPrefix(chain, m.chainPrefix)
+		if err := m.Uninstall(ctx, key); err != nil {
 			lastErr = err
 		}
 	}
-
 	return lastErr
 }
 
-// LinkChainToOutput adds a jump rule from OUTPUT chain to the session's chain.
-// This is needed to actually filter outgoing traffic.
-func (m *Manager) LinkChainToOutput(ctx context.Context, sessionID string) error {
-	chainName := m.ChainName(sessionID)
-
-	// Add jump rule to OUTPUT chain
-	if err := m.executor.Run(ctx, "-I", "OUTPUT", "-j", chainName); err != nil {
-		return fmt.Errorf("link chain to OUTPUT: %w", err)
+// outputJumpRule renders the OUTPUT -> runner chain jump.
+func (m *Manager) outputJumpRule(chain string) Rule {
+	return Rule{
+		Chain:  "OUTPUT",
+		Action: RuleAction(chain),
 	}
+}
 
-	if err := m.executor.RunIPv6(ctx, "-I", "OUTPUT", "-j", chainName); err != nil {
-		return fmt.Errorf("link IPv6 chain to OUTPUT: %w", err)
+func (m *Manager) createChain(ctx context.Context, chain string) error {
+	if err := m.executor.Run(ctx, "-N", chain); err != nil && !isChainExists(err) {
+		return fmt.Errorf("create chain %s: %w", chain, err)
 	}
-
+	if err := m.executor.RunIPv6(ctx, "-N", chain); err != nil && !isChainExists(err) {
+		return fmt.Errorf("create IPv6 chain %s: %w", chain, err)
+	}
 	return nil
 }
 
-// UnlinkChainFromOutput removes the jump rule from OUTPUT chain.
-func (m *Manager) UnlinkChainFromOutput(ctx context.Context, sessionID string) error {
-	chainName := m.ChainName(sessionID)
+func (m *Manager) deleteChain(ctx context.Context, chain string) error {
+	_ = m.executor.Run(ctx, "-F", chain)
+	if err := m.executor.Run(ctx, "-X", chain); err != nil && !isMissingChain(err) {
+		return fmt.Errorf("delete chain %s: %w", chain, err)
+	}
 
-	// Remove jump rule from OUTPUT chain
-	if err := m.executor.Run(ctx, "-D", "OUTPUT", "-j", chainName); err != nil {
-		if !strings.Contains(err.Error(), "Bad rule") {
-			return fmt.Errorf("unlink chain from OUTPUT: %w", err)
+	_ = m.executor.RunIPv6(ctx, "-F", chain)
+	if err := m.executor.RunIPv6(ctx, "-X", chain); err != nil && !isMissingChain(err) {
+		return fmt.Errorf("delete IPv6 chain %s: %w", chain, err)
+	}
+	return nil
+}
+
+func (m *Manager) flushChain(ctx context.Context, chain string) error {
+	if err := m.executor.Run(ctx, "-F", chain); err != nil {
+		return fmt.Errorf("flush chain %s: %w", chain, err)
+	}
+	if err := m.executor.RunIPv6(ctx, "-F", chain); err != nil {
+		return fmt.Errorf("flush IPv6 chain %s: %w", chain, err)
+	}
+	return nil
+}
+
+func (m *Manager) applyRules(ctx context.Context, rs *RuleSet) error {
+	for i := range rs.Rules {
+		if err := m.executor.Run(ctx, rs.Rules[i].ToArgs()...); err != nil {
+			return fmt.Errorf("apply rule %s: %w", rs.Rules[i].String(), err)
 		}
 	}
-
-	if err := m.executor.RunIPv6(ctx, "-D", "OUTPUT", "-j", chainName); err != nil {
-		if !strings.Contains(err.Error(), "Bad rule") {
-			return fmt.Errorf("unlink IPv6 chain from OUTPUT: %w", err)
+	for i := range rs.IPv6Rules {
+		if err := m.executor.RunIPv6(ctx, rs.IPv6Rules[i].ToArgs()...); err != nil {
+			return fmt.Errorf("apply IPv6 rule %s: %w", rs.IPv6Rules[i].String(), err)
 		}
 	}
-
 	return nil
 }
 
-// ApplyInNamespace applies iptables rules in a specific network namespace.
-// This is used for container network isolation.
-func (m *Manager) ApplyInNamespace(ctx context.Context, nsPath string, sessionID string, policy *network.ResolvedPolicy) error {
-	// For namespace-aware execution, we would use nsenter or similar.
-	// This is a placeholder for the actual implementation.
-	// In practice, this would be called from the Docker provider.
-
-	// Create chain
-	if err := m.CreateChain(ctx, sessionID); err != nil {
-		return err
+// ensureRule appends a rule unless an identical one already exists.
+func (m *Manager) ensureRule(ctx context.Context, rule *Rule) error {
+	run, family := m.executor.Run, "IPv4"
+	if rule.IsIPv6 {
+		run, family = m.executor.RunIPv6, "IPv6"
 	}
 
-	// Apply policy
-	if err := m.ApplyPolicy(ctx, sessionID, policy); err != nil {
-		// Cleanup on failure
-		_ = m.DeleteChain(ctx, sessionID)
-		return err
+	if err := run(ctx, rule.Args("-C")...); err == nil {
+		return nil
+	} else if !isMissingRule(err) && !isMissingChain(err) {
+		return fmt.Errorf("checking %s rule %s: %w", family, rule.String(), err)
 	}
 
-	// Link to OUTPUT
-	if err := m.LinkChainToOutput(ctx, sessionID); err != nil {
-		_ = m.DeleteChain(ctx, sessionID)
-		return err
+	if err := run(ctx, rule.Args("-A")...); err != nil {
+		return fmt.Errorf("adding %s rule %s: %w", family, rule.String(), err)
 	}
-
 	return nil
 }
 
-// CreateBlockedCIDRs creates Rule structs for all blocked CIDRs.
+// removeRule deletes a rule, tolerating one that is already gone.
+func (m *Manager) removeRule(ctx context.Context, rule *Rule) error {
+	run, family := m.executor.Run, "IPv4"
+	if rule.IsIPv6 {
+		run, family = m.executor.RunIPv6, "IPv6"
+	}
+
+	if err := run(ctx, rule.Args("-D")...); err != nil {
+		if isMissingRule(err) || isMissingChain(err) {
+			return nil
+		}
+		return fmt.Errorf("removing %s rule %s: %w", family, rule.String(), err)
+	}
+	return nil
+}
+
+// isChainExists matches iptables' "chain already exists" complaint.
+func isChainExists(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Chain already exists")
+}
+
+// isMissingChain matches the several ways iptables reports an absent chain.
+func isMissingChain(err error) bool {
+	if err == nil {
+		return false
+	}
+	// "iptables: No chain/target/match by that name."
+	return strings.Contains(err.Error(), "No chain")
+}
+
+// isMissingRule matches iptables' response to -C or -D for an absent rule.
+func isMissingRule(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Bad rule") ||
+		strings.Contains(msg, "does a matching rule exist") ||
+		strings.Contains(msg, "No chain/target/match by that name")
+}
+
+// CreateBlockedCIDRs returns the always-blocked ranges.
 func CreateBlockedCIDRs() []*net.IPNet {
 	return network.ParsedBlockedCIDRs
 }

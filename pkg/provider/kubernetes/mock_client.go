@@ -44,11 +44,16 @@ type MockKubeClient struct {
 	DeletePVCCalls           []deletePVCCall
 	CreateNetworkPolicyCalls []createNetworkPolicyCall
 	DeleteNetworkPolicyCalls []deleteNetworkPolicyCall
+
+	// seq is a monotonic counter stamped on recorded calls, so a test can
+	// assert that one resource was created before another.
+	seq int
 }
 
 type createPodCall struct {
 	Namespace string
 	Pod       *corev1.Pod
+	Seq       int
 }
 
 type deletePodCall struct {
@@ -69,6 +74,7 @@ type deletePVCCall struct {
 type createNetworkPolicyCall struct {
 	Namespace string
 	Policy    *networkingv1.NetworkPolicy
+	Seq       int
 }
 
 type deleteNetworkPolicyCall struct {
@@ -91,6 +97,12 @@ var _ KubeClient = (*MockKubeClient)(nil)
 
 func (m *MockKubeClient) key(namespace, name string) string {
 	return namespace + "/" + name
+}
+
+// nextSeq returns the next call ordinal. Caller holds the write lock.
+func (m *MockKubeClient) nextSeq() int {
+	m.seq++
+	return m.seq
 }
 
 // AddNamespace adds a namespace to the mock.
@@ -156,7 +168,7 @@ func (m *MockKubeClient) CreatePod(ctx context.Context, namespace string, pod *c
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.CreatePodCalls = append(m.CreatePodCalls, createPodCall{Namespace: namespace, Pod: pod})
+	m.CreatePodCalls = append(m.CreatePodCalls, createPodCall{Namespace: namespace, Pod: pod, Seq: m.nextSeq()})
 
 	if m.CreatePodErr != nil {
 		return nil, m.CreatePodErr
@@ -334,7 +346,7 @@ func (m *MockKubeClient) CreateNetworkPolicy(ctx context.Context, namespace stri
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.CreateNetworkPolicyCalls = append(m.CreateNetworkPolicyCalls, createNetworkPolicyCall{Namespace: namespace, Policy: np})
+	m.CreateNetworkPolicyCalls = append(m.CreateNetworkPolicyCalls, createNetworkPolicyCall{Namespace: namespace, Policy: np, Seq: m.nextSeq()})
 
 	if m.CreateNetworkPolicyErr != nil {
 		return nil, m.CreateNetworkPolicyErr

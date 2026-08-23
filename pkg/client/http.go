@@ -280,15 +280,68 @@ func (c *HTTPClient) CancelTask(ctx context.Context, id string) error {
 
 // GetTaskLogs retrieves logs for a task.
 func (c *HTTPClient) GetTaskLogs(ctx context.Context, id string, opts GetLogsOptions) (LogIterator, error) {
-	params := url.Values{}
-	if opts.Tail > 0 {
-		params.Set("limit", strconv.Itoa(opts.Tail))
+	return c.logIterator(ctx, "/api/v1/tasks/"+id+"/logs", opts)
+}
+
+// GetSessionLogs retrieves every log line a session produced.
+//
+// Logs are archived per session, so this is the view that survives archiving:
+// once a session's rows have moved into its archive, the task endpoints answer
+// from the archive too, but only this one spans the whole session.
+func (c *HTTPClient) GetSessionLogs(ctx context.Context, id string, opts GetLogsOptions) (LogIterator, error) {
+	return c.logIterator(ctx, "/api/v1/sessions/"+id+"/logs", opts)
+}
+
+func (c *HTTPClient) logIterator(ctx context.Context, path string, opts GetLogsOptions) (LogIterator, error) {
+	it := &pagedLogIterator{client: c, ctx: ctx, path: path, opts: opts}
+	if err := it.fetch(); err != nil {
+		return nil, err
 	}
-	if opts.SinceSequence > 0 {
-		params.Set("since_sequence", strconv.FormatInt(opts.SinceSequence, 10))
+	return it, nil
+}
+
+// pagedLogIterator walks every page of a log listing.
+//
+// It used to fetch one page and stop, which read as "that is all the logs"
+// whatever the response said about there being more. That was survivable while
+// every log was a row in one table and the default page held most of them; it
+// stopped being survivable when archiving made the first page of a long session
+// the start of an archive rather than the whole of it.
+type pagedLogIterator struct {
+	client *HTTPClient
+	ctx    context.Context //nolint:containedctx // the iterator outlives the call that made it
+	path   string
+	opts   GetLogsOptions
+
+	logs   []*Log
+	index  int
+	cursor string
+	done   bool
+
+	// remaining counts down a Tail request across pages, so --tail N means N
+	// lines rather than N lines per page.
+	remaining int
+}
+
+func (it *pagedLogIterator) fetch() error {
+	params := url.Values{}
+	if it.opts.Tail > 0 {
+		if it.remaining == 0 && it.cursor == "" {
+			it.remaining = it.opts.Tail
+		}
+		params.Set("limit", strconv.Itoa(it.remaining))
+	}
+	if it.opts.SinceSequence > 0 {
+		params.Set("since_sequence", strconv.FormatInt(it.opts.SinceSequence, 10))
+	}
+	if it.opts.Archived != "" {
+		params.Set("archived", it.opts.Archived)
+	}
+	if it.cursor != "" {
+		params.Set("cursor", it.cursor)
 	}
 
-	path := "/api/v1/tasks/" + id + "/logs"
+	path := it.path
 	if len(params) > 0 {
 		path += "?" + params.Encode()
 	}
@@ -296,36 +349,51 @@ func (c *HTTPClient) GetTaskLogs(ctx context.Context, id string, opts GetLogsOpt
 	var result struct {
 		Items      []*Log `json:"items"`
 		TotalCount int64  `json:"total_count"`
+		HasMore    bool   `json:"has_more"`
 		NextCursor string `json:"next_cursor,omitempty"`
 	}
-	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
-		return nil, err
+	if err := it.client.doRequest(it.ctx, http.MethodGet, path, nil, &result); err != nil {
+		return err
 	}
 
-	return &sliceLogIterator{
-		logs:  result.Items,
-		index: 0,
-	}, nil
-}
+	it.logs = result.Items
+	it.index = 0
+	it.cursor = result.NextCursor
 
-// sliceLogIterator implements LogIterator for a slice of logs.
-type sliceLogIterator struct {
-	logs  []*Log
-	index int
-}
-
-// Next returns the next log entry.
-func (it *sliceLogIterator) Next() (*Log, error) {
-	if it.index >= len(it.logs) {
-		return nil, io.EOF
+	if it.opts.Tail > 0 {
+		it.remaining -= len(result.Items)
+		if it.remaining <= 0 {
+			it.done = true
+		}
 	}
+	if !result.HasMore || result.NextCursor == "" {
+		it.done = true
+	}
+	return nil
+}
+
+// Next returns the next log entry, fetching the next page when the current one
+// runs out.
+func (it *pagedLogIterator) Next() (*Log, error) {
+	for it.index >= len(it.logs) {
+		if it.done {
+			return nil, io.EOF
+		}
+		if err := it.fetch(); err != nil {
+			return nil, err
+		}
+		if len(it.logs) == 0 {
+			return nil, io.EOF
+		}
+	}
+
 	log := it.logs[it.index]
 	it.index++
 	return log, nil
 }
 
 // Close releases resources.
-func (it *sliceLogIterator) Close() error {
+func (it *pagedLogIterator) Close() error {
 	return nil
 }
 

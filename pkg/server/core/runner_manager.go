@@ -46,6 +46,7 @@ type RunnerManager struct {
 	logger      *zap.Logger
 	webhooks    *WebhookIntegration
 	background  *backgroundTasks
+	waker       RunnerAvailableNotifier
 }
 
 // RunnerManagerOption is a functional option for RunnerManager.
@@ -70,6 +71,18 @@ func WithSessionManager(sm SessionManagerInterface) RunnerManagerOption {
 func WithRunnerBackground(b *backgroundTasks) RunnerManagerOption {
 	return func(m *RunnerManager) {
 		m.background = b
+	}
+}
+
+// WithRunnerWaker supplies the redispatch waker.
+//
+// Without it a runner that connects, or that finishes a task and returns to
+// idle, is invisible to any session parked waiting for capacity: the task sits
+// pending until a human pokes it. That dead end is the user-visible bug behind
+// the redispatch proposal.
+func WithRunnerWaker(w RunnerAvailableNotifier) RunnerManagerOption {
+	return func(m *RunnerManager) {
+		m.waker = w
 	}
 }
 
@@ -153,9 +166,24 @@ func (m *RunnerManager) OnConnect(ctx context.Context, runnerID string) error {
 	// RPC returns is a race the lookup usually loses.
 	m.background.Go("runner-attach-resuming", func(bgCtx context.Context) {
 		m.tryAttachToResumingSession(bgCtx, runnerID)
+
+		// Redispatch trigger 3. A resuming session gets first refusal above,
+		// because it is already paying for this runner; whatever is left over
+		// goes to sessions that are merely parked. A pool that was empty when a
+		// task was created is never revisited without this.
+		m.wake(bgCtx, WakeTriggerRunnerJoined)
 	})
 
 	return nil
+}
+
+// wake asks the redispatch waker for a pass. Safe to call with no waker wired,
+// which is what every test that does not care about redispatch does.
+func (m *RunnerManager) wake(ctx context.Context, trigger string) {
+	if m.waker == nil {
+		return
+	}
+	m.waker.RunnerAvailable(ctx, trigger)
 }
 
 // tryAttachToResumingSession checks for sessions in "resuming" status and attaches the runner.
@@ -344,6 +372,14 @@ func (m *RunnerManager) SetStatus(ctx context.Context, runnerID, status string) 
 		zap.String("from", runner.Status),
 		zap.String("to", status),
 	)
+
+	// Redispatch trigger 2, the busy->idle half. A pool runner that just
+	// finished a task is the most likely moment a *different* parked session
+	// can proceed, and this is the only place the server hears about it: the
+	// runner reports the transition over the control channel.
+	if status == StatusIdle && runner.Status != StatusIdle {
+		m.wake(ctx, WakeTriggerRunnerFreed)
+	}
 
 	return nil
 }

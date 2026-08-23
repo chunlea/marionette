@@ -162,6 +162,64 @@ jobs:
       - name: Check docs/schema.sql matches migrations/
         run: make schema-check
 
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    container:
+      image: golang:1.25-bookworm
+    # Recording only. There is no regression gate yet: the numbers a shared CI
+    # runner produces are too noisy to fail a pull request on, and a gate on
+    # noise is a gate everyone learns to ignore. The artifact is what gives
+    # future gating something to be calibrated against.
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install dependencies
+        run: |
+          apt-get update && apt-get install -y curl
+          curl -sSL "https://github.com/bufbuild/buf/releases/download/${BUF_VERSION}/buf-Linux-x86_64" -o /usr/local/bin/buf
+          chmod +x /usr/local/bin/buf
+
+      - name: Install protoc plugins
+        run: |
+          go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}"
+          go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}"
+
+      - name: Generate protobuf
+        run: buf generate
+
+      # No -race: the detector changes timing by an order of magnitude, so a
+      # benchmark under it measures the detector.
+      #
+      # Core only. The store benchmarks need a PostgreSQL container, and this
+      # job already runs inside one; test/perf/store skips itself cleanly when
+      # there is no Docker daemon to reach.
+      - name: Record the machine
+        run: |
+          {
+            echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "commit: ${GITHUB_SHA}"
+            echo "runner: ${RUNNER_OS} ${RUNNER_ARCH}"
+            echo "cpus: $(nproc)"
+            echo "go: $(go version)"
+            echo
+          } > bench.txt
+
+      - name: Run benchmarks
+        run: go test -run '^$' -bench . -benchmem -benchtime 2s ./pkg/server/core/... | tee -a bench.txt
+
+      - name: Upload benchmark artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: bench.txt
+        if: always()
+
   build:
     name: Build
     runs-on: ubuntu-latest

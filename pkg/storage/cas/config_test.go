@@ -13,7 +13,7 @@ func TestConfig_WithDefaults(t *testing.T) {
 	assert.Equal(t, DefaultChunkerConfig.MinSize, c.Chunker.MinSize)
 	assert.Equal(t, DefaultChunkerConfig.MaxSize, c.Chunker.MaxSize)
 	assert.Equal(t, DefaultChunkerConfig.TargetSize, c.Chunker.TargetSize)
-	assert.Equal(t, DefaultConfig.SingleChunkThreshold, c.SingleChunkThreshold)
+	assert.Equal(t, DefaultConfig.CDCThreshold, c.CDCThreshold)
 	assert.Equal(t, DefaultConfig.TempDir, c.TempDir)
 	assert.Equal(t, DefaultConfig.MaxConcurrency, c.MaxConcurrency)
 	assert.Equal(t, DefaultConfig.CompressLevel, c.CompressLevel)
@@ -22,12 +22,12 @@ func TestConfig_WithDefaults(t *testing.T) {
 func TestConfig_WithDefaults_Partial(t *testing.T) {
 	// Partial config should only fill missing values
 	c := Config{
-		SingleChunkThreshold: 50 * 1024 * 1024, // 50 MB
-		MaxConcurrency:       20,
+		CDCThreshold:   50 * 1024 * 1024, // 50 MB
+		MaxConcurrency: 20,
 	}.WithDefaults()
 
 	// Custom values preserved
-	assert.Equal(t, int64(50*1024*1024), c.SingleChunkThreshold)
+	assert.Equal(t, int64(50*1024*1024), c.CDCThreshold)
 	assert.Equal(t, 20, c.MaxConcurrency)
 
 	// Defaults filled
@@ -48,7 +48,7 @@ func TestDefaultChunkerConfig(t *testing.T) {
 
 func TestDefaultConfig(t *testing.T) {
 	// Verify defaults are sensible
-	assert.Equal(t, int64(100*1024*1024), DefaultConfig.SingleChunkThreshold) // 100 MB
+	assert.Equal(t, int64(100*1024*1024), DefaultConfig.CDCThreshold) // 100 MB
 	assert.Equal(t, 10, DefaultConfig.MaxConcurrency)
 	assert.Equal(t, 3, DefaultConfig.CompressLevel)
 }

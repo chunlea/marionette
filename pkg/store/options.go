@@ -154,6 +154,14 @@ type ListLogsOptions struct {
 	RunnerID  *string  // Filter by runner
 	Stream    []string // Filter by stream (stdout, stderr, system)
 	Level     []string // Filter by level (debug, info, warn, error)
+
+	// After excludes everything at or before one exact log position.
+	//
+	// It is the boundary a log archive records. Retrieval serves the archive
+	// and then the rows beyond it; without the full (created_at, sequence, id)
+	// comparison, a row sharing the last archived row's timestamp is either
+	// served twice or not at all.
+	After *LogCursor
 }
 
 // ListLogArchivesOptions for filtering log archives.

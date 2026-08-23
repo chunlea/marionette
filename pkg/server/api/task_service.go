@@ -68,6 +68,10 @@ type GetLogsOptions struct {
 	Cursor string   `json:"cursor,omitempty"`
 	Level  []string `json:"level,omitempty"`
 	Stream []string `json:"stream,omitempty"`
+
+	// Archived selects which copy to read. The default merges both, so a
+	// caller never has to know whether a session's logs have been archived.
+	Archived ArchivedFilter `json:"archived,omitempty"`
 }
 
 // StreamLogsOptions contains options for streaming task logs.

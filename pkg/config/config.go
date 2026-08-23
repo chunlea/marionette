@@ -90,6 +90,92 @@ type DockerProviderConfig struct {
 
 	// Resources holds default resource limits for containers.
 	Resources DockerResourcesConfig `mapstructure:"resources"`
+
+	// Isolation holds network-isolation settings for restricted runners.
+	Isolation NetworkIsolationConfig `mapstructure:"isolation"`
+}
+
+// NetworkIsolationConfig holds operator-controlled network isolation settings.
+//
+// A session chooses a policy level (none, allow_list, proxy, air_gapped); it
+// never chooses its own proxy, resolvers or control-plane address. Those come
+// from here so a compromised session cannot widen its own policy.
+//
+// The same shape is understood by both the Docker and Kubernetes providers.
+type NetworkIsolationConfig struct {
+	// ServerURL is the control-plane address pinned open for every restricted
+	// runner. A restricted runner that cannot reach the server is not
+	// isolated, it is broken.
+	//
+	// This is the fallback for deployments where the spawn options carry no
+	// server address.
+	ServerURL string `mapstructure:"server_url"`
+
+	// ProxyURL is the egress proxy for proxy-level sessions,
+	// e.g. "http://proxy.internal:3128". Proxy level fails without it.
+	ProxyURL string `mapstructure:"proxy_url"`
+
+	// ProxyNoProxy lists extra hosts that bypass the proxy.
+	ProxyNoProxy []string `mapstructure:"proxy_no_proxy"`
+
+	// ProxyCACert is the in-container path to the proxy's CA bundle, for a
+	// proxy that terminates TLS. The runner image must provide the file.
+	ProxyCACert string `mapstructure:"proxy_ca_cert"`
+
+	// DNSServers are the resolver addresses restricted runners may reach.
+	// Docker only.
+	//
+	// Leaving this empty means allow_list and proxy sessions may send DNS
+	// anywhere, because nothing in a sandbox works without name resolution.
+	// Pinning resolvers here is what closes DNS as an exfiltration channel.
+	DNSServers []string `mapstructure:"dns_servers"`
+
+	// DNSNamespace is the namespace running cluster DNS. Kubernetes only.
+	DNSNamespace string `mapstructure:"dns_namespace"`
+
+	// RefreshInterval overrides how often pinned allow-list addresses are
+	// re-resolved, e.g. "2m". Clamped to [30s, 15m]. Docker only.
+	RefreshInterval string `mapstructure:"refresh_interval"`
+}
+
+// ProviderJSON renders the isolation settings in the shape a provider's
+// config JSON expects, or nil when nothing is configured.
+//
+// Providers are constructed from a store.ProviderConfig whose Config is raw
+// JSON, so a settings block declared here only reaches them once it is
+// serialised into that.
+func (c *NetworkIsolationConfig) ProviderJSON() map[string]interface{} {
+	if c == nil {
+		return nil
+	}
+
+	out := map[string]interface{}{}
+	if c.ServerURL != "" {
+		out["server_url"] = c.ServerURL
+	}
+	if c.ProxyURL != "" {
+		out["proxy_url"] = c.ProxyURL
+	}
+	if len(c.ProxyNoProxy) > 0 {
+		out["proxy_no_proxy"] = c.ProxyNoProxy
+	}
+	if c.ProxyCACert != "" {
+		out["proxy_ca_cert"] = c.ProxyCACert
+	}
+	if len(c.DNSServers) > 0 {
+		out["dns_servers"] = c.DNSServers
+	}
+	if c.DNSNamespace != "" {
+		out["dns_namespace"] = c.DNSNamespace
+	}
+	if c.RefreshInterval != "" {
+		out["refresh_interval"] = c.RefreshInterval
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // DockerResourcesConfig holds Docker container resource limits.
@@ -130,6 +216,9 @@ type KubernetesProviderConfig struct {
 
 	// Tolerations for pod scheduling.
 	Tolerations []KubernetesTolerationConfig `mapstructure:"tolerations"`
+
+	// Isolation holds network-isolation settings for restricted runners.
+	Isolation NetworkIsolationConfig `mapstructure:"isolation"`
 }
 
 // KubernetesResourcesConfig holds Kubernetes pod resource limits.
@@ -169,11 +258,62 @@ type KubernetesTolerationConfig struct {
 
 // StorageConfig holds storage backend configuration.
 type StorageConfig struct {
-	Provider  string                 `mapstructure:"provider"`
-	Local     *LocalStorageConfig    `mapstructure:"local"`
-	S3        *S3StorageConfig       `mapstructure:"s3"`
-	Workspace WorkspaceStorageConfig `mapstructure:"workspace"`
-	GC        StorageGCConfig        `mapstructure:"gc"`
+	Provider   string                  `mapstructure:"provider"`
+	Local      *LocalStorageConfig     `mapstructure:"local"`
+	S3         *S3StorageConfig        `mapstructure:"s3"`
+	Workspace  WorkspaceStorageConfig  `mapstructure:"workspace"`
+	GC         StorageGCConfig         `mapstructure:"gc"`
+	Encryption StorageEncryptionConfig `mapstructure:"encryption"`
+	LogArchive StorageLogArchiveConfig `mapstructure:"log_archive"`
+}
+
+// StorageEncryptionConfig gates encryption of objects at rest.
+type StorageEncryptionConfig struct {
+	// Enabled encrypts archive payloads with the deployment's data keys.
+	//
+	// Default false, because it needs MARIONETTE_ENCRYPTION_KEY and an
+	// operator who understands that losing that key loses the archives. What
+	// was written under which setting is recorded per archive, so switching it
+	// on does not make yesterday's objects unreadable.
+	Enabled bool `mapstructure:"enabled"`
+}
+
+// StorageLogArchiveConfig controls moving logs out of PostgreSQL.
+//
+// It is off by default. Turning it on is what makes log retention possible at
+// all: the partition maintainer refuses to drop a day no archive covers, so
+// without archiving, retention drops nothing however it is configured.
+type StorageLogArchiveConfig struct {
+	// Enabled runs the archiver.
+	Enabled bool `mapstructure:"enabled"`
+
+	// Interval is how often a pass runs.
+	Interval time.Duration `mapstructure:"interval"`
+
+	// TerminatedAfter is the grace window after a session terminates. It exists
+	// so the archiver never reads a session something is still writing to.
+	TerminatedAfter time.Duration `mapstructure:"terminated_after"`
+
+	// IdleAfter also archives live sessions that have been quiet this long.
+	// Zero leaves them alone, which is the conservative setting.
+	IdleAfter time.Duration `mapstructure:"idle_after"`
+
+	// Retention is how long an archive lives. Zero keeps archives forever.
+	//
+	// Keep it comfortably longer than RetentionDays: the partitions are the hot
+	// copy and the archive is the cold one, and an archive that expires first
+	// would delete logs the database no longer has either.
+	Retention time.Duration `mapstructure:"retention"`
+
+	// RetentionDays drops daily log partitions older than this. Zero disables
+	// dropping. It only ever drops partitions the archives cover.
+	RetentionDays int `mapstructure:"retention_days"`
+
+	// SessionsPerRun bounds one pass. Zero uses the job's default.
+	SessionsPerRun int `mapstructure:"sessions_per_run"`
+
+	// BatchSize is how many log rows are read at a time. Zero uses the default.
+	BatchSize int `mapstructure:"batch_size"`
 }
 
 // StorageGCConfig gates content-addressed storage garbage collection.

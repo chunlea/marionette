@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -807,4 +808,143 @@ func TestHTTPClient_TrailingSlashInBaseURL(t *testing.T) {
 // Helper function
 func strPtr(s string) *string {
 	return &s
+}
+
+// A session long enough to have been archived does not fit in one page, and
+// stopping at the first one used to look exactly like reaching the end.
+func TestHTTPClient_LogIteratorFollowsPagination(t *testing.T) {
+	pages := []struct {
+		items      []*Log
+		hasMore    bool
+		nextCursor string
+	}{
+		{items: []*Log{{ID: "log_1", Content: "one"}}, hasMore: true, nextCursor: "archive:1"},
+		{items: []*Log{{ID: "log_2", Content: "two"}}, hasMore: true, nextCursor: "hot-cursor"},
+		{items: []*Log{{ID: "log_3", Content: "three"}}},
+	}
+
+	var cursors []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cursor := r.URL.Query().Get("cursor")
+		cursors = append(cursors, cursor)
+
+		// The cursor changes shape mid-stream - an archive offset, then a
+		// database cursor - which is exactly what the iterator has to carry
+		// without interpreting.
+		var page = pages[0]
+		switch cursor {
+		case "archive:1":
+			page = pages[1]
+		case "hot-cursor":
+			page = pages[2]
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Items      []*Log `json:"items"`
+			TotalCount int64  `json:"total_count"`
+			HasMore    bool   `json:"has_more"`
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{Items: page.items, TotalCount: 3, HasMore: page.hasMore, NextCursor: page.nextCursor})
+	}))
+	defer server.Close()
+
+	c := NewHTTPClient(server.URL, "test-api-key")
+	iter, err := c.GetSessionLogs(context.Background(), "sess_1", GetLogsOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer func() { _ = iter.Close() }()
+
+	var got []string
+	for {
+		log, err := iter.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("unexpected error reading log: %v", err)
+		}
+		got = append(got, log.Content)
+	}
+
+	if len(got) != 3 || got[0] != "one" || got[2] != "three" {
+		t.Fatalf("expected all three pages, got %v", got)
+	}
+	if len(cursors) != 3 {
+		t.Fatalf("expected three requests, got %v", cursors)
+	}
+}
+
+// --tail N means N lines, not N lines per page.
+func TestHTTPClient_LogIteratorTailStopsAtTheLimit(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.URL.Query().Get("limit"); got != "2" {
+			t.Errorf("expected limit=2, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Items      []*Log `json:"items"`
+			HasMore    bool   `json:"has_more"`
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{
+			Items:      []*Log{{ID: "log_1", Content: "one"}, {ID: "log_2", Content: "two"}},
+			HasMore:    true,
+			NextCursor: "more",
+		})
+	}))
+	defer server.Close()
+
+	c := NewHTTPClient(server.URL, "test-api-key")
+	iter, err := c.GetTaskLogs(context.Background(), "task_1", GetLogsOptions{Tail: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer func() { _ = iter.Close() }()
+
+	count := 0
+	for {
+		if _, err := iter.Next(); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		count++
+	}
+
+	if count != 2 {
+		t.Fatalf("expected 2 lines, got %d", count)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one request, got %d", requests)
+	}
+}
+
+func TestHTTPClient_GetSessionLogsPassesArchivedFilter(t *testing.T) {
+	var gotPath, gotArchived string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotArchived = r.URL.Query().Get("archived")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Items []*Log `json:"items"`
+		}{})
+	}))
+	defer server.Close()
+
+	c := NewHTTPClient(server.URL, "test-api-key")
+	iter, err := c.GetSessionLogs(context.Background(), "sess_1", GetLogsOptions{Archived: "true"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_ = iter.Close()
+
+	if gotPath != "/api/v1/sessions/sess_1/logs" {
+		t.Fatalf("unexpected path %q", gotPath)
+	}
+	if gotArchived != "true" {
+		t.Fatalf("expected archived=true, got %q", gotArchived)
+	}
 }

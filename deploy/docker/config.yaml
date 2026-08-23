@@ -35,6 +35,10 @@ storage:
   workspace:
     base_dir: /var/marionette/workspaces
 
+  # See configs/production.yaml.example for what turning this on commits you to.
+  log_archive:
+    enabled: false
+
 # Logging configuration
 logging:
   level: info

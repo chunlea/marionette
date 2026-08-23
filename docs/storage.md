@@ -42,10 +42,42 @@ Marionette uses Content-Addressable Storage (CAS) for workspaces and tiered stor
 
 | Workspace Size | Mode | Description |
 |----------------|------|-------------|
-| < 100MB | Single Chunk | Entire workspace as one tar.zst chunk |
-| >= 100MB | CDC Chunking | Content-defined chunking with dedup |
+| < `cdc_threshold` (100MB) | Single Chunk | Entire workspace as one tar.zst chunk |
+| >= `cdc_threshold` (100MB) | CDC Chunking | Content-defined chunking with dedup |
 
 Both modes use zstd compression for speed (3-5x faster than gzip).
+
+The threshold is where holding a whole workspace in memory stops being
+reasonable. Below it, one chunk is cheaper than thousands and a tar preserves
+the tree for free. Above it, the sync has to stream, and everything in
+[Bounded memory](#bounded-memory) applies.
+
+`storage.cas.cdc_mode` overrides the choice: `auto` (default), `always` or
+`never`. Tests use it to reach either path on a tree small enough to write in a
+few lines; an operator who knows their workspaces can pin it.
+
+### Archive fidelity
+
+A snapshot has to restore the workspace that was taken, not an approximation of
+it. Both modes record:
+
+| Entry | Stored as | Restored as |
+|-------|-----------|-------------|
+| Regular file | chunk list + mode + mtime | written, chmod'd, mtime restored |
+| Directory | mode | created with that mode, empty ones included |
+| Symlink | target text | recreated verbatim, never followed |
+| Socket, fifo, device | *skipped* | absent |
+
+Symlinks are never resolved. Following one would inline the target's bytes under
+the link's name, turning one file into two - and a link that dangles in the
+workspace it came from has to dangle in the one it is restored into.
+
+Sockets, fifos and devices carry nothing a snapshot can restore and mean nothing
+on another machine, so they are left out rather than restored as empty files.
+
+Modification times are restored because the incremental fast path depends on
+them: a restore that reset every mtime would make the next sync re-chunk the
+whole workspace.
 
 ## Tenant Isolation
 
@@ -211,23 +243,36 @@ storage:
     enabled: true
     key_provider: local  # local, kms
 
-  # CAS settings
-  cas:
-    single_chunk_threshold: 100MB
-    chunk_min_size: 65536      # 64KB
-    chunk_max_size: 1048576    # 1MB
-    chunk_target_size: 262144  # 256KB
-    compress: true
-
-    # Garbage collection (mark-and-sweep)
-    gc_enabled: true
-    gc_schedule: "0 4 * * *"   # Daily at 4 AM
-    gc_grace_period: 168h      # 7 days before physical delete
-
-    cache_enabled: true
-    cache_max_size: 2GB
-    cache_path: /var/cache/marionette/chunks
+  # Garbage collection (mark-and-sweep)
+  gc:
+    enabled: true
+    interval: 24h
 ```
+
+### Runner configuration
+
+Workspace sync runs on the runner, so the chunking settings live in the
+runner's config, not the server's:
+
+```yaml
+# marionette-agent config
+storage:
+  backend: local          # none (default) or local
+  local_path: /var/marionette/cas
+  encryption: none        # no default: storing workspaces unencrypted is a
+                          # decision, not a fallback
+
+  cas:
+    cdc_threshold: 104857600   # 100 MB. Below this a workspace is one tar.zst
+                               # chunk; at or above it, content-defined chunking.
+    cdc_mode: auto             # auto | always | never
+    max_concurrency: 10        # chunks in flight; see Bounded memory below
+```
+
+Every one of these may be omitted. `cdc_threshold: 0` and `max_concurrency: 0`
+mean "unset" and take the defaults above; a negative value or an unknown
+`cdc_mode` fails at startup rather than at the first suspend, where the only
+symptom would be a workspace that quietly never got saved.
 
 ---
 
@@ -245,9 +290,64 @@ For large workspaces (e.g., projects with `node_modules`, build artifacts, or ML
 
 4. **Incremental Transfer**: On sync, only new/modified chunks are uploaded. On restore, only missing chunks are downloaded.
 
+5. **Parent manifest reuse**: A sync given a previous manifest merges it against
+   the walk. A file whose size, mode and modification time are unchanged carries
+   its chunk list over without being read at all, so the second sync of a
+   workspace costs the files that changed rather than the files that exist.
+   Touching one file of a thousand uploads one file's chunks and asks storage
+   about nothing else.
+
+   Both sides are in directory-walk order, so this is a merge and not an index:
+   the comparison holds two entries, not two manifests. Manifests written before
+   the order was recorded set `ordered: false` in their header and are indexed in
+   memory instead.
+
 ## CDC Implementation Details
 
 We use the **restic chunker** algorithm (Rabin fingerprinting with polynomial `0x3DA3358B4DC173`).
+
+### Bounded memory
+
+CDC mode exists for workspaces too large to hold, so a sync must not hold one.
+Nothing in the walk scales with the tree: files are streamed through the chunker
+a chunk at a time, chunks are handed to an uploader that owns a fixed set of
+buffers, and manifest entries are appended to the manifest object and forgotten.
+
+What a sync costs is set by configuration:
+
+| Term | Bound | Default |
+|------|-------|---------|
+| Chunk uploads in flight | `max_concurrency` x `chunk_max_size` | 10 x 8 MB |
+| Chunker read buffer | `chunk_max_size` | 8 MB |
+| Manifest frame | frame size | 4 MB |
+| Dedup set | `MaxSeenChunks` x ~72 bytes | ~75 MB, capped |
+| One file's chunk hashes | file size / `chunk_target_size` x 64 bytes | 6.4 MB per 100 GB file |
+
+Only the last term depends on the workspace at all, and it depends on the
+largest single file rather than on the tree.
+
+The dedup set is the one structure that would otherwise grow without limit - one
+hash per distinct chunk. It stops growing at `MaxSeenChunks`; past that,
+deduplication falls back to asking storage whether a chunk is already there,
+which is slower and equally correct.
+
+A runner on a small box lowers `max_concurrency`. That is the term that matters:
+each slot holds up to one maximum-sized chunk.
+
+Restore is the same shape in reverse. Entries arrive from a streaming cursor and
+chunks are fetched at most `max_concurrency` ahead of the write, so a restore's
+memory is bounded the same way. There is no chunk cache: a workspace with the
+same chunk in many files re-fetches it, which trades bandwidth for a bound.
+
+Measured: a 512 MB tree costs what a 128 MB tree costs
+(`TestCDC_MemoryDoesNotFollowWorkspaceSize`).
+
+### Resumable restore
+
+A restore that is interrupted converges when it runs again. Every file is
+written to a scratch name in its own directory and renamed into place, so a file
+that exists is a file that is complete; a re-run skips entries already on disk
+with the recorded size, mode and modification time, and rewrites the rest.
 
 ### Library
 
@@ -463,7 +563,32 @@ Manifests use **JSONL (JSON Lines)** format for memory-efficient streaming. Each
 - **Line 1**: Manifest header (metadata without files)
 - **Lines 2+**: One `ManifestFile` per line
 
-This enables streaming processing without loading the entire manifest into memory.
+A manifest lists every file in a workspace, so it is as large as the workspace is
+wide. Encoding the JSONL, compressing it and encrypting it as three whole buffers
+would make describing a workspace cost as much as storing it, so large manifests
+are stored **framed**:
+
+```
+"MFSTF1\n"                     magic
+uvarint len | frame            the header, exactly one JSON line
+uvarint len | frame            entries, whole lines, 4 MB of JSONL each
+...
+```
+
+Each frame goes through the same envelope encryptor - compressed with zstd, then
+sealed - so the object is still JSONL, still zstd, still encrypted, still at
+`manifests/{tenant}/{workspace}/{manifest}.jsonl.zst.enc`. A writer holds one
+frame and so does a reader.
+
+The header is written last and stored first. Its counts - how many chunks, how
+many entries - are only known once the walk that produced them has finished, so
+frames are spooled to an unlinked temporary file and the header is prepended at
+upload. That also makes the upload the single durability point: nothing records
+a manifest until its object is written.
+
+Objects without the magic are the original single-buffer encoding and are read
+the way they always were. Single-chunk manifests are still written that way,
+because they have no file list to stream.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -489,9 +614,16 @@ type ManifestHeader struct {
     TotalSize   int64     `json:"total_size"`
     ChunkCount  int       `json:"chunk_count"`
 
-    // Single chunk mode (for workspaces < 100MB)
+    // Single chunk mode (for workspaces below cdc_threshold)
     SingleChunk bool   `json:"single_chunk,omitempty"`
     ChunkHash   string `json:"chunk_hash,omitempty"`
+
+    // Ordered reports that the entries are in directory-walk order, which is
+    // what lets an incremental sync merge against them instead of indexing
+    // them. FileCount is how many follow; zero means a manifest written
+    // before the field existed.
+    Ordered   bool `json:"ordered,omitempty"`
+    FileCount int  `json:"file_count,omitempty"`
 }
 
 // ManifestFile is each subsequent line
@@ -501,6 +633,20 @@ type ManifestFile struct {
     ModTime time.Time   `json:"mod_time"`
     Size    int64       `json:"size"`
     Chunks  []string    `json:"chunks"`
+
+    // ChunkSizes are the uncompressed sizes of Chunks, in the same order.
+    // The chunks table stores a size and nothing else that reads a manifest
+    // object can recover it, so it travels with the hashes. Manifests written
+    // before this field omit it; a reader that finds it missing treats the
+    // sizes as unknown, not as zero.
+    ChunkSizes []int64 `json:"chunk_sizes,omitempty"`
+
+    // Type is "" (regular file), "d" (directory) or "l" (symlink). The empty
+    // string means a file so that manifests written before directories and
+    // symlinks were recorded still read correctly. Link is the symlink
+    // target, stored verbatim and never resolved.
+    Type string `json:"type,omitempty"`
+    Link string `json:"link,omitempty"`
 }
 ```
 
@@ -724,10 +870,14 @@ func (s *CASSync) StreamManifestFiles(ctx context.Context, tenantID, workspaceID
 | Single file chunk | 8 MB | Max chunk size limit |
 | Parallel uploads | 80 MB | 10 concurrent × 8 MB |
 | Parallel downloads | 80 MB | 10 concurrent × 8 MB |
-| Manifest save | 1 MB buffer | JSONL streaming (one line at a time) |
-| Manifest load | 1 MB buffer | JSONL streaming with `bufio.Scanner` |
-| Manifest stream | ~10 KB | Channel-based streaming for 100k+ files |
+| Manifest save | 4 MB frame | Framed JSONL, spooled to a temp file |
+| Manifest load | 4 MB frame | One frame decrypted at a time |
+| Manifest stream | 4 MB frame | Cursor over the same frames |
+| Dedup set | ~75 MB, capped | `MaxSeenChunks` hashes, then falls back to storage |
 | Log archive | 64 KB buffer | Streaming with cursor-based pagination |
+
+See [Bounded memory](#bounded-memory) for how these terms are enforced and what
+`max_concurrency` changes.
 
 ### Key Principles
 
@@ -1062,7 +1212,8 @@ func (s *CASSync) restoreFromSingleChunk(ctx context.Context, manifest *Manifest
 
 ## Small Workspace Optimization
 
-For small workspaces (< 100MB), CAS stores the entire workspace as a single chunk:
+For small workspaces (below `cdc_threshold`), CAS stores the entire workspace as
+a single chunk:
 
 ```go
 func (s *CASSync) syncAsSingleChunk(ctx context.Context, workspaceID, tenantID, srcDir string) error {
@@ -1077,7 +1228,14 @@ func (s *CASSync) syncAsSingleChunk(ctx context.Context, workspaceID, tenantID, 
         }
         relPath, _ := filepath.Rel(srcDir, path)
 
-        header, _ := tar.FileInfoHeader(info, "")
+        // The link target has to be read and passed in: tar.FileInfoHeader
+        // cannot read it, and "" records a link that points nowhere.
+        link := ""
+        if info.Mode()&os.ModeSymlink != 0 {
+            link, _ = os.Readlink(path)
+        }
+
+        header, _ := tar.FileInfoHeader(info, link)
         header.Name = relPath
         tw.WriteHeader(header)
 
@@ -1448,334 +1606,153 @@ Logs use tiered storage: hot data in PostgreSQL, cold data in object storage.
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 
-  Hot (PostgreSQL)  ───7d───>  Cold (S3)  ───90d───>  Delete
-  - Partitioned by day         - JSONL.zst compressed
-  - Real-time queries          - On-demand retrieval
-  - Streaming to clients
+  Hot (PostgreSQL)  ──────>  Cold (object store)  ──────>  Delete
+  - Partitioned by day       - NDJSON in zstd frames
+  - Real-time queries        - Read through the same endpoints
+  - Streaming to clients     - One object per session
+
+  The two arrows are storage.log_archive.retention_days and
+  storage.log_archive.retention. Both default to off.
 ```
 
-## Log Archiver Job (Memory-Efficient)
+## Log Archiving
 
-The log archiver uses cursor-based pagination and streaming to avoid loading all logs into memory.
+Built in round 3 (`pkg/jobs/log_archiver.go`, `pkg/storage/logarchive`). What
+follows is the implementation, not a sketch of one.
 
-```go
-// pkg/jobs/log_archiver.go
+### Why it exists
 
-type LogArchiver struct {
-    store   store.Store
-    storage storage.StorageProvider
-    crypto  *crypto.Service
-    config  LogArchiverConfig
-}
+`logs` is partitioned by day and nothing ever removed a partition. Round 1 wired
+the partition maintainer with `RetentionDays` pinned at zero, because a daily
+partition is the only copy of the logs in it: retention without a second copy is
+deletion on a timer. Archiving makes the second copy, and the retention check
+asks per partition whether it exists.
 
-type LogArchiverConfig struct {
-    RetentionHot  time.Duration // PostgreSQL: 7 days
-    RetentionCold time.Duration // S3: 90 days
-    BatchSize     int           // Sessions per run
-    LogBatchSize  int           // Logs per query (default: 1000)
-}
+### The order, which is the whole design
 
-func (j *LogArchiver) Run(ctx context.Context) error {
-    // 1. Find sessions to archive (terminated > RetentionHot ago)
-    sessions, _ := j.store.GetSessionsForLogArchive(ctx, j.config.RetentionHot)
-
-    for _, session := range sessions {
-        if err := j.archiveSessionLogs(ctx, session); err != nil {
-            log.Error("failed to archive logs", "session", session.ID, "err", err)
-            continue // Don't fail entire job
-        }
-    }
-
-    // 2. Drop old partitions
-    j.dropOldPartitions(ctx)
-
-    // 3. Clean expired S3 archives
-    j.cleanupExpiredArchives(ctx)
-
-    return nil
-}
-
-// archiveSessionLogs uses streaming to avoid loading all logs into memory
-func (j *LogArchiver) archiveSessionLogs(ctx context.Context, session *store.Session) error {
-    // Count logs first to check if any exist
-    count, err := j.store.CountSessionLogs(ctx, session.ID)
-    if err != nil || count == 0 {
-        return err
-    }
-
-    key := fmt.Sprintf("logs/%s/%s.jsonl.zst", session.TenantID, session.ID)
-
-    // Use io.Pipe for concurrent streaming: DB -> compress -> encrypt -> S3
-    pr, pw := io.Pipe()
-
-    var uploadErr error
-    uploadDone := make(chan struct{})
-
-    // Uploader goroutine
-    go func() {
-        defer close(uploadDone)
-        uploadErr = j.storage.Upload(ctx, key, pr, storage.UploadOptions{
-            ContentType: "application/x-zstd",
-        })
-    }()
-
-    // Producer: paginate through logs, stream to pipe
-    func() {
-        defer pw.Close()
-
-        zw, _ := zstd.NewWriter(pw)
-        defer zw.Close()
-
-        enc := json.NewEncoder(zw)
-
-        // Cursor-based pagination - never load all logs at once
-        var cursor string
-        batchSize := j.config.LogBatchSize
-        if batchSize == 0 {
-            batchSize = 1000
-        }
-
-        for {
-            // Fetch batch of logs using cursor (sequence-based)
-            logs, nextCursor, err := j.store.GetSessionLogsBatch(ctx, session.ID, cursor, batchSize)
-            if err != nil {
-                log.Error("failed to fetch logs", "session", session.ID, "err", err)
-                return
-            }
-
-            if len(logs) == 0 {
-                break
-            }
-
-            // Stream each log (don't accumulate in memory)
-            for _, logEntry := range logs {
-                if err := enc.Encode(logEntry); err != nil {
-                    log.Error("failed to encode log", "err", err)
-                    return
-                }
-            }
-
-            if nextCursor == "" {
-                break
-            }
-            cursor = nextCursor
-        }
-    }()
-
-    // Wait for upload to complete
-    <-uploadDone
-    if uploadErr != nil {
-        return uploadErr
-    }
-
-    // Record archive metadata
-    j.store.CreateLogArchive(ctx, &store.LogArchive{
-        SessionID:  session.ID,
-        TenantID:   session.TenantID,
-        StorageKey: key,
-        LogCount:   count,
-        ExpiresAt:  time.Now().Add(j.config.RetentionCold),
-    })
-
-    // Delete logs from PostgreSQL (in batches to avoid long locks)
-    return j.store.DeleteSessionLogsBatched(ctx, session.ID, 10000)
-}
+```
+write the object  ->  commit the log_archives row  ->  delete the rows
 ```
 
-### Store Interface for Paginated Logs
+A crash anywhere in that sequence leaves rows that are in both places, never
+rows that are in neither.
 
-```go
-// pkg/store/logs.go
+| Crash point | State | How it converges |
+|-------------|-------|------------------|
+| Before the object lands | Rows intact, no archive | Next pass writes the same object again |
+| After the object, before the row | Orphan object, rows intact | Next pass rewrites the same key - it is derived from the count already archived - and commits |
+| After the row, before the delete | Rows duplicated on disk | Retrieval serves each line once; next pass finishes the delete |
 
-// GetSessionLogsBatch returns logs with cursor-based pagination
-// cursor is the last sequence number seen (empty for first page)
-// Returns logs, next cursor, error
-func (s *Store) GetSessionLogsBatch(
-    ctx context.Context,
-    sessionID string,
-    cursor string,
-    limit int,
-) ([]Log, string, error) {
-    query := `
-        SELECT id, task_id, run_id, stream, level, content, sequence,
-               timestamp_unix_ms, metadata
-        FROM logs
-        WHERE session_id = $1
-    `
-    args := []interface{}{sessionID}
+Two details make it exact. The delete stops at the full
+`(created_at, sequence, id)` of the last archived row rather than at its
+timestamp, because log rows share timestamps and a row arriving on the same
+microsecond would otherwise be deleted having never been archived. And the read
+holds a lag window (default 5 minutes) back from the present, so a row written
+by a transaction that opened before the scan cannot land underneath the
+boundary at all.
 
-    if cursor != "" {
-        query += ` AND sequence > $2`
-        args = append(args, cursor)
-    }
+### The object
 
-    query += ` ORDER BY sequence ASC LIMIT $` + strconv.Itoa(len(args)+1)
-    args = append(args, limit+1) // Fetch one extra to detect if more exist
+One object per session, keyed `logs/{tenant}/{session}/{records}.mla`, where
+`{records}` is how many records were already archived before the pass that wrote
+it. Extending an archive therefore writes a new object and leaves the old one
+intact until the row points at the new one; the key is deterministic, so a retry
+overwrites its own abandoned attempt rather than accumulating one per attempt.
 
-    rows, err := s.db.QueryContext(ctx, query, args...)
-    if err != nil {
-        return nil, "", err
-    }
-    defer rows.Close()
+The payload is a sequence of length-prefixed frames:
 
-    var logs []Log
-    for rows.Next() {
-        var log Log
-        if err := rows.Scan(&log.ID, &log.TaskID, &log.RunID, &log.Stream,
-            &log.Level, &log.Content, &log.Sequence, &log.TimestampUnixMs,
-            &log.Metadata); err != nil {
-            return nil, "", err
-        }
-        logs = append(logs, log)
-    }
-
-    // Determine next cursor
-    var nextCursor string
-    if len(logs) > limit {
-        nextCursor = strconv.FormatInt(logs[limit-1].Sequence, 10)
-        logs = logs[:limit] // Remove extra element
-    }
-
-    return logs, nextCursor, nil
-}
-
-// DeleteSessionLogsBatched deletes logs in batches to avoid long locks
-func (s *Store) DeleteSessionLogsBatched(ctx context.Context, sessionID string, batchSize int) error {
-    for {
-        result, err := s.db.ExecContext(ctx, `
-            DELETE FROM logs
-            WHERE id IN (
-                SELECT id FROM logs
-                WHERE session_id = $1
-                LIMIT $2
-            )
-        `, sessionID, batchSize)
-        if err != nil {
-            return err
-        }
-
-        affected, _ := result.RowsAffected()
-        if affected == 0 {
-            break
-        }
-
-        // Small sleep to allow other transactions
-        time.Sleep(10 * time.Millisecond)
-    }
-    return nil
-}
+```
+"MLA1"
+repeat: uvarint payload length, then payload
+payload: zstd(NDJSON of store.Log), then AES-256-GCM if encryption is on
 ```
 
-## Retrieving Archived Logs (Streaming)
+Framed rather than one zstd stream, for three reasons. Writing is
+memory-bounded - one frame at a time, uploaded through a pipe. Reading is too,
+which the retrieval endpoint needs because it pages through archives it did not
+size. And extending an archive copies the existing frames through as opaque
+bytes, without decrypting a history that may be far larger than the addition.
 
-```go
-// GetSessionLogs returns logs, streaming from archive if needed
-// For large archives, use GetSessionLogsStream instead
-func (s *LogService) GetSessionLogs(ctx context.Context, sessionID string) ([]Log, error) {
-    // Try PostgreSQL first (hot data)
-    logs, _ := s.store.GetSessionLogs(ctx, sessionID)
-    if len(logs) > 0 {
-        return logs, nil
-    }
+`format` and `encrypted` live on the `log_archives` row, not in config.
+Encryption is a deployment switch, and an archive written before it was turned
+on has to stay readable after; reading the switch instead of the row is how a
+deployment loses the logs it believes it archived.
 
-    // Check archive (cold data)
-    archive, _ := s.store.GetLogArchive(ctx, sessionID)
-    if archive == nil {
-        return []Log{}, nil
-    }
+### Which sessions
 
-    // Stream from archive with memory limit
-    return s.streamLogsFromArchive(ctx, archive, 0) // 0 = no limit
-}
+Terminated sessions, once they have been terminated for `terminated_after` - a
+grace window so the archiver is never reading a session something is still
+writing to. Optionally also live sessions quiet for `idle_after`; those can
+produce more logs later, which is why an archive can be extended. A session with
+no logs is skipped rather than given an empty archive.
 
-// GetSessionLogsStream returns a channel for streaming logs (memory-efficient)
-func (s *LogService) GetSessionLogsStream(ctx context.Context, sessionID string) (<-chan Log, error) {
-    archive, err := s.store.GetLogArchive(ctx, sessionID)
-    if err != nil {
-        return nil, err
-    }
-    if archive == nil {
-        // Return empty channel
-        ch := make(chan Log)
-        close(ch)
-        return ch, nil
-    }
+### Retention
 
-    ch := make(chan Log, 100) // Buffered for performance
+`DropArchivedLogPartitions` drops a daily partition only when every row left in
+it is covered by a live archive - the row's session has an archive that is not
+soft-deleted and whose `last_log_at` is at or after the row's `created_at`. The
+usual reason a partition is kept is that a session in it is still running, which
+is exactly the case retention must not touch; kept partitions are logged by
+name, because the other reason is archiving falling behind and a silent retain
+looks like a working policy.
 
-    go func() {
-        defer close(ch)
+The check queries the parent table with the day as a range rather than the
+partition directly: daily partitions carry no row level security policy of their
+own and inherit the parent's only when reached through it.
 
-        reader, _, err := s.storage.Download(ctx, archive.StorageKey)
-        if err != nil {
-            return
-        }
-        defer reader.Close()
+The archiver and the coverage check both run cross-tenant, through
+`store.WithSystemAccess` - the same mechanism the reaper and chunk GC use, not a
+superuser connection.
 
-        zr, _ := zstd.NewReader(reader)
-        defer zr.Close()
+### Retrieval
 
-        scanner := bufio.NewScanner(zr)
-        // Increase buffer for large log lines
-        scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+`GET /api/v1/sessions/{id}/logs` and `GET /api/v1/tasks/{id}/logs` both serve
+the archive and the hot rows as one ordered stream, with one opaque cursor
+carrying the caller across the seam (`archive:<offset>` on the archive side, the
+store's own keyset cursor after it). `?archived=true|false` narrows it to one
+side. `total_count` includes archived records; for those it ignores the level
+and stream filters, because counting them would mean decompressing the whole
+object to answer a number.
 
-        for scanner.Scan() {
-            var log Log
-            if err := json.Unmarshal(scanner.Bytes(), &log); err != nil {
-                continue
-            }
+Because the boundary is the exact triple, the rows a crashed archiver left
+behind - already in the object, not yet deleted - never reach the wire twice.
 
-            select {
-            case ch <- log:
-            case <-ctx.Done():
-                return
-            }
-        }
-    }()
+### Expiry
 
-    return ch, nil
-}
-
-// streamLogsFromArchive reads logs with optional limit
-func (s *LogService) streamLogsFromArchive(ctx context.Context, archive *LogArchive, limit int) ([]Log, error) {
-    reader, _, err := s.storage.Download(ctx, archive.StorageKey)
-    if err != nil {
-        return nil, err
-    }
-    defer reader.Close()
-
-    zr, _ := zstd.NewReader(reader)
-    defer zr.Close()
-
-    var logs []Log
-    scanner := bufio.NewScanner(zr)
-    scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 1MB max line
-
-    for scanner.Scan() {
-        var log Log
-        if err := json.Unmarshal(scanner.Bytes(), &log); err != nil {
-            continue
-        }
-        logs = append(logs, log)
-
-        if limit > 0 && len(logs) >= limit {
-            break
-        }
-    }
-
-    return logs, scanner.Err()
-}
-```
+Two phases, and the order is the CAS lesson: the row is soft-deleted first, then
+the object, then the row goes. The reverse leaves a live row pointing at an
+object that is gone, which reads as data loss rather than as an interrupted
+delete. An interrupted sweep leaves a tombstone whose blob may still exist, and
+the next pass finishes it.
 
 ## Configuration
 
 ```yaml
-logs:
-  retention_hot: 168h   # 7 days in PostgreSQL
-  retention_cold: 2160h # 90 days in S3
-  archive_schedule: "0 3 * * *"  # Daily at 3 AM
-  partitions_ahead: 7   # Create 7 days ahead
+storage:
+  encryption:
+    enabled: false        # encrypt archive frames; needs MARIONETTE_ENCRYPTION_KEY
+
+  log_archive:
+    enabled: false        # off by default
+    interval: 1h          # how often a pass runs
+    terminated_after: 15m # grace window after a session terminates
+    idle_after: 0         # also archive live sessions quiet this long (0 = never)
+    retention: 2160h      # 90 days; how long an archive lives (0 = forever)
+    retention_days: 30    # drop log partitions older than this
+    sessions_per_run: 50
+    batch_size: 1000
 ```
+
+Two settings delete the same logs from different places. `retention_days` is how
+long a log stays queryable as a database row; `retention` is how long the
+archive that replaces it lives. An archive shorter than the partitions would
+delete logs the database no longer has either, so the server refuses to start on
+that combination.
+
+With `enabled: false`, `retention_days` does nothing - the wiring forces it to
+zero, and the coverage check would refuse anyway. That is deliberate: both locks
+have to be picked before anything deletes the only copy of a log line.
+
 
 ## Security Layers
 

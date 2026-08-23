@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -115,31 +116,127 @@ func (r *DNSResolver) Resolve(ctx context.Context, host string) ([]net.IP, error
 	return ips, err
 }
 
-// ResolvePolicy resolves all allowed hosts in a network policy.
-// Returns a ResolvedPolicy with pinned IP addresses.
+// ResolvePolicy resolves a network policy into pinned IP addresses.
+//
+// Everything a restricted runner is allowed to reach is pinned here: the
+// allow-list hosts, the control plane, the egress proxy and the resolvers.
+// Rules are then written against those addresses, never against hostnames, so
+// there is no name lookup at connection time for an attacker to race.
 func (r *DNSResolver) ResolvePolicy(ctx context.Context, policy *NetworkPolicy) (*ResolvedPolicy, error) {
 	if policy == nil {
 		return nil, fmt.Errorf("policy is nil")
 	}
 
-	// For non-allow_list policies, return a minimal resolved policy
-	if policy.Level != PolicyAllowList {
-		return NewResolvedPolicy(policy, nil, r.cacheTTL), nil
+	var resolutions []HostResolution
+	if policy.Level == PolicyAllowList {
+		resolutions = make([]HostResolution, 0, len(policy.AllowedHosts))
+		for _, pattern := range policy.AllowedHosts {
+			resolutions = append(resolutions, r.resolvePattern(ctx, pattern))
+		}
 	}
 
-	resolutions := make([]HostResolution, 0, len(policy.AllowedHosts))
+	resolved := NewResolvedPolicy(policy, resolutions, r.cacheTTL)
 
-	for _, pattern := range policy.AllowedHosts {
-		hr := r.resolvePattern(ctx, pattern)
-		resolutions = append(resolutions, hr)
+	// The control plane is pinned at every level, air_gapped included: a
+	// runner that cannot reach the server is not isolated, it is broken.
+	for _, ep := range policy.ControlPlane {
+		resolved.ControlPlane = append(resolved.ControlPlane, r.ResolveEndpoint(ctx, ep))
 	}
 
-	return NewResolvedPolicy(policy, resolutions, r.cacheTTL), nil
+	if policy.Level == PolicyProxy && policy.Proxy != nil {
+		ep, err := policy.Proxy.Endpoint()
+		if err != nil {
+			resolved.Proxy = &EndpointResolution{ResolvedAt: time.Now(), Error: err}
+		} else {
+			er := r.ResolveEndpoint(ctx, ep)
+			resolved.Proxy = &er
+		}
+	}
+
+	if policy.AllowsExternalDNS() {
+		resolved.DNSServers = parseIPList(policy.DNSServers)
+	}
+
+	return resolved, nil
+}
+
+// ResolvePolicyFresh re-resolves a policy while ignoring the cache.
+//
+// The refresh loop must not be served the entry it is trying to replace, and
+// the cache TTL is deliberately close to the refresh interval, so every
+// refresh drops the relevant entries first.
+func (r *DNSResolver) ResolvePolicyFresh(ctx context.Context, policy *NetworkPolicy) (*ResolvedPolicy, error) {
+	if policy == nil {
+		return nil, fmt.Errorf("policy is nil")
+	}
+
+	for _, host := range policy.AllowedHosts {
+		r.InvalidateCache(host)
+	}
+	for _, host := range policy.ControlPlaneHosts() {
+		r.InvalidateCache(host)
+	}
+	if policy.Proxy != nil {
+		if ep, err := policy.Proxy.Endpoint(); err == nil {
+			r.InvalidateCache(ep.Host)
+		}
+	}
+
+	return r.ResolvePolicy(ctx, policy)
+}
+
+// ResolveEndpoint pins a host:port endpoint to concrete addresses.
+// IP literals are used as-is; nothing is looked up for them.
+func (r *DNSResolver) ResolveEndpoint(ctx context.Context, ep Endpoint) EndpointResolution {
+	now := time.Now()
+
+	if ip := net.ParseIP(ep.Host); ip != nil {
+		return EndpointResolution{Endpoint: ep, IPs: []net.IP{ip}, ResolvedAt: now}
+	}
+
+	ips, err := r.Resolve(ctx, ep.Host)
+	return EndpointResolution{Endpoint: ep, IPs: ips, ResolvedAt: now, Error: err}
+}
+
+// cidrSlice wraps a parsed network, tolerating a nil from a parse failure.
+func cidrSlice(cidr *net.IPNet) []*net.IPNet {
+	if cidr == nil {
+		return nil
+	}
+	return []*net.IPNet{cidr}
+}
+
+// parseIPList converts resolver addresses to net.IP, dropping unparseable ones.
+func parseIPList(addrs []string) []net.IP {
+	out := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		// Accept both "10.0.0.1" and "10.0.0.1:53".
+		host := addr
+		if h, _, err := net.SplitHostPort(addr); err == nil {
+			host = h
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			out = append(out, ip)
+		}
+	}
+	return out
 }
 
 // resolvePattern resolves a single host pattern to IP addresses.
 func (r *DNSResolver) resolvePattern(ctx context.Context, pattern string) HostResolution {
 	now := time.Now()
+
+	// A network block is already an address range: nothing to look up, and
+	// nothing that can rotate underneath us.
+	if strings.Contains(pattern, "/") {
+		_, cidr, err := net.ParseCIDR(pattern)
+		return HostResolution{
+			Pattern:    pattern,
+			CIDRs:      cidrSlice(cidr),
+			ResolvedAt: now,
+			Error:      err,
+		}
+	}
 
 	// Wildcards cannot be directly resolved
 	if isWildcardPattern(pattern) {

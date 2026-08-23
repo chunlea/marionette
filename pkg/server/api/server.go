@@ -237,6 +237,7 @@ func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 			r.With(RequireScope("sessions:write")).Post("/{sessionID}/suspend", srv.handleSuspendSession)
 			r.With(RequireScope("sessions:write")).Post("/{sessionID}/resume", srv.handleResumeSession)
 			r.With(RequireScope("sessions:write")).Delete("/{sessionID}", srv.handleTerminateSession)
+			r.With(RequireScope("tasks:read")).Get("/{sessionID}/logs", srv.handleGetSessionLogs)
 
 			// Session tunnels
 			r.With(RequireScope("tunnels:write")).Post("/{sessionID}/tunnels", srv.handleCreateTunnel)

@@ -508,7 +508,10 @@ func (h *DefaultCommandHandler) syncWorkspace(ctx context.Context, session *Sess
 		return false, ErrSyncUnavailable.Error()
 	}
 
-	result, err := h.syncer.Sync(ctx, session.Workspace, h.workspace.Resolve(session.WorkspacePath))
+	// The snapshot this workspace was last stored as. Handing it to the sync is
+	// what makes a suspend cost the files that changed rather than all of them.
+	result, err := h.syncer.Sync(ctx, session.Workspace,
+		h.workspace.Resolve(session.WorkspacePath), session.WorkspaceManifestID)
 	if err != nil {
 		h.logger.Warn("workspace sync failed",
 			zap.String("session_id", session.SessionID),

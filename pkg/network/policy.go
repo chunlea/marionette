@@ -3,6 +3,7 @@ package network
 
 import (
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -14,20 +15,25 @@ const (
 	PolicyNone PolicyLevel = "none"
 
 	// PolicyAllowList restricts network access to a whitelist of domains.
-	// DNS resolution is pinned at task start to prevent DNS rebinding attacks.
+	// DNS resolution is pinned at runner start and refreshed in place to
+	// prevent DNS rebinding attacks.
 	PolicyAllowList PolicyLevel = "allow_list"
 
-	// PolicyProxy routes all traffic through a transparent proxy for
-	// inspection and logging. Enables TLS termination (MITM) for visibility.
+	// PolicyProxy forces all HTTP(S) egress through a configured proxy.
+	// Direct egress is dropped, so a tool that ignores the proxy environment
+	// fails closed rather than escaping the policy.
 	PolicyProxy PolicyLevel = "proxy"
 
-	// PolicyAirGapped blocks all internet access. Only Marionette server
-	// gRPC and inbound streaming tunnels are permitted.
+	// PolicyAirGapped blocks all egress. Only the runner to server control
+	// plane is permitted; external DNS is not.
 	PolicyAirGapped PolicyLevel = "air_gapped"
 )
 
 // DefaultAllowedPorts are the ports allowed when no explicit ports are specified.
 var DefaultAllowedPorts = []int{80, 443}
+
+// DefaultControlPlanePort is assumed when the server address carries no port.
+const DefaultControlPlanePort = 9090
 
 // NetworkPolicy defines the network isolation configuration for a session.
 type NetworkPolicy struct {
@@ -45,11 +51,57 @@ type NetworkPolicy struct {
 	// BlockMetadata controls whether cloud metadata endpoints are blocked.
 	// Always true for security; cannot be disabled.
 	BlockMetadata bool
+
+	// ControlPlane lists endpoints that stay reachable at every restricted
+	// level: the Marionette server's gRPC address. Without it a restricted
+	// runner cannot report back and the session is dead on arrival.
+	ControlPlane []Endpoint
+
+	// Proxy configures the egress proxy. Required for PolicyProxy, ignored
+	// otherwise.
+	Proxy *ProxyConfig
+
+	// DNSServers are the resolver addresses the sandbox may reach on port 53.
+	// Empty means "no explicit resolver known": see AllowsExternalDNS.
+	DNSServers []string
+}
+
+// PolicyOption configures a NetworkPolicy during ParsePolicy.
+type PolicyOption func(*NetworkPolicy)
+
+// WithControlPlane sets the endpoints that must stay reachable.
+func WithControlPlane(endpoints ...Endpoint) PolicyOption {
+	return func(p *NetworkPolicy) {
+		p.ControlPlane = append(p.ControlPlane, endpoints...)
+	}
+}
+
+// WithProxy sets the egress proxy configuration.
+func WithProxy(proxy *ProxyConfig) PolicyOption {
+	return func(p *NetworkPolicy) {
+		p.Proxy = proxy
+	}
+}
+
+// WithDNSServers sets the resolver addresses the sandbox may reach.
+func WithDNSServers(servers ...string) PolicyOption {
+	return func(p *NetworkPolicy) {
+		p.DNSServers = append(p.DNSServers, servers...)
+	}
+}
+
+// WithAllowedPorts overrides the default allowed ports.
+func WithAllowedPorts(ports ...int) PolicyOption {
+	return func(p *NetworkPolicy) {
+		if len(ports) > 0 {
+			p.AllowedPorts = ports
+		}
+	}
 }
 
 // ParsePolicy creates a NetworkPolicy from configuration values.
 // Returns an error if the level is invalid.
-func ParsePolicy(level string, allowedHosts []string) (*NetworkPolicy, error) {
+func ParsePolicy(level string, allowedHosts []string, opts ...PolicyOption) (*NetworkPolicy, error) {
 	policyLevel := PolicyLevel(level)
 	if err := validatePolicyLevel(policyLevel); err != nil {
 		return nil, err
@@ -60,6 +112,10 @@ func ParsePolicy(level string, allowedHosts []string) (*NetworkPolicy, error) {
 		AllowedHosts:  allowedHosts,
 		AllowedPorts:  DefaultAllowedPorts,
 		BlockMetadata: true, // Always block metadata endpoints
+	}
+
+	for _, opt := range opts {
+		opt(policy)
 	}
 
 	if err := policy.Validate(); err != nil {
@@ -80,6 +136,16 @@ func (p *NetworkPolicy) Validate() error {
 		return fmt.Errorf("allow_list policy requires at least one allowed host")
 	}
 
+	// proxy mode without a proxy would silently degrade to "drop everything".
+	if p.Level == PolicyProxy {
+		if p.Proxy == nil {
+			return fmt.Errorf("proxy policy requires a proxy configuration")
+		}
+		if err := p.Proxy.Validate(); err != nil {
+			return fmt.Errorf("invalid proxy configuration: %w", err)
+		}
+	}
+
 	// Validate host patterns
 	for _, host := range p.AllowedHosts {
 		if err := validateHostPattern(host); err != nil {
@@ -87,22 +153,59 @@ func (p *NetworkPolicy) Validate() error {
 		}
 	}
 
+	for _, ep := range p.ControlPlane {
+		if err := ep.Validate(); err != nil {
+			return fmt.Errorf("invalid control plane endpoint: %w", err)
+		}
+	}
+
+	for _, port := range p.AllowedPorts {
+		if port <= 0 || port > 65535 {
+			return fmt.Errorf("invalid allowed port %d", port)
+		}
+	}
+
 	return nil
 }
 
 // IsRestricted returns true if network access is restricted (not "none").
+//
+// A nil policy is the "no isolation" case, so the predicates below tolerate
+// one: callers get a policy or nil from a single Prepare step and should not
+// have to guard every use.
 func (p *NetworkPolicy) IsRestricted() bool {
-	return p.Level != PolicyNone
+	return p != nil && p.Level != PolicyNone
 }
 
 // IsAirGapped returns true if the policy completely blocks internet access.
 func (p *NetworkPolicy) IsAirGapped() bool {
-	return p.Level == PolicyAirGapped
+	return p != nil && p.Level == PolicyAirGapped
 }
 
-// RequiresDNSPinning returns true if the policy requires DNS pinning.
+// RequiresDNSPinning returns true if the policy resolves names to IP rules and
+// therefore needs a refresh loop to follow rotating records.
+//
+// Proxy mode is included: the proxy endpoint itself is pinned to an IP.
 func (p *NetworkPolicy) RequiresDNSPinning() bool {
-	return p.Level == PolicyAllowList
+	return p != nil && (p.Level == PolicyAllowList || p.Level == PolicyProxy)
+}
+
+// AllowsExternalDNS reports whether the sandbox may send DNS queries off-box.
+//
+// Air-gapped runners may not: DNS is a general-purpose exfiltration channel,
+// so the control-plane address is pinned into the container's /etc/hosts
+// instead and port 53 stays closed.
+func (p *NetworkPolicy) AllowsExternalDNS() bool {
+	return p == nil || p.Level != PolicyAirGapped
+}
+
+// ControlPlaneHosts returns the host part of every control-plane endpoint.
+func (p *NetworkPolicy) ControlPlaneHosts() []string {
+	hosts := make([]string, 0, len(p.ControlPlane))
+	for _, ep := range p.ControlPlane {
+		hosts = append(hosts, ep.Host)
+	}
+	return hosts
 }
 
 // EffectivePorts returns the ports that should be allowed.
@@ -127,9 +230,31 @@ func validatePolicyLevel(level PolicyLevel) error {
 }
 
 // validateHostPattern checks if a host pattern is valid.
+//
+// An entry is a hostname (optionally with a leading or embedded wildcard), an
+// IP literal, or a CIDR block.
 func validateHostPattern(pattern string) error {
 	if pattern == "" {
 		return fmt.Errorf("empty pattern")
+	}
+
+	// A network block, e.g. 10.20.0.0/16 or 2001:db8::/32.
+	if strings.Contains(pattern, "/") {
+		if _, _, err := net.ParseCIDR(pattern); err != nil {
+			return fmt.Errorf("not a valid CIDR: %w", err)
+		}
+		return nil
+	}
+
+	// An IP literal, including IPv6 which is full of colons.
+	if net.ParseIP(pattern) != nil {
+		return nil
+	}
+
+	// A trailing port used to be accepted and then silently ignored, which
+	// quietly widened the rule to every allowed port. Say so instead.
+	if strings.Contains(pattern, ":") {
+		return fmt.Errorf("a port is not allowed here; set allowed_ports on the policy instead")
 	}
 
 	// Check for invalid characters

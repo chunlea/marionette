@@ -61,7 +61,7 @@ func TestMaintainLogPartitions(t *testing.T) {
 	})
 
 	t.Run("rejects negative retention", func(t *testing.T) {
-		err := testStore.DropOldLogPartitions(ctx, -1)
+		_, err := testStore.DropArchivedLogPartitions(ctx, -1)
 		assert.ErrorIs(t, err, store.ErrInvalidInput)
 	})
 }
@@ -116,18 +116,21 @@ func TestCreateLogPartitionDrainsDefault(t *testing.T) {
 	assert.Equal(t, 1, throughParent)
 }
 
-func TestDropOldLogPartitionsKeepsDefault(t *testing.T) {
+func TestDropArchivedLogPartitionsKeepsDefault(t *testing.T) {
 	ctx := context.Background()
 	pool := testStore.Pool()
 
-	// Create a partition well past any retention window.
+	// Create an empty partition well past any retention window. Empty means
+	// nothing in it is uncovered, so retention may take it.
 	old := time.Now().UTC().AddDate(0, 0, -400).Truncate(24 * time.Hour)
 	oldName := "logs_" + old.Format("20060102")
 	_, err := pool.Exec(ctx, "SELECT create_log_partition($1::date)", old)
 	require.NoError(t, err)
 	require.True(t, partitionExists(ctx, t, oldName))
 
-	require.NoError(t, testStore.DropOldLogPartitions(ctx, 7))
+	result, err := testStore.DropArchivedLogPartitions(ctx, 7)
+	require.NoError(t, err)
+	assert.Contains(t, result.Dropped, oldName)
 
 	assert.False(t, partitionExists(ctx, t, oldName), "stale partition was not dropped")
 	assert.True(t, partitionExists(ctx, t, "logs_default"), "logs_default must never be dropped")

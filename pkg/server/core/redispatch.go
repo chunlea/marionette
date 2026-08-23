@@ -25,9 +25,6 @@ const (
 	// the status quo, so the blast radius of a bad decision here is bounded by
 	// construction.
 	DefaultRedispatchMaxAttempts = 6
-
-	// redispatchBatch bounds how many sessions one sweep touches.
-	redispatchBatch = 50
 )
 
 // redispatchBackoff is the delay before attempt n (1-based), capped.
@@ -67,12 +64,15 @@ func (m *TaskManager) recordDispatchFailure(ctx context.Context, taskID string, 
 		return
 	}
 
+	m.redispatchMetrics.dispatchFailed()
+
 	attempts := task.DispatchAttempts + 1
 	updates := store.TaskUpdates{DispatchAttempts: &attempts}
 
 	if attempts >= m.redispatchMaxAttempts {
 		reason := fmt.Sprintf("gave up after %d dispatch attempts: %v", attempts, cause)
 		updates.DispatchParkedReason = &reason
+		m.redispatchMetrics.taskParked()
 		m.logger.Warn("parking task: automatic redispatch gave up",
 			zap.String("task_id", taskID),
 			zap.Int("attempts", attempts),
@@ -115,15 +115,16 @@ func eligibleForRedispatch(task *store.Task, ignoreBackoff bool, now time.Time) 
 
 // RedispatchSweeper is the backstop trigger.
 //
-// Every other trigger is an edge: a task was created, a runner attached. Edges
-// are missed - a server restarts and loses the in-memory schedule, a runner
-// appears in a way nothing watches - and a task that nothing retries is the
-// bug this exists to fix. It scans sessions rather than tasks: a session with a
-// runner, no task in flight and a backlog is a cheap indexed question, and the
-// one-task-per-session invariant bounds the work per tick for free.
+// Every other trigger is an edge: a task was created, a runner was freed, a
+// runner joined. Edges are missed - a server restarts and loses its in-memory
+// state, a runner appears in a way nothing watches - and a task that nothing
+// ever retries is the bug this whole mechanism exists to fix.
+//
+// It owns a timer and nothing else. The scan itself lives in DispatchWaker, so
+// a tick that lands in the middle of a runner-freed pass coalesces into it
+// instead of walking the same sessions a second time.
 type RedispatchSweeper struct {
-	store    store.Store
-	tasks    TaskManagerInterface
+	waker    *DispatchWaker
 	logger   *zap.Logger
 	interval time.Duration
 
@@ -145,14 +146,15 @@ func WithRedispatchInterval(d time.Duration) RedispatchSweeperOption {
 
 // NewRedispatchSweeper creates a RedispatchSweeper.
 func NewRedispatchSweeper(
-	s store.Store,
-	tasks TaskManagerInterface,
+	waker *DispatchWaker,
 	logger *zap.Logger,
 	opts ...RedispatchSweeperOption,
 ) *RedispatchSweeper {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	sweeper := &RedispatchSweeper{
-		store:    s,
-		tasks:    tasks,
+		waker:    waker,
 		logger:   logger,
 		interval: DefaultRedispatchInterval,
 		stopCh:   make(chan struct{}),
@@ -216,64 +218,8 @@ func (s *RedispatchSweeper) run(ctx context.Context) {
 // Sweep performs one pass. Exported so tests can drive it directly rather than
 // waiting on a timer.
 func (s *RedispatchSweeper) Sweep(ctx context.Context) error {
-	sessions, err := s.store.ListSessions(ctx, store.ListSessionsOptions{
-		BaseListOptions: store.BaseListOptions{Limit: redispatchBatch},
-		Status:          []string{SessionStatusActive},
-	})
-	if err != nil {
-		return err
+	if s.waker == nil {
+		return nil
 	}
-
-	dispatched := 0
-	for _, session := range sessions.Items {
-		// A session with no runner has nothing to dispatch to; that is the
-		// runner-attach trigger's job, not this one.
-		if session.RunnerID == nil || *session.RunnerID == "" {
-			continue
-		}
-		if s.sweepSession(ctx, session.ID) {
-			dispatched++
-		}
-	}
-
-	if dispatched > 0 {
-		s.logger.Info("redispatched parked work", zap.Int("sessions", dispatched))
-	}
-	return nil
-}
-
-// sweepSession dispatches one session's backlog if anything is due.
-func (s *RedispatchSweeper) sweepSession(ctx context.Context, sessionID string) bool {
-	pending, err := s.store.ListTasks(ctx, store.ListTasksOptions{
-		BaseListOptions: store.BaseListOptions{Limit: dispatchScanLimit},
-		SessionID:       &sessionID,
-		Status:          []string{TaskStatusPending},
-	})
-	if err != nil {
-		s.logger.Warn("could not list pending tasks",
-			zap.String("session_id", sessionID), zap.Error(err))
-		return false
-	}
-
-	now := time.Now()
-	due := false
-	for _, task := range pending.Items {
-		if eligibleForRedispatch(task, false, now) {
-			due = true
-			break
-		}
-	}
-	if !due {
-		return false
-	}
-
-	// DispatchNext picks the oldest pending task and is a no-op when one is
-	// already in flight, so the one-task-per-session invariant holds here for
-	// free and a lost race is not an error.
-	if err := s.tasks.DispatchNext(ctx, sessionID); err != nil {
-		s.logger.Warn("redispatch failed",
-			zap.String("session_id", sessionID), zap.Error(err))
-		return false
-	}
-	return true
+	return s.waker.WakeAndWait(ctx, WakeTriggerSweep)
 }

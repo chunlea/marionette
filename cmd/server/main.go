@@ -39,6 +39,7 @@ import (
 	"github.com/chunlea/marionette/pkg/streaming/browser"
 	"github.com/chunlea/marionette/pkg/tunnel"
 	"github.com/chunlea/marionette/pkg/webhook"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -98,6 +99,19 @@ func main() {
 	// Initialize provider registry
 	providerRegistry := initProviderRegistry(dbStore, cfg, logger)
 
+	// The metrics registry is built before the core managers because they
+	// register collectors of their own; the middleware and the scrape endpoint
+	// are attached further down, once the servers exist.
+	var metricsRegistry *metrics.Registry
+	var metricsServer *metrics.Server
+	if cfg.Observability.Metrics.Enabled {
+		metricsRegistry = metrics.NewRegistry(cfg.Observability.Metrics.Namespace)
+	}
+	var metricsRegisterer prometheus.Registerer
+	if metricsRegistry != nil {
+		metricsRegisterer = metricsRegistry.PrometheusRegistry()
+	}
+
 	// Create core managers (only if database is available).
 	// core.Wire is the single production wiring point: every manager and every
 	// background job is built there, so the binary cannot drift away from what
@@ -109,6 +123,7 @@ func main() {
 	var grpcOpts []grpcserver.ServerOption
 	var grpcCfg grpcserver.Config
 	var webhookDeliveryJob *jobs.WebhookDeliveryJob
+	var logArchive logArchiving
 
 	if dbStore != nil {
 		// Create API key service (needed for both public and admin APIs)
@@ -125,6 +140,7 @@ func main() {
 		runnerTokenSvc := auth.NewRunnerTokenService(dbStore, id.RunnerToken)
 
 		chunkGC, chunkTenants := initChunkGC(cfg, secrets, dbStore, logger)
+		logArchive = initLogArchiving(cfg, secrets, dbStore, logger)
 
 		app, err = core.Wire(core.WireDeps{
 			Store:              dbStore,
@@ -136,11 +152,17 @@ func main() {
 			ProviderRegistry:   providerRegistry,
 			AuditLog:           auditLog,
 			Logger:             logger,
+			MetricsRegisterer:  metricsRegisterer,
+			MetricsNamespace:   cfg.Observability.Metrics.Namespace,
 			WorkspaceConfig:    cfg.Storage.Workspace,
 			WebhookConfig:      webhookConfig(),
 			Jobs: core.JobsConfig{
 				DisableChunkGC:  !cfg.Storage.GC.Enabled,
 				ChunkGCInterval: cfg.Storage.GC.Interval,
+				// Zero unless the archiver is actually running. The drop is
+				// archive-gated as well, so this is the second of two locks on
+				// deleting the only copy of the logs.
+				LogRetentionDays: logArchive.RetentionDays,
 			},
 		})
 		if err != nil {
@@ -148,8 +170,10 @@ func main() {
 		}
 
 		// Create adapters and add to API options
-		sessionAdapter := api.NewSessionAdapter(app.Sessions, app.Workspaces)
-		taskAdapter := api.NewTaskAdapter(app.Tasks, dbStore)
+		sessionAdapter := api.NewSessionAdapter(app.Sessions, app.Workspaces,
+			api.WithSessionLogReader(logArchive.Reader))
+		taskAdapter := api.NewTaskAdapter(app.Tasks, dbStore,
+			api.WithTaskLogArchive(logArchive.Reader))
 		permAdapter := api.NewPermissionAdapter(app.Permissions)
 		workspaceAdapter := api.NewWorkspaceAdapter(app.Workspaces)
 		scheduledTaskAdapter := api.NewScheduledTaskAdapter(app.ScheduledTasks)
@@ -235,12 +259,8 @@ func main() {
 		logger.Info("core services initialized and wired to API")
 	}
 
-	// Create metrics registry and middleware (if enabled)
-	var metricsRegistry *metrics.Registry
-	var metricsServer *metrics.Server
-	if cfg.Observability.Metrics.Enabled {
-		metricsRegistry = metrics.NewRegistry(cfg.Observability.Metrics.Namespace)
-
+	// Attach the metrics middleware (if enabled)
+	if metricsRegistry != nil {
 		// Add metrics middleware to API and Admin servers
 		apiOpts = append(apiOpts, api.WithMiddleware(metrics.HTTPMiddleware(metricsRegistry)))
 
@@ -366,6 +386,16 @@ func main() {
 			webhookDeliveryJob = nil
 		} else {
 			logger.Info("Webhook delivery job started")
+		}
+
+		// The archiver runs on the App context, which carries system access:
+		// it archives every tenant's sessions and has no request to take a
+		// tenant from.
+		if logArchive.Archiver != nil {
+			if err := logArchive.Archiver.Start(app.Context()); err != nil {
+				logger.Error("failed to start log archiver", zap.Error(err))
+				logArchive.Archiver = nil
+			}
 		}
 	}
 	if streamMgr != nil {
@@ -533,6 +563,12 @@ func main() {
 	if webhookDeliveryJob != nil {
 		if err := webhookDeliveryJob.Stop(ctx); err != nil {
 			logger.Error("webhook delivery job stop error", zap.Error(err))
+		}
+	}
+
+	if logArchive.Archiver != nil {
+		if err := logArchive.Archiver.Stop(ctx); err != nil {
+			logger.Error("log archiver stop error", zap.Error(err))
 		}
 	}
 

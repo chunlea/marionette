@@ -23,8 +23,18 @@ type ChunkStore interface {
 
 // ManifestStore defines operations for workspace manifests.
 type ManifestStore interface {
-	// SaveManifest stores a manifest using JSONL streaming format.
+	// SaveManifest stores a manifest held whole in memory.
+	// Use OpenManifestWriter for manifests produced by a walk.
 	SaveManifest(ctx context.Context, manifest *Manifest) error
+
+	// OpenManifestWriter begins a streaming write. The caller appends entries
+	// as it discovers them and then commits, which is what keeps a sync's
+	// memory independent of how many files the workspace holds.
+	OpenManifestWriter(ctx context.Context, manifest *Manifest) (*ManifestObjectWriter, error)
+
+	// OpenManifest opens a manifest for streaming reads, holding at most one
+	// frame rather than the whole entry list.
+	OpenManifest(ctx context.Context, tenantID, workspaceID, manifestID string) (*ManifestEntries, error)
 
 	// LoadManifest loads a complete manifest.
 	LoadManifest(ctx context.Context, tenantID, workspaceID, manifestID string) (*Manifest, error)
@@ -44,6 +54,11 @@ type Syncer interface {
 	// Sync performs workspace sync.
 	// Returns the created manifest ID.
 	Sync(ctx context.Context, workspaceID, tenantID, srcDir string) (string, error)
+
+	// SyncFrom is Sync with the workspace's previous snapshot to reuse, so
+	// unchanged files are not read again. A parent that cannot be opened is
+	// treated as no parent rather than as a failure.
+	SyncFrom(ctx context.Context, workspaceID, tenantID, srcDir, parentManifestID string) (string, error)
 
 	// SyncIncremental performs incremental sync based on a previous manifest.
 	// Only uploads chunks that have changed since the previous manifest.

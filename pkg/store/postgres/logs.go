@@ -18,7 +18,8 @@ const logColumns = `id, session_id, task_id, run_id, runner_id, stream, level, c
 
 // LogArchive column list for SELECT queries.
 const logArchiveColumns = `id, session_id, tenant_id, storage_key, storage_size_bytes,
-	log_count, first_log_at, last_log_at, archived_at, expires_at, deleted_at`
+	log_count, first_log_at, last_log_at, archived_at, expires_at, deleted_at,
+	format, encrypted, last_log_id, last_log_sequence`
 
 // ActionLog column list for SELECT queries.
 const actionLogColumns = `id, actor_type, actor_id, actor_name, action, resource_type, resource_id,
@@ -188,6 +189,15 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 		args = append(args, opts.Level)
 		argNum++
 	}
+	if opts.After != nil {
+		// A row comparison, not three ANDed ones: the ordering logs are
+		// archived in is (created_at, sequence, id), and that is the only
+		// boundary that neither repeats nor skips a row at the seam.
+		conditions = append(conditions, fmt.Sprintf(
+			"(created_at, sequence, id) > ($%d, $%d, $%d)", argNum, argNum+1, argNum+2))
+		args = append(args, opts.After.CreatedAt, opts.After.Sequence, opts.After.ID)
+		argNum += 3
+	}
 
 	whereClause := ""
 	if len(conditions) > 0 {
@@ -317,18 +327,24 @@ func createLogArchive(ctx context.Context, q querier, archive *store.LogArchive)
 		archive.ID = id.LogArchive()
 	}
 
+	if archive.Format == "" {
+		archive.Format = DefaultLogArchiveFormat
+	}
+
 	query := `
 		INSERT INTO log_archives (
 			id, session_id, tenant_id, storage_key, storage_size_bytes,
-			log_count, first_log_at, last_log_at, archived_at, expires_at, deleted_at
+			log_count, first_log_at, last_log_at, archived_at, expires_at, deleted_at,
+			format, encrypted, last_log_id, last_log_sequence
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10
+			$1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, $12, $13, $14
 		)
 		RETURNING archived_at`
 
 	err := q.QueryRow(ctx, query,
 		archive.ID, archive.SessionID, archive.TenantID, archive.StorageKey, archive.StorageSizeBytes,
 		archive.LogCount, archive.FirstLogAt, archive.LastLogAt, archive.ExpiresAt, archive.DeletedAt,
+		archive.Format, archive.Encrypted, archive.LastLogID, archive.LastLogSequence,
 	).Scan(&archive.ArchivedAt)
 
 	if err != nil {
@@ -466,10 +482,44 @@ func updateLogArchive(ctx context.Context, q querier, archiveID string, updates 
 	var args []any
 	argNum := 1
 
-	if updates.DeletedAt != nil {
-		setClauses = append(setClauses, fmt.Sprintf("deleted_at = $%d", argNum))
-		args = append(args, *updates.DeletedAt)
+	set := func(column string, value any) {
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", column, argNum))
+		args = append(args, value)
 		argNum++
+	}
+
+	if updates.DeletedAt != nil {
+		set("deleted_at", *updates.DeletedAt)
+	}
+	if updates.StorageKey != nil {
+		set("storage_key", *updates.StorageKey)
+	}
+	if updates.StorageSizeBytes != nil {
+		set("storage_size_bytes", *updates.StorageSizeBytes)
+	}
+	if updates.LogCount != nil {
+		set("log_count", *updates.LogCount)
+	}
+	if updates.FirstLogAt != nil {
+		set("first_log_at", *updates.FirstLogAt)
+	}
+	if updates.LastLogAt != nil {
+		set("last_log_at", *updates.LastLogAt)
+	}
+	if updates.LastLogID != nil {
+		set("last_log_id", *updates.LastLogID)
+	}
+	if updates.LastLogSequence != nil {
+		set("last_log_sequence", *updates.LastLogSequence)
+	}
+	if updates.ExpiresAt != nil {
+		set("expires_at", *updates.ExpiresAt)
+	}
+	if updates.Format != nil {
+		set("format", *updates.Format)
+	}
+	if updates.Encrypted != nil {
+		set("encrypted", *updates.Encrypted)
 	}
 
 	if len(setClauses) == 0 {
@@ -521,6 +571,7 @@ func scanLogArchive(row pgx.Row, identifier string) (*store.LogArchive, error) {
 	err := row.Scan(
 		&a.ID, &a.SessionID, &a.TenantID, &a.StorageKey, &a.StorageSizeBytes,
 		&a.LogCount, &a.FirstLogAt, &a.LastLogAt, &a.ArchivedAt, &a.ExpiresAt, &a.DeletedAt,
+		&a.Format, &a.Encrypted, &a.LastLogID, &a.LastLogSequence,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -536,6 +587,7 @@ func scanLogArchiveFromRows(rows pgx.Rows) (*store.LogArchive, error) {
 	err := rows.Scan(
 		&a.ID, &a.SessionID, &a.TenantID, &a.StorageKey, &a.StorageSizeBytes,
 		&a.LogCount, &a.FirstLogAt, &a.LastLogAt, &a.ArchivedAt, &a.ExpiresAt, &a.DeletedAt,
+		&a.Format, &a.Encrypted, &a.LastLogID, &a.LastLogSequence,
 	)
 	if err != nil {
 		return nil, err

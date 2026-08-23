@@ -34,6 +34,12 @@ type DockerClient interface {
 	NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
 	NetworkInspect(ctx context.Context, networkID string, options network.InspectOptions) (network.Inspect, error)
 
+	// NetworkConnect attaches a running container to a network. Restricted
+	// runners are created detached and connected only once their firewall
+	// rules exist, so this is the moment egress becomes possible at all.
+	NetworkConnect(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error
+	NetworkDisconnect(ctx context.Context, networkID, containerID string, force bool) error
+
 	// Connection
 	Ping(ctx context.Context) (types.Ping, error)
 	Close() error

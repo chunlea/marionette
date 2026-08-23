@@ -31,6 +31,17 @@ var apiSecurity = openapi.SecurityScheme{
 	},
 }
 
+// archivedQuery documents the `archived` parameter both log endpoints take.
+//
+// Omitting it is the answer almost every caller wants - one stream, wherever
+// the lines happen to be stored. The two explicit values exist for the caller
+// that is asking about storage rather than about logs.
+func archivedQuery() openapi.Parameter {
+	p := openapi.BoolQuery("archived",
+		"Which copy to read. Omit for both, oldest first. true reads only the archive; false reads only the rows still in the database.")
+	return p
+}
+
 // publicRoutes is every route the public API server serves.
 func publicRoutes() []openapi.Route {
 	return []openapi.Route{
@@ -181,12 +192,14 @@ func publicRoutes() []openapi.Route {
 		},
 		{
 			Method: "GET", Path: "/api/v1/tasks/{taskID}/logs", Tag: "Tasks",
-			Summary: "List task logs",
-			Secured: true,
-			Scopes:  []string{"tasks:read"},
+			Summary:     "List task logs",
+			Description: "Logs are archived per session once a session finishes, so a task's older logs may no longer be rows in the database. This reads both, in order, and `archived` narrows it to one side.",
+			Secured:     true,
+			Scopes:      []string{"tasks:read"},
 			Query: openapi.WithQuery(openapi.PaginationQuery(),
 				openapi.RepeatedQuery("level", "Filter by log level."),
 				openapi.RepeatedQuery("stream", "Filter by output stream."),
+				archivedQuery(),
 			),
 			Success: 200, Response: apitypes.ListResponse[apitypes.Log]{},
 		},
@@ -368,6 +381,19 @@ func publicRoutes() []openapi.Route {
 			Scopes:      []string{"tunnels:write"},
 			Request:     CreateTunnelOptions{},
 			Success:     201, Response: apitypes.Tunnel{},
+		},
+		{
+			Method: "GET", Path: "/api/v1/sessions/{sessionID}/logs", Tag: "Sessions",
+			Summary:     "List session logs",
+			Description: "Every log line the session ever produced, oldest first: the archived ones followed by the rows still in the database. This is the only view that survives archiving, because archives are written per session. `total_count` includes archived records, and for those it ignores the level and stream filters - counting them would mean decompressing the whole archive to answer a number.",
+			Secured:     true,
+			Scopes:      []string{"tasks:read"},
+			Query: openapi.WithQuery(openapi.PaginationQuery(),
+				openapi.RepeatedQuery("level", "Filter by log level."),
+				openapi.RepeatedQuery("stream", "Filter by output stream."),
+				archivedQuery(),
+			),
+			Success: 200, Response: apitypes.ListResponse[apitypes.Log]{},
 		},
 		{
 			Method: "GET", Path: "/api/v1/sessions/{sessionID}/tunnels", Tag: "Tunnels",

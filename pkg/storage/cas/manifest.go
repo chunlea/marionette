@@ -1,10 +1,10 @@
 package cas
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -22,6 +22,10 @@ func manifestKey(tenantID, workspaceID, manifestID string) string {
 type BlobManifestStore struct {
 	storage   storage.StorageProvider
 	encryptor Encryptor
+
+	// tempDir is where a streaming write spools its sealed frames. Empty uses
+	// the system temporary directory.
+	tempDir string
 }
 
 // NewBlobManifestStore creates a new manifest store.
@@ -30,6 +34,30 @@ func NewBlobManifestStore(storageProvider storage.StorageProvider, encryptor Enc
 		storage:   storageProvider,
 		encryptor: encryptor,
 	}
+}
+
+// NewBlobManifestStoreWithTempDir creates a manifest store that spools
+// streaming writes into tempDir.
+//
+// A manifest is spooled rather than buffered because its header cannot be
+// written until the walk that produces it has finished, and the workspaces
+// this matters for have manifests too large to hold. The spool is unlinked as
+// soon as it is created, so nothing survives a crash.
+func NewBlobManifestStoreWithTempDir(storageProvider storage.StorageProvider, encryptor Encryptor, tempDir string) *BlobManifestStore {
+	return &BlobManifestStore{
+		storage:   storageProvider,
+		encryptor: encryptor,
+		tempDir:   tempDir,
+	}
+}
+
+// newZstdDecoder creates a zstd decoder for manifest decompression.
+func newZstdDecoder() (*zstd.Decoder, error) {
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zstd decoder: %w", err)
+	}
+	return decoder, nil
 }
 
 // SaveManifest stores a manifest using JSONL streaming format.
@@ -89,70 +117,26 @@ func (s *BlobManifestStore) SaveManifest(ctx context.Context, manifest *Manifest
 }
 
 // LoadManifest loads a complete manifest.
+//
+// Every entry ends up in memory, so this is for manifests a caller has a
+// reason to hold whole. Sync and restore use OpenManifest instead.
 func (s *BlobManifestStore) LoadManifest(ctx context.Context, tenantID, workspaceID, manifestID string) (*Manifest, error) {
-	key := manifestKey(tenantID, workspaceID, manifestID)
-
-	// Download
-	reader, _, err := s.storage.Download(ctx, key)
+	entries, err := s.OpenManifest(ctx, tenantID, workspaceID, manifestID)
 	if err != nil {
-		if err == storage.ErrNotFound {
-			return nil, ErrManifestNotFound
+		return nil, err
+	}
+	defer func() { _ = entries.Close() }()
+
+	manifest := entries.Manifest()
+	for {
+		entry, err := entries.Next()
+		if errors.Is(err, io.EOF) {
+			break
 		}
-		return nil, fmt.Errorf("failed to download manifest: %w", err)
-	}
-	defer func() { _ = reader.Close() }()
-
-	// Read encrypted data
-	encrypted, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read manifest: %w", err)
-	}
-
-	// Decrypt
-	compressed, err := s.encryptor.Decrypt(ctx, tenantID, encrypted)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt manifest: %w", err)
-	}
-
-	// Decompress
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create zstd decoder: %w", err)
-	}
-	defer decoder.Close()
-
-	data, err := decoder.DecodeAll(compressed, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decompress manifest: %w", err)
-	}
-
-	// Parse JSONL
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 1MB max line
-
-	// Read header (first line)
-	if !scanner.Scan() {
-		return nil, ErrInvalidManifest
-	}
-
-	var header ManifestHeader
-	if err := json.Unmarshal(scanner.Bytes(), &header); err != nil {
-		return nil, fmt.Errorf("failed to parse manifest header: %w", err)
-	}
-
-	manifest := FromHeader(header)
-
-	// Read file entries
-	for scanner.Scan() {
-		var file ManifestFile
-		if err := json.Unmarshal(scanner.Bytes(), &file); err != nil {
-			return nil, fmt.Errorf("failed to parse manifest file entry: %w", err)
+		if err != nil {
+			return nil, err
 		}
-		manifest.Files = append(manifest.Files, file)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to scan manifest: %w", err)
+		manifest.Files = append(manifest.Files, entry)
 	}
 
 	return manifest, nil
@@ -161,70 +145,31 @@ func (s *BlobManifestStore) LoadManifest(ctx context.Context, tenantID, workspac
 // StreamManifestFiles returns a channel for streaming manifest files.
 // Use for very large manifests (100k+ files).
 // The header is returned synchronously, files are streamed via channel.
+//
+// The channel is closed when the manifest is exhausted or ctx is cancelled. A
+// caller that stops reading early must cancel ctx, or the object reader behind
+// the channel is never released.
 func (s *BlobManifestStore) StreamManifestFiles(ctx context.Context, tenantID, workspaceID, manifestID string) (<-chan ManifestFile, *ManifestHeader, error) {
-	key := manifestKey(tenantID, workspaceID, manifestID)
-
-	// Download
-	reader, _, err := s.storage.Download(ctx, key)
+	entries, err := s.OpenManifest(ctx, tenantID, workspaceID, manifestID)
 	if err != nil {
-		if err == storage.ErrNotFound {
-			return nil, nil, ErrManifestNotFound
-		}
-		return nil, nil, fmt.Errorf("failed to download manifest: %w", err)
+		return nil, nil, err
 	}
 
-	// Read encrypted data (we need all of it for AES-GCM decryption)
-	encrypted, err := io.ReadAll(reader)
-	_ = reader.Close()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read manifest: %w", err)
-	}
-
-	// Decrypt
-	compressed, err := s.encryptor.Decrypt(ctx, tenantID, encrypted)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to decrypt manifest: %w", err)
-	}
-
-	// Decompress
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create zstd decoder: %w", err)
-	}
-
-	data, err := decoder.DecodeAll(compressed, nil)
-	decoder.Close()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to decompress manifest: %w", err)
-	}
-
-	// Parse header synchronously
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-
-	if !scanner.Scan() {
-		return nil, nil, ErrInvalidManifest
-	}
-
-	var header ManifestHeader
-	if err := json.Unmarshal(scanner.Bytes(), &header); err != nil {
-		return nil, nil, fmt.Errorf("failed to parse manifest header: %w", err)
-	}
-
-	// Stream file entries via channel
+	header := entries.Header()
 	ch := make(chan ManifestFile, 100)
 
 	go func() {
 		defer close(ch)
+		defer func() { _ = entries.Close() }()
 
-		for scanner.Scan() {
-			var file ManifestFile
-			if err := json.Unmarshal(scanner.Bytes(), &file); err != nil {
-				continue // Skip invalid entries
+		for {
+			entry, err := entries.Next()
+			if err != nil {
+				return
 			}
 
 			select {
-			case ch <- file:
+			case ch <- entry:
 			case <-ctx.Done():
 				return
 			}

@@ -28,10 +28,11 @@ func TestParsePolicy(t *testing.T) {
 			wantErr:      false,
 		},
 		{
-			name:         "proxy policy",
+			name:         "proxy policy without a proxy is rejected",
 			level:        "proxy",
 			allowedHosts: nil,
-			wantErr:      false,
+			wantErr:      true,
+			errContains:  "proxy policy requires a proxy configuration",
 		},
 		{
 			name:         "air_gapped policy",
@@ -228,7 +229,7 @@ func TestNetworkPolicy_RequiresDNSPinning(t *testing.T) {
 	}{
 		{PolicyNone, false},
 		{PolicyAllowList, true},
-		{PolicyProxy, false},
+		{PolicyProxy, true},
 		{PolicyAirGapped, false},
 	}
 
@@ -302,7 +303,10 @@ func TestValidateHostPattern(t *testing.T) {
 		{"-foo.com", "cannot start or end with hyphen"},
 		{"foo-.com", "cannot start or end with hyphen"},
 		{"foo@bar.com", "invalid character"},
-		{"foo/bar.com", "invalid character"},
+		// A slash now means "CIDR", so this fails as a malformed one.
+		{"foo/bar.com", "not a valid CIDR"},
+		{"10.0.0.0/64", "not a valid CIDR"},
+		{"github.com:443", "a port is not allowed here"},
 		// Label exceeds 63 characters (DNS spec limit)
 		{"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmn.com", "exceeds 63 characters"},
 	}

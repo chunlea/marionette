@@ -8,6 +8,8 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+
+	"github.com/chunlea/marionette/pkg/storage/cas"
 )
 
 const envPrefix = "MARIONETTE"
@@ -58,6 +60,30 @@ type StorageConfig struct {
 	// Encryption is "none". It has no default on purpose: storing workspace
 	// contents unencrypted is an operator decision, not a fallback.
 	Encryption string `mapstructure:"encryption"`
+
+	// CAS tunes how a workspace is broken up for storage.
+	CAS CASConfig `mapstructure:"cas"`
+}
+
+// CASConfig controls the content-addressable storage layout.
+//
+// The defaults suit a coding agent's workspace and an operator should not have
+// to think about them. They are configurable because the right answer depends
+// on the workspaces a deployment actually holds, and because a test needs to
+// reach the large-workspace path without writing a hundred megabytes.
+type CASConfig struct {
+	// CDCThreshold is the workspace size, in bytes, at which storage switches
+	// from a single tar.zst chunk to content-defined chunking. Zero uses the
+	// default of 100 MB.
+	CDCThreshold int64 `mapstructure:"cdc_threshold"`
+
+	// CDCMode overrides the threshold: "auto" (default), "always" or "never".
+	CDCMode string `mapstructure:"cdc_mode"`
+
+	// MaxConcurrency is how many chunks may be in flight at once. It is the
+	// main term in a sync's memory: each one holds up to one maximum-sized
+	// chunk. Zero uses the default of 10.
+	MaxConcurrency int `mapstructure:"max_concurrency"`
 }
 
 // ServerConfig contains gRPC server connection settings.
@@ -249,6 +275,7 @@ func setDefaults(v *viper.Viper) {
 	// Storage: sync is off unless an operator turns it on. Encryption has no
 	// default so that enabling a backend forces an explicit choice.
 	v.SetDefault("storage.backend", StorageBackendNone)
+	v.SetDefault("storage.cas.cdc_mode", cas.CDCModeAuto)
 
 	// TLS defaults
 	v.SetDefault("tls.enabled", false)
@@ -332,6 +359,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("%w: storage.encryption must be %q, got %q",
 				ErrInvalidConfig, StorageEncryptionNone, c.Storage.Encryption)
 		}
+		if err := c.Storage.CAS.validate(); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("%w: storage.backend must be %q or %q, got %q",
 			ErrInvalidConfig, StorageBackendNone, StorageBackendLocal, c.Storage.Backend)
@@ -367,5 +397,24 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+// validate checks the CAS tuning knobs.
+func (c CASConfig) validate() error {
+	switch c.CDCMode {
+	case "", cas.CDCModeAuto, cas.CDCModeAlways, cas.CDCModeNever:
+	default:
+		return fmt.Errorf("%w: storage.cas.cdc_mode must be %q, %q or %q, got %q",
+			ErrInvalidConfig, cas.CDCModeAuto, cas.CDCModeAlways, cas.CDCModeNever, c.CDCMode)
+	}
+	if c.CDCThreshold < 0 {
+		return fmt.Errorf("%w: storage.cas.cdc_threshold must not be negative, got %d",
+			ErrInvalidConfig, c.CDCThreshold)
+	}
+	if c.MaxConcurrency < 0 {
+		return fmt.Errorf("%w: storage.cas.max_concurrency must not be negative, got %d",
+			ErrInvalidConfig, c.MaxConcurrency)
+	}
 	return nil
 }

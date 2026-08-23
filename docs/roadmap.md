@@ -1625,16 +1625,17 @@
 
 ### 10.6 Log Archiving
 
-- [ ] Log archiver job (`pkg/jobs/log_archiver.go`):
-  - [ ] Find sessions for archival (terminated + retention passed)
-  - [ ] Stream logs to object storage (JSONL.zst)
-  - [ ] Create log_archive record
-  - [ ] Delete logs from PostgreSQL
-- [ ] Log retrieval:
-  - [ ] Check PostgreSQL first (hot)
-  - [ ] Fall back to object storage (cold)
-  - [ ] Stream from archive
-- [ ] Partition management:
-  - [ ] Create daily partitions ahead
-  - [ ] Drop old partitions after archival
-  - [ ] pg_cron integration
+- [x] Log archiver job (`pkg/jobs/log_archiver.go`):
+  - [x] Find sessions for archival (terminated past a grace window, or idle)
+  - [x] Stream logs to object storage (NDJSON in zstd frames, optionally encrypted)
+  - [x] Create log_archive record
+  - [x] Delete logs from PostgreSQL, after the object and the row are durable
+- [x] Log retrieval:
+  - [x] Serve the archive and the hot rows as one stream, one cursor
+  - [x] `GET /api/v1/sessions/{id}/logs`, and the task endpoint falls back too
+  - [x] `mctl sessions logs`, and `mctl tasks logs` follows pagination
+- [x] Partition management:
+  - [x] Create daily partitions ahead
+  - [x] Drop old partitions, but only those the archives cover
+  - [ ] pg_cron integration (not needed: the maintainer job does this)
+- [x] Archive lifecycle: expires_at sweep, row soft-deleted before the object

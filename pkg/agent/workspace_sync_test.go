@@ -22,11 +22,27 @@ import (
 func newTestSyncer(t *testing.T) *WorkspaceSyncer {
 	t.Helper()
 
+	return newTestSyncerWithCAS(t, CASConfig{})
+}
+
+// newTestSyncerWithCAS is newTestSyncer with the chunking settings a test
+// needs to reach one side of the threshold or the other.
+func newTestSyncerWithCAS(t *testing.T, casCfg CASConfig) *WorkspaceSyncer {
+	t.Helper()
+	return newTestSyncerAt(t, t.TempDir(), casCfg)
+}
+
+// newTestSyncerAt is newTestSyncerWithCAS with a caller-chosen store, for
+// tests that need to look at what actually landed in it.
+func newTestSyncerAt(t *testing.T, casPath string, casCfg CASConfig) *WorkspaceSyncer {
+	t.Helper()
+
 	logger := zaptest.NewLogger(t)
 	syncer, err := NewWorkspaceSyncerFromConfig(StorageConfig{
 		Backend:    StorageBackendLocal,
-		LocalPath:  t.TempDir(),
+		LocalPath:  casPath,
 		Encryption: StorageEncryptionNone,
+		CAS:        casCfg,
 	}, logger)
 	require.NoError(t, err)
 	require.True(t, syncer.Available())
@@ -101,7 +117,7 @@ func TestWorkspaceSyncer_RoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 
-	result, err := syncer.Sync(ctx, id, source)
+	result, err := syncer.Sync(ctx, id, source, "")
 	require.NoError(t, err)
 	require.True(t, result.Synced, "reason: %s", result.Reason)
 	assert.NotEmpty(t, result.ManifestID)
@@ -141,7 +157,7 @@ func TestWorkspaceSyncer_RoundTripAfterChange(t *testing.T) {
 	source := t.TempDir()
 	writeTree(t, source, map[string][]byte{"a.txt": []byte("first")})
 
-	first, err := syncer.Sync(ctx, id, source)
+	first, err := syncer.Sync(ctx, id, source, "")
 	require.NoError(t, err)
 	require.True(t, first.Synced)
 
@@ -151,7 +167,7 @@ func TestWorkspaceSyncer_RoundTripAfterChange(t *testing.T) {
 		"b.txt": []byte("added"),
 	})
 
-	second, err := syncer.Sync(ctx, id, source)
+	second, err := syncer.Sync(ctx, id, source, "")
 	require.NoError(t, err)
 	require.True(t, second.Synced)
 	assert.NotEqual(t, first.ManifestID, second.ManifestID, "each sync is its own snapshot")
@@ -173,7 +189,7 @@ func TestWorkspaceSyncer_TenantsAreIsolated(t *testing.T) {
 	source := t.TempDir()
 	writeTree(t, source, map[string][]byte{"secret.txt": []byte("tenant a only")})
 
-	result, err := syncer.Sync(ctx, WorkspaceIdentity{WorkspaceID: "ws_shared", TenantID: "tenant_a"}, source)
+	result, err := syncer.Sync(ctx, WorkspaceIdentity{WorkspaceID: "ws_shared", TenantID: "tenant_a"}, source, "")
 	require.NoError(t, err)
 	require.True(t, result.Synced)
 
@@ -198,7 +214,7 @@ func TestWorkspaceSyncer_HonestFailures(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, syncer.Available())
 
-		result, err := syncer.Sync(ctx, WorkspaceIdentity{WorkspaceID: "ws_x"}, t.TempDir())
+		result, err := syncer.Sync(ctx, WorkspaceIdentity{WorkspaceID: "ws_x"}, t.TempDir(), "")
 		assert.ErrorIs(t, err, ErrSyncUnavailable)
 		assert.False(t, result.Synced)
 		assert.NotEmpty(t, result.Reason)
@@ -210,7 +226,7 @@ func TestWorkspaceSyncer_HonestFailures(t *testing.T) {
 	t.Run("workspace identity unknown", func(t *testing.T) {
 		syncer := newTestSyncer(t)
 
-		result, err := syncer.Sync(ctx, WorkspaceIdentity{}, t.TempDir())
+		result, err := syncer.Sync(ctx, WorkspaceIdentity{}, t.TempDir(), "")
 		assert.ErrorIs(t, err, ErrNoWorkspaceIdentity)
 		assert.False(t, result.Synced)
 		assert.Contains(t, result.Reason, "workspace identity")
@@ -220,7 +236,7 @@ func TestWorkspaceSyncer_HonestFailures(t *testing.T) {
 		syncer := newTestSyncer(t)
 
 		result, err := syncer.Sync(ctx, WorkspaceIdentity{WorkspaceID: "ws_gone"},
-			filepath.Join(t.TempDir(), "does-not-exist"))
+			filepath.Join(t.TempDir(), "does-not-exist"), "")
 		require.Error(t, err)
 		assert.False(t, result.Synced)
 		assert.Contains(t, result.Reason, "unreadable")
@@ -319,6 +335,10 @@ func (failingSyncer) Sync(context.Context, string, string, string) (string, erro
 	return "", errors.New("object store unreachable")
 }
 
+func (failingSyncer) SyncFrom(context.Context, string, string, string, string) (string, error) {
+	return "", errors.New("object store unreachable")
+}
+
 func (failingSyncer) RestoreFromManifest(context.Context, string, string, string) error {
 	return errors.New("object store unreachable")
 }
@@ -403,7 +423,7 @@ func TestHandleAttachSession_RestoresEmptyWorkspace(t *testing.T) {
 	// A previous runner synced this workspace.
 	source := t.TempDir()
 	writeTree(t, source, map[string][]byte{"kept.txt": []byte("survives the runner")})
-	result, err := syncer.Sync(ctx, id, source)
+	result, err := syncer.Sync(ctx, id, source, "")
 	require.NoError(t, err)
 	require.True(t, result.Synced)
 
@@ -429,7 +449,7 @@ func TestHandleAttachSession_KeepsPopulatedWorkspace(t *testing.T) {
 
 	source := t.TempDir()
 	writeTree(t, source, map[string][]byte{"file.txt": []byte("old snapshot")})
-	result, err := syncer.Sync(ctx, id, source)
+	result, err := syncer.Sync(ctx, id, source, "")
 	require.NoError(t, err)
 
 	base := t.TempDir()
@@ -548,13 +568,13 @@ func TestWorkspaceSyncer_MountPathDoesNotCollideSessions(t *testing.T) {
 
 	firstSource := t.TempDir()
 	writeTree(t, firstSource, map[string][]byte{"a.txt": []byte("workspace one")})
-	firstResult, err := syncer.Sync(ctx, firstID, firstSource)
+	firstResult, err := syncer.Sync(ctx, firstID, firstSource, "")
 	require.NoError(t, err)
 	require.True(t, firstResult.Synced, "reason: %s", firstResult.Reason)
 
 	secondSource := t.TempDir()
 	writeTree(t, secondSource, map[string][]byte{"b.txt": []byte("workspace two")})
-	secondResult, err := syncer.Sync(ctx, secondID, secondSource)
+	secondResult, err := syncer.Sync(ctx, secondID, secondSource, "")
 	require.NoError(t, err)
 	require.True(t, secondResult.Synced, "reason: %s", secondResult.Reason)
 
@@ -576,4 +596,224 @@ func TestWorkspaceSyncer_MountPathDoesNotCollideSessions(t *testing.T) {
 	err = syncer.Restore(ctx, secondID, firstResult.ManifestID, crossTarget)
 	require.Error(t, err,
 		"a manifest from another workspace must not restore under this key")
+}
+
+// The runner's CAS settings have to reach the syncer, and the ones it leaves
+// out have to land on the defaults rather than on zero.
+func TestCASConfigFrom(t *testing.T) {
+	t.Run("empty settings produce the defaults", func(t *testing.T) {
+		got := casConfigFrom(CASConfig{})
+
+		assert.Equal(t, cas.DefaultConfig.CDCThreshold, got.CDCThreshold)
+		assert.Equal(t, cas.CDCModeAuto, got.CDCMode)
+		assert.Equal(t, cas.DefaultConfig.MaxConcurrency, got.MaxConcurrency)
+		assert.NotEmpty(t, got.TempDir)
+	})
+
+	t.Run("configured settings are carried through", func(t *testing.T) {
+		got := casConfigFrom(CASConfig{
+			CDCThreshold:   4096,
+			CDCMode:        cas.CDCModeAlways,
+			MaxConcurrency: 3,
+		})
+
+		assert.Equal(t, int64(4096), got.CDCThreshold)
+		assert.Equal(t, cas.CDCModeAlways, got.CDCMode)
+		assert.Equal(t, 3, got.MaxConcurrency)
+	})
+}
+
+// A CAS setting that cannot be honoured has to be rejected at startup. The
+// alternative is a runner that looks healthy and stores workspaces the wrong
+// way, which is only discovered at the first restore.
+func TestCASConfigValidation(t *testing.T) {
+	base := func() Config {
+		return Config{
+			Server:  ServerConfig{Address: "localhost:9090"},
+			Runner:  RunnerConfig{Token: "rtok_test"},
+			Sandbox: SandboxConfig{Mode: "runner-is-sandbox"},
+			Logging: LoggingConfig{Level: "info", Format: "json"},
+			Storage: StorageConfig{
+				Backend:    StorageBackendLocal,
+				LocalPath:  t.TempDir(),
+				Encryption: StorageEncryptionNone,
+			},
+		}
+	}
+
+	t.Run("a known mode is accepted", func(t *testing.T) {
+		cfg := base()
+		cfg.Storage.CAS.CDCMode = cas.CDCModeAlways
+		require.NoError(t, cfg.Validate())
+	})
+
+	t.Run("an unknown mode is rejected", func(t *testing.T) {
+		cfg := base()
+		cfg.Storage.CAS.CDCMode = "sometimes"
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "storage.cas.cdc_mode")
+	})
+
+	t.Run("a negative threshold is rejected", func(t *testing.T) {
+		cfg := base()
+		cfg.Storage.CAS.CDCThreshold = -1
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "storage.cas.cdc_threshold")
+	})
+
+	t.Run("a negative concurrency is rejected", func(t *testing.T) {
+		cfg := base()
+		cfg.Storage.CAS.MaxConcurrency = -2
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "storage.cas.max_concurrency")
+	})
+}
+
+// The large-workspace path has to work through the runner's own entry points,
+// not just through the CAS package: a suspend that only survives small
+// workspaces is a suspend that fails on the workspaces worth preserving.
+func TestWorkspaceSyncer_RoundTripOverTheCDCThreshold(t *testing.T) {
+	ctx := context.Background()
+	syncer := newTestSyncerWithCAS(t, CASConfig{CDCMode: cas.CDCModeAlways, MaxConcurrency: 2})
+
+	id := WorkspaceIdentity{WorkspaceID: "ws_big", TenantID: "tenant-1"}
+
+	srcDir := t.TempDir()
+	blob := make([]byte, 5<<20)
+	_, err := rand.Read(blob)
+	require.NoError(t, err)
+	writeTree(t, srcDir, map[string][]byte{
+		"main.go":       []byte("package main\n"),
+		"vendor/big.db": blob,
+		"docs/notes.md": []byte("notes"),
+	})
+	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "build/out"), 0o755))
+
+	result, err := syncer.Sync(ctx, id, srcDir, "")
+	require.NoError(t, err)
+	require.True(t, result.Synced)
+
+	dstDir := filepath.Join(t.TempDir(), "restored")
+	require.NoError(t, syncer.Restore(ctx, id, result.ManifestID, dstDir))
+
+	assert.Equal(t, readTree(t, srcDir), readTree(t, dstDir))
+	assert.DirExists(t, filepath.Join(dstDir, "build/out"),
+		"an empty directory is part of the workspace")
+
+	// A second sync of the same tree reuses the first snapshot's chunks, so
+	// nothing new lands in storage.
+	second, err := syncer.Sync(ctx, id, srcDir, "")
+	require.NoError(t, err)
+	require.True(t, second.Synced)
+	require.NotEqual(t, result.ManifestID, second.ManifestID)
+}
+
+// countChunks reports how many chunk blobs a local CAS store holds.
+func countChunks(t *testing.T, casPath string) int {
+	t.Helper()
+
+	count := 0
+	err := filepath.Walk(filepath.Join(casPath, "chunks"), func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if !info.IsDir() {
+			count++
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	return count
+}
+
+// A suspend hands the previous snapshot to the sync, so the second suspend of
+// an untouched workspace reads nothing and stores nothing. Without that, every
+// suspend re-reads the whole workspace to discover that none of it moved.
+func TestWorkspaceSyncer_SecondSuspendReusesTheParentSnapshot(t *testing.T) {
+	ctx := context.Background()
+	casPath := t.TempDir()
+	syncer := newTestSyncerAt(t, casPath, CASConfig{CDCMode: cas.CDCModeAlways, MaxConcurrency: 2})
+
+	id := WorkspaceIdentity{WorkspaceID: "ws_reuse", TenantID: "tenant-1"}
+	source := t.TempDir()
+	writeTree(t, source, map[string][]byte{
+		"a.bin": randomBytes(t, 2<<20),
+		"b.bin": randomBytes(t, 2<<20),
+		"c.txt": []byte("small"),
+	})
+
+	first, err := syncer.Sync(ctx, id, source, "")
+	require.NoError(t, err)
+	require.True(t, first.Synced)
+	afterFirst := countChunks(t, casPath)
+	require.Positive(t, afterFirst)
+
+	second, err := syncer.Sync(ctx, id, source, first.ManifestID)
+	require.NoError(t, err)
+	require.True(t, second.Synced)
+	assert.Equal(t, afterFirst, countChunks(t, casPath),
+		"an unchanged workspace must not produce a single new chunk")
+
+	// The new snapshot is still complete: reuse is not the same as delta.
+	target := filepath.Join(t.TempDir(), "restored")
+	require.NoError(t, syncer.Restore(ctx, id, second.ManifestID, target))
+	assert.Equal(t, readTree(t, source), readTree(t, target))
+}
+
+// The fast path trusts size, mode and modification time, which is what every
+// backup tool does and is a heuristic either way. This pins the blind spot
+// rather than pretending it is not there: a file rewritten to the same length,
+// with its timestamp and permissions put back, is not noticed.
+func TestWorkspaceSyncer_ParentFastPathTrustsSizeModeAndTime(t *testing.T) {
+	ctx := context.Background()
+	syncer := newTestSyncerWithCAS(t, CASConfig{CDCMode: cas.CDCModeAlways, MaxConcurrency: 2})
+
+	id := WorkspaceIdentity{WorkspaceID: "ws_heuristic", TenantID: "tenant-1"}
+	source := t.TempDir()
+	file := filepath.Join(source, "a.txt")
+	require.NoError(t, os.WriteFile(file, []byte("original"), 0o644))
+
+	first, err := syncer.Sync(ctx, id, source, "")
+	require.NoError(t, err)
+
+	info, err := os.Stat(file)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(file, []byte("replaced"), 0o644)) // same length
+	require.NoError(t, os.Chtimes(file, info.ModTime(), info.ModTime()))
+
+	second, err := syncer.Sync(ctx, id, source, first.ManifestID)
+	require.NoError(t, err)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	require.NoError(t, syncer.Restore(ctx, id, second.ManifestID, target))
+
+	restored := readTree(t, target)
+	assert.Equal(t, []byte("original"), restored["a.txt"],
+		"the file was never re-read, which is what makes the fast path fast")
+}
+
+// A snapshot this store has never seen - written by another runner, or already
+// collected - means there is nothing to reuse, not that the suspend fails.
+func TestWorkspaceSyncer_UnknownParentFallsBackToAFullSync(t *testing.T) {
+	ctx := context.Background()
+	syncer := newTestSyncerWithCAS(t, CASConfig{CDCMode: cas.CDCModeAlways})
+
+	id := WorkspaceIdentity{WorkspaceID: "ws_orphan", TenantID: "tenant-1"}
+	source := t.TempDir()
+	writeTree(t, source, map[string][]byte{"a.txt": []byte("content")})
+
+	result, err := syncer.Sync(ctx, id, source, "mfst_nothinglikethis")
+	require.NoError(t, err)
+	require.True(t, result.Synced, "reason: %s", result.Reason)
+
+	target := filepath.Join(t.TempDir(), "restored")
+	require.NoError(t, syncer.Restore(ctx, id, result.ManifestID, target))
+	assert.Equal(t, readTree(t, source), readTree(t, target))
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -187,9 +188,24 @@ type SessionManager struct {
 	auditLog         audit.Logger
 	providerRegistry ProviderRegistryInterface
 	taskManager      TaskManagerInterface
+	waker            RunnerAvailableNotifier
 	webhooks         *WebhookIntegration
 	background       *backgroundTasks
 	logger           *zap.Logger
+
+	// reserved holds runners chosen but not yet written to a session row.
+	//
+	// runnerClaimed answers from the database, so between selecting an idle
+	// runner and recording the choice there is a window in which the runner
+	// still looks free. Two sessions activating at the same time both take it,
+	// and Activate then detaches the loser - so N concurrent creates against N
+	// idle runners leave most of the sessions with nothing, which is exactly
+	// what the load test found.
+	//
+	// This closes the window inside one process. Across processes it needs a
+	// claim the database arbitrates; see NEEDS in the round-3 report.
+	reservedMu sync.Mutex
+	reserved   map[string]struct{}
 }
 
 // SessionManagerConfig holds configuration for SessionManager.
@@ -237,6 +253,31 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 	}
 }
 
+// reserveRunner marks a runner as spoken for, reporting false if it already is.
+func (m *SessionManager) reserveRunner(runnerID string) bool {
+	m.reservedMu.Lock()
+	defer m.reservedMu.Unlock()
+	if m.reserved == nil {
+		m.reserved = make(map[string]struct{})
+	}
+	if _, taken := m.reserved[runnerID]; taken {
+		return false
+	}
+	m.reserved[runnerID] = struct{}{}
+	return true
+}
+
+// releaseReservation drops a reservation. It is safe to call for a runner that
+// was never reserved.
+func (m *SessionManager) releaseReservation(runnerID string) {
+	if runnerID == "" {
+		return
+	}
+	m.reservedMu.Lock()
+	defer m.reservedMu.Unlock()
+	delete(m.reserved, runnerID)
+}
+
 // setTaskManager injects the task manager after construction.
 //
 // SessionManager and TaskManager reference each other: TaskManager needs the
@@ -247,6 +288,24 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 // production wiring happens exactly once, in Wire.
 func (m *SessionManager) setTaskManager(tm TaskManagerInterface) {
 	m.taskManager = tm
+}
+
+// setWaker injects the redispatch waker after construction.
+//
+// The waker needs both managers, so it cannot exist when either is built. Like
+// setTaskManager this is package-private: production wiring happens once, in
+// Wire.
+func (m *SessionManager) setWaker(w RunnerAvailableNotifier) {
+	m.waker = w
+}
+
+// wake asks the redispatch waker for a pass after this session gave up a
+// runner. Safe with no waker wired.
+func (m *SessionManager) wake(ctx context.Context) {
+	if m.waker == nil {
+		return
+	}
+	m.waker.RunnerAvailable(ctx, WakeTriggerRunnerFreed)
 }
 
 // CreateSessionOptions contains options for creating a new session.
@@ -782,6 +841,14 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 		)
 	} else {
 		m.releaseRunner(ctx, sessionID, previousRunnerID, opts)
+
+		// Redispatch trigger 2. The runner this session was holding is gone -
+		// back to its pool, paused, or destroyed - and which of those it was is
+		// deliberately not checked here. A wake is two queries when it finds
+		// nothing, and guessing wrong in the other direction strands a session.
+		if previousRunnerID != nil && *previousRunnerID != "" {
+			m.wake(ctx)
+		}
 	}
 
 	// Log audit event
@@ -1510,6 +1577,9 @@ func (m *SessionManager) EnsureRunner(ctx context.Context, sessionID string) (*s
 	if err != nil {
 		return nil, err
 	}
+	// Held until the session row names the runner, which is the point at which
+	// runnerClaimed starts answering correctly for it.
+	defer m.releaseReservation(runnerID)
 
 	if err := m.Activate(ctx, sessionID, runnerID); err != nil {
 		m.logger.Error("failed to activate session on allocated runner",
@@ -1634,23 +1704,46 @@ func (m *SessionManager) selectIdleRunner(ctx context.Context, session *store.Se
 		if runner.Tainted {
 			continue
 		}
+		// Runner selection runs under whatever context asked for it, and the
+		// background triggers run with system access so they can serve every
+		// tenant. That makes row level security no help here: without this
+		// check a redispatch pass could hand tenant A's runner to tenant B's
+		// session, and only Activate's tenant assertion would catch it - after
+		// the candidate had already been chosen and the alternatives skipped.
+		if !sameTenant(session.TenantID, runner.TenantID) {
+			continue
+		}
 		if selector != nil && !hasAllCapabilities(runner.Capabilities, selector.Capabilities) {
 			continue
 		}
-		// "idle" is the runner's connection state, not an assignment: a runner
-		// can be idle while a session still owns it.
 		if m.connManager != nil && !m.connManager.IsConnected(runner.ID) {
 			continue
 		}
+		// The reservation is taken BEFORE the database is asked whether the
+		// runner is claimed, and that order is the whole point. The other way
+		// round, a caller that reads "unclaimed" can be overtaken by a caller
+		// that reserves, activates and releases before it gets to reserve; it
+		// then takes a runner on the strength of an answer that is no longer
+		// true. Reserving first means any claim committed before the check is
+		// seen, and any claim committed after it can only come from the one
+		// holder of the reservation.
+		if !m.reserveRunner(runner.ID) {
+			continue
+		}
+
+		// "idle" is the runner's connection state, not an assignment: a runner
+		// can be idle while a session still owns it.
 		claimed, err := m.runnerClaimed(ctx, runner.ID)
 		if err != nil {
 			m.logger.Warn("could not determine whether runner is claimed; skipping it",
 				zap.String("runner_id", runner.ID),
 				zap.Error(err),
 			)
+			m.releaseReservation(runner.ID)
 			continue
 		}
 		if claimed {
+			m.releaseReservation(runner.ID)
 			continue
 		}
 		return runner.ID, nil
@@ -1817,6 +1910,11 @@ func (m *SessionManager) Terminate(ctx context.Context, sessionID string) error 
 		m.cleanupWorkspaceIfUnused(ctx, sessionID, session.WorkspaceID)
 	}
 
+	// Redispatch trigger 2: a terminated session releases whatever it held.
+	if previousRunnerID != nil && *previousRunnerID != "" {
+		m.wake(ctx)
+	}
+
 	return nil
 }
 
@@ -1953,6 +2051,10 @@ func (m *SessionManager) DetachRunner(ctx context.Context, sessionID string) err
 		zap.String("session_id", sessionID),
 		zap.Stringp("runner_id", previousRunnerID),
 	)
+
+	// Redispatch trigger 2: an explicit detach hands the runner back with no
+	// suspend to carry the wake.
+	m.wake(ctx)
 
 	return nil
 }

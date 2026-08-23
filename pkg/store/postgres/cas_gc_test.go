@@ -274,14 +274,22 @@ func TestGCConcurrentWritersKeepTheirChunks(t *testing.T) {
 		writers          = 8
 		chunksPerWriter  = 25
 		abandonedPerCall = 4
+
+		// A content-defined manifest commits thousands of chunks in one
+		// transaction, in batches. Enough to cross a batch boundary, so the
+		// collector gets a window in the middle of a commit rather than only
+		// around it.
+		cdcWriters       = 2
+		chunksPerCDCSync = 1100
 	)
 
 	var (
-		mu         sync.Mutex
-		committed  []string
-		reclaimed  int
-		abandoned  []string
-		writeGroup sync.WaitGroup
+		mu           sync.Mutex
+		committed    []string
+		reclaimed    int
+		abandoned    []string
+		cdcCommitted []string
+		writeGroup   sync.WaitGroup
 	)
 
 	gcCtx, stopGC := context.WithCancel(ctx)
@@ -361,6 +369,46 @@ func TestGCConcurrentWritersKeepTheirChunks(t *testing.T) {
 		}(w)
 	}
 
+	// The CDC writers: one manifest each, every chunk of it referenced in a
+	// single transaction while the collector runs flat out. A manifest either
+	// commits whole or not at all, so unlike the writers above there is no
+	// "reclaimed before commit" outcome to account for - if the commit
+	// returns, every chunk it named must still be there.
+	workspace := newCommitWorkspace(ctx, t)
+	for w := 0; w < cdcWriters; w++ {
+		writeGroup.Add(1)
+		go func(writer int) {
+			defer writeGroup.Done()
+
+			chunks := make([]*store.Chunk, 0, chunksPerCDCSync)
+			for i := 0; i < chunksPerCDCSync; i++ {
+				hash := chunkHash(fmt.Sprintf("cdc%d-c%d-%s", writer, i, tenant))
+				if _, err := blobs.StoreChunk(ctx, tenant, hash, []byte("payload")); err != nil {
+					t.Errorf("StoreChunk: %v", err)
+					return
+				}
+				chunks = append(chunks, &store.Chunk{Hash: hash, Size: 7})
+			}
+
+			manifest := &store.Manifest{
+				WorkspaceID: workspace.ID,
+				TenantID:    tenant,
+				TotalSize:   int64(chunksPerCDCSync) * 7,
+				ChunkCount:  chunksPerCDCSync,
+			}
+			if err := testStore.CommitManifest(ctx, manifest, chunks); err != nil {
+				t.Errorf("CommitManifest: %v", err)
+				return
+			}
+
+			mu.Lock()
+			for _, chunk := range chunks {
+				cdcCommitted = append(cdcCommitted, chunk.Hash)
+			}
+			mu.Unlock()
+		}(w)
+	}
+
 	writeGroup.Wait()
 	stopGC()
 	<-gcDone
@@ -383,6 +431,22 @@ func TestGCConcurrentWritersKeepTheirChunks(t *testing.T) {
 		assert.Truef(t, blobs.has(tenant, hash), "chunk %s lost its blob", hash)
 	}
 	assert.Emptyf(t, lost, "%d committed chunk(s) were collected while live", len(lost))
+
+	require.Len(t, cdcCommitted, cdcWriters*chunksPerCDCSync,
+		"every content-defined manifest must commit whole")
+
+	var lostCDC []string
+	for _, hash := range cdcCommitted {
+		chunk, err := testStore.GetChunk(ctx, tenant, hash)
+		if err != nil {
+			lostCDC = append(lostCDC, hash)
+			continue
+		}
+		assert.Positivef(t, chunk.RefCount, "manifest chunk %s lost its reference", hash)
+		assert.Nilf(t, chunk.DeletedAt, "manifest chunk %s is still marked for deletion", hash)
+		assert.Truef(t, blobs.has(tenant, hash), "manifest chunk %s lost its blob", hash)
+	}
+	assert.Emptyf(t, lostCDC, "%d manifest chunk(s) were collected while live", len(lostCDC))
 
 	// One last pass now that the writers have stopped, so the abandoned chunks
 	// are certain to have been offered to the collector.

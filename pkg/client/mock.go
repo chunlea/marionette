@@ -21,11 +21,12 @@ type MockClient struct {
 	ResumeSessionFunc    func(ctx context.Context, id string) error
 	TerminateSessionFunc func(ctx context.Context, id string) error
 
-	CreateTaskFunc  func(ctx context.Context, opts CreateTaskOptions) (*Task, error)
-	GetTaskFunc     func(ctx context.Context, id string) (*Task, error)
-	ListTasksFunc   func(ctx context.Context, opts ListTasksOptions) (*ListResult[Task], error)
-	CancelTaskFunc  func(ctx context.Context, id string) error
-	GetTaskLogsFunc func(ctx context.Context, id string, opts GetLogsOptions) (LogIterator, error)
+	CreateTaskFunc     func(ctx context.Context, opts CreateTaskOptions) (*Task, error)
+	GetTaskFunc        func(ctx context.Context, id string) (*Task, error)
+	ListTasksFunc      func(ctx context.Context, opts ListTasksOptions) (*ListResult[Task], error)
+	CancelTaskFunc     func(ctx context.Context, id string) error
+	GetTaskLogsFunc    func(ctx context.Context, id string, opts GetLogsOptions) (LogIterator, error)
+	GetSessionLogsFunc func(ctx context.Context, id string, opts GetLogsOptions) (LogIterator, error)
 
 	GetRunnerFunc   func(ctx context.Context, id string) (*Runner, error)
 	ListRunnersFunc func(ctx context.Context, opts ListRunnersOptions) (*ListResult[Runner], error)
@@ -177,6 +178,15 @@ func (m *MockClient) GetTaskLogs(ctx context.Context, id string, opts GetLogsOpt
 	m.recordCall("GetTaskLogs", id, opts)
 	if m.GetTaskLogsFunc != nil {
 		return m.GetTaskLogsFunc(ctx, id, opts)
+	}
+	return &MockLogIterator{}, nil
+}
+
+// GetSessionLogs implements Client.
+func (m *MockClient) GetSessionLogs(ctx context.Context, id string, opts GetLogsOptions) (LogIterator, error) {
+	m.recordCall("GetSessionLogs", id, opts)
+	if m.GetSessionLogsFunc != nil {
+		return m.GetSessionLogsFunc(ctx, id, opts)
 	}
 	return &MockLogIterator{}, nil
 }

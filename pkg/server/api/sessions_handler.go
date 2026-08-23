@@ -150,9 +150,63 @@ func (s *Server) handleTerminateSession(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleServiceError converts service errors to HTTP responses.
+// handleGetSessionLogs handles GET /api/v1/sessions/{sessionID}/logs.
+//
+// Logs are archived per session, so this is the endpoint that can still answer
+// for a session whose hot rows are gone. It serves the archive and the rows
+// written after it as one stream; `archived` narrows that to one side when a
+// caller genuinely wants to know which.
+func (s *Server) handleGetSessionLogs(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		WriteError(w, http.StatusInternalServerError, "service_unavailable", "Session service not configured")
+		return
+	}
+
+	sessionID := chi.URLParam(r, "sessionID")
+	if sessionID == "" {
+		WriteError(w, http.StatusBadRequest, "invalid_id", "Session ID is required")
+		return
+	}
+
+	opts, err := parseGetLogsOptions(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	result, err := s.sessions.GetLogs(r.Context(), sessionID, opts)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, toListResponse(result, toLogResponse))
+}
+
+// parseGetLogsOptions reads the query parameters both log endpoints share.
+func parseGetLogsOptions(r *http.Request) (GetLogsOptions, error) {
+	archived, err := ParseArchivedFilter(r.URL.Query().Get("archived"))
+	if err != nil {
+		return GetLogsOptions{}, err
+	}
+	return GetLogsOptions{
+		Limit:    parseIntQuery(r, "limit", 100),
+		Cursor:   r.URL.Query().Get("cursor"),
+		Level:    r.URL.Query()["level"],
+		Stream:   r.URL.Query()["stream"],
+		Archived: archived,
+	}, nil
+}
+
 func handleServiceError(w http.ResponseWriter, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		WriteError(w, http.StatusNotFound, "not_found", "Resource not found")
+		return
+	}
+
+	if errors.Is(err, ErrNotImplemented) {
+		WriteError(w, http.StatusNotImplemented, "not_implemented",
+			"This server is not configured to serve that")
 		return
 	}
 

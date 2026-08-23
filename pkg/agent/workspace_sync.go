@@ -97,9 +97,16 @@ func (s *WorkspaceSyncer) Available() bool {
 
 // Sync stores the workspace at dir and returns what actually happened.
 //
+// previousManifestID is the snapshot this workspace was last stored as, or
+// empty. When it is supplied, files whose size, mode and modification time have
+// not moved carry their chunk lists over from it instead of being read again -
+// which is the difference between a suspend that re-reads a whole workspace
+// every time and one that reads what changed. A snapshot this runner's store
+// does not hold is ignored, not fatal.
+//
 // The error is returned for logging and tests; callers on the suspend path
 // must use the SyncResult and let the suspend succeed regardless.
-func (s *WorkspaceSyncer) Sync(ctx context.Context, id WorkspaceIdentity, dir string) (SyncResult, error) {
+func (s *WorkspaceSyncer) Sync(ctx context.Context, id WorkspaceIdentity, dir, previousManifestID string) (SyncResult, error) {
 	if !s.Available() {
 		return SyncResult{Reason: ErrSyncUnavailable.Error()}, ErrSyncUnavailable
 	}
@@ -112,7 +119,8 @@ func (s *WorkspaceSyncer) Sync(ctx context.Context, id WorkspaceIdentity, dir st
 		return SyncResult{Reason: reason}, fmt.Errorf("stat workspace: %w", err)
 	}
 
-	manifestID, err := s.newSyncer(id.WorkspaceID).Sync(ctx, id.WorkspaceID, id.TenantID, dir)
+	manifestID, err := s.newSyncer(id.WorkspaceID).
+		SyncFrom(ctx, id.WorkspaceID, id.TenantID, dir, previousManifestID)
 	if err != nil {
 		return SyncResult{Reason: fmt.Sprintf("sync failed: %v", err)}, err
 	}
@@ -120,6 +128,7 @@ func (s *WorkspaceSyncer) Sync(ctx context.Context, id WorkspaceIdentity, dir st
 	s.logger.Info("workspace synced",
 		zap.String("workspace_id", id.WorkspaceID),
 		zap.String("manifest_id", manifestID),
+		zap.String("parent_manifest_id", previousManifestID),
 		zap.String("dir", dir),
 	)
 
@@ -194,13 +203,10 @@ func buildCASSyncer(cfg StorageConfig, logger *zap.Logger) (func(workspaceID str
 			return nil, err
 		}
 
-		casCfg := cas.DefaultConfig
-		if casCfg.TempDir == "" {
-			casCfg.TempDir = filepath.Join(os.TempDir(), "marionette-cas")
-		}
+		casCfg := casConfigFrom(cfg.CAS)
 
 		chunkStore := cas.NewBlobChunkStore(provider, encryptor)
-		manifestStore := cas.NewBlobManifestStore(provider, encryptor)
+		manifestStore := cas.NewBlobManifestStoreWithTempDir(provider, encryptor, casCfg.TempDir)
 
 		return func(workspaceID string) cas.Syncer {
 			return cas.NewSync(casCfg, chunkStore, pinnedManifestStore{
@@ -212,6 +218,23 @@ func buildCASSyncer(cfg StorageConfig, logger *zap.Logger) (func(workspaceID str
 	default:
 		return nil, fmt.Errorf("unknown storage backend %q", cfg.Backend)
 	}
+}
+
+// casConfigFrom applies the runner's CAS settings over the defaults.
+//
+// Zero means "unset" for every one of these: a runner that says nothing about
+// chunking gets the defaults rather than a workspace stored one byte at a time.
+func casConfigFrom(cfg CASConfig) cas.Config {
+	casCfg := cas.Config{
+		CDCThreshold:   cfg.CDCThreshold,
+		CDCMode:        cfg.CDCMode,
+		MaxConcurrency: cfg.MaxConcurrency,
+	}.WithDefaults()
+
+	if casCfg.TempDir == "" {
+		casCfg.TempDir = filepath.Join(os.TempDir(), "marionette-cas")
+	}
+	return casCfg
 }
 
 // buildCASEncryptor resolves the configured encryption mode.
@@ -274,6 +297,10 @@ func (p pinnedManifestStore) LoadManifest(ctx context.Context, tenantID, workspa
 
 func (p pinnedManifestStore) StreamManifestFiles(ctx context.Context, tenantID, workspaceID, manifestID string) (<-chan cas.ManifestFile, *cas.ManifestHeader, error) {
 	return p.ManifestStore.StreamManifestFiles(ctx, tenantID, p.resolve(workspaceID), manifestID)
+}
+
+func (p pinnedManifestStore) OpenManifest(ctx context.Context, tenantID, workspaceID, manifestID string) (*cas.ManifestEntries, error) {
+	return p.ManifestStore.OpenManifest(ctx, tenantID, p.resolve(workspaceID), manifestID)
 }
 
 func (p pinnedManifestStore) DeleteManifest(ctx context.Context, tenantID, workspaceID, manifestID string) error {

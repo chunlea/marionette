@@ -1,8 +1,18 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 )
+
+// ErrNotImplemented is returned when a route is served but the service behind
+// it was never configured.
+//
+// It is deliberately distinct from an empty result: three routes in this API
+// answered 501 for the life of the project because their services were never
+// wired, and the failure mode that hid it was endpoints that returned nothing
+// and looked like they had simply found nothing.
+var ErrNotImplemented = errors.New("service not configured")
 
 // InvalidStateError is returned when an operation is not valid for the current state.
 type InvalidStateError struct {

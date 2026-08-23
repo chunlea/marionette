@@ -18,14 +18,31 @@ type logLister interface {
 type TaskAdapter struct {
 	manager *core.TaskManager
 	store   logLister
+	logs    *ArchivedLogReader
+}
+
+// TaskAdapterOption configures a TaskAdapter.
+type TaskAdapterOption func(*TaskAdapter)
+
+// WithTaskLogArchive lets task log reads fall through to the session's archive.
+//
+// Optional, because a deployment with archiving switched off has nothing to
+// fall through to and the hot rows are the whole story. When it is set, a task
+// whose logs have been archived reads exactly as it did before they were.
+func WithTaskLogArchive(reader *ArchivedLogReader) TaskAdapterOption {
+	return func(a *TaskAdapter) { a.logs = reader }
 }
 
 // NewTaskAdapter creates a new TaskAdapter.
-func NewTaskAdapter(manager *core.TaskManager, store store.Store) *TaskAdapter {
-	return &TaskAdapter{
+func NewTaskAdapter(manager *core.TaskManager, store store.Store, opts ...TaskAdapterOption) *TaskAdapter {
+	a := &TaskAdapter{
 		manager: manager,
 		store:   store,
 	}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 // ListRuns returns the execution attempts of a task.
@@ -99,19 +116,52 @@ func (a *TaskAdapter) Execute(ctx context.Context, id string) error {
 	return a.manager.Execute(ctx, id)
 }
 
-// GetLogs returns logs for a task.
+// GetLogs returns logs for a task, from the archive as well as the hot rows.
+//
+// Archiving is by session, so serving a task's archived logs means finding the
+// session first and filtering the archive down to the task. That lookup only
+// happens when there is an archive reader to use it: with archiving off this is
+// the same single query it always was.
 func (a *TaskAdapter) GetLogs(ctx context.Context, taskID string, opts GetLogsOptions) (*store.ListResult[store.Log], error) {
-	// Query logs directly from store
-	storeOpts := store.ListLogsOptions{
-		BaseListOptions: store.BaseListOptions{
-			Limit:  opts.Limit,
-			Cursor: opts.Cursor,
-		},
-		TaskID: &taskID,
-		Level:  opts.Level,
-		Stream: opts.Stream,
+	if a.logs == nil {
+		storeOpts := store.ListLogsOptions{
+			BaseListOptions: store.BaseListOptions{
+				Limit:  opts.Limit,
+				Cursor: opts.Cursor,
+			},
+			TaskID: &taskID,
+			Level:  opts.Level,
+			Stream: opts.Stream,
+		}
+		return a.store.ListLogs(ctx, storeOpts)
 	}
-	return a.store.ListLogs(ctx, storeOpts)
+
+	sessionID, err := a.sessionOf(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	return a.logs.Read(ctx, logQuery{
+		SessionID: sessionID,
+		TaskID:    taskID,
+		Limit:     opts.Limit,
+		Cursor:    opts.Cursor,
+		Level:     opts.Level,
+		Stream:    opts.Stream,
+		Archived:  opts.Archived,
+	})
+}
+
+// sessionOf resolves the session a task belongs to.
+func (a *TaskAdapter) sessionOf(ctx context.Context, taskID string) (string, error) {
+	task, err := a.manager.Get(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, core.ErrTaskNotFound) {
+			return "", fmt.Errorf("%w: task %s", store.ErrNotFound, taskID)
+		}
+		return "", err
+	}
+	return task.SessionID, nil
 }
 
 // StreamLogs streams logs for a task in real-time.

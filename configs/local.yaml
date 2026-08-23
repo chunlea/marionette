@@ -37,6 +37,18 @@ storage:
   workspace:
     base_dir: "./data/workspaces"
 
+  # Log archiving moves finished sessions' logs out of PostgreSQL and into the
+  # object store above. It is off by default; turning it on is also what makes
+  # log retention possible, because the partition maintainer will not drop a day
+  # no archive covers.
+  log_archive:
+    enabled: false
+    # interval: 1h                 # how often a pass runs
+    # terminated_after: 15m        # grace window after a session terminates
+    # idle_after: 0                # also archive live sessions quiet this long
+    # retention: 2160h             # 90 days; how long an archive lives (0 = forever)
+    # retention_days: 30           # drop log partitions older than this
+
 # Logging configuration
 logging:
   level: debug

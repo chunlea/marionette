@@ -21,14 +21,56 @@ type SessionManagerInterface interface {
 type SessionAdapter struct {
 	manager          SessionManagerInterface
 	workspaceManager core.WorkspaceManagerInterface
+	logs             *ArchivedLogReader
+}
+
+// SessionAdapterOption configures a SessionAdapter.
+type SessionAdapterOption func(*SessionAdapter)
+
+// WithSessionLogReader supplies the reader that serves session logs.
+//
+// Without it GetLogs reports that log retrieval is not configured rather than
+// silently returning nothing: an empty page and "this server cannot answer
+// that" are different answers, and only one of them is safe to believe.
+func WithSessionLogReader(reader *ArchivedLogReader) SessionAdapterOption {
+	return func(a *SessionAdapter) { a.logs = reader }
 }
 
 // NewSessionAdapter creates a new SessionAdapter.
-func NewSessionAdapter(manager SessionManagerInterface, workspaceManager core.WorkspaceManagerInterface) *SessionAdapter {
-	return &SessionAdapter{
+func NewSessionAdapter(
+	manager SessionManagerInterface,
+	workspaceManager core.WorkspaceManagerInterface,
+	opts ...SessionAdapterOption,
+) *SessionAdapter {
+	a := &SessionAdapter{
 		manager:          manager,
 		workspaceManager: workspaceManager,
 	}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
+}
+
+// GetLogs returns the session's logs, from the archive and from PostgreSQL.
+func (a *SessionAdapter) GetLogs(
+	ctx context.Context,
+	sessionID string,
+	opts GetLogsOptions,
+) (*store.ListResult[store.Log], error) {
+	if a.logs == nil {
+		return nil, ErrNotImplemented
+	}
+
+	// The session has to exist, and the lookup is what applies tenant
+	// isolation: without it a caller could read any tenant's archive by
+	// guessing a session id, because the reader queries by session rather than
+	// through a policy-checked row the caller already holds.
+	if _, err := a.manager.Get(ctx, sessionID); err != nil {
+		return nil, err
+	}
+
+	return a.logs.ReadSession(ctx, sessionID, opts)
 }
 
 // Create creates a new session with the given options.

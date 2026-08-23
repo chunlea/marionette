@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -136,4 +137,14 @@ func setDefaults(v *viper.Viper) {
 
 	// Chunk GC deletes blobs; off until workspace sync references them.
 	v.SetDefault("storage.gc.enabled", false)
+
+	// Log archiving is off by default, and so is the retention that depends on
+	// it. The defaults below are what apply once an operator switches it on.
+	v.SetDefault("storage.encryption.enabled", false)
+	v.SetDefault("storage.log_archive.enabled", false)
+	v.SetDefault("storage.log_archive.interval", time.Hour)
+	v.SetDefault("storage.log_archive.terminated_after", 15*time.Minute)
+	v.SetDefault("storage.log_archive.idle_after", time.Duration(0))
+	v.SetDefault("storage.log_archive.retention", 90*24*time.Hour)
+	v.SetDefault("storage.log_archive.retention_days", 30)
 }

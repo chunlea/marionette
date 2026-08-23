@@ -237,6 +237,8 @@ CREATE TABLE public.action_logs (
     CONSTRAINT valid_actor_type CHECK ((actor_type = ANY (ARRAY['user'::text, 'api_key'::text, 'system'::text, 'runner'::text])))
 );
 
+ALTER TABLE ONLY public.action_logs FORCE ROW LEVEL SECURITY;
+
 --
 -- Name: agent_configs; Type: TABLE; Schema: public; Owner: -
 --
@@ -256,6 +258,8 @@ CREATE TABLE public.agent_configs (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+ALTER TABLE ONLY public.agent_configs FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: api_keys; Type: TABLE; Schema: public; Owner: -
@@ -279,6 +283,8 @@ CREATE TABLE public.api_keys (
     revoke_reason text
 );
 
+ALTER TABLE ONLY public.api_keys FORCE ROW LEVEL SECURITY;
+
 --
 -- Name: chunks; Type: TABLE; Schema: public; Owner: -
 --
@@ -291,6 +297,8 @@ CREATE TABLE public.chunks (
     deleted_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+ALTER TABLE ONLY public.chunks FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: data_keys; Type: TABLE; Schema: public; Owner: -
@@ -309,6 +317,8 @@ CREATE TABLE public.data_keys (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+ALTER TABLE ONLY public.data_keys FORCE ROW LEVEL SECURITY;
+
 --
 -- Name: log_archives; Type: TABLE; Schema: public; Owner: -
 --
@@ -324,8 +334,14 @@ CREATE TABLE public.log_archives (
     last_log_at timestamp with time zone,
     archived_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    format text DEFAULT 'ndjson+zstd/frames1'::text NOT NULL,
+    encrypted boolean DEFAULT false NOT NULL,
+    last_log_id text,
+    last_log_sequence bigint
 );
+
+ALTER TABLE ONLY public.log_archives FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: logs; Type: TABLE; Schema: public; Owner: -
@@ -347,6 +363,8 @@ CREATE TABLE public.logs (
 )
 PARTITION BY RANGE (created_at);
 
+ALTER TABLE ONLY public.logs FORCE ROW LEVEL SECURITY;
+
 --
 -- Name: logs_default; Type: TABLE; Schema: public; Owner: -
 --
@@ -366,6 +384,8 @@ CREATE TABLE public.logs_default (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+ALTER TABLE ONLY public.logs_default FORCE ROW LEVEL SECURITY;
+
 --
 -- Name: manifests; Type: TABLE; Schema: public; Owner: -
 --
@@ -382,6 +402,8 @@ CREATE TABLE public.manifests (
     tenant_id text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+ALTER TABLE ONLY public.manifests FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: permission_requests; Type: TABLE; Schema: public; Owner: -
@@ -409,6 +431,8 @@ CREATE TABLE public.permission_requests (
     CONSTRAINT valid_risk_level CHECK ((risk_level = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
 );
 
+ALTER TABLE ONLY public.permission_requests FORCE ROW LEVEL SECURITY;
+
 --
 -- Name: profiles; Type: TABLE; Schema: public; Owner: -
 --
@@ -432,6 +456,8 @@ CREATE TABLE public.profiles (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+ALTER TABLE ONLY public.profiles FORCE ROW LEVEL SECURITY;
+
 --
 -- Name: provider_configs; Type: TABLE; Schema: public; Owner: -
 --
@@ -450,6 +476,8 @@ CREATE TABLE public.provider_configs (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT valid_suspend_strategy CHECK ((((suspend_config ->> 'strategy'::text) IS NULL) OR ((suspend_config ->> 'strategy'::text) = ANY (ARRAY['pause'::text, 'snapshot'::text, 'terminate_preserve_storage'::text, 'release_to_pool'::text, 'terminate'::text]))))
 );
+
+ALTER TABLE ONLY public.provider_configs FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: runner_tokens; Type: TABLE; Schema: public; Owner: -
@@ -475,6 +503,8 @@ CREATE TABLE public.runner_tokens (
     revoke_reason text,
     CONSTRAINT valid_token_status CHECK ((status = ANY (ARRAY['active'::text, 'rotating'::text, 'revoked'::text, 'expired'::text])))
 );
+
+ALTER TABLE ONLY public.runner_tokens FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: runners; Type: TABLE; Schema: public; Owner: -
@@ -503,6 +533,8 @@ CREATE TABLE public.runners (
     CONSTRAINT valid_runner_status CHECK ((status = ANY (ARRAY['offline'::text, 'idle'::text, 'busy'::text, 'paused'::text]))),
     CONSTRAINT valid_sandbox_mode CHECK ((sandbox_mode = ANY (ARRAY['runner-is-sandbox'::text, 'runner-creates-sandbox'::text, 'none'::text])))
 );
+
+ALTER TABLE ONLY public.runners FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: scheduled_tasks; Type: TABLE; Schema: public; Owner: -
@@ -535,6 +567,8 @@ CREATE TABLE public.scheduled_tasks (
     CONSTRAINT valid_on_failure CHECK ((on_failure = ANY (ARRAY['continue'::text, 'pause_on_failure'::text, 'disable_on_failure'::text]))),
     CONSTRAINT valid_scheduled_task_status CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'disabled'::text])))
 );
+
+ALTER TABLE ONLY public.scheduled_tasks FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
@@ -573,12 +607,15 @@ CREATE TABLE public.sessions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     profile_id text,
+    workspace_manifest_id text,
     CONSTRAINT scheduled_requires_cron CHECK (((lifecycle_mode <> 'scheduled'::text) OR (schedule_cron IS NOT NULL))),
     CONSTRAINT valid_lifecycle_mode CHECK ((lifecycle_mode = ANY (ARRAY['on_demand'::text, 'always_on'::text, 'scheduled'::text]))),
     CONSTRAINT valid_network_policy CHECK ((network_policy = ANY (ARRAY['none'::text, 'allow_list'::text, 'proxy'::text, 'air_gapped'::text]))),
     CONSTRAINT valid_session_status CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'suspended'::text, 'resuming'::text, 'terminated'::text]))),
     CONSTRAINT valid_suspend_strategy CHECK (((suspend_strategy IS NULL) OR (suspend_strategy = ANY (ARRAY['pause'::text, 'snapshot'::text, 'terminate_preserve_storage'::text, 'release_to_pool'::text, 'terminate'::text]))))
 );
+
+ALTER TABLE ONLY public.sessions FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: snapshots; Type: TABLE; Schema: public; Owner: -
@@ -597,6 +634,8 @@ CREATE TABLE public.snapshots (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone
 );
+
+ALTER TABLE ONLY public.snapshots FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: streams; Type: TABLE; Schema: public; Owner: -
@@ -634,6 +673,8 @@ CREATE TABLE public.streams (
     CONSTRAINT valid_stream_state CHECK ((state = ANY (ARRAY['pending'::text, 'starting'::text, 'active'::text, 'paused'::text, 'stopping'::text, 'stopped'::text, 'error'::text]))),
     CONSTRAINT valid_stream_type CHECK ((type = ANY (ARRAY['desktop'::text, 'browser'::text, 'ios'::text, 'android'::text])))
 );
+
+ALTER TABLE ONLY public.streams FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: COLUMN streams.device_serial; Type: COMMENT; Schema: public; Owner: -
@@ -676,6 +717,8 @@ CREATE TABLE public.task_runs (
     CONSTRAINT valid_task_run_status CHECK ((status = ANY (ARRAY['pending'::text, 'assigned'::text, 'running'::text, 'completed'::text, 'failed'::text, 'timeout'::text, 'canceled'::text])))
 );
 
+ALTER TABLE ONLY public.task_runs FORCE ROW LEVEL SECURITY;
+
 --
 -- Name: tasks; Type: TABLE; Schema: public; Owner: -
 --
@@ -693,8 +736,13 @@ CREATE TABLE public.tasks (
     annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    next_dispatch_after timestamp with time zone,
+    dispatch_attempts integer DEFAULT 0 NOT NULL,
+    dispatch_parked_reason text,
     CONSTRAINT valid_task_status CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text, 'canceled'::text])))
 );
+
+ALTER TABLE ONLY public.tasks FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: tunnels; Type: TABLE; Schema: public; Owner: -
@@ -722,6 +770,8 @@ CREATE TABLE public.tunnels (
     CONSTRAINT valid_type_direction CHECK ((((type = ANY (ARRAY['desktop'::text, 'browser'::text, 'ios'::text, 'android'::text])) AND (direction = 'inbound'::text)) OR ((type = ANY (ARRAY['http'::text, 'tcp'::text])) AND (direction = 'outbound'::text))))
 );
 
+ALTER TABLE ONLY public.tunnels FORCE ROW LEVEL SECURITY;
+
 --
 -- Name: webhook_events; Type: TABLE; Schema: public; Owner: -
 --
@@ -742,6 +792,8 @@ CREATE TABLE public.webhook_events (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT valid_webhook_event_status CHECK ((status = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text, 'exhausted'::text, 'canceled'::text])))
 );
+
+ALTER TABLE ONLY public.webhook_events FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: webhooks; Type: TABLE; Schema: public; Owner: -
@@ -766,6 +818,8 @@ CREATE TABLE public.webhooks (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+ALTER TABLE ONLY public.webhooks FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: workspaces; Type: TABLE; Schema: public; Owner: -
@@ -792,6 +846,8 @@ CREATE TABLE public.workspaces (
     deleted_at timestamp with time zone,
     CONSTRAINT valid_mobility CHECK ((mobility = ANY (ARRAY['local'::text, 'shared'::text, 'object_sync'::text])))
 );
+
+ALTER TABLE ONLY public.workspaces FORCE ROW LEVEL SECURITY;
 
 --
 -- Name: logs_default; Type: TABLE ATTACH; Schema: public; Owner: -
@@ -1103,6 +1159,18 @@ CREATE INDEX idx_data_keys_tenant ON public.data_keys USING btree (tenant_id);
 --
 
 CREATE INDEX idx_log_archives_expires ON public.log_archives USING btree (expires_at) WHERE (deleted_at IS NULL);
+
+--
+-- Name: idx_log_archives_purge; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_log_archives_purge ON public.log_archives USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
+
+--
+-- Name: idx_log_archives_session_coverage; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_log_archives_session_coverage ON public.log_archives USING btree (session_id, last_log_at) WHERE (deleted_at IS NULL);
 
 --
 -- Name: idx_log_archives_tenant; Type: INDEX; Schema: public; Owner: -
@@ -1441,6 +1509,12 @@ CREATE INDEX idx_task_runs_tenant ON public.task_runs USING btree (tenant_id);
 CREATE INDEX idx_tasks_pending ON public.tasks USING btree (session_id, status) WHERE (status = 'pending'::text);
 
 --
+-- Name: idx_tasks_redispatch; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_redispatch ON public.tasks USING btree (next_dispatch_after) WHERE ((status = 'pending'::text) AND (dispatch_parked_reason IS NULL));
+
+--
 -- Name: idx_tasks_session; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1769,6 +1843,558 @@ ALTER TABLE ONLY public.tunnels
 
 ALTER TABLE ONLY public.webhook_events
     ADD CONSTRAINT webhook_events_webhook_id_fkey FOREIGN KEY (webhook_id) REFERENCES public.webhooks(id) ON DELETE CASCADE;
+
+--
+-- Name: action_logs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.action_logs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: agent_configs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_configs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: api_keys; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.api_keys ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: chunks; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.chunks ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: data_keys; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.data_keys ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: log_archives; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.log_archives ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: logs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.logs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: logs_default; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.logs_default ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: manifests; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.manifests ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: permission_requests; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.permission_requests ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: profiles; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: provider_configs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.provider_configs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: runner_tokens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.runner_tokens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: runners; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.runners ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: scheduled_tasks; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.scheduled_tasks ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sessions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: snapshots; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.snapshots ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: streams; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.streams ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: task_runs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.task_runs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tasks; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: action_logs tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.action_logs USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: agent_configs tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.agent_configs USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: api_keys tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.api_keys USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: chunks tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.chunks USING (((current_setting('app.system'::text, true) = 'on'::text) OR (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NULL) OR (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text)))) WITH CHECK (((current_setting('app.system'::text, true) = 'on'::text) OR (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NULL) OR (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))));
+
+--
+-- Name: data_keys tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.data_keys USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: log_archives tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.log_archives USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: logs tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.logs USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: logs_default tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.logs_default USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: manifests tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.manifests USING (((current_setting('app.system'::text, true) = 'on'::text) OR (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NULL) OR (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text)))) WITH CHECK (((current_setting('app.system'::text, true) = 'on'::text) OR (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NULL) OR (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))));
+
+--
+-- Name: permission_requests tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.permission_requests USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: profiles tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.profiles USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: provider_configs tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.provider_configs USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: runner_tokens tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.runner_tokens USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: runners tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.runners USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: scheduled_tasks tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.scheduled_tasks USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: sessions tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.sessions USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: snapshots tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.snapshots USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: streams tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.streams USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: task_runs tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.task_runs USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: tasks tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.tasks USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: tunnels tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.tunnels USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: webhook_events tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.webhook_events USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: webhooks tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.webhooks USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: workspaces tenant_isolation; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenant_isolation ON public.workspaces USING (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END) WITH CHECK (
+CASE
+    WHEN (current_setting('app.system'::text, true) = 'on'::text) THEN true
+    WHEN (NULLIF(current_setting('app.tenant_id'::text, true), ''::text) IS NOT NULL) THEN (tenant_id = NULLIF(current_setting('app.tenant_id'::text, true), ''::text))
+    WHEN (COALESCE(current_setting('app.multi_tenant'::text, true), 'off'::text) = 'on'::text) THEN false
+    ELSE (tenant_id IS NULL)
+END);
+
+--
+-- Name: tunnels; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tunnels ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: webhook_events; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.webhook_events ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: webhooks; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.webhooks ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: workspaces; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workspaces ENABLE ROW LEVEL SECURITY;
 
 --
 -- PostgreSQL database dump complete

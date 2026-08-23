@@ -4,10 +4,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -126,13 +128,58 @@ func NewSync(config Config, chunkStore ChunkStore, manifestStore ManifestStore) 
 }
 
 // Sync performs workspace synchronization.
-// For small workspaces (<SingleChunkThreshold), uses single-chunk mode (tar.zst).
-// For large workspaces, uses CDC with parallel chunk uploads.
+// Below CDCThreshold the workspace is stored as one tar.zst chunk; at or above
+// it, content-defined chunking streams the tree instead. CDCMode overrides the
+// choice.
 func (s *Sync) Sync(ctx context.Context, workspaceID, tenantID, srcDir string) (string, error) {
-	// Calculate total size to determine mode
-	totalSize, err := calculateDirSize(srcDir)
-	if err != nil {
-		return "", fmt.Errorf("failed to calculate directory size: %w", err)
+	manifestID, _, err := s.sync(ctx, workspaceID, tenantID, srcDir, syncOptions{})
+	return manifestID, err
+}
+
+// SyncFrom is Sync with the workspace's previous snapshot to reuse.
+//
+// A file whose size, mode and modification time match the parent carries its
+// chunk list over without being read, so the second sync of a workspace costs
+// the files that changed. This is the call a suspend makes: a runner knows
+// which snapshot it last wrote, and re-reading a whole workspace to discover
+// that none of it moved is the cost the parent exists to avoid.
+//
+// A parent that cannot be opened is not an error. It means this store has never
+// seen that snapshot - a different runner wrote it, or it has been collected -
+// and the only safe reading of that is that there is nothing to reuse.
+func (s *Sync) SyncFrom(ctx context.Context, workspaceID, tenantID, srcDir, parentManifestID string) (string, error) {
+	manifestID, _, err := s.sync(ctx, workspaceID, tenantID, srcDir, syncOptions{
+		parentManifestID: parentManifestID,
+		parentOptional:   true,
+	})
+	return manifestID, err
+}
+
+// syncOptions carries what varies between the three entry points.
+type syncOptions struct {
+	// parentManifestID is the snapshot to reuse. Empty means a full sync.
+	parentManifestID string
+
+	// parentOptional treats a parent that cannot be opened as no parent.
+	parentOptional bool
+
+	// diff, when set, is filled in with what changed. It names every path, so
+	// it costs memory proportional to the workspace - which is why the path a
+	// runner actually takes leaves it nil.
+	diff *DiffResult
+}
+
+// sync is the one implementation behind Sync, SyncFrom and SyncIncremental.
+func (s *Sync) sync(ctx context.Context, workspaceID, tenantID, srcDir string, opts syncOptions) (string, bool, error) {
+	// The size pass is a second walk, so it is skipped when the mode is
+	// already decided. CDC recomputes the total from the walk it does anyway.
+	var totalSize int64
+	if s.config.CDCMode != CDCModeAlways {
+		var err error
+		totalSize, err = calculateDirSize(srcDir)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to calculate directory size: %w", err)
+		}
 	}
 
 	manifest := &Manifest{
@@ -141,26 +188,57 @@ func (s *Sync) Sync(ctx context.Context, workspaceID, tenantID, srcDir string) (
 		TenantID:    tenantID,
 		CreatedAt:   time.Now(),
 		TotalSize:   totalSize,
+		ParentID:    stringPtr(opts.parentManifestID),
 	}
 
-	if totalSize < s.config.SingleChunkThreshold {
-		// Single chunk mode
+	if !s.config.useCDC(totalSize) {
 		if err := s.syncSingleChunk(ctx, manifest, srcDir); err != nil {
-			return "", err
+			return "", false, err
 		}
-	} else {
-		// CDC mode
-		if err := s.syncCDC(ctx, manifest, srcDir); err != nil {
-			return "", err
+		if err := s.manifestStore.SaveManifest(ctx, manifest); err != nil {
+			return "", false, fmt.Errorf("failed to save manifest: %w", err)
 		}
+		return manifest.ID, false, nil
 	}
 
-	// Save manifest
-	if err := s.manifestStore.SaveManifest(ctx, manifest); err != nil {
-		return "", fmt.Errorf("failed to save manifest: %w", err)
+	parent, err := s.openParent(ctx, workspaceID, tenantID, opts.parentManifestID)
+	if err != nil {
+		if !opts.parentOptional || !errors.Is(err, ErrManifestNotFound) {
+			return "", true, err
+		}
+		parent = nil
+	}
+	if parent != nil {
+		defer func() { _ = parent.Close() }()
 	}
 
-	return manifest.ID, nil
+	if err := s.syncCDC(ctx, manifest, srcDir, parent, opts.diff); err != nil {
+		return "", true, err
+	}
+	return manifest.ID, true, nil
+}
+
+// openParent opens the previous snapshot so unchanged files can carry their
+// chunk lists over. A missing or single-chunk parent is not an error: it just
+// means everything is re-chunked.
+func (s *Sync) openParent(ctx context.Context, workspaceID, tenantID, manifestID string) (*ManifestEntries, error) {
+	if manifestID == "" {
+		return nil, nil
+	}
+
+	cursor, err := s.manifestStore.OpenManifest(ctx, tenantID, workspaceID, manifestID)
+	if err != nil {
+		if errors.Is(err, ErrManifestNotFound) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("failed to load previous manifest: %w", err)
+	}
+	if cursor.Header().SingleChunk {
+		// A tar archive has no per-file chunk lists to reuse.
+		_ = cursor.Close()
+		return nil, nil
+	}
+	return cursor, nil
 }
 
 // syncSingleChunk creates a tar.zst archive of the entire directory.
@@ -194,8 +272,18 @@ func (s *Sync) syncSingleChunk(ctx context.Context, manifest *Manifest, srcDir s
 			return nil
 		}
 
-		// Create tar header
-		header, err := tar.FileInfoHeader(info, "")
+		// Symlinks need their target, and tar.FileInfoHeader cannot read it:
+		// passing "" records a link that points nowhere, which is how the
+		// small-workspace path used to lose every symlink it archived.
+		link := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err = os.Readlink(path)
+			if err != nil {
+				return err
+			}
+		}
+
+		header, err := tar.FileInfoHeader(info, link)
 		if err != nil {
 			return err
 		}
@@ -254,115 +342,6 @@ func (s *Sync) syncSingleChunk(ctx context.Context, manifest *Manifest, srcDir s
 	return nil
 }
 
-// syncCDC performs content-defined chunking and parallel upload.
-func (s *Sync) syncCDC(ctx context.Context, manifest *Manifest, srcDir string) error {
-	var files []ManifestFile
-	var mu sync.Mutex
-
-	// Track unique chunks to upload
-	chunksToUpload := make(map[string][]byte)
-	var chunkMu sync.Mutex
-
-	// Walk directory and chunk each file
-	err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip directories
-		if info.IsDir() {
-			return nil
-		}
-
-		// Get relative path
-		relPath, err := filepath.Rel(srcDir, path)
-		if err != nil {
-			return err
-		}
-
-		// Read file
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("failed to read file %s: %w", path, err)
-		}
-
-		// Chunk the file
-		chunks, err := s.chunker.ChunkData(data)
-		if err != nil {
-			return fmt.Errorf("failed to chunk file %s: %w", path, err)
-		}
-
-		// Build file entry
-		mf := ManifestFile{
-			Path:    relPath,
-			Mode:    info.Mode(),
-			ModTime: info.ModTime(),
-			Size:    info.Size(),
-			Chunks:  make([]string, 0, len(chunks)),
-		}
-
-		for _, chunk := range chunks {
-			mf.Chunks = append(mf.Chunks, chunk.Hash)
-
-			// Track unique chunks
-			chunkMu.Lock()
-			if _, exists := chunksToUpload[chunk.Hash]; !exists {
-				chunksToUpload[chunk.Hash] = chunk.Data
-			}
-			chunkMu.Unlock()
-		}
-
-		mu.Lock()
-		files = append(files, mf)
-		mu.Unlock()
-
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("failed to walk directory: %w", err)
-	}
-
-	// Parallel upload of unique chunks
-	if err := s.uploadChunks(ctx, manifest.TenantID, chunksToUpload); err != nil {
-		return err
-	}
-
-	manifest.Files = files
-	manifest.ChunkCount = len(chunksToUpload)
-
-	return nil
-}
-
-// uploadChunks uploads chunks with bounded concurrency.
-func (s *Sync) uploadChunks(ctx context.Context, tenantID string, chunks map[string][]byte) error {
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(s.config.MaxConcurrency)
-
-	for hash, data := range chunks {
-		hash := hash
-		data := data
-
-		g.Go(func() error {
-			// Check if chunk already exists (dedup)
-			exists, err := s.chunkStore.ChunkExists(ctx, tenantID, hash)
-			if err != nil {
-				return fmt.Errorf("failed to check chunk %s: %w", hash, err)
-			}
-			if exists {
-				return nil // Skip existing chunk
-			}
-
-			// Upload chunk
-			if _, err := s.chunkStore.StoreChunk(ctx, tenantID, hash, data); err != nil {
-				return fmt.Errorf("failed to upload chunk %s: %w", hash, err)
-			}
-			return nil
-		})
-	}
-
-	return g.Wait()
-}
-
 // Restore reconstructs a workspace from the latest manifest.
 func (s *Sync) Restore(_ context.Context, _, _, _ string) error {
 	// Load the latest manifest
@@ -382,24 +361,21 @@ func (s *Sync) RestoreFromManifest(ctx context.Context, manifestID, tenantID, ds
 
 // restoreFromManifestInternal performs the actual restore.
 func (s *Sync) restoreFromManifestInternal(ctx context.Context, workspaceID, manifestID, tenantID, dstDir string) error {
-	// Load manifest using streaming API
-	fileCh, header, err := s.manifestStore.StreamManifestFiles(ctx, tenantID, workspaceID, manifestID)
+	entries, err := s.manifestStore.OpenManifest(ctx, tenantID, workspaceID, manifestID)
 	if err != nil {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
+	defer func() { _ = entries.Close() }()
 
-	// Create destination directory
-	if err := os.MkdirAll(dstDir, 0755); err != nil {
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
-	if header.SingleChunk {
-		// Single chunk mode: extract tar.zst
+	if header := entries.Header(); header.SingleChunk {
 		return s.restoreSingleChunk(ctx, header.ChunkHash, tenantID, dstDir)
 	}
 
-	// CDC mode: restore files from chunks
-	return s.restoreCDC(ctx, tenantID, dstDir, fileCh)
+	return s.restoreCDC(ctx, tenantID, dstDir, entries)
 }
 
 // restoreSingleChunk extracts a tar.zst archive.
@@ -437,8 +413,23 @@ func (s *Sync) restoreSingleChunk(ctx context.Context, hash, tenantID, dstDir st
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(header.Mode)); err != nil {
+			if err := os.MkdirAll(target, header.FileInfo().Mode().Perm()); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
+			}
+			// MkdirAll applies the umask, and does nothing at all when the
+			// directory was already created as some file's parent.
+			if err := os.Chmod(target, header.FileInfo().Mode().Perm()); err != nil {
+				return fmt.Errorf("failed to set directory mode: %w", err)
+			}
+		case tar.TypeSymlink:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return fmt.Errorf("failed to create parent directory: %w", err)
+			}
+			if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("failed to replace symlink: %w", err)
+			}
+			if err := os.Symlink(header.Linkname, target); err != nil {
+				return fmt.Errorf("failed to create symlink: %w", err)
 			}
 		case tar.TypeReg:
 			// Create parent directory
@@ -460,69 +451,6 @@ func (s *Sync) restoreSingleChunk(ctx context.Context, hash, tenantID, dstDir st
 			// Restore modification time (non-fatal if fails)
 			_ = os.Chtimes(target, header.ModTime, header.ModTime)
 		}
-	}
-
-	return nil
-}
-
-// restoreCDC restores files from chunks using CDC mode.
-func (s *Sync) restoreCDC(ctx context.Context, tenantID, dstDir string, fileCh <-chan ManifestFile) error {
-	// Cache chunks to avoid re-downloading
-	chunkCache := make(map[string][]byte)
-	var cacheMu sync.Mutex
-
-	for mf := range fileCh {
-		target := filepath.Join(dstDir, mf.Path)
-
-		// Security: prevent path traversal
-		if !isValidRestorePath(dstDir, target) {
-			return &PathTraversalError{Path: mf.Path}
-		}
-
-		// Create parent directory
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			return fmt.Errorf("failed to create parent directory: %w", err)
-		}
-
-		// Create file
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mf.Mode)
-		if err != nil {
-			return fmt.Errorf("failed to create file %s: %w", mf.Path, err)
-		}
-
-		// Write chunks
-		for _, hash := range mf.Chunks {
-			// Check cache first
-			cacheMu.Lock()
-			data, ok := chunkCache[hash]
-			cacheMu.Unlock()
-
-			if !ok {
-				// Download chunk
-				var err error
-				data, err = s.chunkStore.GetChunk(ctx, tenantID, hash)
-				if err != nil {
-					_ = f.Close()
-					return fmt.Errorf("failed to get chunk %s for file %s: %w", hash, mf.Path, err)
-				}
-
-				// Cache for potential reuse
-				cacheMu.Lock()
-				chunkCache[hash] = data
-				cacheMu.Unlock()
-			}
-
-			if _, err := f.Write(data); err != nil {
-				_ = f.Close()
-				return fmt.Errorf("failed to write chunk to file %s: %w", mf.Path, err)
-			}
-		}
-
-		_ = f.Close()
-
-		// Restore modification time and permissions (non-fatal if fails)
-		_ = os.Chtimes(target, mf.ModTime, mf.ModTime)
-		_ = os.Chmod(target, mf.Mode)
 	}
 
 	return nil
@@ -565,11 +493,18 @@ func (s *Sync) ValidateManifest(ctx context.Context, manifest *Manifest) error {
 	return nil
 }
 
-// isValidRestorePath checks that the target path doesn't escape the base directory.
+// isValidRestorePath checks that the target path doesn't escape the base
+// directory.
+//
+// The comparison is on path components, not on the string: "/tmp/ws" is not a
+// prefix of "/tmp/ws-elsewhere" in any sense a restore should accept, and the
+// string compare it used to do said otherwise.
 func isValidRestorePath(baseDir, target string) bool {
-	cleanTarget := filepath.Clean(target)
-	cleanBase := filepath.Clean(baseDir)
-	return len(cleanTarget) >= len(cleanBase) && cleanTarget[:len(cleanBase)] == cleanBase
+	rel, err := filepath.Rel(filepath.Clean(baseDir), filepath.Clean(target))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // calculateDirSize calculates the total size of all files in a directory.
@@ -588,135 +523,35 @@ func calculateDirSize(dir string) (int64, error) {
 }
 
 // SyncIncremental performs incremental sync based on a previous manifest.
-// Only uploads chunks that have changed since the previous manifest.
+//
+// It is the same walk as Sync with the parent manifest merged in, plus a record
+// of what changed. That record names every path, so it is bounded by the
+// workspace rather than by a chunk: callers that only need the snapshot should
+// use Sync.
 func (s *Sync) SyncIncremental(ctx context.Context, workspaceID, tenantID, srcDir, previousManifestID string) (string, *DiffResult, error) {
-	// Load previous manifest if provided
-	var previousManifest *Manifest
-	if previousManifestID != "" {
-		var err error
-		previousManifest, err = s.manifestStore.LoadManifest(ctx, tenantID, workspaceID, previousManifestID)
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to load previous manifest: %w", err)
-		}
+	diff := &DiffResult{
+		Added:     make([]string, 0),
+		Modified:  make([]string, 0),
+		Deleted:   make([]string, 0),
+		Unchanged: make([]string, 0),
 	}
 
-	// Calculate total size to determine mode
-	totalSize, err := calculateDirSize(srcDir)
+	manifestID, usedCDC, err := s.sync(ctx, workspaceID, tenantID, srcDir, syncOptions{
+		parentManifestID: previousManifestID,
+		diff:             diff,
+	})
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to calculate directory size: %w", err)
+		return "", nil, err
 	}
 
-	// For single chunk mode, we can't do incremental sync effectively
-	// because the entire workspace is in one chunk
-	if totalSize < s.config.SingleChunkThreshold {
-		manifestID, err := s.Sync(ctx, workspaceID, tenantID, srcDir)
-		if err != nil {
-			return "", nil, err
-		}
-		// For single chunk mode, we just report all files as modified
-		diff := &DiffResult{Modified: []string{"(single-chunk-mode)"}}
-		return manifestID, diff, nil
+	if !usedCDC {
+		// One chunk holds the whole workspace, so there is nothing to compare
+		// file by file and nothing was reused. Saying so is better than
+		// reporting an empty diff that reads as "nothing changed".
+		return manifestID, &DiffResult{Modified: []string{"(single-chunk-mode)"}}, nil
 	}
 
-	// Compare current directory against previous manifest
-	diff, fileChunks, err := DiffDirectory(previousManifest, srcDir, s.chunker)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to diff directory: %w", err)
-	}
-
-	// If nothing changed, still create a new manifest for the timestamp
-	manifest := &Manifest{
-		ID:          id.Manifest(),
-		WorkspaceID: workspaceID,
-		TenantID:    tenantID,
-		CreatedAt:   time.Now(),
-		TotalSize:   totalSize,
-		ParentID:    stringPtr(previousManifestID),
-	}
-
-	// Collect chunks that need to be uploaded
-	chunksToUpload := CollectNewChunks(fileChunks)
-
-	// Check which chunks already exist
-	existingChunks := make(map[string]bool)
-	for hash := range chunksToUpload {
-		exists, err := s.chunkStore.ChunkExists(ctx, tenantID, hash)
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to check chunk %s: %w", hash, err)
-		}
-		existingChunks[hash] = exists
-	}
-
-	// Filter to only new chunks
-	newChunks := ChunksToUpload(chunksToUpload, existingChunks)
-
-	// Upload new chunks in parallel
-	if err := s.uploadChunks(ctx, tenantID, newChunks); err != nil {
-		return "", nil, fmt.Errorf("failed to upload chunks: %w", err)
-	}
-
-	// Build the file list for the new manifest
-	manifest.Files = s.buildManifestFiles(srcDir, fileChunks, previousManifest, diff)
-	manifest.ChunkCount = len(chunksToUpload)
-
-	// Save manifest
-	if err := s.manifestStore.SaveManifest(ctx, manifest); err != nil {
-		return "", nil, fmt.Errorf("failed to save manifest: %w", err)
-	}
-
-	return manifest.ID, diff, nil
-}
-
-// buildManifestFiles constructs the manifest file list from diff results.
-func (s *Sync) buildManifestFiles(srcDir string, newChunks map[string][]ChunkInfo, previousManifest *Manifest, diff *DiffResult) []ManifestFile {
-	files := make([]ManifestFile, 0)
-
-	// Create map of previous files for unchanged lookup
-	previousFiles := make(map[string]*ManifestFile)
-	if previousManifest != nil {
-		for i := range previousManifest.Files {
-			previousFiles[previousManifest.Files[i].Path] = &previousManifest.Files[i]
-		}
-	}
-
-	// Add unchanged files from previous manifest
-	for _, path := range diff.Unchanged {
-		if pf, ok := previousFiles[path]; ok {
-			files = append(files, *pf)
-		}
-	}
-
-	// Add new and modified files
-	addOrModified := make([]string, 0, len(diff.Added)+len(diff.Modified))
-	addOrModified = append(addOrModified, diff.Added...)
-	addOrModified = append(addOrModified, diff.Modified...)
-	for _, path := range addOrModified {
-		chunks, ok := newChunks[path]
-		if !ok {
-			continue
-		}
-
-		fullPath := filepath.Join(srcDir, path)
-		info, err := os.Stat(fullPath)
-		if err != nil {
-			continue
-		}
-
-		hashes := make([]string, len(chunks))
-		for i, c := range chunks {
-			hashes[i] = c.Hash
-		}
-
-		files = append(files, ManifestFile{
-			Path:    path,
-			Mode:    info.Mode(),
-			ModTime: info.ModTime(),
-			Size:    info.Size(),
-			Chunks:  hashes,
-		})
-	}
-
-	return files
+	return manifestID, diff, nil
 }
 
 // Diff compares the current directory against a manifest.

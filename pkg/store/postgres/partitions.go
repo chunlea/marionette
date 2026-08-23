@@ -29,18 +29,8 @@ func (s *Store) MaintainLogPartitions(ctx context.Context, daysAhead int) error 
 	return nil
 }
 
-// DropOldLogPartitions drops daily partitions of `logs` whose day is older than
-// retentionDays. The logs_default partition is never dropped.
-//
-// This deletes log rows permanently: only call it once the logs in question
-// have been archived.
-func (s *Store) DropOldLogPartitions(ctx context.Context, retentionDays int) error {
-	if retentionDays < 0 {
-		return &store.InvalidInputError{Field: "retention_days", Message: "must be >= 0"}
-	}
-
-	if _, err := s.pool.Exec(ctx, "SELECT drop_old_log_partitions($1::int)", retentionDays); err != nil {
-		return fmt.Errorf("dropping old log partitions: %w", err)
-	}
-	return nil
-}
+// Retention lives in log_archive.go as DropArchivedLogPartitions. There is no
+// unconditional "drop everything older than N days" here on purpose: the
+// migration's drop_old_log_partitions() function is a date comparison and
+// nothing more, and a caller that reached for it would delete the only copy of
+// the logs in every partition it matched.

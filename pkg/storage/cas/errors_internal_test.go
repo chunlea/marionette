@@ -252,8 +252,8 @@ func TestSync_SyncCDC_ChunkExistsError(t *testing.T) {
 	manifestStore := NewBlobManifestStore(NewMemoryProvider(), encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Force CDC
-		MaxConcurrency:       1,
+		CDCThreshold:   10, // Force CDC
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -301,8 +301,8 @@ func TestSync_RestoreCDC_GetChunkError(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Force CDC
-		MaxConcurrency:       1,
+		CDCThreshold:   10, // Force CDC
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -336,8 +336,8 @@ func TestSync_RestoreSingleChunk_GetChunkError(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024, // Force single chunk
-		MaxConcurrency:       1,
+		CDCThreshold:   100 * 1024 * 1024, // Force single chunk
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -394,8 +394,8 @@ func TestSync_RestoreFromManifest_SingleChunk(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024, // Force single chunk
-		MaxConcurrency:       1,
+		CDCThreshold:   100 * 1024 * 1024, // Force single chunk
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -432,8 +432,8 @@ func TestSync_RestoreFromManifest_CDC(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Force CDC
-		MaxConcurrency:       1,
+		CDCThreshold:   10, // Force CDC
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -547,8 +547,8 @@ func TestSync_RestoreFromManifest_PathTraversal(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Force CDC
-		MaxConcurrency:       1,
+		CDCThreshold:   10, // Force CDC
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -593,8 +593,8 @@ func TestSync_SyncSingleChunk_SaveManifestError(t *testing.T) {
 	manifestStore := NewBlobManifestStore(manifestProvider, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024, // Force single chunk
-		MaxConcurrency:       1,
+		CDCThreshold:   100 * 1024 * 1024, // Force single chunk
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -622,8 +622,8 @@ func TestSync_SyncCDC_SaveManifestError(t *testing.T) {
 	manifestStore := NewBlobManifestStore(manifestProvider, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Force CDC
-		MaxConcurrency:       1,
+		CDCThreshold:   10, // Force CDC
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -636,7 +636,9 @@ func TestSync_SyncCDC_SaveManifestError(t *testing.T) {
 
 	_, err := sync.Sync(ctx, "ws-1", "tenant-1", srcDir)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "save manifest")
+	// CDC mode streams the manifest straight to the object store rather than
+	// handing a finished one to SaveManifest, so the upload is where it fails.
+	assert.Contains(t, err.Error(), "upload manifest")
 }
 
 func TestSync_SyncSingleChunk_StoreChunkError(t *testing.T) {
@@ -648,8 +650,8 @@ func TestSync_SyncSingleChunk_StoreChunkError(t *testing.T) {
 	manifestStore := NewBlobManifestStore(NewMemoryProvider(), encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024, // Force single chunk
-		MaxConcurrency:       1,
+		CDCThreshold:   100 * 1024 * 1024, // Force single chunk
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -689,8 +691,8 @@ func TestSync_RestoreSingleChunk_Directory(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024, // Force single chunk
-		MaxConcurrency:       1,
+		CDCThreshold:   100 * 1024 * 1024, // Force single chunk
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -757,8 +759,8 @@ func TestSync_SyncCDC_UploadChunkError(t *testing.T) {
 	manifestStore := NewBlobManifestStore(manifestProvider, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Force CDC
-		MaxConcurrency:       1,
+		CDCThreshold:   10, // Force CDC
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -819,8 +821,8 @@ func TestSync_RestoreCDC_ChunkNotFound(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Force CDC
-		MaxConcurrency:       1,
+		CDCThreshold:   10, // Force CDC
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -858,8 +860,8 @@ func TestSync_RestoreCDC_MultipleChunks(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Force CDC
-		MaxConcurrency:       1,
+		CDCThreshold:   10, // Force CDC
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -915,8 +917,8 @@ func TestSync_RestoreCDC_ChunkReuse(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Force CDC
-		MaxConcurrency:       1,
+		CDCThreshold:   10, // Force CDC
+		MaxConcurrency: 1,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)

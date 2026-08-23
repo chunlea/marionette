@@ -3,11 +3,13 @@ package docker
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/chunlea/marionette/pkg/network"
 	"github.com/chunlea/marionette/pkg/provider"
 )
 
@@ -26,6 +28,9 @@ const (
 
 	// DefaultCPUs is the default CPU limit.
 	DefaultCPUs = "2"
+
+	// DefaultProcRoot is where a host's procfs lives.
+	DefaultProcRoot = "/proc"
 )
 
 // Config holds Docker provider settings parsed from provider_configs.config JSON.
@@ -49,6 +54,80 @@ type Config struct {
 	// Cmd is the default command to run in the container.
 	// If empty, the image's default entrypoint/cmd is used.
 	Cmd []string `json:"cmd,omitempty"`
+
+	// Isolation holds the network-isolation settings applied to runners whose
+	// session asks for a restricted network policy.
+	Isolation IsolationConfig `json:"isolation,omitempty"`
+}
+
+// IsolationConfig holds operator-controlled network isolation settings.
+//
+// Everything here is operator input, never session input: a session picks a
+// policy level, it does not get to choose its own proxy or resolvers.
+type IsolationConfig struct {
+	// ServerURL is the control-plane address pinned into every restricted
+	// runner's firewall.
+	//
+	// SpawnOptions.ServerURL is authoritative when the caller sets it; this is
+	// the operator fallback for deployments where it does not.
+	ServerURL string `json:"server_url,omitempty"`
+
+	// ProxyURL is the egress proxy used by proxy-level sessions,
+	// e.g. "http://proxy.internal:3128".
+	ProxyURL string `json:"proxy_url,omitempty"`
+
+	// ProxyNoProxy lists extra hosts that bypass the proxy.
+	ProxyNoProxy []string `json:"proxy_no_proxy,omitempty"`
+
+	// ProxyCACert is the in-container path to the proxy's CA bundle, for a
+	// proxy that terminates TLS. The runner image or a mount must provide it.
+	ProxyCACert string `json:"proxy_ca_cert,omitempty"`
+
+	// DNSServers are the resolver addresses restricted runners may reach.
+	//
+	// Leaving this empty means allow_list and proxy sessions fall back to
+	// permitting DNS to any destination, because nothing in the sandbox works
+	// without name resolution. Pinning resolvers here is what closes DNS as an
+	// exfiltration channel.
+	DNSServers []string `json:"dns_servers,omitempty"`
+
+	// RefreshInterval overrides how often pinned allow-list addresses are
+	// re-resolved, e.g. "2m". Clamped to [30s, 15m].
+	RefreshInterval string `json:"refresh_interval,omitempty"`
+
+	// ProcRoot is where the host's procfs is mounted, used to reach a
+	// container's network namespace at /proc/<pid>/ns/net.
+	//
+	// The default is correct for a server running directly on the Docker host.
+	// A server running inside a container sees its own procfs, where the
+	// container PIDs the Docker API reports do not exist, so it must either
+	// share the host PID namespace or mount the host's /proc and point this
+	// at it.
+	ProcRoot string `json:"proc_root,omitempty"`
+}
+
+// EffectiveProcRoot returns the procfs mount point to resolve namespaces
+// through.
+func (c *IsolationConfig) EffectiveProcRoot() string {
+	if c.ProcRoot == "" {
+		return DefaultProcRoot
+	}
+	return c.ProcRoot
+}
+
+// RefreshIntervalDuration parses RefreshInterval, returning 0 when unset.
+func (c *IsolationConfig) RefreshIntervalDuration() (time.Duration, error) {
+	if c.RefreshInterval == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(c.RefreshInterval)
+	if err != nil {
+		return 0, fmt.Errorf("invalid refresh_interval %q: %w", c.RefreshInterval, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("refresh_interval must be positive, got %q", c.RefreshInterval)
+	}
+	return d, nil
 }
 
 // ResourceConfig holds default resource limits.
@@ -114,6 +193,33 @@ func (c *Config) validate() error {
 	// Validate CPU format
 	if _, err := ParseCPUs(c.Resources.CPUs); err != nil {
 		return &provider.ErrInvalidConfig{Field: "resources.cpus", Reason: err.Error()}
+	}
+
+	// A malformed proxy or server address must fail at configuration time, not
+	// when the first restricted session tries to spawn.
+	if c.Isolation.ProxyURL != "" {
+		if _, err := network.ParseProxyConfig(c.Isolation.ProxyURL, c.Isolation.ProxyNoProxy, c.Isolation.ProxyCACert); err != nil {
+			return &provider.ErrInvalidConfig{Field: "isolation.proxy_url", Reason: err.Error()}
+		}
+	}
+
+	if c.Isolation.ServerURL != "" {
+		if _, err := network.ParseEndpoint(c.Isolation.ServerURL, network.DefaultControlPlanePort); err != nil {
+			return &provider.ErrInvalidConfig{Field: "isolation.server_url", Reason: err.Error()}
+		}
+	}
+
+	for _, addr := range c.Isolation.DNSServers {
+		if net.ParseIP(addr) == nil {
+			return &provider.ErrInvalidConfig{
+				Field:  "isolation.dns_servers",
+				Reason: fmt.Sprintf("%q is not an IP address", addr),
+			}
+		}
+	}
+
+	if _, err := c.Isolation.RefreshIntervalDuration(); err != nil {
+		return &provider.ErrInvalidConfig{Field: "isolation.refresh_interval", Reason: err.Error()}
 	}
 
 	return nil

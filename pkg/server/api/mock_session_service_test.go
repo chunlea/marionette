@@ -22,6 +22,23 @@ type MockSessionService struct {
 	SuspendFunc   func(ctx context.Context, id string) error
 	ResumeFunc    func(ctx context.Context, id string) error
 	TerminateFunc func(ctx context.Context, id string) error
+	GetLogsFunc   func(ctx context.Context, id string, opts GetLogsOptions) (*store.ListResult[store.Log], error)
+}
+
+// GetLogs returns the session's logs.
+func (m *MockSessionService) GetLogs(
+	ctx context.Context, sessionID string, opts GetLogsOptions,
+) (*store.ListResult[store.Log], error) {
+	if m.GetLogsFunc != nil {
+		return m.GetLogsFunc(ctx, sessionID, opts)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, ok := m.sessions[sessionID]; !ok {
+		return nil, store.ErrNotFound
+	}
+	return &store.ListResult[store.Log]{}, nil
 }
 
 // NewMockSessionService creates a new MockSessionService with an empty session store.

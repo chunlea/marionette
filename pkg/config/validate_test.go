@@ -3,6 +3,10 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConfigValidate(t *testing.T) {
@@ -302,4 +306,55 @@ func TestValidatePort(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The two retentions delete the same logs from different places. Configured the
+// wrong way round they do not conflict, they just delete them.
+func TestStorageLogArchiveRetentionOrdering(t *testing.T) {
+	base := StorageLogArchiveConfig{
+		Enabled:       true,
+		Interval:      time.Hour,
+		RetentionDays: 30,
+	}
+
+	t.Run("archive must outlast the partitions", func(t *testing.T) {
+		c := base
+		c.Retention = 10 * 24 * time.Hour
+		err := c.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must outlast")
+	})
+
+	t.Run("longer archive retention is fine", func(t *testing.T) {
+		c := base
+		c.Retention = 90 * 24 * time.Hour
+		assert.NoError(t, c.Validate())
+	})
+
+	t.Run("keeping archives forever is fine", func(t *testing.T) {
+		c := base
+		c.Retention = 0
+		assert.NoError(t, c.Validate())
+	})
+
+	t.Run("nothing is checked while archiving is off", func(t *testing.T) {
+		c := base
+		c.Enabled = false
+		c.Retention = time.Hour
+		assert.NoError(t, c.Validate())
+	})
+
+	t.Run("negative values are rejected", func(t *testing.T) {
+		c := base
+		c.RetentionDays = -1
+		assert.Error(t, c.Validate())
+
+		c = base
+		c.Retention = -time.Hour
+		assert.Error(t, c.Validate())
+
+		c = base
+		c.Interval = -time.Hour
+		assert.Error(t, c.Validate())
+	})
 }
