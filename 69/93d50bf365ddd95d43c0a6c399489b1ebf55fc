@@ -1,0 +1,31 @@
+pkg/store/postgres/cas.go
+  s_0d0ac42be2d99d::t_df046484d4fb07 621-629,656-659,669-670,672-673,714,724-725,727-728,743-812
+pkg/store/postgres/cas_gc_test.go
+  s_6ce8a3a3b8d9e6::t_e0528f30d42682 277-283,287-292,372-411,435-450
+pkg/store/postgres/cas_commit_test.go
+  s_0d0ac42be2d99d::t_83376524fce601 5,243-328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "6993d50bf365ddd95d43c0a6c399489b1ebf55fc",
+  "prompts": {},
+  "sessions": {
+    "s_0d0ac42be2d99d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "62a01624-4bc1-4cf8-862e-f2a73cffc4da",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_6ce8a3a3b8d9e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f1a55cc-dd39-4229-91f5-7498430c8926",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
