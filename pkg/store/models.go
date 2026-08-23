@@ -155,6 +155,11 @@ type SessionUpdates struct {
 	LastActivityAt         *time.Time
 	SuspendedAt            *time.Time
 	ResumedAt              *time.Time
+	// ExpectedStatus makes the update conditional: it applies only if the row
+	// still carries this status. It is how a status transition becomes a
+	// compare-and-set, so two servers deciding the same transition at the same
+	// time cannot both perform it.
+	ExpectedStatus *string
 }
 
 // Task represents a unit of work.

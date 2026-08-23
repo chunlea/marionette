@@ -358,6 +358,16 @@ func updateSession(ctx context.Context, q querier, sessionID string, updates sto
 	query := fmt.Sprintf(`UPDATE sessions SET %s WHERE id = $%d`,
 		strings.Join(setClauses, ", "), argNum)
 	args = append(args, sessionID)
+	argNum++
+
+	// The precondition turns this into a compare-and-set, the same way
+	// ExpectedStatus does for tasks. Session status transitions are otherwise
+	// read-then-write, so two servers deciding the same transition both
+	// perform it.
+	if updates.ExpectedStatus != nil {
+		query += fmt.Sprintf(` AND status = $%d`, argNum)
+		args = append(args, *updates.ExpectedStatus)
+	}
 
 	result, err := q.Exec(ctx, query, args...)
 	if err != nil {
@@ -365,6 +375,10 @@ func updateSession(ctx context.Context, q querier, sessionID string, updates sto
 	}
 
 	if result.RowsAffected() == 0 {
+		if updates.ExpectedStatus != nil {
+			return fmt.Errorf("%w: session %s is no longer %s",
+				store.ErrConflict, sessionID, *updates.ExpectedStatus)
+		}
 		return &store.NotFoundError{Resource: "session", ID: sessionID}
 	}
 

@@ -1264,12 +1264,24 @@ func (m *SessionManager) ResumeWithResult(ctx context.Context, sessionID string)
 	}
 
 	now := time.Now()
+	// Compare-and-set on the status the caller validated above. The scheduled
+	// session activator polls with a plain SELECT, so two replicas can find
+	// the same session due at the same moment; without this both would resume
+	// it and both would advance next_scheduled_at, silently skipping a run.
 	updates := store.SessionUpdates{
-		Status:    stringPtr(SessionStatusResuming),
-		ResumedAt: &now,
+		Status:         stringPtr(SessionStatusResuming),
+		ExpectedStatus: &session.Status,
+		ResumedAt:      &now,
 	}
 
 	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			m.logger.Debug("session was resumed by another server first",
+				zap.String("session_id", sessionID),
+				zap.String("from_status", session.Status),
+			)
+			return nil, ErrInvalidSessionTransition
+		}
 		return nil, err
 	}
 

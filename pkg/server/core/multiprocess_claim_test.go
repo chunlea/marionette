@@ -462,3 +462,55 @@ func TestTwoProcesses_ScheduledTickRunsOnce(t *testing.T) {
 
 	terminateAll(t, first, sessionID)
 }
+
+// TestTwoProcesses_ScheduledSessionResumesOnce: the scheduled session activator
+// polls with a plain SELECT too, so two replicas can find the same session due.
+// Both resuming it means both advance next_scheduled_at, silently skipping the
+// following run.
+//
+// Unlike the runner-claim tests above, this one does not reliably lose the race
+// without the fix - the window between reading the session and writing the new
+// status is a few hundred microseconds. The compare-and-set it depends on is
+// pinned deterministically by TestUpdateSession_ExpectedStatusIsACompareAndSet
+// in pkg/store/postgres; what this test guards is that Resume actually uses it,
+// and reports a lost transition rather than some other error.
+func TestTwoProcesses_ScheduledSessionResumesOnce(t *testing.T) {
+	dsn := startPostgres(t)
+	first := newTestApp(t, dsn)
+	second := newTestApp(t, dsn)
+	resetState(t, first)
+
+	ctx := context.Background()
+	sessionID := seedSession(t, first, "scheduled-session")
+	require.NoError(t, first.store.UpdateSession(ctx, sessionID, store.SessionUpdates{
+		Status: stringPtr(SessionStatusSuspended),
+	}))
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	results := make([]error, 2)
+
+	for i, app := range []*testApp{first, second} {
+		wg.Add(1)
+		go func(i int, app *testApp) {
+			defer wg.Done()
+			<-start
+			results[i] = app.app.Sessions.Resume(context.Background(), sessionID)
+		}(i, app)
+	}
+	close(start)
+	wg.Wait()
+
+	resumed := 0
+	for _, err := range results {
+		if err == nil {
+			resumed++
+			continue
+		}
+		require.ErrorIs(t, err, ErrInvalidSessionTransition,
+			"the replica that lost must report a lost transition, not something else")
+	}
+	assert.Equal(t, 1, resumed, "exactly one replica may resume a session")
+
+	terminateAll(t, first, sessionID)
+}
