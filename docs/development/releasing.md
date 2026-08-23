@@ -44,8 +44,9 @@ the workflow refuses to create a release for a tag it cannot verify.
 gh run watch "$(gh run list --workflow=release.yml --limit=1 --json databaseId -q '.[0].databaseId')"
 ```
 
-Roughly ten minutes: the arm64 agent image installs Debian packages under
-emulation, which is the slow part.
+Ten to twenty minutes on a cold cache: two Go builds per image (the builders
+cross-compile rather than emulate), plus the arm64 agent image installing its
+Debian packages under emulation, which is the one genuinely slow step.
 
 **5. Publish the draft.**
 
@@ -80,6 +81,10 @@ Run that after any change to the workflow, the Dockerfiles, or `make dist`. The
 same dispatch with `-f dry_run=false`, run from the tag's ref
 (`--ref v0.2.0`), is the way to re-drive a real release by hand if the tag push
 did not trigger one.
+
+GitHub only offers `workflow_dispatch` for workflows that exist on the default
+branch, so the first rehearsal has to wait until this workflow is merged to
+`main`. `--ref` then chooses which branch's copy actually runs.
 
 ## Version numbers
 
