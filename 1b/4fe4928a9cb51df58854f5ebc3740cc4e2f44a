@@ -1,0 +1,23 @@
+pkg/server/core/app.go
+  s_b1ee0c9aba1316::t_33d819ce9f3bd0 13,55-66,134-135,139,273,286,295,308,312-337,351,365,419
+pkg/server/core/teststore_test.go
+  s_b1ee0c9aba1316::t_a7ceb2cdaec510 665-675
+pkg/server/core/app_test.go
+  s_b1ee0c9aba1316::t_02c57709dcf8d9 11,35,97,182-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "1b4fe4928a9cb51df58854f5ebc3740cc4e2f44a",
+  "prompts": {},
+  "sessions": {
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
