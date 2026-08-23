@@ -1,0 +1,31 @@
+pkg/agent/client.go
+  s_b1ee0c9aba1316::t_a75bb1f6b9198e 62-65,68,117,120,125,128-129,162-167,172,174-177,179-181,184-188,271-277,286,288-289,291,308-309,316-317,348-350,352-353,357-375,388-395
+pkg/agent/control.go
+  s_476c758fe5506c::t_01a8c119a9fa00 8,30-34,68,208-212,214,220,223-224,226-228
+pkg/agent/lifecycle_test.go
+  s_b1ee0c9aba1316::t_31713197fe4563 1-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "47c626ef86a45feafafde81550736474408cb71e",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
