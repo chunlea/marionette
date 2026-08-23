@@ -1,0 +1,75 @@
+pkg/provider/docker/config.go
+  s_476c758fe5506c::t_69b53f5675cadd 191-201
+pkg/provider/docker/docker.go
+  s_476c758fe5506c::t_a8d328b2cbb33c 39,63,78,83,85-86,93,98,100-101,128-131,546,561,572
+pkg/provider/docker/docker_test.go
+  s_476c758fe5506c::t_f699241967f3b9 604,608-609,621,625-626,914,916-917
+pkg/provider/docker/network.go
+  s_476c758fe5506c::t_a4b3d56cc1292c 18-21,25,29,35,39,95-97,99-100,103,105,107-111,114
+pkg/provider/docker/network_test.go
+  s_476c758fe5506c::t_97eb8a505b95a1 15,23,31,50,61,74,85,108
+pkg/provider/docker/suspend.go
+  s_476c758fe5506c::t_57ac311a2e70b0 15-25,27,29-31
+pkg/provider/docker/suspend_test.go
+  s_476c758fe5506c::t_64535a56e5b7fa 23,51,80,132,325-329,337,339-340
+pkg/provider/e2b/config.go
+  s_476c758fe5506c::t_9fd772da8e06ac 127-129,131-134
+pkg/provider/e2b/config_test.go
+  s_476c758fe5506c::t_bf71e8acb1a2b2 127,133,135-136,148,150-151,161,163-164,177,189,192
+pkg/provider/e2b/provider.go
+  s_476c758fe5506c::t_8dd9833b0f6bf3 24,40,266-269
+pkg/provider/e2b/suspend.go
+  s_476c758fe5506c::t_e539ae47f2c130 10-19,21,23-25
+pkg/provider/e2b/suspend_test.go
+  s_476c758fe5506c::t_d0f2396e2be2a0 351-355
+pkg/provider/kubernetes/config.go
+  s_476c758fe5506c::t_5d3f5d5ab32667 373-383
+pkg/provider/kubernetes/config_test.go
+  s_476c758fe5506c::t_196789c0c3e8ed 164,169,171-172,184,186-187,194-195,202
+pkg/provider/kubernetes/kubernetes.go
+  s_476c758fe5506c::t_e917cd40d1ea49 41,62,81,83-84,110-113,254,653
+pkg/provider/kubernetes/kubernetes_test.go
+  s_476c758fe5506c::t_1687c438c20f90 35-36,456-457,528-529,967-968,1288-1289,1398,1480-1481,1505,1510,1525-1527,1537-1539,1543-1561
+pkg/provider/kubernetes/network.go
+  s_476c758fe5506c::t_22ba3dca310f73 19,21-28,34-38,81-83,85-88,94
+pkg/provider/kubernetes/suspend.go
+  s_476c758fe5506c::t_7a36eb6146f179 13-25,30
+pkg/provider/kubernetes/suspend_test.go
+  s_476c758fe5506c::t_75cc3a22535e0d 310,316
+pkg/provider/pool/config.go
+  s_476c758fe5506c::t_89e31c1fc05b38 153-156,160
+pkg/provider/pool/config_test.go
+  s_476c758fe5506c::t_9f782ff04ad0db 226,238,244,251,258,265,272,290
+pkg/provider/pool/pool.go
+  s_476c758fe5506c::t_45112ac8f9ea83 29,35-36,56,77,83-84,117-121,263-268,393
+pkg/provider/pool/pool_test.go
+  s_476c758fe5506c::t_4be16f9c9f040b 182-189
+pkg/provider/suspend.go
+  s_476c758fe5506c::t_7b5524819cc30b 1-204
+pkg/provider/suspend_test.go
+  s_30fb41c4a911b8::t_269a91231e1f14 1-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "b4aafba874ddaf9b1de3a7e60b3e72d5139e62e6",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
