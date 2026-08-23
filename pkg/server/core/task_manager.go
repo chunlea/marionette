@@ -99,9 +99,14 @@ type TaskManager struct {
 	logger     *zap.Logger
 }
 
-// SetWebhookIntegration sets the webhook integration for dispatching events.
-func (m *TaskManager) SetWebhookIntegration(wi *WebhookIntegration) {
-	m.webhooks = wi
+// TaskManagerOption is a functional option for TaskManager.
+type TaskManagerOption func(*TaskManager)
+
+// WithTaskWebhooks sets the webhook integration for dispatching task events.
+func WithTaskWebhooks(wi *WebhookIntegration) TaskManagerOption {
+	return func(m *TaskManager) {
+		m.webhooks = wi
+	}
 }
 
 // NewTaskManager creates a new TaskManager.
@@ -111,14 +116,19 @@ func NewTaskManager(
 	sessionMgr SessionManagerInterface,
 	auditLog audit.Logger,
 	logger *zap.Logger,
+	opts ...TaskManagerOption,
 ) *TaskManager {
-	return &TaskManager{
+	m := &TaskManager{
 		store:      store,
 		cmdSender:  cmdSender,
 		sessionMgr: sessionMgr,
 		auditLog:   auditLog,
 		logger:     logger,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // CreateTaskOptions contains options for creating a new task.

@@ -90,55 +90,53 @@ func main() {
 	// Initialize provider registry
 	providerRegistry := initProviderRegistry(dbStore, cfg, logger)
 
-	// Create core managers (only if database is available)
-	var sessionMgr *core.SessionManager
-	var taskMgr *core.TaskManager
-	var permMgr *core.PermissionManager
-	var permEnforcer *core.PermissionTimeoutEnforcer
+	// Create core managers (only if database is available).
+	// core.Wire is the single production wiring point: every manager and every
+	// background job is built there, so the binary cannot drift away from what
+	// the tests exercise.
+	var app *core.App
 	var connManager *grpcserver.ConnectionManager
 	var apiOpts []api.Option
 	var apiKeySvc *auth.APIKeyService
 	var grpcOpts []grpcserver.ServerOption
+	var grpcCfg grpcserver.Config
+	var webhookDeliveryJob *jobs.WebhookDeliveryJob
 
 	if dbStore != nil {
 		// Create API key service (needed for both public and admin APIs)
 		apiKeySvc = auth.NewAPIKeyService(dbStore, id.APIKey)
 
-		// Note: RunnerTokenService is created internally by the gRPC server
-		// when Store is provided (see pkg/server/grpc/server.go)
-
-		// Create connection manager first (needed by PermissionManager)
+		// Create connection manager first: it is both the connectivity oracle
+		// and the command sender for every core manager.
 		connManager = grpcserver.NewConnectionManager(logger)
-
-		// Create workspace manager
-		workspaceMgr := core.NewWorkspaceManager(dbStore, cfg.Storage.Workspace, logger)
 
 		// Create audit logger
 		auditStoreAdapter := audit.NewStoreAdapter(dbStore)
 		auditLog := audit.NewLogger(auditStoreAdapter)
 
-		// Create core managers
-		sessionMgr = core.NewSessionManager(dbStore, connManager, connManager, logger)
-		sessionMgr.SetWorkspaceManager(workspaceMgr)
-		taskMgr = core.NewTaskManager(dbStore, connManager, sessionMgr, auditLog, logger)
-		sessionMgr.SetProviderRegistry(providerRegistry)
-		sessionMgr.SetTaskManager(taskMgr)
+		runnerTokenSvc := auth.NewRunnerTokenService(dbStore, id.RunnerToken)
 
-		// Create permission manager with connection manager as command sender
-		permMgr = core.NewPermissionManager(dbStore, connManager, sessionMgr, auditLog, logger)
-
-		// Create permission timeout enforcer
-		permEnforcer = core.NewPermissionTimeoutEnforcer(dbStore, sessionMgr, logger)
-
-		// Create scheduled task service
-		scheduledTaskSvc := core.NewScheduledTaskService(dbStore, taskMgr, auditLog, logger)
+		app, err = core.Wire(core.WireDeps{
+			Store:              dbStore,
+			ConnManager:        connManager,
+			CmdSender:          connManager,
+			RunnerTokenService: runnerTokenSvc,
+			ProviderRegistry:   providerRegistry,
+			AuditLog:           auditLog,
+			Logger:             logger,
+			WorkspaceConfig:    cfg.Storage.Workspace,
+			WebhookConfig:      webhookConfig(),
+		})
+		if err != nil {
+			logger.Fatal("failed to wire core services", zap.Error(err))
+		}
 
 		// Create adapters and add to API options
-		sessionAdapter := api.NewSessionAdapter(sessionMgr, workspaceMgr)
-		taskAdapter := api.NewTaskAdapter(taskMgr, dbStore)
-		permAdapter := api.NewPermissionAdapter(permMgr)
-		workspaceAdapter := api.NewWorkspaceAdapter(workspaceMgr)
-		scheduledTaskAdapter := api.NewScheduledTaskAdapter(scheduledTaskSvc)
+		sessionAdapter := api.NewSessionAdapter(app.Sessions, app.Workspaces)
+		taskAdapter := api.NewTaskAdapter(app.Tasks, dbStore)
+		permAdapter := api.NewPermissionAdapter(app.Permissions)
+		workspaceAdapter := api.NewWorkspaceAdapter(app.Workspaces)
+		scheduledTaskAdapter := api.NewScheduledTaskAdapter(app.ScheduledTasks)
 
 		apiOpts = append(apiOpts,
 			api.WithSessionService(sessionAdapter),
@@ -147,6 +145,11 @@ func main() {
 			api.WithWorkspaceService(workspaceAdapter),
 			api.WithAPIKeyService(apiKeySvc),
 			api.WithScheduledTaskService(scheduledTaskAdapter),
+			// These three routes answered 501 for the life of the project
+			// because their services were never wired.
+			api.WithRunnerService(newRunnerServiceAdapter(dbStore)),
+			api.WithLogStreamService(newLogStreamAdapter(dbStore, app.LogSubscribers, logger)),
+			api.WithEventStreamService(newEventStreamAdapter(app.Events, logger)),
 		)
 
 		// Create tunnel manager for HTTP tunnel proxy
@@ -225,13 +228,26 @@ func main() {
 		)
 		logger.Info("browser stream service wired to API")
 
+		// The message router lives in the gRPC package but is built here, from
+		// the managers core.Wire produced, so the gRPC server never constructs
+		// a half-wired manager of its own.
+		messageRouter := grpcserver.NewMessageRouter(logger, app.Runners,
+			grpcserver.WithMRStore(dbStore),
+			grpcserver.WithMRPermissionManager(app.Permissions),
+			grpcserver.WithMRTaskManager(app.Tasks),
+			grpcserver.WithMRSessionManager(app.Sessions),
+			grpcserver.WithMRTunnelRouter(tunnelRouter),
+		)
+
+		grpcCfg.RunnerManager = app.Runners
+		grpcCfg.RunnerRegistry = app.RunnerRegistry
+		grpcCfg.RunnerTokenService = runnerTokenSvc
+		grpcCfg.MessageRouter = messageRouter
+		grpcCfg.LogSubscribers = app.LogSubscribers
+
 		// Wire gRPC server options
 		grpcOpts = append(grpcOpts,
 			grpcserver.WithConnManager(connManager),
-			grpcserver.WithPermissionManager(permMgr),
-			grpcserver.WithTaskManager(taskMgr),
-			grpcserver.WithSessionManager(sessionMgr),
-			grpcserver.WithTunnelRouter(tunnelRouter),
 			grpcserver.WithBrowserStream(browserStreamHandler),
 		)
 
@@ -323,8 +339,8 @@ func main() {
 		adminOpts = append(adminOpts, admin.WithAPIKeyService(apiKeyAdapter))
 		logger.Info("API key service wired to Admin API")
 	}
-	if sessionMgr != nil {
-		adminOpts = append(adminOpts, admin.WithSessionActivator(sessionMgr))
+	if app != nil {
+		adminOpts = append(adminOpts, admin.WithSessionActivator(app.Sessions))
 		logger.Info("Session activator wired to Admin API")
 	}
 	if dbStore != nil {
@@ -334,8 +350,7 @@ func main() {
 		logger.Info("Action log service wired to Admin API")
 
 		// Create runner token service for admin API
-		runnerTokenSvc := auth.NewRunnerTokenService(dbStore, id.RunnerToken)
-		runnerTokenAdapter := admin.NewRunnerTokenAdapter(runnerTokenSvc)
+		runnerTokenAdapter := admin.NewRunnerTokenAdapter(auth.NewRunnerTokenService(dbStore, id.RunnerToken))
 		adminOpts = append(adminOpts, admin.WithRunnerTokenAdminService(runnerTokenAdapter))
 		logger.Info("Runner token service wired to Admin API")
 
@@ -343,42 +358,23 @@ func main() {
 		profileAdapter := admin.NewProfileAdapter(dbStore)
 		adminOpts = append(adminOpts, admin.WithProfileService(profileAdapter))
 		logger.Info("Profile service wired to Admin API")
-
-		// Create webhook manager and service for admin API
-		webhookMgr := core.NewWebhookManager(dbStore, webhook.Config{
-			DefaultMaxRetries:        3,
-			DefaultRetryDelaySeconds: 60,
-			DefaultTimeoutSeconds:    30,
-			MaxPayloadSize:           10 * 1024 * 1024, // 10MB
-			UserAgent:                "Marionette-Webhook/1.0",
-			WorkerCount:              4,
-			BatchSize:                100,
-		}, logger.Named("webhook"))
-		webhookAdapter := admin.NewWebhookAdapter(webhookMgr)
+	}
+	if app != nil {
+		// The webhook manager and its integration are built by core.Wire so the
+		// managers get them at construction time instead of through setters.
+		webhookAdapter := admin.NewWebhookAdapter(app.Webhooks)
 		adminOpts = append(adminOpts, admin.WithWebhookService(webhookAdapter))
 		logger.Info("Webhook service wired to Admin API")
 
-		// Create webhook integration and inject into managers
-		webhookIntegration := core.NewWebhookIntegration(webhookMgr, logger.Named("webhook-integration"))
-		if sessionMgr != nil {
-			sessionMgr.SetWebhookIntegration(webhookIntegration)
-		}
-		if taskMgr != nil {
-			taskMgr.SetWebhookIntegration(webhookIntegration)
-		}
-		if permMgr != nil {
-			permMgr.SetWebhookIntegration(webhookIntegration)
-		}
-		logger.Info("Webhook integration wired to managers")
-
 		// Start webhook delivery job
-		webhookDeliveryJob := jobs.NewWebhookDeliveryJob(webhookMgr, jobs.WebhookDeliveryJobConfig{
+		webhookDeliveryJob = jobs.NewWebhookDeliveryJob(app.Webhooks, jobs.WebhookDeliveryJobConfig{
 			Interval:  5 * time.Second,
 			BatchSize: 100,
 			Logger:    logger.Named("webhook-delivery"),
 		})
-		if err := webhookDeliveryJob.Start(context.Background()); err != nil {
+		if err := webhookDeliveryJob.Start(app.Context()); err != nil {
 			logger.Error("failed to start webhook delivery job", zap.Error(err))
+			webhookDeliveryJob = nil
 		} else {
 			logger.Info("Webhook delivery job started")
 		}
@@ -408,12 +404,12 @@ func main() {
 		Port: cfg.Server.Admin.Port,
 	}, logger, adminOpts...)
 
-	grpcServer, err := grpcserver.New(grpcserver.Config{
-		Host:  cfg.Server.GRPC.Host,
-		Port:  cfg.Server.GRPC.Port,
-		TLS:   &cfg.TLS,
-		Store: dbStore,
-	}, logger, grpcOpts...)
+	grpcCfg.Host = cfg.Server.GRPC.Host
+	grpcCfg.Port = cfg.Server.GRPC.Port
+	grpcCfg.TLS = &cfg.TLS
+	grpcCfg.Store = dbStore
+
+	grpcServer, err := grpcserver.New(grpcCfg, logger, grpcOpts...)
 	if err != nil {
 		logger.Fatal("failed to create gRPC server", zap.Error(err))
 	}
@@ -475,10 +471,14 @@ func main() {
 	}
 	logger.Info("all servers started", logFields...)
 
-	// Start permission timeout enforcer if available
-	if permEnforcer != nil {
-		permEnforcer.Start(context.Background())
-		logger.Info("permission timeout enforcer started")
+	// Start the core background jobs (stale detector, task/permission timeout
+	// enforcers, scheduled task executor, scheduled session activator).
+	if app != nil {
+		if err := app.Start(context.Background()); err != nil {
+			logger.Error("failed to start core background jobs", zap.Error(err))
+		} else {
+			logger.Info("core background jobs started")
+		}
 	}
 
 	// Start stream manager if available
@@ -506,9 +506,20 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Stop permission timeout enforcer first
-	if permEnforcer != nil {
-		permEnforcer.Stop()
+	// Drain the core background jobs first so nothing keeps writing while the
+	// servers and the database go away.
+	if app != nil {
+		if err := app.Stop(ctx); err != nil {
+			logger.Error("core background jobs stop error", zap.Error(err))
+		} else {
+			logger.Info("core background jobs stopped")
+		}
+	}
+
+	if webhookDeliveryJob != nil {
+		if err := webhookDeliveryJob.Stop(ctx); err != nil {
+			logger.Error("webhook delivery job stop error", zap.Error(err))
+		}
 	}
 
 	// Stop stream manager
@@ -555,6 +566,21 @@ func main() {
 	}
 
 	logger.Info("marionette server stopped")
+}
+
+// webhookConfig returns the webhook delivery configuration.
+// These values are not user-configurable yet; keeping them in one function
+// makes the eventual move into config.yaml a single edit.
+func webhookConfig() webhook.Config {
+	return webhook.Config{
+		DefaultMaxRetries:        3,
+		DefaultRetryDelaySeconds: 60,
+		DefaultTimeoutSeconds:    30,
+		MaxPayloadSize:           10 * 1024 * 1024, // 10MB
+		UserAgent:                "Marionette-Webhook/1.0",
+		WorkerCount:              4,
+		BatchSize:                100,
+	}
 }
 
 // initProviderRegistry creates and configures the provider registry.

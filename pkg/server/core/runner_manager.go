@@ -64,9 +64,11 @@ func WithSessionManager(sm SessionManagerInterface) RunnerManagerOption {
 	}
 }
 
-// SetWebhookIntegration sets the webhook integration for dispatching events.
-func (m *RunnerManager) SetWebhookIntegration(wi *WebhookIntegration) {
-	m.webhooks = wi
+// WithRunnerWebhooks sets the webhook integration for dispatching runner events.
+func WithRunnerWebhooks(wi *WebhookIntegration) RunnerManagerOption {
+	return func(m *RunnerManager) {
+		m.webhooks = wi
+	}
 }
 
 // NewRunnerManager creates a new RunnerManager.

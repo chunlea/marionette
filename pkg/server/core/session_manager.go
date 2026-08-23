@@ -196,6 +196,7 @@ type SessionManagerConfig struct {
 	WorkspaceManager WorkspaceManagerInterface
 	AuditLog         audit.Logger
 	ProviderRegistry ProviderRegistryInterface
+	Webhooks         *WebhookIntegration
 	Logger           *zap.Logger
 }
 
@@ -218,28 +219,21 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 		workspaceManager: cfg.WorkspaceManager,
 		auditLog:         cfg.AuditLog,
 		providerRegistry: cfg.ProviderRegistry,
+		webhooks:         cfg.Webhooks,
 		logger:           cfg.Logger,
 	}
 }
 
-// SetWorkspaceManager sets the workspace manager. This allows optional injection.
-func (m *SessionManager) SetWorkspaceManager(wm WorkspaceManagerInterface) {
-	m.workspaceManager = wm
-}
-
-// SetProviderRegistry sets the provider registry. This allows optional injection.
-func (m *SessionManager) SetProviderRegistry(pr ProviderRegistryInterface) {
-	m.providerRegistry = pr
-}
-
-// SetTaskManager sets the task manager. This allows optional injection.
-func (m *SessionManager) SetTaskManager(tm TaskManagerInterface) {
+// setTaskManager injects the task manager after construction.
+//
+// SessionManager and TaskManager reference each other: TaskManager needs the
+// session manager to look up a session's runner, SessionManager needs the task
+// manager to re-execute running tasks after a resume. That value-level cycle
+// cannot be resolved by constructor arguments alone, so Wire builds the session
+// manager first and closes the loop here. This is deliberately package-private:
+// production wiring happens exactly once, in Wire.
+func (m *SessionManager) setTaskManager(tm TaskManagerInterface) {
 	m.taskManager = tm
-}
-
-// SetWebhookIntegration sets the webhook integration for dispatching events.
-func (m *SessionManager) SetWebhookIntegration(wi *WebhookIntegration) {
-	m.webhooks = wi
 }
 
 // CreateSessionOptions contains options for creating a new session.

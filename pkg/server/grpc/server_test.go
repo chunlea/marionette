@@ -14,7 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
+	"github.com/chunlea/marionette/pkg/id"
+	"github.com/chunlea/marionette/pkg/provider"
+	"github.com/chunlea/marionette/pkg/server/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -337,17 +341,37 @@ func TestNew_WithTLSNonexistentCA(t *testing.T) {
 // Store Wiring Tests
 // =============================================================================
 
+// TestNew_WithStore builds the server the way cmd/server does: every runner
+// lifecycle component comes from core.Wire. Constructing them ad hoc here is
+// what let production ship a RunnerManager with no TaskManager while this test
+// stayed green.
 func TestNew_WithStore(t *testing.T) {
 	logger := zap.NewNop()
 
 	// Use the integrationTestStore which implements store.Store
 	testStore := newIntegrationTestStore()
+	connManager := NewConnectionManager(logger)
+
+	app, err := core.Wire(core.WireDeps{
+		Store:              testStore,
+		ConnManager:        connManager,
+		CmdSender:          connManager,
+		RunnerTokenService: auth.NewRunnerTokenService(testStore, id.RunnerToken),
+		ProviderRegistry:   provider.NewRegistry(testStore),
+		Logger:             logger,
+	})
+	require.NoError(t, err)
 
 	server, err := New(Config{
-		Host:  "127.0.0.1",
-		Port:  0,
-		Store: testStore,
-	}, logger)
+		Host:               "127.0.0.1",
+		Port:               0,
+		Store:              testStore,
+		RunnerManager:      app.Runners,
+		RunnerRegistry:     app.RunnerRegistry,
+		RunnerTokenService: auth.NewRunnerTokenService(testStore, id.RunnerToken),
+		MessageRouter:      NewMessageRouter(logger, app.Runners, WithMRStore(testStore)),
+		LogSubscribers:     app.LogSubscribers,
+	}, logger, WithConnManager(connManager))
 
 	require.NoError(t, err)
 	require.NotNil(t, server)
@@ -356,6 +380,23 @@ func TestNew_WithStore(t *testing.T) {
 	// Clean up
 	err = server.Shutdown(context.Background())
 	require.NoError(t, err)
+	require.NoError(t, app.Stop(context.Background()))
+}
+
+// TestNew_WithStore_RequiresWiredComponents locks in the fail-fast contract:
+// a store without the lifecycle components is a wiring bug, and New must say so
+// at startup rather than silently no-op at runtime.
+func TestNew_WithStore_RequiresWiredComponents(t *testing.T) {
+	logger := zap.NewNop()
+
+	_, err := New(Config{
+		Host:  "127.0.0.1",
+		Port:  0,
+		Store: newIntegrationTestStore(),
+	}, logger)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "RunnerManager is required")
 }
 
 func TestNew_WithoutStore_LogsWarning(t *testing.T) {

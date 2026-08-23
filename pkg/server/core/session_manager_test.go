@@ -1496,7 +1496,7 @@ func TestSessionManager_SetWorkspaceManager(t *testing.T) {
 
 	// Set workspace manager
 	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/test"}
-	manager.SetWorkspaceManager(mockWM)
+	manager.workspaceManager = mockWM
 
 	assert.NotNil(t, manager.workspaceManager)
 	assert.Equal(t, mockWM, manager.workspaceManager)
@@ -1506,7 +1506,7 @@ func TestSessionManager_GetWorkspaceHostPath(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		manager, s := setupSessionManagerTest()
 		mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
-		manager.SetWorkspaceManager(mockWM)
+		manager.workspaceManager = mockWM
 
 		s.SetSession(&store.Session{
 			ID:          "sess_123",
@@ -1522,7 +1522,7 @@ func TestSessionManager_GetWorkspaceHostPath(t *testing.T) {
 	t.Run("session not found", func(t *testing.T) {
 		manager, _ := setupSessionManagerTest()
 		mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces"}
-		manager.SetWorkspaceManager(mockWM)
+		manager.workspaceManager = mockWM
 
 		_, err := manager.GetWorkspaceHostPath(context.Background(), "sess_nonexistent")
 		assert.ErrorIs(t, err, ErrSessionNotFound)
@@ -1548,7 +1548,7 @@ func TestSessionManager_Activate_WorkspacePathForDockerRunner(t *testing.T) {
 	cmdSender := &mockCommandSenderForSession{}
 	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
 	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
-	manager.SetWorkspaceManager(mockWM)
+	manager.workspaceManager = mockWM
 
 	// Setup with Docker runner (runner-is-sandbox mode)
 	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
@@ -1579,7 +1579,7 @@ func TestSessionManager_Activate_WorkspacePathForLocalRunner(t *testing.T) {
 	cmdSender := &mockCommandSenderForSession{}
 	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
 	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
-	manager.SetWorkspaceManager(mockWM)
+	manager.workspaceManager = mockWM
 
 	// Setup with local runner (no sandbox mode or "none")
 	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
@@ -1610,7 +1610,7 @@ func TestSessionManager_Activate_WorkspacePathForRunnerCreatesSandbox(t *testing
 	cmdSender := &mockCommandSenderForSession{}
 	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
 	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
-	manager.SetWorkspaceManager(mockWM)
+	manager.workspaceManager = mockWM
 
 	// Setup with runner-creates-sandbox mode
 	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
@@ -1669,7 +1669,7 @@ func TestSessionManager_Activate_WorkspacePathWithoutWorkspaceManager(t *testing
 func TestSessionManager_AttachRunner_EnsuresHostDirectory(t *testing.T) {
 	manager, s := setupSessionManagerTest()
 	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
-	manager.SetWorkspaceManager(mockWM)
+	manager.workspaceManager = mockWM
 
 	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
 	s.SetSession(&store.Session{
@@ -1694,7 +1694,7 @@ func TestSessionManager_AttachRunner_EnsureHostDirectoryError(t *testing.T) {
 		hostPath:         "/var/workspaces/ws_123",
 		ensureHostDirErr: assert.AnError,
 	}
-	manager.SetWorkspaceManager(mockWM)
+	manager.workspaceManager = mockWM
 
 	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "test-workspace"})
 	s.SetSession(&store.Session{
@@ -1722,7 +1722,7 @@ func TestSessionManager_RequestRunnerForResume_ExternalRunnerConnected(t *testin
 	cmdSender := &mockCommandSenderForSession{}
 	manager, s, connMgr := setupSessionManagerTestFull(cmdSender)
 	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
-	manager.SetWorkspaceManager(mockWM)
+	manager.workspaceManager = mockWM
 
 	// Configure connection manager to show runner as connected
 	connMgr.connectedRunners = map[string]bool{
@@ -1764,7 +1764,7 @@ func TestSessionManager_RequestRunnerForResume_ExternalRunnerNotConnected(t *tes
 	cmdSender := &mockCommandSenderForSession{}
 	manager, s, connMgr := setupSessionManagerTestFull(cmdSender)
 	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123"}
-	manager.SetWorkspaceManager(mockWM)
+	manager.workspaceManager = mockWM
 
 	// Configure connection manager to show runner as NOT connected
 	connMgr.connectedRunners = map[string]bool{
@@ -1899,7 +1899,7 @@ func TestSessionManager_ReExecuteRunningTasks_WithRunningTask(t *testing.T) {
 	cmdSender := &mockCommandSenderForSession{}
 	manager, s, _ := setupSessionManagerTestFull(cmdSender)
 	mockTM := &mockTaskManagerForSession{}
-	manager.SetTaskManager(mockTM)
+	manager.setTaskManager(mockTM)
 
 	// Create a running task
 	s.SetTask(&store.Task{
@@ -1922,7 +1922,7 @@ func TestSessionManager_ReExecuteRunningTasks_NoRunningTasks(t *testing.T) {
 	cmdSender := &mockCommandSenderForSession{}
 	manager, s, _ := setupSessionManagerTestFull(cmdSender)
 	mockTM := &mockTaskManagerForSession{}
-	manager.SetTaskManager(mockTM)
+	manager.setTaskManager(mockTM)
 
 	// Create a completed task (not running)
 	s.SetTask(&store.Task{

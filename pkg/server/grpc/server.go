@@ -12,7 +12,6 @@ import (
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
 	"github.com/chunlea/marionette/pkg/crypto/certreloader"
-	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/server/core"
 	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
@@ -31,11 +30,50 @@ type Server struct {
 }
 
 // Config holds configuration for the gRPC server.
+//
+// The runner lifecycle components are supplied by the caller, not built here.
+// They used to be constructed inside New, which meant production got a
+// RunnerManager with no TaskManager attached (so a dead runner's tasks stayed
+// "running" forever) while tests injected a complete one and passed. core.Wire
+// is now the single place these are built.
 type Config struct {
 	Host  string
 	Port  int
 	TLS   *config.TLSConfig
 	Store store.Store // Optional: enables full runner lifecycle management
+
+	// RunnerManager handles runner connect/disconnect/heartbeat.
+	// Required when Store is set.
+	RunnerManager core.RunnerManagerInterface
+	// RunnerRegistry handles runner registration. Required when Store is set.
+	RunnerRegistry *core.RunnerRegistry
+	// RunnerTokenService authenticates runners. Required when Store is set.
+	RunnerTokenService *auth.RunnerTokenService
+	// MessageRouter routes inbound runner messages. Required when Store is set.
+	MessageRouter MessageRouterInterface
+	// LogSubscribers receives streamed logs for real-time subscribers.
+	// Optional.
+	LogSubscribers core.LogSubscriberManagerInterface
+}
+
+// validate checks that the runner lifecycle components are present whenever a
+// store is configured. A nil component here is exactly the failure mode this
+// wiring pass exists to remove, so it is an error, not a warning.
+func (c Config) validate() error {
+	if c.Store == nil {
+		return nil
+	}
+	switch {
+	case c.RunnerManager == nil:
+		return fmt.Errorf("grpc: RunnerManager is required when Store is set")
+	case c.RunnerRegistry == nil:
+		return fmt.Errorf("grpc: RunnerRegistry is required when Store is set")
+	case c.RunnerTokenService == nil:
+		return fmt.Errorf("grpc: RunnerTokenService is required when Store is set")
+	case c.MessageRouter == nil:
+		return fmt.Errorf("grpc: MessageRouter is required when Store is set")
+	}
+	return nil
 }
 
 // ServerOption is a functional option for configuring the gRPC server.
@@ -43,11 +81,7 @@ type ServerOption func(*serverOptions)
 
 // serverOptions holds optional dependencies for the gRPC server.
 type serverOptions struct {
-	permissionManager    core.PermissionManagerInterface
-	sessionManager       core.SessionManagerInterface
-	taskManager          core.TaskManagerInterface
 	connManager          *ConnectionManager
-	tunnelRouter         *TunnelRouter
 	browserStreamHandler BrowserStreamHandlerInterface
 
 	// Interceptors for metrics, tracing, etc.
@@ -55,39 +89,11 @@ type serverOptions struct {
 	streamInterceptors []grpc.StreamServerInterceptor
 }
 
-// WithPermissionManager sets the permission manager for handling permission requests from runners.
-func WithPermissionManager(pm core.PermissionManagerInterface) ServerOption {
-	return func(o *serverOptions) {
-		o.permissionManager = pm
-	}
-}
-
-// WithSessionManager sets the session manager for session operations.
-func WithSessionManager(sm core.SessionManagerInterface) ServerOption {
-	return func(o *serverOptions) {
-		o.sessionManager = sm
-	}
-}
-
-// WithTaskManager sets the task manager for task operations.
-func WithTaskManager(tm core.TaskManagerInterface) ServerOption {
-	return func(o *serverOptions) {
-		o.taskManager = tm
-	}
-}
-
 // WithConnManager sets the connection manager for the server.
 // If not provided, a new ConnectionManager will be created internally.
 func WithConnManager(cm *ConnectionManager) ServerOption {
 	return func(o *serverOptions) {
 		o.connManager = cm
-	}
-}
-
-// WithTunnelRouter sets the tunnel router for handling tunnel data.
-func WithTunnelRouter(tr *TunnelRouter) ServerOption {
-	return func(o *serverOptions) {
-		o.tunnelRouter = tr
 	}
 }
 
@@ -116,6 +122,10 @@ func WithStreamInterceptor(i grpc.StreamServerInterceptor) ServerOption {
 
 // New creates a new gRPC server.
 func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) {
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
 	// Apply options
 	srvOpts := &serverOptions{}
 	for _, opt := range opts {
@@ -178,48 +188,21 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 		WithConnectionManager(connManager),
 	}
 
-	// If store is provided, wire up the full runner lifecycle
+	// Attach the runner lifecycle components built by core.Wire.
 	if cfg.Store != nil {
-		// Create token service for runner authentication
-		tokenSvc := auth.NewRunnerTokenService(cfg.Store, id.RunnerToken)
-
-		// Create runner registry for registration
-		registry := core.NewRunnerRegistry(cfg.Store, tokenSvc, logger)
-
-		// Create runner manager for lifecycle management
-		runnerMgrOpts := []core.RunnerManagerOption{}
-		if srvOpts.sessionManager != nil {
-			runnerMgrOpts = append(runnerMgrOpts, core.WithSessionManager(srvOpts.sessionManager))
-		}
-		runnerManager := core.NewRunnerManager(cfg.Store, connManager, logger, runnerMgrOpts...)
-
-		// Create message router with optional managers
-		routerOpts := []MessageRouterOption{
-			WithMRStore(cfg.Store), // Required for permission request handling
-		}
-		if srvOpts.permissionManager != nil {
-			routerOpts = append(routerOpts, WithMRPermissionManager(srvOpts.permissionManager))
-		}
-		if srvOpts.taskManager != nil {
-			routerOpts = append(routerOpts, WithMRTaskManager(srvOpts.taskManager))
-		}
-		if srvOpts.sessionManager != nil {
-			routerOpts = append(routerOpts, WithMRSessionManager(srvOpts.sessionManager))
-		}
-		if srvOpts.tunnelRouter != nil {
-			routerOpts = append(routerOpts, WithMRTunnelRouter(srvOpts.tunnelRouter))
-		}
-		router := NewMessageRouter(logger, runnerManager, routerOpts...)
-
 		svcOpts = append(svcOpts,
 			WithStore(cfg.Store),
-			WithTokenService(tokenSvc),
-			WithRegistry(registry),
-			WithRunnerManager(runnerManager),
-			WithRouter(router),
+			WithTokenService(cfg.RunnerTokenService),
+			WithRegistry(cfg.RunnerRegistry),
+			WithRunnerManager(cfg.RunnerManager),
+			WithRouter(cfg.MessageRouter),
 		)
 
-		logger.Info("runner lifecycle services initialized")
+		if cfg.LogSubscribers != nil {
+			svcOpts = append(svcOpts, WithLogSubscriberManager(cfg.LogSubscribers))
+		}
+
+		logger.Info("runner lifecycle services attached")
 	} else {
 		logger.Warn("store not configured - runner registration will not work")
 	}
