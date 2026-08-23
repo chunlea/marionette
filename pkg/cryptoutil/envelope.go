@@ -7,9 +7,11 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -53,11 +55,20 @@ type DEKStore interface {
 // Each resource (e.g., tenant, agent config) has its own DEK, which is stored
 // encrypted by the KEK in the database.
 type Service struct {
-	kek      []byte        // Key Encryption Key (from environment)
-	kekID    string        // Optional KEK identifier
-	store    DEKStore      // For persisting encrypted DEKs
-	idGen    func() string // ID generator for new DEKs
-	dekCache sync.Map      // Cache of decrypted DEKs: "resourceType:resourceID" -> []byte
+	kek   []byte        // Key Encryption Key (from environment)
+	kekID string        // Optional KEK identifier
+	store DEKStore      // For persisting encrypted DEKs
+	idGen func() string // ID generator for new DEKs
+
+	// dekCache holds decrypted DEKs keyed by "resourceType:resourceID".
+	// Bounded: one entry per tenant per resource type would otherwise grow
+	// without limit, and these are plaintext key material held in memory.
+	dekCache *dekCache
+
+	// creating collapses concurrent first-use of the same resource into one
+	// DEK creation. Without it every caller generates its own key and all but
+	// one are discarded — along with anything already encrypted under them.
+	creating singleflight.Group
 }
 
 // NewService creates a new encryption service.
@@ -77,9 +88,10 @@ func NewService(kekHex string, store DEKStore, idGen func() string) (*Service, e
 	}
 
 	return &Service{
-		kek:   kek,
-		store: store,
-		idGen: idGen,
+		kek:      kek,
+		store:    store,
+		idGen:    idGen,
+		dekCache: newDEKCache(defaultDEKCacheSize),
 	}, nil
 }
 
@@ -176,9 +188,9 @@ func (s *Service) RotateDEK(ctx context.Context, resourceType, resourceID string
 		return fmt.Errorf("failed to update DEK: %w", err)
 	}
 
-	// Update cache
-	cacheKey := resourceType + ":" + resourceID
-	s.dekCache.Store(cacheKey, newDEK)
+	// The rotated key replaces the cached one immediately: leaving the old one
+	// cached is how a rotation silently fails to take effect.
+	s.dekCache.put(resourceType+":"+resourceID, newDEK)
 
 	return nil
 }
@@ -199,88 +211,96 @@ func (s *Service) DecryptDirect(ciphertext []byte) ([]byte, error) {
 func (s *Service) getOrCreateDEK(ctx context.Context, resourceType, resourceID string) ([]byte, error) {
 	cacheKey := resourceType + ":" + resourceID
 
-	// Check cache first
-	if cached, ok := s.dekCache.Load(cacheKey); ok {
-		return cached.([]byte), nil
+	if cached, ok := s.dekCache.get(cacheKey); ok {
+		return cached, nil
 	}
 
-	// Try to load from store
+	// One creation per resource per process; the rest wait and share the result.
+	dek, err, _ := s.creating.Do(cacheKey, func() (any, error) {
+		return s.loadOrCreateDEK(ctx, resourceType, resourceID)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return dek.([]byte), nil
+}
+
+func (s *Service) loadOrCreateDEK(ctx context.Context, resourceType, resourceID string) ([]byte, error) {
+	cacheKey := resourceType + ":" + resourceID
+
+	// Another caller may have finished while this one waited.
+	if cached, ok := s.dekCache.get(cacheKey); ok {
+		return cached, nil
+	}
+
 	if s.store != nil {
-		dk, err := s.store.GetDEK(ctx, resourceType, resourceID)
-		if err == nil && dk != nil {
-			// Decrypt the stored DEK
-			encryptedDEK, err := base64.StdEncoding.DecodeString(dk.DEKEncrypted)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode DEK: %w", err)
-			}
-
-			dek, err := s.decryptWithKey(s.kek, encryptedDEK)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
-			}
-
-			// Cache and return
-			s.dekCache.Store(cacheKey, dek)
+		dek, err := s.loadDEK(ctx, resourceType, resourceID)
+		switch {
+		case err == nil:
+			s.dekCache.put(cacheKey, dek)
 			return dek, nil
-		}
-		// If error is not "not found", return it
-		if err != nil && err != ErrDEKNotFound {
+		case !errors.Is(err, ErrDEKNotFound):
+			// Anything other than "no key yet" is a real failure. This used to
+			// be a != comparison, which never matched a wrapped error and so
+			// treated a broken store as an empty one — quietly generating a
+			// second DEK for a resource that already had one.
 			return nil, fmt.Errorf("failed to get DEK: %w", err)
 		}
 	}
 
-	// Generate new DEK
 	dek := make([]byte, keySize)
 	if _, err := rand.Read(dek); err != nil {
 		return nil, fmt.Errorf("failed to generate DEK: %w", err)
 	}
 
-	// Persist if we have a store
-	if s.store != nil {
-		encryptedDEK, err := s.encryptWithKey(s.kek, dek)
-		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt DEK: %w", err)
-		}
-
-		id := ""
-		if s.idGen != nil {
-			id = s.idGen()
-		}
-
-		dk := &DataKey{
-			ID:           id,
-			ResourceType: resourceType,
-			ResourceID:   resourceID,
-			DEKEncrypted: base64.StdEncoding.EncodeToString(encryptedDEK),
-			Algorithm:    AlgorithmAES256GCM,
-			KEKID:        s.kekID,
-			CreatedAt:    time.Now(),
-		}
-
-		if err := s.store.CreateDEK(ctx, dk); err != nil {
-			return nil, fmt.Errorf("failed to store DEK: %w", err)
-		}
+	if s.store == nil {
+		s.dekCache.put(cacheKey, dek)
+		return dek, nil
 	}
 
-	// Cache and return
-	s.dekCache.Store(cacheKey, dek)
+	encryptedDEK, err := s.encryptWithKey(s.kek, dek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt DEK: %w", err)
+	}
+
+	id := ""
+	if s.idGen != nil {
+		id = s.idGen()
+	}
+
+	dk := &DataKey{
+		ID:           id,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		DEKEncrypted: base64.StdEncoding.EncodeToString(encryptedDEK),
+		Algorithm:    AlgorithmAES256GCM,
+		KEKID:        s.kekID,
+		CreatedAt:    time.Now(),
+	}
+
+	if err := s.store.CreateDEK(ctx, dk); err != nil {
+		if !errors.Is(err, ErrDEKExists) {
+			return nil, fmt.Errorf("failed to store DEK: %w", err)
+		}
+
+		// Another process won. Its key is the one everything else will use, so
+		// discard ours and adopt theirs; keeping ours would make anything we
+		// encrypt unreadable to every other process.
+		existing, err := s.loadDEK(ctx, resourceType, resourceID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load concurrently created DEK: %w", err)
+		}
+		s.dekCache.put(cacheKey, existing)
+		return existing, nil
+	}
+
+	s.dekCache.put(cacheKey, dek)
 	return dek, nil
 }
 
-// getDEK retrieves a DEK for the specified resource (does not create).
-func (s *Service) getDEK(ctx context.Context, resourceType, resourceID string) ([]byte, error) {
-	cacheKey := resourceType + ":" + resourceID
-
-	// Check cache first
-	if cached, ok := s.dekCache.Load(cacheKey); ok {
-		return cached.([]byte), nil
-	}
-
-	// Load from store
-	if s.store == nil {
-		return nil, ErrDEKNotFound
-	}
-
+// loadDEK reads and decrypts the stored DEK for a resource. It does not cache.
+func (s *Service) loadDEK(ctx context.Context, resourceType, resourceID string) ([]byte, error) {
 	dk, err := s.store.GetDEK(ctx, resourceType, resourceID)
 	if err != nil {
 		return nil, err
@@ -289,7 +309,6 @@ func (s *Service) getDEK(ctx context.Context, resourceType, resourceID string) (
 		return nil, ErrDEKNotFound
 	}
 
-	// Decrypt the stored DEK
 	encryptedDEK, err := base64.StdEncoding.DecodeString(dk.DEKEncrypted)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode DEK: %w", err)
@@ -300,9 +319,40 @@ func (s *Service) getDEK(ctx context.Context, resourceType, resourceID string) (
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// Cache and return
-	s.dekCache.Store(cacheKey, dek)
 	return dek, nil
+}
+
+// getDEK retrieves a DEK for the specified resource (does not create).
+func (s *Service) getDEK(ctx context.Context, resourceType, resourceID string) ([]byte, error) {
+	cacheKey := resourceType + ":" + resourceID
+
+	if cached, ok := s.dekCache.get(cacheKey); ok {
+		return cached, nil
+	}
+
+	if s.store == nil {
+		return nil, ErrDEKNotFound
+	}
+
+	dek, err := s.loadDEK(ctx, resourceType, resourceID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.dekCache.put(cacheKey, dek)
+	return dek, nil
+}
+
+// InvalidateDEK drops the cached key for a resource, so the next use re-reads
+// it. Call this after rotating a DEK: the cache is the whole reason a rotation
+// would otherwise not take effect until the process restarts.
+func (s *Service) InvalidateDEK(resourceType, resourceID string) {
+	s.dekCache.delete(resourceType + ":" + resourceID)
+}
+
+// InvalidateAll drops every cached key. Call this after a KEK rotation.
+func (s *Service) InvalidateAll() {
+	s.dekCache.reset()
 }
 
 // encryptWithKey encrypts plaintext using AES-256-GCM with the given key.
@@ -357,8 +407,10 @@ func (s *Service) decryptWithKey(key, ciphertext []byte) ([]byte, error) {
 }
 
 // ClearCache clears the DEK cache. Useful for testing or after KEK rotation.
+//
+// Deprecated: use InvalidateAll, which says what it does at the call site.
 func (s *Service) ClearCache() {
-	s.dekCache = sync.Map{}
+	s.InvalidateAll()
 }
 
 // GenerateKEK generates a new random KEK and returns it as a hex string.
