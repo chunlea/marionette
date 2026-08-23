@@ -1,0 +1,41 @@
+pkg/server/grpc/connection.go
+  s_e995f4552d48c1::t_5d69fe568a0158 41-45,48-53,58-90,257-260,263,274-284
+pkg/server/grpc/control_channel_test.go
+  s_30fb41c4a911b8::t_cd2745b8f7a6bc 5-6,322-424
+pkg/server/grpc/runner_service.go
+  s_476c758fe5506c::t_0caa4396df901a 238
+pkg/server/grpc/control_channel.go
+  s_30fb41c4a911b8::t_7204504179b4ff 124-127,145-150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "a1a0e1c7421b78942fae56c70639df344c39e8ca",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
