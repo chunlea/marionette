@@ -1,0 +1,29 @@
+pkg/server/core/runner_manager_test.go
+  s_e995f4552d48c1::t_060e65aabeab10 1810-1814
+pkg/server/core/scheduled_task_service_test.go
+  s_e995f4552d48c1::t_1d2d7ec346b5ba 880-884
+pkg/server/core/session_manager_test.go
+  s_e995f4552d48c1::t_32384aaf88d2bc 2848-2852
+pkg/server/core/task_manager.go
+  s_e995f4552d48c1::t_9db9b48887b68a 8,76,716-745
+pkg/server/core/task_manager_test.go
+  s_e995f4552d48c1::t_d45a40343bfeb9 1950-1991
+pkg/server/grpc/message_router_test.go
+  s_e995f4552d48c1::t_95337fc1311f62 1739-1743
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "3b9595bd75a075203f07a3d364373166b5bfeb38",
+  "prompts": {},
+  "sessions": {
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
