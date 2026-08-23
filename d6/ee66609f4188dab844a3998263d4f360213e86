@@ -1,0 +1,31 @@
+pkg/agent/config.go
+  s_1e03d1f9444213::t_76466bb8fd6d03 11-12,63-86,278,362-364,402-420
+pkg/agent/workspace_sync.go
+  s_6ce8a3a3b8d9e6::t_c5dc0ea5b8309e 197,214-230
+pkg/agent/workspace_sync_test.go
+  s_6ce8a3a3b8d9e6::t_faf50e4057b3e1 25-32,38,589-701
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "d6ee66609f4188dab844a3998263d4f360213e86",
+  "prompts": {},
+  "sessions": {
+    "s_1e03d1f9444213": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f08e1d14-b06b-4619-aa64-c85c623e5795",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_6ce8a3a3b8d9e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f1a55cc-dd39-4229-91f5-7498430c8926",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
