@@ -367,13 +367,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","sessi
 //
 // Skipped unless MARIONETTE_LIVE_CLAUDE=1, since it costs tokens.
 func TestExecutor_Execute_RealCLIGate(t *testing.T) {
-	if os.Getenv("MARIONETTE_LIVE_CLAUDE") != "1" {
-		t.Skip("set MARIONETTE_LIVE_CLAUDE=1 to run against the real Claude CLI")
-	}
-
-	binary, err := exec.LookPath("claude")
-	require.NoError(t, err, "claude must be on PATH")
-
+	binary := requireLiveCLI(t)
 	hookBinary := buildHookHelper(t)
 
 	handler := &gateHandler{approve: false}
