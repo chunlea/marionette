@@ -1,0 +1,23 @@
+pkg/agent/run_ledger.go
+  s_683f0a71c8fb68::t_e7874bb01e2ba0 1-131
+pkg/agent/task_runner.go
+  s_683f0a71c8fb68::t_ab85201de1630f 42-46,85,93-129
+pkg/agent/run_ledger_test.go
+  s_683f0a71c8fb68::t_a3ce8cf3933b21 1-306
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "8c39c28949d31cfa72b766932fb2fbcd3eb68c9b",
+  "prompts": {},
+  "sessions": {
+    "s_683f0a71c8fb68": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a8647725-70f7-4390-95b1-c9bcbff2a34d",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
