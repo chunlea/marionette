@@ -124,6 +124,8 @@ func main() {
 	var grpcCfg grpcserver.Config
 	var webhookDeliveryJob *jobs.WebhookDeliveryJob
 	var logArchive logArchiving
+	var replicaRegistry *core.ReplicaRegistry
+	var peerForwarder *grpcserver.PeerForwarder
 
 	if dbStore != nil {
 		// Create API key service (needed for both public and admin APIs)
@@ -250,6 +252,41 @@ func main() {
 		grpcCfg.RunnerTokenService = runnerTokenSvc
 		grpcCfg.MessageRouter = messageRouter
 		grpcCfg.LogSubscribers = app.LogSubscribers
+
+		// Cross-replica command routing.
+		//
+		// A runner's control stream lives in one process, so without this a
+		// second replica cannot reach it and every ExecuteTask, DetachSession
+		// and permission response between them fails. The registry publishes
+		// which process holds which stream; the forwarder is the one hop that
+		// uses it.
+		//
+		// A single-process deployment pays for the heartbeat and nothing else:
+		// SendCommand answers from the local map every time and never reaches
+		// the locator.
+		routingMetrics := grpcserver.NewRoutingMetrics(metricsRegisterer, cfg.Observability.Metrics.Namespace)
+		replicaRegistry, err = core.NewReplicaRegistry(dbStore, core.ReplicaRegistryConfig{
+			AdvertiseAddr:       replicaAdvertiseAddr(cfg, logger),
+			ObserveReplicaCount: routingMetrics.SetLiveReplicas,
+		}, logger.Named("replica-registry"))
+		if err != nil {
+			logger.Fatal("failed to build the replica registry", zap.Error(err))
+		}
+
+		peerCredential := grpcserver.DerivePeerCredential(secrets.MasterKey)
+		if peerCredential == "" {
+			logger.Warn("cross-replica command routing is disabled: " +
+				"MARIONETTE_MASTER_KEY is not set, so peer replicas cannot be authenticated. " +
+				"Single-replica deployments are unaffected")
+		}
+		peerForwarder = grpcserver.NewPeerForwarder(
+			peerCredential, replicaRegistry.ID(), logger.Named("peer-forwarder"))
+
+		connManager.SetRouter(replicaLocator{registry: replicaRegistry}, peerForwarder, routingMetrics)
+
+		grpcCfg.ConnectionBinder = replicaRegistry
+		grpcCfg.PeerCredential = peerCredential
+		grpcCfg.RoutingMetrics = routingMetrics
 
 		// Wire gRPC server options
 		grpcOpts = append(grpcOpts,
@@ -450,6 +487,14 @@ func main() {
 		}
 	}()
 
+	// Announce this replica once the gRPC listener is up, so a peer that reads
+	// the row and dials immediately finds something listening.
+	if replicaRegistry != nil {
+		if err := replicaRegistry.Start(context.Background()); err != nil {
+			logger.Error("failed to start the replica registry", zap.Error(err))
+		}
+	}
+
 	// Start metrics server if enabled
 	if metricsServer != nil {
 		go func() {
@@ -541,6 +586,17 @@ func main() {
 		} else {
 			logger.Info("stream manager stopped")
 		}
+	}
+
+	// Withdraw this replica from the routing table before the listener goes,
+	// so peers stop forwarding to a process that can no longer deliver.
+	// Without it they would keep trying until the heartbeat expires, which
+	// turns every rolling restart into a window of failed commands.
+	if replicaRegistry != nil {
+		replicaRegistry.Stop(ctx)
+	}
+	if peerForwarder != nil {
+		peerForwarder.Close()
 	}
 
 	// Shutdown all servers
@@ -686,6 +742,57 @@ func runnerServerURL(cfg *config.Config, logger *zap.Logger) string {
 		zap.String("configure", "providers.docker.isolation.server_url"),
 	)
 	return addr
+}
+
+// EnvGRPCAdvertiseAddr overrides the host:port peer replicas dial to hand this
+// process a command.
+//
+// The default derives from the gRPC listener, which is right whenever the
+// listener address is reachable from the other replicas. In Kubernetes that
+// means the pod IP: set this from the downward API (status.podIP) plus the
+// gRPC port. A wrong value is worse than none, because peers will route here
+// and time out rather than failing fast.
+const EnvGRPCAdvertiseAddr = "MARIONETTE_GRPC_ADVERTISE_ADDR"
+
+// replicaAdvertiseAddr resolves where peers reach this process.
+//
+// A loopback default is correct for a single-process deployment and correct
+// for the two-process tests; it is wrong for a real multi-replica deployment,
+// which is why picking it is logged.
+func replicaAdvertiseAddr(cfg *config.Config, logger *zap.Logger) string {
+	if addr := os.Getenv(EnvGRPCAdvertiseAddr); addr != "" {
+		return addr
+	}
+
+	host := cfg.Server.GRPC.Host
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(cfg.Server.GRPC.Port))
+	logger.Info("derived the replica advertise address from the gRPC listener",
+		zap.String("advertise_addr", addr),
+		zap.String("configure", EnvGRPCAdvertiseAddr),
+	)
+	return addr
+}
+
+// replicaLocator adapts core.ReplicaRegistry to the locator the gRPC
+// connection manager wants.
+//
+// The two Peer types are the same three fields; they are separate because core
+// cannot import the gRPC package (that dependency runs the other way), and
+// this is the seam where they meet.
+type replicaLocator struct {
+	registry *core.ReplicaRegistry
+}
+
+func (l replicaLocator) Locate(runnerID string) (grpcserver.RunnerPeer, bool) {
+	peer, ok := l.registry.Locate(runnerID)
+	if !ok {
+		return grpcserver.RunnerPeer{}, false
+	}
+	return grpcserver.RunnerPeer{ReplicaID: peer.ReplicaID, Addr: peer.Addr}, true
 }
 
 // initCredentialCrypto builds the envelope crypto the admin agent-config
