@@ -18,6 +18,14 @@ const DefaultTTL = 1 * time.Hour
 const MaxTTL = 24 * time.Hour
 
 // TunnelManager manages tunnel lifecycle and routing.
+//
+// TODO(lane-ROUTE): cmd/server/main.go builds this manager without WithStore,
+// so store is nil in production: Create never writes the tunnels table and
+// every read-through path below dead-ends. Tunnels are memory-only and vanish
+// on restart. Wiring it needs an adapter from store.Store (which has the full
+// tunnel CRUD, including GetTunnelByTokenHash) to this package's Store, plus
+// two calls the interface does not carry today — the token display prefix
+// (token_prefix is NOT NULL) and tenant_id (D2-deferred, so NULL for now).
 type TunnelManager struct {
 	store  Store
 	logger *zap.Logger
