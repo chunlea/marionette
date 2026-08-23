@@ -48,26 +48,26 @@ func TestParser_Goldens(t *testing.T) {
 	}{
 		{
 			golden:      goldenBasic,
-			wantSession: "080a38b4-4ab2-434d-927e-2f3103a3f56e",
+			wantSession: goldenBasicSession,
 			wantResult:  "hi",
 			wantInput:   2,
 			wantOutput:  4,
 		},
 		{
 			golden:      goldenToolUse,
-			wantSession: "5232e175-c2cc-4cf1-a2d1-b50a1850607e",
+			wantSession: goldenToolUseSession,
 			wantResult:  "marionette-golden",
 			wantInput:   4,
-			wantOutput:  122,
+			wantOutput:  123,
 			wantToolUse: 1,
 			wantToolRes: 1,
 		},
 		{
 			golden:      goldenResume,
-			wantSession: "080a38b4-4ab2-434d-927e-2f3103a3f56e",
-			wantResult:  "hi",
+			wantSession: goldenBasicSession,
+			wantResult:  "hi again",
 			wantInput:   2,
-			wantOutput:  4,
+			wantOutput:  5,
 		},
 	}
 
@@ -124,9 +124,9 @@ func TestParser_GoldenInitEvent(t *testing.T) {
 	}
 
 	require.NotEmpty(t, init, "the system/init line must produce an init event")
-	assert.Contains(t, init, "session=080a38b4-4ab2-434d-927e-2f3103a3f56e")
-	assert.Contains(t, init, "version=2.1.241")
-	assert.Contains(t, init, "model=claude-fable-5")
+	assert.Contains(t, init, "session="+goldenBasicSession)
+	assert.Contains(t, init, "version="+goldenCLIVersion)
+	assert.Contains(t, init, "model="+goldenModel)
 }
 
 // TestParser_GoldenPassesThroughMidStreamNoise pins the trap from the brief:
@@ -315,7 +315,7 @@ func TestParser_UnknownTypeDoesNotEndTurn(t *testing.T) {
 
 	require.NotNil(t, p.Result())
 	assert.True(t, p.Result().Succeeded())
-	assert.Equal(t, "080a38b4-4ab2-434d-927e-2f3103a3f56e", p.SessionID())
+	assert.Equal(t, goldenBasicSession, p.SessionID())
 }
 
 func TestParser_SessionIDTracking(t *testing.T) {

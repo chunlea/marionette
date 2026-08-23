@@ -31,41 +31,44 @@ func TestResultMessage_FromGolden(t *testing.T) {
 	}{
 		{
 			golden:       goldenBasic,
-			wantSession:  "080a38b4-4ab2-434d-927e-2f3103a3f56e",
+			wantSession:  goldenBasicSession,
 			wantResult:   "hi",
 			wantTurns:    1,
-			wantCostMin:  0.4,
+			wantCostMin:  0.07,
 			wantInput:    2,
 			wantOutput:   4,
-			wantCacheCr:  19662,
-			wantCacheRd:  16248,
+			wantCacheCr:  16286,
+			wantCacheRd:  30274,
 			wantStopWhy:  "end_turn",
-			wantModelKey: "claude-fable-5",
+			wantModelKey: goldenModel,
 		},
 		{
 			golden:       goldenToolUse,
-			wantSession:  "5232e175-c2cc-4cf1-a2d1-b50a1850607e",
+			wantSession:  goldenToolUseSession,
 			wantResult:   "marionette-golden",
 			wantTurns:    2,
 			wantCostMin:  0.12,
 			wantInput:    4,
-			wantOutput:   122,
-			wantCacheCr:  27652,
-			wantCacheRd:  71212,
+			wantOutput:   123,
+			wantCacheCr:  27688,
+			wantCacheRd:  71551,
 			wantStopWhy:  "end_turn",
-			wantModelKey: "claude-sonnet-5",
+			wantModelKey: goldenModel,
 		},
 		{
-			golden:      goldenResume,
-			wantSession: "080a38b4-4ab2-434d-927e-2f3103a3f56e",
-			wantResult:  "hi",
-			wantTurns:   1,
-			wantCostMin: 0.3,
-			wantInput:   2,
-			wantOutput:  4,
-			wantCacheCr: 81859,
-			wantCacheRd: 0,
-			wantStopWhy: "end_turn",
+			// Resume continues the session basic.jsonl created, so it reports
+			// the same session id.
+			golden:       goldenResume,
+			wantSession:  goldenBasicSession,
+			wantResult:   "hi again",
+			wantTurns:    1,
+			wantCostMin:  0.26,
+			wantInput:    2,
+			wantOutput:   5,
+			wantCacheCr:  66393,
+			wantCacheRd:  0,
+			wantStopWhy:  "end_turn",
+			wantModelKey: goldenModel,
 		},
 	}
 
@@ -214,15 +217,31 @@ func TestInitMessage_FromGolden(t *testing.T) {
 
 	assert.Equal(t, MessageTypeSystem, init.Type)
 	assert.Equal(t, SystemSubtypeInit, init.Subtype)
-	assert.Equal(t, "080a38b4-4ab2-434d-927e-2f3103a3f56e", init.SessionID)
-	assert.Equal(t, "2.1.241", init.ClaudeCodeVersion)
-	assert.Equal(t, "claude-fable-5", init.Model)
-	// basic.jsonl and tooluse.jsonl were recorded under "auto";
-	// resume.jsonl under "acceptEdits". The CLI echoes back the mode it ran
-	// with, so this must not be asserted as a constant.
-	assert.Equal(t, "auto", init.PermissionMode)
+	assert.Equal(t, goldenBasicSession, init.SessionID)
+	assert.Equal(t, goldenCLIVersion, init.ClaudeCodeVersion)
+	assert.Equal(t, goldenModel, init.Model)
+	assert.Equal(t, goldenPermissionMode, init.PermissionMode)
 	assert.NotEmpty(t, init.Tools)
 	assert.NotEmpty(t, init.CWD)
+}
+
+// TestInitMessage_RecordingsAreConsistent keeps the fixture set honest: all
+// three recordings must come from the same CLI version, model and permission
+// mode. The CLI echoes back what it actually ran with, so a re-record that
+// drifts on any of these shows up here instead of silently changing what the
+// other tests are pinning.
+func TestInitMessage_RecordingsAreConsistent(t *testing.T) {
+	for _, name := range []string{goldenBasic, goldenToolUse, goldenResume} {
+		t.Run(name, func(t *testing.T) {
+			var init InitMessage
+			require.NoError(t, json.Unmarshal(
+				goldenLineOfType(t, name, MessageTypeSystem, SystemSubtypeInit), &init))
+
+			assert.Equal(t, goldenCLIVersion, init.ClaudeCodeVersion)
+			assert.Equal(t, goldenModel, init.Model)
+			assert.Equal(t, goldenPermissionMode, init.PermissionMode)
+		})
+	}
 }
 
 // TestInitMessage_ResumeIsNotCwdBound documents a trap: resume.jsonl was

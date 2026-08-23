@@ -18,6 +18,21 @@ const (
 	goldenResume  = "resume.jsonl"
 )
 
+// Properties every recording shares. All three were captured in one pass with
+// the same CLI, model and permission mode; see testdata/golden/README.md.
+const (
+	goldenCLIVersion     = "2.1.241"
+	goldenModel          = "claude-sonnet-5"
+	goldenPermissionMode = "auto"
+)
+
+// Session ids the recordings report. resume.jsonl continues basic.jsonl's
+// session, so it reports goldenBasicSession too.
+const (
+	goldenBasicSession   = "c184bf5b-db6e-4705-a45f-eeb5c28f965b"
+	goldenToolUseSession = "698a1b66-8639-40c4-90f6-c061da925803"
+)
+
 // goldenLines returns every non-empty line of a golden recording.
 // Tests read the recordings rather than embedding copies of them, so a
 // re-recording immediately shows up as a test failure instead of drifting.
