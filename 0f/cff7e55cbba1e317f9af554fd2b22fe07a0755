@@ -1,0 +1,23 @@
+pkg/server/admin/openapi.yaml
+  s_c8578aa5dbeab3::t_8ffce890c3f03c 9-10,15-23
+web/.env.example
+  s_c8578aa5dbeab3::t_ab854d43db3f9d 1-3,7-12
+web/src/vite-env.d.ts
+  s_c8578aa5dbeab3::t_14c7b8a305e6c8 6-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "0fcff7e55cbba1e317f9af554fd2b22fe07a0755",
+  "prompts": {},
+  "sessions": {
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
