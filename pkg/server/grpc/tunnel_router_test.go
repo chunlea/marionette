@@ -111,9 +111,7 @@ func TestTunnelRouter_HandleTunnelData(t *testing.T) {
 	// Create a mock connection manually
 	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
 	responseCh := conn.responseCh
-	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = conn
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, conn)
 
 	// Handle incoming data
 	err := tr.HandleTunnelData(context.Background(), "run_test", &pb.TunnelData{
@@ -155,9 +153,7 @@ func TestTunnelRouter_HandleTunnelData_WrongRunner(t *testing.T) {
 	// Create connection
 	conn := newTunnelConnection("tun_test", "conn_test", "run_correct")
 	responseCh := conn.responseCh
-	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = conn
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, conn)
 
 	// Handle data from wrong runner (should be ignored)
 	err := tr.HandleTunnelData(context.Background(), "run_wrong", &pb.TunnelData{
@@ -182,9 +178,7 @@ func TestTunnelRouter_HandleTunnelData_EOF(t *testing.T) {
 
 	// Create connection
 	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
-	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = conn
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, conn)
 
 	// Handle EOF
 	err := tr.HandleTunnelData(context.Background(), "run_test", &pb.TunnelData{
@@ -194,11 +188,9 @@ func TestTunnelRouter_HandleTunnelData_EOF(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Verify connection was closed
-	tr.connectionsMu.RLock()
-	_, exists := tr.connections["conn_test"]
-	tr.connectionsMu.RUnlock()
-	assert.False(t, exists)
+	// The pump delivers EOF and then tears the connection down.
+	waitPumpDone(t, conn)
+	assertConnectionGone(t, tr, "conn_test")
 }
 
 func TestTunnelRouter_CloseConnection(t *testing.T) {
@@ -208,9 +200,7 @@ func TestTunnelRouter_CloseConnection(t *testing.T) {
 	// Create connection
 	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
 	responseCh := conn.responseCh
-	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = conn
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, conn)
 
 	// Close connection
 	tr.CloseConnection("conn_test")
@@ -237,9 +227,7 @@ func TestTunnelRouter_HandleCloseTunnel(t *testing.T) {
 	// Create tunnel registration and connections
 	tr.RegisterTunnel("tun_test", "run_test")
 	conn := newTunnelConnection("tun_test", "conn_1", "run_test")
-	tr.connectionsMu.Lock()
-	tr.connections["conn_1"] = conn
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, conn)
 
 	// Handle close
 	err := tr.HandleCloseTunnel(context.Background(), "run_test", "tun_test", "test cleanup")
@@ -265,10 +253,8 @@ func TestTunnelRouter_CleanupIdleConnections(t *testing.T) {
 
 	active := newTunnelConnection("tun_test", "conn_active", "")
 
-	tr.connectionsMu.Lock()
-	tr.connections["conn_idle"] = idle
-	tr.connections["conn_active"] = active
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, idle)
+	registerForTest(t, tr, active)
 
 	cleaned := tr.CleanupIdleConnections(time.Hour)
 	assert.Equal(t, 1, cleaned)
@@ -292,9 +278,7 @@ func TestTunnelRouter_CleanupIdleConnections_SparesOldButActive(t *testing.T) {
 	conn := newTunnelConnection("tun_test", "conn_ws", "run_test")
 	conn.createdAt = time.Now().Add(-6 * time.Hour)
 
-	tr.connectionsMu.Lock()
-	tr.connections["conn_ws"] = conn
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, conn)
 
 	assert.Equal(t, 0, tr.CleanupIdleConnections(time.Hour))
 
@@ -432,38 +416,38 @@ func TestTunnelRouter_SendEOF_NoConnectionManager(t *testing.T) {
 	assert.Contains(t, err.Error(), "connection manager not configured")
 }
 
-func TestTunnelRouter_HandleTunnelData_ContextCancelled(t *testing.T) {
+// The caller's context no longer gates delivery. Enqueueing is instant and the
+// pump owns the wait, so a control stream whose context is already cancelled
+// still hands the frame over rather than dropping it on the floor.
+func TestTunnelRouter_HandleTunnelData_CallerContextDoesNotGateDelivery(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	tr := NewTunnelRouter(WithTRLogger(logger))
 
-	// Fill the response channel so the send has to block.
 	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
-	for i := 0; i < cap(conn.responseCh); i++ {
-		conn.responseCh <- &pb.TunnelData{}
-	}
-	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = conn
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, conn)
 
-	// Use cancelled context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	// Handle data with cancelled context
 	err := tr.HandleTunnelData(ctx, "run_test", &pb.TunnelData{
 		TunnelId:     "tun_test",
 		ConnectionId: "conn_test",
-		Data:         []byte("test"),
+		Data:         []byte("delivered anyway"),
 	})
+	require.NoError(t, err)
 
-	// Should return context error
-	require.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
+	select {
+	case frame := <-conn.responseCh:
+		assert.Equal(t, []byte("delivered anyway"), frame.GetData())
+	case <-time.After(3 * time.Second):
+		t.Fatal("frame was not delivered")
+	}
 }
 
 // TestTunnelRouter_HandleTunnelData_StalledConsumer is the regression test for
 // the old `default:` branch, which silently dropped bytes mid-body whenever a
-// consumer fell behind. A stalled consumer must now fail loudly instead.
+// consumer fell behind. A stalled consumer must still fail loudly - the wait
+// simply happens on the pump now instead of on the caller.
 func TestTunnelRouter_HandleTunnelData_StalledConsumer(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	tr := NewTunnelRouter(
@@ -476,23 +460,56 @@ func TestTunnelRouter_HandleTunnelData_StalledConsumer(t *testing.T) {
 		conn.responseCh <- &pb.TunnelData{}
 	}
 
-	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = conn
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, conn)
 
+	// The caller is not held up by the stalled consumer.
 	err := tr.HandleTunnelData(context.Background(), "run_test", &pb.TunnelData{
 		TunnelId:     "tun_test",
 		ConnectionId: "conn_test",
 		Data:         []byte("must not be dropped silently"),
 	})
+	require.NoError(t, err)
 
-	require.ErrorIs(t, err, errSendTimeout)
+	// The pump waits out the send timeout and then tears the connection down,
+	// rather than leaking bytes.
+	waitPumpDone(t, conn)
+	assertConnectionGone(t, tr, "conn_test")
+}
 
-	// The connection is torn down rather than left leaking bytes.
-	tr.connectionsMu.RLock()
-	_, exists := tr.connections["conn_test"]
-	tr.connectionsMu.RUnlock()
-	assert.False(t, exists, "a stalled connection must be closed, not kept")
+// A consumer far enough behind to fill the inbox is rejected at enqueue, which
+// is the one place a full queue is reported to the caller. It is still a
+// teardown, never a silent drop.
+func TestTunnelRouter_HandleTunnelData_InboxOverflowTearsDownConnection(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tr := NewTunnelRouter(
+		WithTRLogger(logger),
+		WithTRSendTimeout(30*time.Second), // long: the pump must stay blocked
+	)
+
+	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
+	for i := 0; i < cap(conn.responseCh); i++ {
+		conn.responseCh <- &pb.TunnelData{}
+	}
+	registerForTest(t, tr, conn)
+
+	frame := func() *pb.TunnelData {
+		return &pb.TunnelData{
+			TunnelId:     "tun_test",
+			ConnectionId: "conn_test",
+			Data:         []byte("payload"),
+		}
+	}
+
+	// Fill the inbox. One frame may be in flight on the pump, so allow for it.
+	var err error
+	for i := 0; i < cap(conn.inbox)+2; i++ {
+		if err = tr.HandleTunnelData(context.Background(), "run_test", frame()); err != nil {
+			break
+		}
+	}
+
+	require.ErrorIs(t, err, errInboxFull)
+	assertConnectionGone(t, tr, "conn_test")
 }
 
 // TestTunnelRouter_HandleTunnelData_BlocksUntilDrained proves the send waits
@@ -509,9 +526,7 @@ func TestTunnelRouter_HandleTunnelData_BlocksUntilDrained(t *testing.T) {
 		conn.responseCh <- &pb.TunnelData{}
 	}
 
-	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = conn
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, conn)
 
 	payload := []byte("late but intact")
 
@@ -582,9 +597,7 @@ func TestTunnelRouter_CloseRace_NoSendOnClosedChannel(t *testing.T) {
 
 		const connID = "conn_race"
 		conn := newTunnelConnection("tun_race", connID, "run_race")
-		tr.connectionsMu.Lock()
-		tr.connections[connID] = conn
-		tr.connectionsMu.Unlock()
+		registerForTest(t, tr, conn)
 
 		var wg sync.WaitGroup
 
@@ -632,9 +645,7 @@ func TestTunnelRouter_HandleCloseTunnel_Race(t *testing.T) {
 
 		const connID = "conn_race"
 		conn := newTunnelConnection("tun_race", connID, "run_race")
-		tr.connectionsMu.Lock()
-		tr.connections[connID] = conn
-		tr.connectionsMu.Unlock()
+		registerForTest(t, tr, conn)
 
 		var wg sync.WaitGroup
 
@@ -675,9 +686,7 @@ func TestTunnelRouter_EOFAndClose_DoubleCloseSafe(t *testing.T) {
 
 	const connID = "conn_eof"
 	conn := newTunnelConnection("tun_eof", connID, "run_eof")
-	tr.connectionsMu.Lock()
-	tr.connections[connID] = conn
-	tr.connectionsMu.Unlock()
+	registerForTest(t, tr, conn)
 
 	require.NoError(t, tr.HandleTunnelData(context.Background(), "run_eof", &pb.TunnelData{
 		TunnelId:     "tun_eof",
@@ -685,7 +694,10 @@ func TestTunnelRouter_EOFAndClose_DoubleCloseSafe(t *testing.T) {
 		Eof:          true,
 	}))
 
-	// Second close must be a no-op, not a panic.
+	// Let the pump deliver EOF and tear the connection down.
+	waitPumpDone(t, conn)
+
+	// Further closes must be no-ops, not panics.
 	tr.CloseConnection(connID)
 	conn.close()
 
@@ -696,4 +708,173 @@ func TestTunnelRouter_EOFAndClose_DoubleCloseSafe(t *testing.T) {
 
 	_, ok = <-conn.responseCh
 	assert.False(t, ok, "channel must be closed after teardown")
+}
+
+// waitPumpDone blocks until a connection's pump goroutine has exited. Delivery
+// is asynchronous now, so assertions about it have to wait for the pump rather
+// than assume the work happened inline.
+func waitPumpDone(t *testing.T, conn *tunnelConnection) {
+	t.Helper()
+	select {
+	case <-conn.pumpDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pump did not exit")
+	}
+}
+
+// assertConnectionGone waits for a connection to leave the router's map. The
+// pump tears down on its own goroutine, so removal is eventual.
+func assertConnectionGone(t *testing.T, tr *TunnelRouter, connectionID string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		tr.connectionsMu.RLock()
+		defer tr.connectionsMu.RUnlock()
+		_, exists := tr.connections[connectionID]
+		return !exists
+	}, 5*time.Second, 5*time.Millisecond, "connection %s was not torn down", connectionID)
+}
+
+// TestTunnelRouter_StalledConsumerDoesNotBlockOtherTraffic is the regression
+// test for the head-of-line blocking the bounded blocking send introduced.
+//
+// A runner's control stream dispatches messages one at a time. When the router
+// waited for a stalled consumer inline, that wait held the whole stream: the
+// runner's heartbeats and every other tunnel's frames queued behind one wedged
+// HTTP client for up to the send timeout. The pump moves that wait onto the
+// connection it belongs to.
+//
+// The stalled connection here can never drain, and the send timeout is long, so
+// before the pump this test would take at least sendTimeout to get past the
+// first frame. It now completes in milliseconds.
+func TestTunnelRouter_StalledConsumerDoesNotBlockOtherTraffic(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	const sendTimeout = 30 * time.Second
+	tr := NewTunnelRouter(
+		WithTRLogger(logger),
+		WithTRSendTimeout(sendTimeout),
+	)
+
+	// A consumer that never reads: its response channel starts full.
+	stalled := newTunnelConnection("tun_stalled", "conn_stalled", "run_1")
+	for i := 0; i < cap(stalled.responseCh); i++ {
+		stalled.responseCh <- &pb.TunnelData{}
+	}
+	registerForTest(t, tr, stalled)
+
+	// A healthy connection on a different tunnel, same runner.
+	healthy := newTunnelConnection("tun_healthy", "conn_healthy", "run_1")
+	registerForTest(t, tr, healthy)
+
+	// Stand in for the control stream reader: it dispatches sequentially, so
+	// anything it blocks on delays everything behind it.
+	reader := func(connectionID, tunnelID string, payload []byte) error {
+		return tr.HandleTunnelData(context.Background(), "run_1", &pb.TunnelData{
+			TunnelId:     tunnelID,
+			ConnectionId: connectionID,
+			Data:         payload,
+		})
+	}
+
+	start := time.Now()
+
+	// One frame for the wedged consumer, which the pump will sit on.
+	require.NoError(t, reader("conn_stalled", "tun_stalled", []byte("blocks the pump")))
+
+	// The very next message on the same stream must not wait for it.
+	require.NoError(t, reader("conn_healthy", "tun_healthy", []byte("must not wait")))
+
+	select {
+	case frame := <-healthy.responseCh:
+		assert.Equal(t, []byte("must not wait"), frame.GetData())
+	case <-time.After(5 * time.Second):
+		t.Fatal("healthy tunnel starved behind the stalled one")
+	}
+
+	elapsed := time.Since(start)
+	assert.Less(t, elapsed, sendTimeout/10,
+		"other traffic waited on the stalled consumer (took %s)", elapsed)
+
+	// And the reader keeps flowing for the rest of the stream.
+	for i := 0; i < 20; i++ {
+		require.NoError(t, reader("conn_healthy", "tun_healthy", []byte("still flowing")))
+		select {
+		case <-healthy.responseCh:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("healthy tunnel stalled on frame %d", i)
+		}
+	}
+
+	assert.Less(t, time.Since(start), sendTimeout/10,
+		"sustained traffic was throttled by the stalled consumer")
+
+	// The stalled connection is still pending its own teardown, unaffecting
+	// everyone else. Clean it up so the pump goroutine does not outlive the test.
+	tr.CloseConnection("conn_stalled")
+	waitPumpDone(t, stalled)
+}
+
+// The same property, stated as the interleaving that actually matters: a
+// heartbeat dispatched behind a stalled tunnel frame is not delayed by it.
+func TestTunnelRouter_StalledConsumerDoesNotDelayHeartbeats(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	const sendTimeout = 30 * time.Second
+	tr := NewTunnelRouter(WithTRLogger(logger), WithTRSendTimeout(sendTimeout))
+
+	stalled := newTunnelConnection("tun_stalled", "conn_stalled", "run_1")
+	for i := 0; i < cap(stalled.responseCh); i++ {
+		stalled.responseCh <- &pb.TunnelData{}
+	}
+	registerForTest(t, tr, stalled)
+
+	heartbeats := make(chan time.Time, 8)
+
+	// The reader loop: a tunnel frame for the wedged consumer, then a
+	// heartbeat, repeatedly. Both run on the one goroutine, as they do in
+	// RunnerService.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 8; i++ {
+			_ = tr.HandleTunnelData(context.Background(), "run_1", &pb.TunnelData{
+				TunnelId:     "tun_stalled",
+				ConnectionId: "conn_stalled",
+				Data:         []byte("wedged"),
+			})
+			heartbeats <- time.Now()
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reader loop blocked behind the stalled consumer")
+	}
+
+	require.Len(t, heartbeats, 8, "every heartbeat should have been dispatched")
+
+	tr.CloseConnection("conn_stalled")
+	waitPumpDone(t, stalled)
+}
+
+// registerForTest registers a connection and guarantees its pump has exited
+// before the test ends.
+//
+// A pump outliving its test writes to a zaptest logger whose testing.T has
+// already returned, which races the test framework. Closing here also keeps
+// pump goroutines from leaking between tests.
+func registerForTest(t *testing.T, tr *TunnelRouter, conn *tunnelConnection) {
+	t.Helper()
+
+	tr.register(conn)
+
+	t.Cleanup(func() {
+		tr.CloseConnection(conn.connectionID)
+		select {
+		case <-conn.pumpDone:
+		case <-time.After(5 * time.Second):
+			t.Error("pump did not exit before the test ended")
+		}
+	})
 }

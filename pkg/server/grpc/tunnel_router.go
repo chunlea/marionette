@@ -13,19 +13,26 @@ import (
 )
 
 const (
-	// defaultTunnelSendTimeout bounds how long a frame from a runner may wait
-	// for the HTTP handler to drain responseCh before the connection is torn
-	// down. Sends block rather than drop: a dropped frame silently truncates
-	// the HTTP body or WebSocket frame the consumer is reassembling.
+	// defaultTunnelSendTimeout bounds how long a frame may wait for the HTTP
+	// handler to drain responseCh before the connection is torn down. Sends
+	// block rather than drop: a dropped frame silently truncates the HTTP body
+	// or WebSocket frame the consumer is reassembling.
 	//
-	// Because the runner control stream dispatches messages sequentially, a
-	// stalled consumer blocks that runner's other messages for up to this
-	// long. That is intentional back-pressure, but it is why the timeout
-	// exists and why the connection is dropped once it expires.
+	// This wait happens on the connection's own pump goroutine, so it costs
+	// that connection only. The runner's control stream is never held by it.
 	defaultTunnelSendTimeout = 30 * time.Second
 
 	// tunnelResponseBuffer is the per-connection response channel buffer.
 	tunnelResponseBuffer = 10
+
+	// tunnelInboxBuffer bounds the queue between the control stream reader and
+	// a connection's pump.
+	//
+	// Together with tunnelResponseBuffer this is the burst a briefly paused
+	// consumer can absorb before the connection is torn down. It is kept small
+	// deliberately: frames run to 64KB, so the queue is also the per-connection
+	// memory a wedged consumer can pin.
+	tunnelInboxBuffer = 64
 )
 
 var (
@@ -35,6 +42,10 @@ var (
 
 	// errSendTimeout means the consumer did not drain the channel in time.
 	errSendTimeout = errors.New("tunnel consumer stalled")
+
+	// errInboxFull means the consumer fell far enough behind to fill the
+	// connection's queue.
+	errInboxFull = errors.New("tunnel connection queue full")
 )
 
 // TunnelRouter routes TunnelData between HTTP handlers and runners.
@@ -79,11 +90,21 @@ type tunnelConnection struct {
 	// either direction. Accessed atomically so idle sweeps never block a
 	// sender.
 	lastActivity atomic.Int64
+
+	// inbox queues frames from the runner's control stream for the pump. The
+	// reader hands frames over here and moves on, so a stalled consumer costs
+	// this connection only rather than every message from that runner.
+	inbox chan *pb.TunnelData
+
+	// pumpDone is closed when the pump goroutine has exited.
+	pumpDone chan struct{}
 }
 
 // newTunnelConnection builds a connection with its close/activity bookkeeping
 // initialised. tunnelConnection must not be constructed as a bare literal:
 // close panics on a nil done channel.
+//
+// The connection is inert until TunnelRouter.register starts its pump.
 func newTunnelConnection(tunnelID, connectionID, runnerID string) *tunnelConnection {
 	c := &tunnelConnection{
 		tunnelID:     tunnelID,
@@ -92,6 +113,8 @@ func newTunnelConnection(tunnelID, connectionID, runnerID string) *tunnelConnect
 		responseCh:   make(chan *pb.TunnelData, tunnelResponseBuffer),
 		createdAt:    time.Now(),
 		done:         make(chan struct{}),
+		inbox:        make(chan *pb.TunnelData, tunnelInboxBuffer),
+		pumpDone:     make(chan struct{}),
 	}
 	c.touch()
 	return c
@@ -120,6 +143,75 @@ func (c *tunnelConnection) close() {
 		defer c.sendMu.Unlock()
 		close(c.responseCh)
 	})
+}
+
+// enqueue hands a frame to the pump. It never blocks on the consumer, so the
+// caller — the runner's control stream reader — is never held up by one slow
+// tunnel.
+//
+// The default case below is not the silent drop this file used to have. A full
+// inbox means the pump has already spent the whole send timeout blocked on a
+// consumer that is not draining; the caller responds by tearing the connection
+// down, so the frame is never quietly lost.
+func (c *tunnelConnection) enqueue(data *pb.TunnelData) error {
+	select {
+	case <-c.done:
+		return errConnectionClosed
+	default:
+	}
+
+	select {
+	case c.inbox <- data:
+		return nil
+	case <-c.done:
+		return errConnectionClosed
+	default:
+		return errInboxFull
+	}
+}
+
+// pump delivers queued frames to the consumer, in order, on the connection's
+// own goroutine. It owns the blocking send: the deadline and teardown
+// semantics are unchanged, they simply no longer run on the shared reader.
+//
+// It exits when the connection closes, when a send fails, or after delivering
+// EOF, and calls onTeardown so the router drops the connection with it.
+func (c *tunnelConnection) pump(logger *zap.Logger, sendTimeout time.Duration, onTeardown func()) {
+	defer close(c.pumpDone)
+
+	for {
+		select {
+		case <-c.done:
+			return
+
+		case data := <-c.inbox:
+			if err := c.send(context.Background(), data, sendTimeout); err != nil {
+				if errors.Is(err, errSendTimeout) {
+					logger.Warn("tunnel consumer stalled, closing connection",
+						zap.String("connection_id", c.connectionID),
+						zap.String("tunnel_id", c.tunnelID),
+						zap.Duration("timeout", sendTimeout),
+					)
+				}
+				onTeardown()
+				return
+			}
+
+			logger.Debug("routed tunnel data to handler",
+				zap.String("connection_id", c.connectionID),
+				zap.String("tunnel_id", c.tunnelID),
+				zap.Int("data_len", len(data.GetData())),
+				zap.Bool("eof", data.GetEof()),
+			)
+
+			if data.GetEof() {
+				// Delivered first, then torn down, so the consumer sees the
+				// final frame before responseCh closes.
+				onTeardown()
+				return
+			}
+		}
+	}
 }
 
 // send delivers a frame to the consumer, blocking until the consumer drains
@@ -286,11 +378,7 @@ func (r *TunnelRouter) SendRequest(ctx context.Context, tunnelID, connectionID s
 	}
 
 	conn := newTunnelConnection(tunnelID, connectionID, runnerID)
-
-	// Register connection
-	r.connectionsMu.Lock()
-	r.connections[connectionID] = conn
-	r.connectionsMu.Unlock()
+	r.register(conn)
 
 	// Send data to runner
 	cmd := &pb.ServerCommand{
@@ -321,6 +409,19 @@ func (r *TunnelRouter) SendRequest(ctx context.Context, tunnelID, connectionID s
 	)
 
 	return conn.responseCh, nil
+}
+
+// register adds a connection to the router and starts its pump. This is the
+// only sanctioned way to make a connection live: without a pump nothing drains
+// its inbox.
+func (r *TunnelRouter) register(conn *tunnelConnection) {
+	r.connectionsMu.Lock()
+	r.connections[conn.connectionID] = conn
+	r.connectionsMu.Unlock()
+
+	go conn.pump(r.logger, r.sendTimeout, func() {
+		r.CloseConnection(conn.connectionID)
+	})
 }
 
 // CloseConnection closes a tunnel connection and cleans up resources.
@@ -446,9 +547,10 @@ func (r *TunnelRouter) HandleTunnelData(ctx context.Context, runnerID string, da
 		return nil
 	}
 
-	// Blocking send with a deadline. Dropping the frame here would corrupt the
-	// HTTP body or WebSocket frame the consumer is reassembling.
-	if err := conn.send(ctx, data, r.sendTimeout); err != nil {
+	// Hand the frame to this connection's pump and return. The delivery wait,
+	// including the EOF close, happens on the pump so that a stalled tunnel
+	// consumer cannot delay this runner's heartbeats or any other tunnel.
+	if err := conn.enqueue(data); err != nil {
 		switch {
 		case errors.Is(err, errConnectionClosed):
 			// Consumer went away; nothing left to deliver to.
@@ -458,35 +560,18 @@ func (r *TunnelRouter) HandleTunnelData(ctx context.Context, runnerID string, da
 			)
 			return nil
 
-		case errors.Is(err, errSendTimeout):
-			// Tear the connection down rather than block this runner's
-			// control stream indefinitely.
-			r.logger.Warn("tunnel consumer stalled, closing connection",
+		default:
+			// Queue full: the consumer is far enough behind that the pump has
+			// already waited out the send timeout. Tear this connection down
+			// and keep reading for everyone else.
+			r.logger.Warn("tunnel connection queue full, closing connection",
 				zap.String("connection_id", connectionID),
 				zap.String("tunnel_id", data.GetTunnelId()),
-				zap.Duration("timeout", r.sendTimeout),
+				zap.Int("queue_size", cap(conn.inbox)),
 			)
 			r.CloseConnection(connectionID)
 			return err
-
-		default:
-			r.logger.Warn("context cancelled while routing data",
-				zap.String("connection_id", connectionID),
-			)
-			return err
 		}
-	}
-
-	r.logger.Debug("routed tunnel data to handler",
-		zap.String("connection_id", connectionID),
-		zap.String("tunnel_id", data.GetTunnelId()),
-		zap.Int("data_len", len(data.GetData())),
-		zap.Bool("eof", data.GetEof()),
-	)
-
-	// If EOF, close the connection
-	if data.GetEof() {
-		r.CloseConnection(connectionID)
 	}
 
 	return nil

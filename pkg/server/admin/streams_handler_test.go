@@ -123,7 +123,10 @@ func TestStreamsHandler_List(t *testing.T) {
 
 	items := result["items"].([]interface{})
 	assert.Len(t, items, 1)
-	assert.Equal(t, float64(1), result["total"])
+	// The streams listing used to answer {items,total}, alone among the admin
+	// listings — and the TypeScript already expected total_count.
+	assert.Equal(t, float64(1), result["total_count"])
+	assert.Equal(t, false, result["has_more"])
 
 	item := items[0].(map[string]interface{})
 	assert.Equal(t, "stream_123", item["id"])

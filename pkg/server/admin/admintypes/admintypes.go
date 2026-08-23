@@ -263,3 +263,17 @@ type Status struct {
 type Accepted struct {
 	Status string `json:"status"`
 }
+
+// ActivateSessionRequest attaches a runner to a pending session.
+//
+// This endpoint exists for operators and for the smoke walk; ordinary session
+// lifecycle happens through the public API.
+type ActivateSessionRequest struct {
+	RunnerID string `json:"runner_id"`
+}
+
+// SuspendSessionRequest chooses how a session's runner is released.
+type SuspendSessionRequest struct {
+	// Strategy defaults to "terminate" when empty.
+	Strategy string `json:"strategy,omitempty"`
+}

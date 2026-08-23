@@ -129,13 +129,15 @@ schema:
 schema-check:
 	./scripts/gen-schema.sh --check
 
-## openapi: Regenerate pkg/server/api/openapi.yaml from the Go route table and DTOs
+## openapi: Regenerate the public and admin OpenAPI documents from the Go route tables and DTOs
 openapi:
 	$(GOCMD) run pkg/server/api/openapi_generate.go pkg/server/api/openapi.yaml
+	$(GOCMD) run pkg/server/admin/openapi_generate.go pkg/server/admin/openapi.yaml
 
-## openapi-check: Fail if the OpenAPI document has drifted from the code
+## openapi-check: Fail if either OpenAPI document has drifted from the code
 openapi-check:
 	$(GOTEST) -run TestOpenAPIDocumentIsUpToDate ./pkg/server/api/
+	$(GOTEST) -run TestAdminOpenAPIDocumentIsUpToDate ./pkg/server/admin/
 
 ## migrate-create: Create a new migration (usage: make migrate-create name=migration_name)
 migrate-create:
