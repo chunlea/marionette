@@ -1,0 +1,21 @@
+pkg/store/postgres/webhooks.go
+  s_30fb41c4a911b8::t_0d974f8057126b 7,25-30,166-169,304-308,326-329,454-457,537-548,551-566,568,583-586
+pkg/store/postgres/webhooks_test.go
+  s_30fb41c4a911b8::t_f3dfcf44c92f63 1-225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "5cf87e749a2cb0c027dcd6466d3eb3e845a5e137",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
