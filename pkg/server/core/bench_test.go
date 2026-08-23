@@ -35,6 +35,20 @@ func benchStore(sessionID, runnerID string) *testTaskStore {
 	return s
 }
 
+// resetBenchStore empties the task and run tables between iterations.
+//
+// Without it these benchmarks measure the fake store rather than the code under
+// it: ListTasks scans the whole map and CreateTaskRun scans every run to
+// enforce UNIQUE(task_id, attempt), so both go linear in b.N and the reported
+// cost per operation climbs with the iteration count. A real store answers both
+// from an index.
+func resetBenchStore(s *testTaskStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.tasks)
+	clear(s.taskRuns)
+}
+
 // BenchmarkTaskDispatch_CreateToAssigned is the main path: a task created on an
 // active session reaches a runner without a second API call. It covers Create,
 // the runner check, the dispatch transaction, the run insert and the send.
@@ -46,23 +60,18 @@ func BenchmarkTaskDispatch_CreateToAssigned(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		task, err := manager.Create(ctx, CreateTaskOptions{
+		if _, err := manager.Create(ctx, CreateTaskOptions{
 			SessionID: "sess_bench",
 			Prompt:    "benchmark",
-		})
-		if err != nil {
-			b.Fatal(err)
-		}
-
-		// Complete it so the next iteration is not blocked by the
-		// one-task-per-session invariant. This is part of the cost being
-		// measured: a dispatch only happens when the previous task finished.
-		b.StopTimer()
-		if err := s.UpdateTask(ctx, task.ID, store.TaskUpdates{
-			Status: stringPtr(TaskStatusCompleted),
 		}); err != nil {
 			b.Fatal(err)
 		}
+
+		// The task has to go away before the next iteration or the
+		// one-task-per-session invariant blocks it - and the tables have to be
+		// emptied or the fake store's linear scans dominate the measurement.
+		b.StopTimer()
+		resetBenchStore(s)
 		b.StartTimer()
 	}
 }
@@ -79,6 +88,7 @@ func BenchmarkTaskDispatch_DispatchNext(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
+		resetBenchStore(s)
 		taskID := fmt.Sprintf("task_%d", i)
 		s.tasks[taskID] = &store.Task{
 			ID: taskID, SessionID: "sess_bench", Status: TaskStatusPending,
@@ -89,10 +99,6 @@ func BenchmarkTaskDispatch_DispatchNext(b *testing.B) {
 		if err := manager.DispatchNext(ctx, "sess_bench"); err != nil {
 			b.Fatal(err)
 		}
-
-		b.StopTimer()
-		delete(s.tasks, taskID)
-		b.StartTimer()
 	}
 }
 
