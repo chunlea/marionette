@@ -1,0 +1,31 @@
+pkg/server/core/bench_test.go
+  s_0d0ac42be2d99d::t_7f5eec51e55068 38-51,63,66,70-72,74,91
+.github/workflows/ci.yml
+  s_2681c55641541f::t_e6958f4286b11e 165-222
+test/perf/BASELINE.md
+  s_2681c55641541f::t_159813632ec76e 1-225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "17d38454621097899b17669b229dabd5e33393e0",
+  "prompts": {},
+  "sessions": {
+    "s_0d0ac42be2d99d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "62a01624-4bc1-4cf8-862e-f2a73cffc4da",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_2681c55641541f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957a3a1-8aa9-4481-b571-119f14c7519e",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
