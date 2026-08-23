@@ -618,8 +618,15 @@ func scanChunkFromRows(rows pgx.Rows) (*store.Chunk, error) {
 // at a chunk that no longer exists. Inside one transaction the references are
 // taken before anything is visible, and referencing clears any deletion mark.
 //
-// Chunks must already be in blob storage: this records metadata only. Storing
-// the bytes first is what the grace period protects.
+// Chunks must already be in blob storage, and so must the manifest object for a
+// content-defined manifest: this records metadata only. Storing the bytes first
+// is what the grace period protects, and it is the order that fails safely - an
+// object with no row is an orphan the collector can reclaim, while a row
+// pointing at an object that was never written is a restore with no way back.
+//
+// A content-defined manifest carries chunk_count and a NULL files_json: its file
+// list lives in the manifest object, which is where a list too large to hold in
+// memory belongs. A single-chunk manifest carries the one chunk hash.
 func (s *Store) CommitManifest(ctx context.Context, manifest *store.Manifest, chunks []*store.Chunk) error {
 	if manifest == nil {
 		return &store.InvalidInputError{Field: "manifest", Message: "must not be nil"}
@@ -646,7 +653,10 @@ func (s *Store) CommitManifest(ctx context.Context, manifest *store.Manifest, ch
 	}
 
 	// Deduplicate: a workspace commonly contains the same chunk more than once,
-	// and each occurrence must not inflate the reference count.
+	// and each occurrence must not inflate the reference count. It also has to
+	// happen before the batched statement below, which cannot update the same
+	// row twice.
+	unique := make([]*store.Chunk, 0, len(chunks))
 	seen := make(map[string]struct{}, len(chunks))
 	for _, chunk := range chunks {
 		if chunk == nil || chunk.Hash == "" {
@@ -656,13 +666,11 @@ func (s *Store) CommitManifest(ctx context.Context, manifest *store.Manifest, ch
 			continue
 		}
 		seen[chunk.Hash] = struct{}{}
+		unique = append(unique, chunk)
+	}
 
-		if err := pgTx.RegisterChunk(ctx, manifest.TenantID, chunk.Hash, chunk.Size); err != nil {
-			return fmt.Errorf("registering chunk %s: %w", chunk.Hash, err)
-		}
-		if err := pgTx.IncrementChunkRef(ctx, manifest.TenantID, chunk.Hash); err != nil {
-			return fmt.Errorf("referencing chunk %s: %w", chunk.Hash, err)
-		}
+	if err := referenceChunks(ctx, pgTx.tx, manifest.TenantID, unique); err != nil {
+		return err
 	}
 
 	if err := pgTx.CreateManifest(ctx, manifest); err != nil {
@@ -703,6 +711,7 @@ func (s *Store) ReleaseManifest(ctx context.Context, manifestID string, chunks [
 		return err
 	}
 
+	unique := make([]*store.Chunk, 0, len(chunks))
 	seen := make(map[string]struct{}, len(chunks))
 	for _, chunk := range chunks {
 		if chunk == nil || chunk.Hash == "" {
@@ -712,14 +721,11 @@ func (s *Store) ReleaseManifest(ctx context.Context, manifestID string, chunks [
 			continue
 		}
 		seen[chunk.Hash] = struct{}{}
+		unique = append(unique, chunk)
+	}
 
-		if err := pgTx.DecrementChunkRef(ctx, manifest.TenantID, chunk.Hash); err != nil {
-			// A chunk that is already gone is not a reason to fail the release:
-			// the manifest is being torn down either way.
-			if !errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("releasing chunk %s: %w", chunk.Hash, err)
-			}
-		}
+	if err := releaseChunks(ctx, pgTx.tx, manifest.TenantID, unique); err != nil {
+		return err
 	}
 
 	if err := pgTx.DeleteManifest(ctx, manifestID); err != nil {
@@ -730,6 +736,76 @@ func (s *Store) ReleaseManifest(ctx context.Context, manifestID string, chunks [
 		return err
 	}
 	committed = true
+
+	return nil
+}
+
+// chunkRefBatchSize is how many chunk references go into one statement.
+//
+// A content-defined manifest of a large workspace names tens of thousands of
+// chunks. Registering and referencing them one at a time is two round trips
+// each, so a hundred thousand chunks was two hundred thousand round trips
+// inside a single transaction - long enough to hold locks for minutes. Batched,
+// it is a couple of hundred.
+const chunkRefBatchSize = 1000
+
+// referenceChunks registers every chunk and takes a reference on it, in
+// batches, within the caller's transaction.
+//
+// Register and reference are one statement rather than two. A chunk that is new
+// is inserted already referenced, and a chunk that exists has its count raised
+// and its deletion mark cleared in the same write - referencing a chunk IS the
+// resurrection, with no window in between for the collector to use.
+func referenceChunks(ctx context.Context, q querier, tenantID string, chunks []*store.Chunk) error {
+	const query = `
+		INSERT INTO chunks (hash, tenant_id, size, ref_count, created_at)
+		SELECT h, $1, s, 1, NOW()
+		FROM unnest($2::text[], $3::bigint[]) AS incoming(h, s)
+		ON CONFLICT (tenant_id, hash) DO UPDATE
+		SET ref_count = chunks.ref_count + 1, deleted_at = NULL`
+
+	for start := 0; start < len(chunks); start += chunkRefBatchSize {
+		end := min(start+chunkRefBatchSize, len(chunks))
+		batch := chunks[start:end]
+
+		hashes := make([]string, len(batch))
+		sizes := make([]int64, len(batch))
+		for i, chunk := range batch {
+			hashes[i] = chunk.Hash
+			sizes[i] = chunk.Size
+		}
+
+		if _, err := q.Exec(ctx, query, tenantID, hashes, sizes); err != nil {
+			return handlePgError(err, "chunk", hashes[0])
+		}
+	}
+
+	return nil
+}
+
+// releaseChunks drops one reference from every chunk, in batches.
+//
+// A chunk that is already gone is not a reason to fail: the manifest is being
+// torn down either way, and a reference that cannot be found is one that no
+// longer needs dropping.
+func releaseChunks(ctx context.Context, q querier, tenantID string, chunks []*store.Chunk) error {
+	const query = `
+		UPDATE chunks SET ref_count = ref_count - 1
+		WHERE tenant_id = $1 AND hash = ANY($2::text[]) AND ref_count > 0`
+
+	for start := 0; start < len(chunks); start += chunkRefBatchSize {
+		end := min(start+chunkRefBatchSize, len(chunks))
+		batch := chunks[start:end]
+
+		hashes := make([]string, 0, len(batch))
+		for _, chunk := range batch {
+			hashes = append(hashes, chunk.Hash)
+		}
+
+		if _, err := q.Exec(ctx, query, tenantID, hashes); err != nil {
+			return handlePgError(err, "chunk", hashes[0])
+		}
+	}
 
 	return nil
 }

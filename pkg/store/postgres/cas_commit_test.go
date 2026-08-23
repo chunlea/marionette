@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -238,4 +239,90 @@ func TestCommitManifestRejectsBadInput(t *testing.T) {
 			[]*store.Chunk{{Size: 1}})
 		assert.ErrorIs(t, err, store.ErrInvalidInput)
 	})
+}
+
+// A content-defined manifest is the case the schema always described and
+// nothing ever wrote: thousands of chunk references, the file list in the
+// object store rather than the row, and all of it in one transaction.
+func TestCommitManifestForAContentDefinedSnapshot(t *testing.T) {
+	ctx := context.Background()
+	tenant := newTenant(t)
+	ws := newCommitWorkspace(ctx, t)
+
+	// More than one batch of references, so the batching is exercised rather
+	// than merely present.
+	const count = 2500
+	chunks := make([]*store.Chunk, 0, count)
+	for i := 0; i < count; i++ {
+		chunks = append(chunks, &store.Chunk{
+			Hash: chunkHash(fmt.Sprintf("cdc-commit-%d-%s", i, tenant)),
+			Size: int64(1024 + i),
+		})
+	}
+
+	manifest := &store.Manifest{
+		WorkspaceID: ws.ID,
+		TenantID:    tenant,
+		TotalSize:   1 << 30,
+		SingleChunk: false,
+		ChunkCount:  count,
+		// The file list lives in the manifest object. A row holding a million
+		// paths is the thing this mode exists to avoid.
+		FilesJSON: nil,
+	}
+
+	require.NoError(t, testStore.CommitManifest(ctx, manifest, chunks))
+
+	stored, err := testStore.GetManifest(ctx, manifest.ID)
+	require.NoError(t, err)
+	assert.False(t, stored.SingleChunk)
+	assert.Equal(t, count, stored.ChunkCount)
+	assert.Nil(t, stored.ChunkHash)
+	assert.Empty(t, stored.FilesJSON, "a content-defined manifest keeps its file list in the object store")
+
+	for _, sample := range []int{0, count / 2, count - 1} {
+		got, err := testStore.GetChunk(ctx, tenant, chunks[sample].Hash)
+		require.NoErrorf(t, err, "chunk %d was not registered", sample)
+		assert.Equal(t, 1, got.RefCount)
+		assert.Equal(t, chunks[sample].Size, got.Size)
+		assert.Nil(t, got.DeletedAt)
+	}
+
+	// Releasing it drops every reference, leaving the chunks to the collector.
+	require.NoError(t, testStore.ReleaseManifest(ctx, manifest.ID, chunks))
+
+	_, err = testStore.GetManifest(ctx, manifest.ID)
+	require.Error(t, err)
+
+	for _, sample := range []int{0, count - 1} {
+		got, err := testStore.GetChunk(ctx, tenant, chunks[sample].Hash)
+		require.NoError(t, err)
+		assert.Equal(t, 0, got.RefCount)
+	}
+}
+
+// A manifest that names the same chunk in many files must reference it once,
+// however many times it appears - which is the normal case for a workspace
+// with a thousand copies of the same license file.
+func TestCommitManifestDeduplicatesAcrossBatches(t *testing.T) {
+	ctx := context.Background()
+	tenant := newTenant(t)
+	ws := newCommitWorkspace(ctx, t)
+
+	repeated := chunkHash("cdc-repeated-" + tenant)
+	chunks := make([]*store.Chunk, 0, 3000)
+	for i := 0; i < 3000; i++ {
+		chunks = append(chunks, &store.Chunk{Hash: repeated, Size: 42})
+	}
+
+	manifest := &store.Manifest{
+		WorkspaceID: ws.ID,
+		TenantID:    tenant,
+		ChunkCount:  1,
+	}
+	require.NoError(t, testStore.CommitManifest(ctx, manifest, chunks))
+
+	got, err := testStore.GetChunk(ctx, tenant, repeated)
+	require.NoError(t, err)
+	assert.Equal(t, 1, got.RefCount)
 }
