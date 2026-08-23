@@ -71,9 +71,10 @@ func (l *eventLog) firstRuleIndex() int {
 type loggingClient struct {
 	log *eventLog
 
-	createErr  error
-	startErr   error
-	connectErr error
+	createErr     error
+	startErr      error
+	connectErr    error
+	disconnectErr error
 
 	createdHostConfig *container.HostConfig
 	createdNetConfig  *network.NetworkingConfig
@@ -156,7 +157,7 @@ func (c *loggingClient) NetworkConnect(_ context.Context, networkID, containerID
 
 func (c *loggingClient) NetworkDisconnect(_ context.Context, networkID, containerID string, _ bool) error {
 	c.log.record("network-disconnect %s -> %s", containerID, networkID)
-	return nil
+	return c.disconnectErr
 }
 
 func (c *loggingClient) Ping(context.Context) (types.Ping, error) { return types.Ping{}, nil }
@@ -279,17 +280,21 @@ func TestSpawn_NoEgressIsPossibleBeforeRulesExist(t *testing.T) {
 	create := f.log.indexOfEvent("container-create")
 	start := f.log.indexOfEvent("container-start")
 	firstRule := f.log.firstRuleIndex()
+	disconnect := f.log.indexOfEvent("network-disconnect")
 	connect := f.log.indexOfEvent("network-connect")
 
 	require.NotEqual(t, -1, create, "events: %v", events)
 	require.NotEqual(t, -1, start)
 	require.NotEqual(t, -1, firstRule)
 	require.NotEqual(t, -1, connect, "a restricted container must be connected explicitly")
+	require.NotEqual(t, -1, disconnect, "the none placeholder has to be dropped before connecting")
 
 	assert.Less(t, create, start)
 	assert.Less(t, start, firstRule)
-	assert.Less(t, firstRule, connect,
+	assert.Less(t, firstRule, disconnect)
+	assert.Less(t, disconnect, connect,
 		"every rule must be installed before the container has an interface to send through")
+	assert.Contains(t, events[disconnect], "-> none")
 
 	// Step 1: the namespace really is interface-less at creation.
 	assert.Contains(t, events[create], `network-mode="none"`)
@@ -322,6 +327,20 @@ func TestSpawn_RuleFailureNeverConnectsTheContainer(t *testing.T) {
 
 	// A half-configured container is destroyed, never connected. Connecting it
 	// would hand a sandbox with incomplete rules a working interface.
+	assert.Equal(t, -1, f.log.indexOfEvent("network-connect"))
+	assert.NotEqual(t, -1, f.log.indexOfEvent("container-remove"))
+}
+
+func TestSpawn_DisconnectFailureNeverConnects(t *testing.T) {
+	f := newOrderingFixture(t, nil)
+	f.client.disconnectErr = errors.New("not attached")
+
+	_, err := f.provider.Spawn(context.Background(), provider.SpawnOptions{
+		RunnerID:      "run_1",
+		ServerURL:     "marionette.internal:9090",
+		NetworkPolicy: "air_gapped",
+	})
+	require.Error(t, err)
 	assert.Equal(t, -1, f.log.indexOfEvent("network-connect"))
 	assert.NotEqual(t, -1, f.log.indexOfEvent("container-remove"))
 }
@@ -374,8 +393,9 @@ func TestSpawn_UnrestrictedPathIsUnchanged(t *testing.T) {
 				assert.False(t, strings.HasPrefix(e, "ip6tables"), "unexpected rule: %s", e)
 			}
 
-			// Attached at creation, as before, and never connected separately.
+			// Attached at creation, as before, and never re-plumbed.
 			assert.Equal(t, -1, f.log.indexOfEvent("network-connect"))
+			assert.Equal(t, -1, f.log.indexOfEvent("network-disconnect"))
 			require.NotNil(t, f.client.createdNetConfig)
 			assert.Contains(t, f.client.createdNetConfig.EndpointsConfig, "marionette-network")
 			assert.Empty(t, string(f.client.createdHostConfig.NetworkMode))

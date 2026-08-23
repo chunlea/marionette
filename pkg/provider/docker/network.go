@@ -28,6 +28,9 @@ type NetworkIsolation struct {
 	client   DockerClient
 	logger   *zap.Logger
 
+	// procRoot is where the host's procfs is mounted.
+	procRoot string
+
 	// refreshInterval overrides the DNS refresh cadence when non-zero.
 	refreshInterval time.Duration
 
@@ -58,6 +61,16 @@ func WithNetworkLogger(l *zap.Logger) NetworkIsolationOption {
 	}
 }
 
+// WithProcRoot sets the procfs mount point used to reach container network
+// namespaces.
+func WithProcRoot(path string) NetworkIsolationOption {
+	return func(n *NetworkIsolation) {
+		if path != "" {
+			n.procRoot = path
+		}
+	}
+}
+
 // WithNetworkRefreshInterval overrides the DNS refresh cadence.
 func WithNetworkRefreshInterval(d time.Duration) NetworkIsolationOption {
 	return func(n *NetworkIsolation) {
@@ -81,6 +94,7 @@ func NewNetworkIsolation(client DockerClient, opts ...NetworkIsolationOption) *N
 		resolver: mnet.NewDNSResolver(),
 		client:   client,
 		logger:   zap.NewNop(),
+		procRoot: DefaultProcRoot,
 		guards:   make(map[string]*runnerGuard),
 	}
 	n.newExecutor = func(resolveNS func(context.Context) (string, error)) iptables.Executor {
@@ -337,7 +351,7 @@ func (n *NetworkIsolation) namespaceResolver(containerID string) func(context.Co
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("/proc/%d/ns/net", pid), nil
+		return fmt.Sprintf("%s/%d/ns/net", n.procRoot, pid), nil
 	}
 }
 

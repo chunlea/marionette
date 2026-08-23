@@ -32,6 +32,10 @@ const (
 
 	// Default stop timeout in seconds.
 	defaultStopTimeout = 30
+
+	// noNetworkMode is Docker's built-in network that provides a namespace
+	// with nothing but loopback in it.
+	noNetworkMode = "none"
 )
 
 // Provider implements the Docker container provider.
@@ -90,7 +94,7 @@ func New(cfg *store.ProviderConfig) (*Provider, error) {
 		config:           dockerCfg,
 		suspendConfig:    suspendCfg,
 		client:           client,
-		networkIsolation: NewNetworkIsolation(client),
+		networkIsolation: NewNetworkIsolation(client, WithProcRoot(dockerCfg.Isolation.ProcRoot)),
 		logger:           zap.NewNop(),
 	}, nil
 }
@@ -106,7 +110,7 @@ func NewWithClient(name string, cfg *Config, suspendCfg *provider.SuspendConfig,
 		config:           cfg,
 		suspendConfig:    suspendCfg,
 		client:           client,
-		networkIsolation: NewNetworkIsolation(client),
+		networkIsolation: NewNetworkIsolation(client, WithProcRoot(cfg.Isolation.ProcRoot)),
 		logger:           zap.NewNop(),
 	}
 }
@@ -240,6 +244,16 @@ func (p *Provider) applyIsolation(ctx context.Context, opts provider.SpawnOption
 
 	if err := p.networkIsolation.Install(ctx, key, containerID, resolved); err != nil {
 		return err
+	}
+
+	// Docker refuses to attach a network to a container that is still in
+	// "none" mode ("cannot be connected to multiple networks with one of the
+	// networks in private (none) mode"), so the placeholder has to be dropped
+	// first. Neither call creates an interface on its own: the namespace stays
+	// loopback-only until the connect below returns.
+	if err := p.client.NetworkDisconnect(ctx, noNetworkMode, containerID, false); err != nil {
+		_ = p.networkIsolation.Cleanup(ctx, key)
+		return fmt.Errorf("detaching container from the none network: %w", err)
 	}
 
 	if err := p.client.NetworkConnect(ctx, p.attachNetwork(), containerID, nil); err != nil {
@@ -457,7 +471,7 @@ func (p *Provider) buildHostConfig(opts provider.SpawnOptions, resolved *network
 	// No network at creation time. The container starts with a namespace that
 	// contains only loopback, which is what makes "rules before packets"
 	// achievable rather than a race we hope to win.
-	cfg.NetworkMode = "none"
+	cfg.NetworkMode = noNetworkMode
 
 	// Never let Docker restart this container behind our back: a restart
 	// re-creates the namespace with an interface already attached, and the
@@ -704,7 +718,7 @@ func NewFromJSON(name string, configJSON, suspendConfigJSON json.RawMessage) (*P
 		config:           cfg,
 		suspendConfig:    suspendCfg,
 		client:           client,
-		networkIsolation: NewNetworkIsolation(client),
+		networkIsolation: NewNetworkIsolation(client, WithProcRoot(cfg.Isolation.ProcRoot)),
 		logger:           zap.NewNop(),
 	}, nil
 }

@@ -28,6 +28,9 @@ const (
 
 	// DefaultCPUs is the default CPU limit.
 	DefaultCPUs = "2"
+
+	// DefaultProcRoot is where a host's procfs lives.
+	DefaultProcRoot = "/proc"
 )
 
 // Config holds Docker provider settings parsed from provider_configs.config JSON.
@@ -91,6 +94,25 @@ type IsolationConfig struct {
 	// RefreshInterval overrides how often pinned allow-list addresses are
 	// re-resolved, e.g. "2m". Clamped to [30s, 15m].
 	RefreshInterval string `json:"refresh_interval,omitempty"`
+
+	// ProcRoot is where the host's procfs is mounted, used to reach a
+	// container's network namespace at /proc/<pid>/ns/net.
+	//
+	// The default is correct for a server running directly on the Docker host.
+	// A server running inside a container sees its own procfs, where the
+	// container PIDs the Docker API reports do not exist, so it must either
+	// share the host PID namespace or mount the host's /proc and point this
+	// at it.
+	ProcRoot string `json:"proc_root,omitempty"`
+}
+
+// EffectiveProcRoot returns the procfs mount point to resolve namespaces
+// through.
+func (c *IsolationConfig) EffectiveProcRoot() string {
+	if c.ProcRoot == "" {
+		return DefaultProcRoot
+	}
+	return c.ProcRoot
 }
 
 // RefreshIntervalDuration parses RefreshInterval, returning 0 when unset.
