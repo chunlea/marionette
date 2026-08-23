@@ -2,7 +2,10 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"os"
+	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -66,15 +69,18 @@ func TestMain(m *testing.M) {
 }
 
 func runMigrations(ctx context.Context, s *pgstore.Store) error {
-	// Read and execute all migration files in order
-	migrationFiles := []string{
-		"../../../migrations/001_initial.up.sql",
-		"../../../migrations/002_add_streams.up.sql",
-		"../../../migrations/003_android_extensions.up.sql",
-		"../../../migrations/004_builtin_profiles.up.sql",
-		"../../../migrations/005_session_profile.up.sql",
-		"../../../migrations/006_webhooks.up.sql",
+	// Glob instead of a hardcoded list: a new migration must never be silently
+	// skipped here, or the tests would validate a stale schema.
+	migrationFiles, err := filepath.Glob("../../../migrations/*.up.sql")
+	if err != nil {
+		return err
 	}
+	if len(migrationFiles) == 0 {
+		return errors.New("no migrations found in ../../../migrations")
+	}
+
+	// Numeric prefixes are zero-padded, so lexical order is migration order.
+	sort.Strings(migrationFiles)
 
 	for _, file := range migrationFiles {
 		migration, err := os.ReadFile(file)
