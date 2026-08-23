@@ -39,6 +39,11 @@ type TaskRunner struct {
 	logStreamer  LogStreamer
 	logger       *zap.Logger
 
+	// ledger remembers run ids so a re-delivered ExecuteTask does not run the
+	// same attempt twice. See run_ledger.go for what it does and does not
+	// guarantee.
+	ledger *runLedger
+
 	// Permission response channels (per request)
 	mu            sync.Mutex
 	permResponses map[string]chan *pb.ApprovePermission
@@ -77,6 +82,7 @@ func NewTaskRunner(
 		statusSetter:  statusSetter,
 		logStreamer:   logStreamer,
 		logger:        logger.Named("task-runner"),
+		ledger:        newRunLedger(completedRunsWindow),
 		permResponses: make(map[string]chan *pb.ApprovePermission),
 		permCache:     make(map[string]*pb.ApprovePermission),
 	}
@@ -84,7 +90,43 @@ func NewTaskRunner(
 
 // Execute runs a task and returns the result message.
 // This implements the OnExecuteTask callback signature.
-func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.RunnerMessage, error) {
+//
+// It is the ledger's gate: a command re-delivered for a run this process is
+// already executing is dropped, and one re-delivered for a run it already
+// finished is answered from the recorded result. Only a genuinely new run id
+// reaches the executor. A different run id arriving while one is in flight is
+// still passed through - that is a real second dispatch, and whether it should
+// have happened is the server's CAS to decide, not the agent's.
+func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (result *pb.RunnerMessage, err error) {
+	switch decision, recorded := r.ledger.begin(cmd.RunId); decision {
+	case runInFlight:
+		r.logger.Info("ignoring re-delivered task: run already in flight",
+			zap.String("task_id", cmd.TaskId),
+			zap.String("run_id", cmd.RunId),
+			zap.String("session_id", cmd.SessionId),
+		)
+		return nil, nil
+	case runCompleted:
+		r.logger.Info("re-sending recorded result: run already completed here",
+			zap.String("task_id", cmd.TaskId),
+			zap.String("run_id", cmd.RunId),
+			zap.String("session_id", cmd.SessionId),
+		)
+		return recorded, nil
+	case runFresh:
+	}
+
+	// Whatever happens below - including a panic - the run leaves the
+	// in-flight set. Only a terminal result is remembered: a run interrupted
+	// without one must be executable again when the server sends it back.
+	defer func() { r.ledger.finish(cmd.RunId, result) }()
+
+	return r.execute(ctx, cmd)
+}
+
+// execute runs the task for real. Execute is the deduplicating wrapper in
+// front of it.
+func (r *TaskRunner) execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.RunnerMessage, error) {
 	r.logger.Info("executing task",
 		zap.String("task_id", cmd.TaskId),
 		zap.String("run_id", cmd.RunId),
