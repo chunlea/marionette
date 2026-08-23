@@ -1,0 +1,23 @@
+api/proto/v1/runner.proto
+  s_e995f4552d48c1::t_0406b160392de6 166-169,277-280,282,289-298
+pkg/server/core/session_manager.go
+  s_e995f4552d48c1::t_2389771ab4bf33 2028-2031,2113-2120
+pkg/server/core/session_manager_test.go
+  s_e995f4552d48c1::t_eae6e1d3d4645e 2853-2922
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "a6020a1077dad8a090a69b0eda778b7cbd14ccab",
+  "prompts": {},
+  "sessions": {
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
