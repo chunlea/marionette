@@ -216,6 +216,13 @@ All tables have `tenant_id` column:
 
 ## Full Schema
 
-For the complete schema definition, see:
+!!! warning "The source of truth is `migrations/`"
+    Schema changes are made by adding a migration under
+    [`migrations/`](https://github.com/chunlea/marionette/tree/main/migrations).
+    [`docs/schema.sql`](https://github.com/chunlea/marionette/blob/main/docs/schema.sql)
+    is *generated* from those migrations by `make schema` and is drift-checked in
+    CI. It is a rendered reference: never edit it, and never provision a database
+    from it.
 
-[`docs/schema.sql`](https://github.com/chunlea/marionette/blob/main/docs/schema.sql)
+For the complete rendered schema, see
+[`docs/schema.sql`](https://github.com/chunlea/marionette/blob/main/docs/schema.sql).

@@ -79,6 +79,14 @@ All environment variables are prefixed with `MARIONETTE_`:
 | `MARIONETTE_DATABASE_URL` | PostgreSQL connection string | `postgres://user:pass@localhost/marionette` |
 | `MARIONETTE_MASTER_KEY` | Master key for admin operations | Random 32+ character string |
 | `MARIONETTE_ENCRYPTION_KEY` | Key for encrypting credentials | Random 32-byte hex string |
+| `MARIONETTE_UI_USERNAME` | Admin API / WebUI basic auth username | `admin` |
+| `MARIONETTE_UI_PASSWORD` | Admin API / WebUI basic auth password | - |
+
+!!! danger "The admin API fails closed"
+    The admin API mints API keys, registers runners and can read every session.
+    The server **refuses to start** without `MARIONETTE_UI_USERNAME` and
+    `MARIONETTE_UI_PASSWORD`. Starting it with `--dev-insecure-admin` serves that
+    API with no authentication at all; use it for local development only.
 
 ### Optional Variables
 
@@ -86,8 +94,6 @@ All environment variables are prefixed with `MARIONETTE_`:
 |----------|-------------|---------|
 | `MARIONETTE_CONFIG` | Config file path | `config.yaml` |
 | `MARIONETTE_LOG_LEVEL` | Log level | `info` |
-| `MARIONETTE_UI_USERNAME` | WebUI Basic Auth username | - |
-| `MARIONETTE_UI_PASSWORD` | WebUI Basic Auth password | - |
 
 ### Agent Variables
 
@@ -95,8 +101,55 @@ All environment variables are prefixed with `MARIONETTE_`:
 |----------|-------------|
 | `MARIONETTE_SERVER` | Server gRPC URL |
 | `MARIONETTE_RUNNER_TOKEN` | Token for authentication |
-| `MARIONETTE_SANDBOX_MODE` | `runner-is-sandbox` or `runner-creates-sandbox` |
+| `MARIONETTE_SANDBOX_MODE` | `runner-is-sandbox`, `runner-creates-sandbox`, or `none` |
 | `MARIONETTE_POOL_NAME` | Pool name (for pool runners) |
+
+## Subsystem flags
+
+Three settings decide whether whole subsystems are live. All are read from the
+server config file.
+
+```yaml
+tunnels:
+  enabled: true       # HTTP proxy and TCP relay
+
+streaming:
+  enabled: false      # desktop and browser streaming
+
+multi_tenant: false   # enforce tenant isolation rather than merely recording it
+```
+
+| Flag | Default | What it does |
+|------|---------|--------------|
+| `tunnels.enabled` | `true` in `configs/local.yaml` | Serves the HTTP proxy and TCP relay used by `mctl tunnels` |
+| `streaming.enabled` | `false` | Desktop and browser streaming. **Frozen** — the SFU has no media source, no renegotiation and never reads RTCP, so it cannot deliver a frame. Leave it off |
+| `multi_tenant` | `false` | Turns `tenant_id` from a recorded column into an enforced boundary |
+
+## Workspace sync (runner)
+
+A pooled runner that is released has to put the workspace somewhere. Off by
+default:
+
+```bash
+./bin/agent ... \
+  --storage-backend local \
+  --storage-local-path /var/marionette/cas \
+  --storage-encryption none
+```
+
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--storage-backend` | `none` | `none` or `local` |
+| `--storage-local-path` | - | Required for `local`. A directory the runner can write: a shared volume or a mounted object store |
+| `--storage-encryption` | *(none)* | Must be set explicitly to `none` when a backend is configured |
+
+`--storage-encryption` has no default on purpose. Storing workspace contents
+unencrypted is a decision an operator makes, not one a missing config value
+makes for them. Per-tenant encryption is refused rather than silently
+downgraded, because a runner has no way to obtain a tenant data key yet.
+
+With sync off, a suspend reports the workspace as **not** synced rather than
+implying a snapshot exists.
 
 ## Provider Configuration
 

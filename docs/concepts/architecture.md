@@ -185,16 +185,39 @@ sequenceDiagram
     AI-->>Agent: Progress/Logs
     Agent-->>Server: Stream Logs (Event stream)
     Server-->>User: Real-time Logs (SSE/WS)
-    AI->>Agent: Permission Request
+    AI->>Agent: PreToolUse hook (tool blocked)
     Agent->>Server: Request Permission
     Server->>User: Permission Prompt
     User->>Server: Approve/Deny
     Server->>Agent: Permission Response
-    AI-->>Agent: Continue/Abort
+    Agent-->>AI: allow / deny
+    AI->>AI: Run the tool, or report it was refused
     AI->>Agent: Task Complete
     Agent->>Server: Task Result
     Server->>User: Task Status
 ```
+
+### Permission gating
+
+The order in that diagram is the whole point: the tool has not run when the
+permission request is raised.
+
+Marionette installs a `PreToolUse` hook into the Claude CLI. Before any tool
+executes, the CLI runs that hook and waits for it. The hook is the agent binary
+re-invoked as `marionette-agent permission-hook`, which talks over a unix socket
+to a broker inside the running agent, which asks the server, which records the
+permission request. Nothing executes until an answer comes back.
+
+Two properties fall out of that design and are worth stating plainly:
+
+- **The CLI fails open on hook timeout.** If a hook exceeds its budget the CLI
+  runs the tool anyway. Every failure path in the gate therefore *denies*, and
+  the hook's own deadline is set shorter than the CLI's so its answer always
+  wins the race.
+- **The policy is deny-by-default on the unknown.** Known read-only tools pass;
+  everything else needs an answer, including `mcp__*` tools and any tool a
+  future CLI release introduces. If the gate cannot start, the task fails rather
+  than running unsupervised.
 
 ## Storage Architecture
 
@@ -212,9 +235,15 @@ Stores all persistent state:
 
 For large data:
 
-- Workspace snapshots (CAS chunks)
+- Workspace snapshots (CAS chunks and manifests)
 - Log archives
-- Agent context snapshots
+
+!!! info "Partly wired"
+    The chunking, manifest and encryption layers work, and a runner configured
+    with a storage backend syncs and restores workspaces. Carrying the workspace
+    identity and manifest id between server and runner is still in progress, so
+    a suspend reports the workspace as **not** synced unless that is configured.
+    Agent context snapshots live in the database, not object storage.
 
 See [Storage](../reference/storage.md) for details on content-addressable storage.
 
@@ -222,9 +251,15 @@ See [Storage](../reference/storage.md) for details on content-addressable storag
 
 ### Multi-Tenant Isolation
 
-- All resources are scoped by `tenant_id`
-- Injected by auth middleware (never from user input)
-- Cross-tenant access prevented at application layer
+- All resources carry a `tenant_id` column
+- It is injected by auth middleware, never taken from user input
+- Cross-tenant access is prevented at the application layer
+
+!!! note "Behind a flag"
+    Enforcement is gated on `multi_tenant` in the server config, which defaults
+    to false. With it off the columns are present and populated but not treated
+    as a boundary — a single-tenant deployment stores everything under the empty
+    tenant.
 
 ### Credential Handling
 
