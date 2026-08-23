@@ -99,6 +99,11 @@ func (r *TaskRunner) Execute(ctx context.Context, cmd *pb.ExecuteTask) (*pb.Runn
 	r.currentCtx = ctx
 	r.mu.Unlock()
 
+	// The command dispatcher holds the queue until this fires. From here the
+	// task is registered, so ApprovePermission and KillTask for it can be
+	// delivered without racing the registration.
+	TaskAccepted(ctx)
+
 	defer func() {
 		// Only set status back to idle if we actually started executing
 		// If the executor was already running (from another task), we shouldn't

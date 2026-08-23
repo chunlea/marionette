@@ -12,6 +12,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// commandQueueSize bounds how many commands may be buffered ahead of the
+// dispatcher. Past it the receive loop blocks, which applies backpressure to
+// the server rather than dropping commands the server believes were delivered.
+const commandQueueSize = 64
+
 // ControlChannel manages the bidirectional streaming connection with the server.
 // It receives ServerCommand messages and dispatches them to appropriate handlers.
 type ControlChannel struct {
@@ -25,6 +30,9 @@ type ControlChannel struct {
 
 	// Channel for outgoing messages
 	outbox chan *pb.RunnerMessage
+
+	// Channel for inbound commands awaiting dispatch, in arrival order.
+	commands chan *pb.ServerCommand
 
 	stopC    chan struct{}
 	stoppedC chan struct{}
@@ -42,6 +50,7 @@ func NewControlChannel(client *Client, handler CommandHandler, logger *zap.Logge
 		handler:  handler,
 		logger:   logger.Named("control"),
 		outbox:   make(chan *pb.RunnerMessage, 100),
+		commands: make(chan *pb.ServerCommand, commandQueueSize),
 		stopC:    make(chan struct{}),
 		stoppedC: make(chan struct{}),
 	}
@@ -93,8 +102,16 @@ func (c *ControlChannel) run(cmdCtx, streamCtx context.Context) {
 		c.sendLoop(streamCtx)
 	}()
 
+	// Start the single command consumer. Commands run on the caller's context
+	// so tearing the stream down does not cancel work already in flight.
+	dispatchDone := make(chan struct{})
+	go func() {
+		defer close(dispatchDone)
+		c.dispatchLoop(cmdCtx)
+	}()
+
 	// Run receiver in main goroutine
-	c.receiveLoop(cmdCtx, streamCtx)
+	c.receiveLoop(streamCtx)
 
 	// receiveLoop only returns when this channel is finished: stop requested,
 	// context canceled, or the stream failed. In the stream-failure case
@@ -104,12 +121,15 @@ func (c *ControlChannel) run(cmdCtx, streamCtx context.Context) {
 	// would hang behind a connection that is already gone.
 	c.StopAsync()
 
-	// Wait for sender to finish
+	// Wait for sender and dispatcher to finish
 	<-senderDone
+	<-dispatchDone
 }
 
-// receiveLoop receives commands from the server.
-func (c *ControlChannel) receiveLoop(cmdCtx, streamCtx context.Context) {
+// receiveLoop receives commands from the server and queues them for the
+// dispatcher. It only enqueues: handling happens on the single consumer, which
+// is what keeps delivery in the order the server sent.
+func (c *ControlChannel) receiveLoop(streamCtx context.Context) {
 	for {
 		select {
 		case <-streamCtx.Done():
@@ -141,8 +161,68 @@ func (c *ControlChannel) receiveLoop(cmdCtx, streamCtx context.Context) {
 			return
 		}
 
-		// Dispatch command to handler
-		go c.handleCommand(cmdCtx, cmd)
+		// Queue for the dispatcher. A full queue blocks here on purpose:
+		// dropping a command the server believes was delivered is worse than
+		// making the server wait.
+		select {
+		case c.commands <- cmd:
+		case <-streamCtx.Done():
+			return
+		case <-c.stopC:
+			return
+		}
+	}
+}
+
+// dispatchLoop is the single consumer of the command queue. Running it as one
+// goroutine is what makes delivery ordered: previously every command got its
+// own goroutine, so an ApprovePermission could be handled before the
+// ExecuteTask it belonged to had even registered.
+func (c *ControlChannel) dispatchLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.stopC:
+			return
+		case cmd := <-c.commands:
+			c.dispatch(ctx, cmd)
+		}
+	}
+}
+
+// dispatch delivers one command without letting the next one overtake it.
+func (c *ControlChannel) dispatch(ctx context.Context, cmd *pb.ServerCommand) {
+	if cmd.GetExecuteTask() == nil {
+		// Every other command is short-lived, so handling it inline is what
+		// preserves the order.
+		c.handleCommand(ctx, cmd)
+		return
+	}
+
+	// HandleExecuteTask blocks for the whole task, and the commands that steer
+	// that task - ApprovePermission, KillTask - arrive while it is running.
+	// Holding the queue for its duration would deadlock them behind the very
+	// task they control. So hand the task off and resume delivery the moment
+	// the handler reports it registered: later commands still cannot overtake
+	// it, but they no longer wait for it to finish.
+	accepted := make(chan struct{})
+	var once sync.Once
+	signal := func() { once.Do(func() { close(accepted) }) }
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.handleCommand(withTaskAccepted(ctx, signal), cmd)
+	}()
+
+	select {
+	case <-accepted:
+	case <-done:
+		// The handler returned without ever accepting - a rejected task, for
+		// instance. Nothing is in flight, so carry on.
+	case <-ctx.Done():
+	case <-c.stopC:
 	}
 }
 
