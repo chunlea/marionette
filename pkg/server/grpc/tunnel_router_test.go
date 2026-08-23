@@ -381,7 +381,7 @@ func TestTunnelRouter_SendEOF_Success(t *testing.T) {
 	tr.RegisterTunnel("tun_test", "run_test")
 
 	// Send EOF
-	err := tr.SendEOF("tun_test", "conn_123")
+	err := tr.SendEOF(context.Background(), "tun_test", "conn_123")
 	require.NoError(t, err)
 
 	// Verify EOF command was sent
@@ -399,7 +399,7 @@ func TestTunnelRouter_SendEOF_NoTunnel(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	tr := NewTunnelRouter(WithTRLogger(logger))
 
-	err := tr.SendEOF("tun_unknown", "conn_123")
+	err := tr.SendEOF(context.Background(), "tun_unknown", "conn_123")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tunnel not found")
 }
@@ -411,7 +411,7 @@ func TestTunnelRouter_SendEOF_NoConnectionManager(t *testing.T) {
 	// Register tunnel but no connection manager
 	tr.RegisterTunnel("tun_test", "run_test")
 
-	err := tr.SendEOF("tun_test", "conn_123")
+	err := tr.SendEOF(context.Background(), "tun_test", "conn_123")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "connection manager not configured")
 }
@@ -871,6 +871,237 @@ func registerForTest(t *testing.T, tr *TunnelRouter, conn *tunnelConnection) {
 
 	t.Cleanup(func() {
 		tr.CloseConnection(conn.connectionID)
+		select {
+		case <-conn.pumpDone:
+		case <-time.After(5 * time.Second):
+			t.Error("pump did not exit before the test ended")
+		}
+	})
+}
+
+// restartTunnelStore is a tunnel.Store holding rows that outlived a server
+// restart: the manager's cache and the router's registration map both start
+// empty, exactly as they do in a freshly started process.
+type restartTunnelStore struct {
+	mu      sync.Mutex
+	tunnels map[string]*tunnel.Tunnel
+	gets    int
+}
+
+func newRestartTunnelStore(tunnels ...*tunnel.Tunnel) *restartTunnelStore {
+	s := &restartTunnelStore{tunnels: make(map[string]*tunnel.Tunnel, len(tunnels))}
+	for _, t := range tunnels {
+		s.tunnels[t.ID] = t
+	}
+	return s
+}
+
+func (s *restartTunnelStore) CreateTunnel(_ context.Context, t *tunnel.Tunnel, _ string, _ int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tunnels[t.ID] = t
+	return nil
+}
+
+func (s *restartTunnelStore) GetTunnel(_ context.Context, id string) (*tunnel.Tunnel, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gets++
+	t, ok := s.tunnels[id]
+	if !ok {
+		return nil, tunnel.ErrTunnelNotFound
+	}
+	return t, nil
+}
+
+func (s *restartTunnelStore) GetTunnelByHash(_ context.Context, _ string) (*tunnel.Tunnel, error) {
+	return nil, tunnel.ErrTunnelNotFound
+}
+
+func (s *restartTunnelStore) ListTunnels(_ context.Context, _ tunnel.ListOptions) ([]*tunnel.Tunnel, error) {
+	return nil, nil
+}
+
+func (s *restartTunnelStore) UpdateTunnel(_ context.Context, id string, updates tunnel.Updates) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tunnels[id]
+	if !ok {
+		return tunnel.ErrTunnelNotFound
+	}
+	if updates.ClosedAt != nil {
+		t.ClosedAt = updates.ClosedAt
+	}
+	return nil
+}
+
+func (s *restartTunnelStore) DeleteExpiredTunnels(_ context.Context) (int64, error) {
+	return 0, nil
+}
+
+func (s *restartTunnelStore) getCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gets
+}
+
+// storedTunnel builds a tunnel row as the store would hold it.
+func storedTunnel(id, runnerID string, expiresIn time.Duration) *tunnel.Tunnel {
+	return &tunnel.Tunnel{
+		ID:        id,
+		SessionID: "ses_restart",
+		RunnerID:  runnerID,
+		Type:      tunnel.TypeHTTP,
+		Direction: tunnel.DirectionOutbound,
+		LocalPort: 3000,
+		ExpiresAt: time.Now().Add(expiresIn),
+		CreatedAt: time.Now().Add(-time.Minute),
+	}
+}
+
+// restartedRouter builds the post-restart pair: a manager whose cache is empty
+// but whose store is warm, and a router that has never seen a RegisterTunnel
+// call.
+func restartedRouter(t *testing.T, store *restartTunnelStore) (*TunnelRouter, *mockTRConnectionManager) {
+	t.Helper()
+
+	logger := zaptest.NewLogger(t)
+	tm := tunnel.NewTunnelManager(
+		tunnel.WithLogger(logger),
+		tunnel.WithStore(store),
+	)
+	cm := newMockTRConnectionManager()
+
+	tr := NewTunnelRouter(
+		WithTRLogger(logger),
+		WithTRConnectionManager(cm),
+		WithTRTunnelManager(tm),
+	)
+
+	return tr, cm
+}
+
+// TestTunnelRouter_RoutesTunnelCreatedBeforeRestart is the regression test for
+// the read-through residual. The router's tunnelRunners map is filled by
+// RegisterTunnel at creation time only, so after a restart it knew no tunnels
+// and every send failed with "tunnel not found" — even though the proxy in
+// front of it had already resolved and authenticated the same tunnel through
+// the store.
+func TestTunnelRouter_RoutesTunnelCreatedBeforeRestart(t *testing.T) {
+	const (
+		tunnelID = "tun_before_restart"
+		runnerID = "run_reconnected"
+		connID   = "conn_after_restart"
+	)
+
+	store := newRestartTunnelStore(storedTunnel(tunnelID, runnerID, time.Hour))
+	tr, cm := restartedRouter(t, store)
+
+	// Nothing registered this tunnel: this is a cold router.
+	_, cached := tr.GetRunnerForTunnel(tunnelID)
+	require.False(t, cached, "precondition: the router must start with no registration")
+
+	responseCh, err := tr.SendRequest(context.Background(), tunnelID, connID, []byte("GET / HTTP/1.1"))
+	require.NoError(t, err, "a tunnel that outlived the restart must still be routable")
+	require.NotNil(t, responseCh)
+	closeConnForTest(t, tr, connID)
+
+	// The remaining two routing paths must resolve the same way.
+	require.NoError(t, tr.SendData(context.Background(), tunnelID, connID, []byte("more"), false))
+	require.NoError(t, tr.SendEOF(context.Background(), tunnelID, connID))
+
+	commands := cm.GetCommands(runnerID)
+	require.Len(t, commands, 3, "all three sends must reach the runner the store names")
+	assert.Equal(t, tunnelID, commands[0].GetTunnelData().GetTunnelId())
+	assert.True(t, commands[2].GetTunnelData().GetEof())
+
+	// Resolution is cached back, so the store is read once per tunnel rather
+	// than once per frame.
+	gotRunner, cached := tr.GetRunnerForTunnel(tunnelID)
+	assert.True(t, cached, "the resolved tunnel must be registered for later frames")
+	assert.Equal(t, runnerID, gotRunner)
+	assert.Equal(t, 1, store.getCount(), "the store should be consulted once, not per send")
+}
+
+// TestTunnelRouter_RestartFallback_RejectsUnusableTunnels checks the fallback
+// does not resurrect tunnels the manager considers dead, and reports a tunnel
+// with no runner as such.
+func TestTunnelRouter_RestartFallback_RejectsUnusableTunnels(t *testing.T) {
+	closedAt := time.Now().Add(-time.Minute)
+
+	closed := storedTunnel("tun_closed", "run_a", time.Hour)
+	closed.ClosedAt = &closedAt
+	expired := storedTunnel("tun_expired", "run_b", -time.Minute)
+	orphan := storedTunnel("tun_orphan", "", time.Hour)
+
+	tests := []struct {
+		name     string
+		tunnelID string
+		wantErr  error
+	}{
+		{"closed", closed.ID, tunnel.ErrTunnelClosed},
+		{"expired", expired.ID, tunnel.ErrTunnelExpired},
+		{"no runner attached", orphan.ID, tunnel.ErrRunnerNotConnected},
+		{"absent from the store", "tun_never_existed", tunnel.ErrTunnelNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newRestartTunnelStore(closed, expired, orphan)
+			tr, cm := restartedRouter(t, store)
+
+			_, err := tr.SendRequest(context.Background(), tt.tunnelID, "conn_x", []byte("hi"))
+			require.Error(t, err)
+			assert.ErrorIs(t, err, tt.wantErr)
+
+			assert.Empty(t, cm.GetCommands("run_a"))
+			assert.Empty(t, cm.GetCommands("run_b"))
+			_, cached := tr.GetRunnerForTunnel(tt.tunnelID)
+			assert.False(t, cached, "an unusable tunnel must not be registered")
+		})
+	}
+}
+
+// TestTunnelRouter_HandleCloseTunnel_DoesNotReregister covers the ordering in
+// HandleCloseTunnel: with a store fallback in place, unregistering before the
+// manager marks the tunnel closed leaves a window where a concurrent send
+// re-registers the entry being removed.
+func TestTunnelRouter_HandleCloseTunnel_DoesNotReregister(t *testing.T) {
+	const (
+		tunnelID = "tun_closing"
+		runnerID = "run_closing"
+	)
+
+	store := newRestartTunnelStore(storedTunnel(tunnelID, runnerID, time.Hour))
+	tr, _ := restartedRouter(t, store)
+
+	// Warm both caches the way a live tunnel would be.
+	tr.RegisterTunnel(tunnelID, runnerID)
+	_, err := tr.tm.Get(context.Background(), tunnelID)
+	require.NoError(t, err)
+
+	require.NoError(t, tr.HandleCloseTunnel(context.Background(), runnerID, tunnelID, "runner closed it"))
+
+	_, cached := tr.GetRunnerForTunnel(tunnelID)
+	require.False(t, cached, "the registration must be gone after a close")
+
+	// The store row is closed too, so the fallback refuses to bring it back.
+	err = tr.SendData(context.Background(), tunnelID, "conn_late", []byte("late frame"), false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, tunnel.ErrTunnelClosed)
+}
+
+// closeConnForTest tears a router-owned connection down and waits for its pump.
+func closeConnForTest(t *testing.T, tr *TunnelRouter, connectionID string) {
+	t.Helper()
+
+	tr.connectionsMu.RLock()
+	conn, ok := tr.connections[connectionID]
+	tr.connectionsMu.RUnlock()
+	require.True(t, ok, "connection %s should be registered", connectionID)
+
+	t.Cleanup(func() {
+		tr.CloseConnection(connectionID)
 		select {
 		case <-conn.pumpDone:
 		case <-time.After(5 * time.Second):

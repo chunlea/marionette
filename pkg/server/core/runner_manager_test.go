@@ -150,6 +150,28 @@ func (w *testStoreWrapper) ReleaseRunnerClaim(_ context.Context, runnerID, sessi
 	return nil
 }
 
+// The connection registry, in memory. Stubs rather than behavioural: nothing
+// in this file routes commands, and the tests that do live in the two-process
+// harness against a real database.
+func (w *testStoreWrapper) BindRunnerConnection(_ context.Context, _, _ string) error { return nil }
+func (w *testStoreWrapper) ReleaseRunnerConnection(_ context.Context, _, _ string) error {
+	return nil
+}
+func (w *testStoreWrapper) GetRunnerConnection(_ context.Context, _ string) (*store.RunnerConnection, error) {
+	return nil, store.ErrNotFound
+}
+func (w *testStoreWrapper) RegisterServerReplica(_ context.Context, _ *store.ServerReplica) error {
+	return nil
+}
+func (w *testStoreWrapper) HeartbeatServerReplica(_ context.Context, _ string) error { return nil }
+func (w *testStoreWrapper) DeleteServerReplica(_ context.Context, _ string) error    { return nil }
+func (w *testStoreWrapper) DeleteExpiredServerReplicas(_ context.Context, _ time.Duration) (int, error) {
+	return 0, nil
+}
+func (w *testStoreWrapper) ListServerReplicas(_ context.Context) ([]*store.ServerReplica, error) {
+	return nil, nil
+}
+
 func (w *testStoreWrapper) GetRunner(ctx context.Context, id string) (*store.Runner, error) {
 	return w.testStore.GetRunner(ctx, id)
 }

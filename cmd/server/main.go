@@ -124,6 +124,8 @@ func main() {
 	var grpcCfg grpcserver.Config
 	var webhookDeliveryJob *jobs.WebhookDeliveryJob
 	var logArchive logArchiving
+	var replicaRegistry *core.ReplicaRegistry
+	var peerForwarder *grpcserver.PeerForwarder
 
 	if dbStore != nil {
 		// Create API key service (needed for both public and admin APIs)
@@ -205,6 +207,7 @@ func main() {
 		if cfg.Tunnels.Enabled {
 			tunnelRouter = wireTunnels(wireTunnelsDeps{
 				store:       dbStore,
+				tunnelStore: dbStore,
 				connManager: connManager,
 				apiKeySvc:   apiKeySvc,
 				baseURL:     baseURL,
@@ -250,6 +253,41 @@ func main() {
 		grpcCfg.RunnerTokenService = runnerTokenSvc
 		grpcCfg.MessageRouter = messageRouter
 		grpcCfg.LogSubscribers = app.LogSubscribers
+
+		// Cross-replica command routing.
+		//
+		// A runner's control stream lives in one process, so without this a
+		// second replica cannot reach it and every ExecuteTask, DetachSession
+		// and permission response between them fails. The registry publishes
+		// which process holds which stream; the forwarder is the one hop that
+		// uses it.
+		//
+		// A single-process deployment pays for the heartbeat and nothing else:
+		// SendCommand answers from the local map every time and never reaches
+		// the locator.
+		routingMetrics := grpcserver.NewRoutingMetrics(metricsRegisterer, cfg.Observability.Metrics.Namespace)
+		replicaRegistry, err = core.NewReplicaRegistry(dbStore, core.ReplicaRegistryConfig{
+			AdvertiseAddr:       replicaAdvertiseAddr(cfg, logger),
+			ObserveReplicaCount: routingMetrics.SetLiveReplicas,
+		}, logger.Named("replica-registry"))
+		if err != nil {
+			logger.Fatal("failed to build the replica registry", zap.Error(err))
+		}
+
+		peerCredential := grpcserver.DerivePeerCredential(secrets.MasterKey)
+		if peerCredential == "" {
+			logger.Warn("cross-replica command routing is disabled: " +
+				"MARIONETTE_MASTER_KEY is not set, so peer replicas cannot be authenticated. " +
+				"Single-replica deployments are unaffected")
+		}
+		peerForwarder = grpcserver.NewPeerForwarder(
+			peerCredential, replicaRegistry.ID(), logger.Named("peer-forwarder"))
+
+		connManager.SetRouter(replicaLocator{registry: replicaRegistry}, peerForwarder, routingMetrics)
+
+		grpcCfg.ConnectionBinder = replicaRegistry
+		grpcCfg.PeerCredential = peerCredential
+		grpcCfg.RoutingMetrics = routingMetrics
 
 		// Wire gRPC server options
 		grpcOpts = append(grpcOpts,
@@ -334,56 +372,29 @@ func main() {
 		healthChecker.Register("grpc_connections", health.ConnectionManagerCheck(connManager))
 	}
 
-	// Create admin server options
-	var adminOpts []admin.Option
-	adminOpts = append(adminOpts, admin.WithHealthService(healthChecker))
+	// Create admin server options.
+	//
+	// The services themselves are assembled by buildAdminServices, which
+	// returns one value per admin.WithX option so a test can assert that the
+	// production binary attaches all of them. Wiring by append is how
+	// provider-configs came to answer 501 for the life of the project.
+	adminOpts := buildAdminServices(adminDeps{
+		store:       storeOrNil(dbStore),
+		app:         app,
+		apiKeys:     apiKeySvc,
+		crypto:      initCredentialCrypto(secrets, dbStore, logger),
+		health:      healthChecker,
+		streamMgr:   streamMgr,
+		connManager: connManager,
+		logger:      logger,
+	}).options()
 
 	// Add metrics middleware to admin server (if enabled)
 	if metricsRegistry != nil {
 		adminOpts = append(adminOpts, admin.WithMiddleware(metrics.HTTPMiddleware(metricsRegistry)))
 	}
 
-	if apiKeySvc != nil {
-		// Create adapter for admin API using existing API key service
-		apiKeyAdapter := admin.NewAPIKeyAdapter(apiKeySvc)
-		adminOpts = append(adminOpts, admin.WithAPIKeyService(apiKeyAdapter))
-		logger.Info("API key service wired to Admin API")
-	}
 	if app != nil {
-		adminOpts = append(adminOpts, admin.WithSessionActivator(app.Sessions))
-		logger.Info("Session activator wired to Admin API")
-
-		// Without this the admin runner endpoints answered 501 and no managed
-		// runner could ever be spawned through the API, which is why nothing
-		// recorded runners.provider_instance_id in the first place.
-		adminOpts = append(adminOpts, admin.WithRunnerAdminService(
-			&runnerAdminAdapter{provisioner: app.RunnerProvisioner},
-		))
-		logger.Info("Runner admin service wired to Admin API")
-	}
-	if dbStore != nil {
-		// Create action log service adapter for admin API
-		actionLogAdapter := admin.NewActionLogStoreAdapter(dbStore)
-		adminOpts = append(adminOpts, admin.WithActionLogService(actionLogAdapter))
-		logger.Info("Action log service wired to Admin API")
-
-		// Create runner token service for admin API
-		runnerTokenAdapter := admin.NewRunnerTokenAdapter(auth.NewRunnerTokenService(dbStore, id.RunnerToken))
-		adminOpts = append(adminOpts, admin.WithRunnerTokenAdminService(runnerTokenAdapter))
-		logger.Info("Runner token service wired to Admin API")
-
-		// Create profile service for admin API
-		profileAdapter := admin.NewProfileAdapter(dbStore)
-		adminOpts = append(adminOpts, admin.WithProfileService(profileAdapter))
-		logger.Info("Profile service wired to Admin API")
-	}
-	if app != nil {
-		// The webhook manager and its integration are built by core.Wire so the
-		// managers get them at construction time instead of through setters.
-		webhookAdapter := admin.NewWebhookAdapter(app.Webhooks)
-		adminOpts = append(adminOpts, admin.WithWebhookService(webhookAdapter))
-		logger.Info("Webhook service wired to Admin API")
-
 		// Start webhook delivery job
 		webhookDeliveryJob = jobs.NewWebhookDeliveryJob(app.Webhooks, jobs.WebhookDeliveryJobConfig{
 			Interval:  5 * time.Second,
@@ -407,26 +418,6 @@ func main() {
 			}
 		}
 	}
-	if streamMgr != nil {
-		// Create streams handler for admin API
-		// Pass connManager to enable sending StartDesktopStream commands to agents
-		streamsHandler := admin.NewStreamsHandler(streamMgr, connManager, logger)
-		adminOpts = append(adminOpts, admin.WithStreamsHandler(streamsHandler))
-		logger.Info("Streams handler wired to Admin API")
-
-		// Create signaling handler for WebRTC
-		sfuHandler := streamMgr.GetSignalingHandler()
-		if sfuHandler != nil {
-			signalingHandler := admin.NewSignalingHandler(
-				sfuHandler,
-				admin.DefaultSignalingConfig(),
-				logger,
-			)
-			adminOpts = append(adminOpts, admin.WithSignalingHandler(signalingHandler))
-			logger.Info("Signaling handler wired to Admin API")
-		}
-	}
-
 	// The dashboard is served by the admin server but calls a relative
 	// /api/v1, which lives on the public API port. Forwarding that prefix
 	// gives the browser one origin: no CORS, no build-time URL baking, and
@@ -496,6 +487,14 @@ func main() {
 			errChan <- fmt.Errorf("grpc server: %w", err)
 		}
 	}()
+
+	// Announce this replica once the gRPC listener is up, so a peer that reads
+	// the row and dials immediately finds something listening.
+	if replicaRegistry != nil {
+		if err := replicaRegistry.Start(context.Background()); err != nil {
+			logger.Error("failed to start the replica registry", zap.Error(err))
+		}
+	}
 
 	// Start metrics server if enabled
 	if metricsServer != nil {
@@ -590,6 +589,17 @@ func main() {
 		}
 	}
 
+	// Withdraw this replica from the routing table before the listener goes,
+	// so peers stop forwarding to a process that can no longer deliver.
+	// Without it they would keep trying until the heartbeat expires, which
+	// turns every rolling restart into a window of failed commands.
+	if replicaRegistry != nil {
+		replicaRegistry.Stop(ctx)
+	}
+	if peerForwarder != nil {
+		peerForwarder.Close()
+	}
+
 	// Shutdown all servers
 	if err := apiServer.Shutdown(ctx); err != nil {
 		logger.Error("api server shutdown error", zap.Error(err))
@@ -629,21 +639,47 @@ func main() {
 
 // wireTunnelsDeps are the pieces the tunnel subsystem needs.
 type wireTunnelsDeps struct {
-	store       store.Store
+	store store.Store
+	// tunnelStore persists tunnels. It is a narrower interface than
+	// store.Store because DeleteExpiredTunnels lives only on the Postgres
+	// store. Nil leaves tunnels memory-only, which is what production ran
+	// with until this was wired.
+	tunnelStore tunnelStore
 	connManager *grpcserver.ConnectionManager
 	apiKeySvc   *auth.APIKeyService
 	baseURL     string
 	logger      *zap.Logger
 }
 
+// newTunnelManager builds the tunnel manager the way production does.
+//
+// Separated from wireTunnels so a test can assert the property that was wrong
+// for the life of the project: the manager production builds must persist.
+// Without a store it keeps tunnels in memory only - Create never writes the
+// tunnels table, every read-through path dead-ends, and a restart loses every
+// open tunnel while the URLs already handed out keep being answered with
+// "tunnel not found".
+func newTunnelManager(deps wireTunnelsDeps) *tunnel.TunnelManager {
+	opts := []tunnel.ManagerOption{
+		tunnel.WithLogger(deps.logger),
+		tunnel.WithBaseURL(deps.baseURL),
+	}
+
+	if deps.tunnelStore != nil {
+		opts = append(opts, tunnel.WithStore(newTunnelStoreAdapter(deps.tunnelStore)))
+		deps.logger.Info("tunnel persistence enabled")
+	} else {
+		deps.logger.Warn("no database: tunnels are memory-only and will not survive a restart")
+	}
+
+	return tunnel.NewTunnelManager(opts...)
+}
+
 // wireTunnels builds the tunnel manager, router and HTTP handlers and appends
 // the tunnel API options. It returns the router so the gRPC message router can
 // forward runner tunnel data to it.
 func wireTunnels(deps wireTunnelsDeps, apiOpts *[]api.Option) *grpcserver.TunnelRouter {
-	tunnelMgr := tunnel.NewTunnelManager(
-		tunnel.WithLogger(deps.logger),
-		tunnel.WithBaseURL(deps.baseURL),
-	)
+	tunnelMgr := newTunnelManager(deps)
 
 	tunnelRouter := grpcserver.NewTunnelRouter(
 		grpcserver.WithTRLogger(deps.logger),
@@ -733,6 +769,86 @@ func runnerServerURL(cfg *config.Config, logger *zap.Logger) string {
 		zap.String("configure", "providers.docker.isolation.server_url"),
 	)
 	return addr
+}
+
+// EnvGRPCAdvertiseAddr overrides the host:port peer replicas dial to hand this
+// process a command.
+//
+// The default derives from the gRPC listener, which is right whenever the
+// listener address is reachable from the other replicas. In Kubernetes that
+// means the pod IP: set this from the downward API (status.podIP) plus the
+// gRPC port. A wrong value is worse than none, because peers will route here
+// and time out rather than failing fast.
+const EnvGRPCAdvertiseAddr = "MARIONETTE_GRPC_ADVERTISE_ADDR"
+
+// replicaAdvertiseAddr resolves where peers reach this process.
+//
+// A loopback default is correct for a single-process deployment and correct
+// for the two-process tests; it is wrong for a real multi-replica deployment,
+// which is why picking it is logged.
+func replicaAdvertiseAddr(cfg *config.Config, logger *zap.Logger) string {
+	if addr := os.Getenv(EnvGRPCAdvertiseAddr); addr != "" {
+		return addr
+	}
+
+	host := cfg.Server.GRPC.Host
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(cfg.Server.GRPC.Port))
+	logger.Info("derived the replica advertise address from the gRPC listener",
+		zap.String("advertise_addr", addr),
+		zap.String("configure", EnvGRPCAdvertiseAddr),
+	)
+	return addr
+}
+
+// replicaLocator adapts core.ReplicaRegistry to the locator the gRPC
+// connection manager wants.
+//
+// The two Peer types are the same three fields; they are separate because core
+// cannot import the gRPC package (that dependency runs the other way), and
+// this is the seam where they meet.
+type replicaLocator struct {
+	registry *core.ReplicaRegistry
+}
+
+func (l replicaLocator) Locate(runnerID string) (grpcserver.RunnerPeer, bool) {
+	peer, ok := l.registry.Locate(runnerID)
+	if !ok {
+		return grpcserver.RunnerPeer{}, false
+	}
+	return grpcserver.RunnerPeer{ReplicaID: peer.ReplicaID, Addr: peer.Addr}, true
+}
+
+// initCredentialCrypto builds the envelope crypto the admin agent-config
+// routes encrypt API keys with.
+//
+// It returns nil rather than failing startup when there is no key: the rest of
+// the server runs fine without agent configs, and buildAdminServices leaves
+// those routes unwired rather than storing a credential in plaintext.
+//
+// It is a separate Service instance from the ones chunk GC and log archiving
+// build. They share the KEK and the DEK table, so the only cost is a second
+// data-key cache; concurrent creation of the same DEK is already handled in
+// pkg/cryptoutil.
+func initCredentialCrypto(
+	secrets *config.Secrets,
+	dbStore *postgres.Store,
+	logger *zap.Logger,
+) secretEncryptor {
+	if dbStore == nil || secrets == nil || secrets.EncryptionKey == "" {
+		return nil
+	}
+
+	svc, err := cryptoutil.NewService(secrets.EncryptionKey, postgres.NewDEKStore(dbStore), id.DataKey)
+	if err != nil {
+		logger.Error("could not build the credential crypto service; agent config routes stay disabled",
+			zap.Error(err))
+		return nil
+	}
+	return svc
 }
 
 // initChunkGC builds the content-addressed storage garbage collector.

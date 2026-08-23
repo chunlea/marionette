@@ -26,7 +26,7 @@ jobs:
       image: golang:1.25-bookworm
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # buf breaking compares against origin/main; a shallow clone has no
           # such ref.
@@ -70,7 +70,7 @@ jobs:
     # syntax, expressions and shell are checked here instead.
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install actionlint
         run: |
@@ -90,7 +90,7 @@ jobs:
       image: golang:1.25-bookworm
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -116,7 +116,7 @@ jobs:
           MARIONETTE_RUNNER_TOKEN: test_token
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage.out
@@ -130,18 +130,23 @@ jobs:
         working-directory: web
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install pnpm
         # Pinned to 9 deliberately: pnpm 10+ fails the install on
         # ERR_PNPM_IGNORED_BUILDS. Keep in sync with the packageManager field
         # in web/package.json.
-        uses: pnpm/action-setup@v4
+        #
+        # The action itself stops at v5, the first major on Node 24, rather
+        # than v6: v6 replaced the installer with a pnpm-11 bootstrap that
+        # self-updates down to the requested version, which is a new path for
+        # the old version we pin here.
+        uses: pnpm/action-setup@v5
         with:
           version: 9
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -180,7 +185,7 @@ jobs:
     # `make schema` render byte-identical output.
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check docs/schema.sql matches migrations/
         run: make schema-check
@@ -190,14 +195,23 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: golang:1.25-bookworm
-    # Recording only. There is no regression gate yet: the numbers a shared CI
-    # runner produces are too noisy to fail a pull request on, and a gate on
-    # noise is a gate everyone learns to ignore. The artifact is what gives
-    # future gating something to be calibrated against.
+    # Recording, plus a comparison that reports and does not fail. The gate
+    # itself stays off here for two reasons, in order of weight:
+    #
+    #   1. test/perf/BASELINE.md was recorded on an Apple M4 Max laptop. This
+    #      job runs on a shared 4-core runner inside a container, so most of
+    #      any ratio it prints is the hardware gap, not a code change.
+    #   2. Even on the quiet baseline machine, a run competing with other work
+    #      came in 2.85x over its own steady state — see the gate section of
+    #      BASELINE.md. A shared runner is never quieter than that.
+    #
+    # A gate on that is a gate everyone learns to ignore. `make bench-gate`
+    # runs the same comparison with the gate ON, where the comparison is
+    # between two runs on the same machine and the ratio means something.
     continue-on-error: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -233,11 +247,33 @@ jobs:
             echo
           } > bench.txt
 
+      # -count 3 so the recorded number can be a median. A single sample is
+      # the one most likely to be the cold outlier, which is exactly the
+      # sample a comparison should not be built on.
+      #
+      # pipefail so a benchmark that fails to build fails the step instead of
+      # leaving an empty bench.txt for the comparison below to skip over.
       - name: Run benchmarks
-        run: go test -run '^$' -bench . -benchmem -benchtime 2s ./pkg/server/core/... | tee -a bench.txt
+        run: |
+          set -euo pipefail
+          go test -run '^$' -bench . -benchmem -benchtime 2s -count 3 ./pkg/server/core/... | tee -a bench.txt
+
+      # Report only: benchcmp exits non-zero solely when it cannot do its job
+      # (an unreadable input), never on a ratio, because -gate is not passed.
+      # A missing or unreadable baseline prints a SKIP line and exits 0.
+      #
+      # continue-on-error is spelled out even though the job-level setting
+      # above already absorbs a failure here: it is what has to change first
+      # if this job is ever flipped to gating, and leaving it implicit is how
+      # a gate ends up tolerant without anyone deciding that.
+      - name: Compare against the baseline
+        continue-on-error: false
+        run: |
+          set -euo pipefail
+          go run ./test/perf/benchcmp -baseline test/perf/BASELINE.md -bench bench.txt | tee -a bench.txt
 
       - name: Upload benchmark artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmarks
           path: bench.txt
@@ -250,7 +286,7 @@ jobs:
       image: golang:1.25-bookworm
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"

@@ -28,6 +28,32 @@ type Runner struct {
 	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
+// ServerReplica is one running server process, as the other processes see it.
+//
+// A replica's id is generated at process start and never persisted: a restart
+// is a new replica, because the process that comes back holds none of the
+// control streams the one that died was holding.
+type ServerReplica struct {
+	ID              string    `json:"id"`
+	AdvertiseAddr   string    `json:"advertise_addr"`
+	Version         *string   `json:"version,omitempty"`
+	StartedAt       time.Time `json:"started_at"`
+	LastHeartbeatAt time.Time `json:"last_heartbeat_at"`
+}
+
+// RunnerConnection says which replica is holding a runner's control stream,
+// and where to reach that replica.
+//
+// It is the answer to the only question cross-replica routing asks: this
+// command is for runner X, whose process do I hand it to?
+type RunnerConnection struct {
+	RunnerID        string    `json:"runner_id"`
+	ReplicaID       string    `json:"replica_id"`
+	AdvertiseAddr   string    `json:"advertise_addr"`
+	ConnectedAt     time.Time `json:"connected_at"`
+	LastHeartbeatAt time.Time `json:"last_heartbeat_at"`
+}
+
 // RunnerUpdates contains fields that can be updated on a runner.
 type RunnerUpdates struct {
 	Name               *string
@@ -309,9 +335,13 @@ type PermissionRequest struct {
 	RespondedBy         *string    `json:"responded_by,omitempty"`
 	ResponseReason      *string    `json:"response_reason,omitempty"`
 	RespondedAt         *time.Time `json:"responded_at,omitempty"`
-	TenantID            *string    `json:"tenant_id,omitempty"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	// DeliveredAt is when the response reached a runner. NULL after a send
+	// that failed, which is what makes the response eligible for replay on the
+	// next attach. See migration 015.
+	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+	TenantID    *string    `json:"tenant_id,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // PermissionRequestUpdates contains fields that can be updated on a permission request.
@@ -320,6 +350,7 @@ type PermissionRequestUpdates struct {
 	RespondedBy    *string
 	ResponseReason *string
 	RespondedAt    *time.Time
+	DeliveredAt    *time.Time
 }
 
 // APIKey represents an API authentication key.

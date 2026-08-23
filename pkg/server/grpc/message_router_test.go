@@ -1752,3 +1752,23 @@ func (m *mockTaskManager) ListRuns(_ context.Context, _ string, _ core.ListTaskR
 
 // DispatchNextNow satisfies TaskManagerInterface. These fakes dispatch nothing.
 func (m *mockTaskManager) DispatchNextNow(_ context.Context, _ string) error { return nil }
+
+// Connection registry stubs: this file's subject does not route commands.
+func (m *mockStoreForRouter) BindRunnerConnection(_ context.Context, _, _ string) error { return nil }
+func (m *mockStoreForRouter) ReleaseRunnerConnection(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockStoreForRouter) GetRunnerConnection(_ context.Context, _ string) (*store.RunnerConnection, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStoreForRouter) RegisterServerReplica(_ context.Context, _ *store.ServerReplica) error {
+	return nil
+}
+func (m *mockStoreForRouter) HeartbeatServerReplica(_ context.Context, _ string) error { return nil }
+func (m *mockStoreForRouter) DeleteServerReplica(_ context.Context, _ string) error    { return nil }
+func (m *mockStoreForRouter) DeleteExpiredServerReplicas(_ context.Context, _ time.Duration) (int, error) {
+	return 0, nil
+}
+func (m *mockStoreForRouter) ListServerReplicas(_ context.Context) ([]*store.ServerReplica, error) {
+	return nil, nil
+}

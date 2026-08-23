@@ -54,6 +54,20 @@ type Config struct {
 	// LogSubscribers receives streamed logs for real-time subscribers.
 	// Optional.
 	LogSubscribers core.LogSubscriberManagerInterface
+
+	// ConnectionBinder records which process holds each runner's control
+	// stream, so commands sent from another replica can be routed to it.
+	// Optional: unset is a single-process deployment.
+	ConnectionBinder ConnectionBinder
+
+	// PeerCredential authenticates a peer replica on the internal router
+	// method. Derived from the master key, which every replica already shares.
+	// Empty leaves the method refusing to serve, which a single-process
+	// deployment never reaches because it never hops.
+	PeerCredential PeerCredential
+
+	// RoutingMetrics counts what routing does. Optional.
+	RoutingMetrics *RoutingMetrics
 }
 
 // validate checks that the runner lifecycle components are present whenever a
@@ -202,6 +216,11 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 			svcOpts = append(svcOpts, WithLogSubscriberManager(cfg.LogSubscribers))
 		}
 
+		if cfg.ConnectionBinder != nil {
+			svcOpts = append(svcOpts, WithConnectionBinder(cfg.ConnectionBinder))
+			logger.Info("cross-replica connection registry attached")
+		}
+
 		logger.Info("runner lifecycle services attached")
 	} else {
 		logger.Warn("store not configured - runner registration will not work")
@@ -216,6 +235,14 @@ func New(cfg Config, logger *zap.Logger, opts ...ServerOption) (*Server, error) 
 	// Register the RunnerService
 	runnerSvc := NewRunnerService(logger, svcOpts...)
 	pb.RegisterRunnerServiceServer(s, runnerSvc)
+
+	// The internal router shares this listener with RunnerService: no new
+	// port, no new firewall rule, and mTLS - where configured - already covers
+	// it. Because runners dial this port, the method authenticates a peer
+	// credential a runner never holds, and refuses outright when none is
+	// configured.
+	pb.RegisterInternalRouterServiceServer(s,
+		NewInternalRouterService(connManager, cfg.PeerCredential, cfg.RoutingMetrics, logger))
 
 	// Enable reflection for grpcurl and debugging
 	reflection.Register(s)

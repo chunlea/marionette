@@ -61,6 +61,19 @@ func (s *RunnerService) Connect(stream grpc.BidiStreamingServer[pb.RunnerMessage
 	}
 	defer s.handleDisconnect(ctx, runnerID)
 
+	// Publish the routing pointer before anything can want to send to this
+	// runner. OnConnect below can trigger an attach on another replica, and a
+	// command sent in that window would find nobody holding the stream.
+	//
+	// The bind is deliberately not on the stream context: it must outlive a
+	// cancelled RPC, and it acts for the deployment rather than for the
+	// tenant the stream carries.
+	if s.connBinder != nil {
+		bindCtx, cancel := context.WithTimeout(context.Background(), disconnectTimeout)
+		s.connBinder.BindRunner(bindCtx, runnerID)
+		cancel()
+	}
+
 	s.logger.Info("runner connected",
 		zap.String("runner_id", runnerID),
 		zap.String("name", runner.Name),
@@ -160,6 +173,16 @@ func (s *RunnerService) handleDisconnect(_ context.Context, runnerID string) {
 
 	// Unregister from connection manager
 	s.connManager.Unregister(runnerID)
+
+	// Clear the routing pointer, but only if it is still ours. A runner that
+	// reconnected to another replica while this stream was dying has already
+	// bound its pointer there, and clearing unconditionally would break the
+	// routing that had just been fixed.
+	if s.connBinder != nil {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), disconnectTimeout)
+		s.connBinder.ReleaseRunner(releaseCtx, runnerID)
+		cancel()
+	}
 
 	// Notify runner manager (updates DB status to offline)
 	// Use a fresh background context since the stream context may be canceled

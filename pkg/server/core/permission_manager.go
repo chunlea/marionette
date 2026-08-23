@@ -255,13 +255,18 @@ func (m *PermissionManager) Respond(ctx context.Context, permID string, approved
 		}
 
 		if err := m.cmdSender.SendCommand(*session.RunnerID, cmd); err != nil {
-			m.logger.Warn("failed to send permission response to runner",
+			// Not fatal, but not free either: the agent is blocked on this
+			// gate and will stay blocked. delivered_at is left NULL, which is
+			// what puts the response in the replay list the next time a runner
+			// attaches to this session. Before that column existed the replay
+			// keyed on the suspend timestamp and this answer was simply lost.
+			m.logger.Warn("failed to send permission response to runner; queued for replay on attach",
 				zap.String("runner_id", *session.RunnerID),
 				zap.String("perm_id", permID),
 				zap.Error(err),
 			)
-			// Not a fatal error - runner will poll on reconnect
 		} else {
+			m.markPermissionDelivered(ctx, permID)
 			m.logger.Debug("permission response sent to runner",
 				zap.String("runner_id", *session.RunnerID),
 				zap.String("perm_id", permID),
@@ -271,6 +276,21 @@ func (m *PermissionManager) Respond(ctx context.Context, permID string, approved
 	}
 
 	return nil
+}
+
+// markPermissionDelivered records that a runner has the response.
+//
+// Best effort: a failure here costs one redundant replay on the next attach,
+// which the agent ignores because it keys responses by request id. Failing the
+// respond call over it would be the worse trade.
+func (m *PermissionManager) markPermissionDelivered(ctx context.Context, permID string) {
+	now := time.Now()
+	if err := m.store.UpdatePermissionRequest(ctx, permID, store.PermissionRequestUpdates{
+		DeliveredAt: &now,
+	}); err != nil {
+		m.logger.Warn("could not record permission delivery; it may be replayed once more",
+			zap.String("perm_id", permID), zap.Error(err))
+	}
 }
 
 // Get retrieves a permission request by ID.

@@ -57,6 +57,20 @@ func (mr *MockStoreMockRecorder) BeginTx(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BeginTx", reflect.TypeOf((*MockStore)(nil).BeginTx), ctx)
 }
 
+// BindRunnerConnection mocks base method.
+func (m *MockStore) BindRunnerConnection(ctx context.Context, runnerID, replicaID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BindRunnerConnection", ctx, runnerID, replicaID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// BindRunnerConnection indicates an expected call of BindRunnerConnection.
+func (mr *MockStoreMockRecorder) BindRunnerConnection(ctx, runnerID, replicaID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BindRunnerConnection", reflect.TypeOf((*MockStore)(nil).BindRunnerConnection), ctx, runnerID, replicaID)
+}
+
 // CancelWebhookEventsByWebhook mocks base method.
 func (m *MockStore) CancelWebhookEventsByWebhook(ctx context.Context, webhookID string) error {
 	m.ctrl.T.Helper()
@@ -535,6 +549,21 @@ func (mr *MockStoreMockRecorder) DeleteDataKey(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteDataKey", reflect.TypeOf((*MockStore)(nil).DeleteDataKey), ctx, id)
 }
 
+// DeleteExpiredServerReplicas mocks base method.
+func (m *MockStore) DeleteExpiredServerReplicas(ctx context.Context, olderThan time.Duration) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteExpiredServerReplicas", ctx, olderThan)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DeleteExpiredServerReplicas indicates an expected call of DeleteExpiredServerReplicas.
+func (mr *MockStoreMockRecorder) DeleteExpiredServerReplicas(ctx, olderThan any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteExpiredServerReplicas", reflect.TypeOf((*MockStore)(nil).DeleteExpiredServerReplicas), ctx, olderThan)
+}
+
 // DeleteManifest mocks base method.
 func (m *MockStore) DeleteManifest(ctx context.Context, id string) error {
 	m.ctrl.T.Helper()
@@ -617,6 +646,20 @@ func (m *MockStore) DeleteScheduledTask(ctx context.Context, id string) error {
 func (mr *MockStoreMockRecorder) DeleteScheduledTask(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteScheduledTask", reflect.TypeOf((*MockStore)(nil).DeleteScheduledTask), ctx, id)
+}
+
+// DeleteServerReplica mocks base method.
+func (m *MockStore) DeleteServerReplica(ctx context.Context, id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteServerReplica", ctx, id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteServerReplica indicates an expected call of DeleteServerReplica.
+func (mr *MockStoreMockRecorder) DeleteServerReplica(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteServerReplica", reflect.TypeOf((*MockStore)(nil).DeleteServerReplica), ctx, id)
 }
 
 // DeleteSession mocks base method.
@@ -1092,6 +1135,21 @@ func (mr *MockStoreMockRecorder) GetRunnerByName(ctx, name any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRunnerByName", reflect.TypeOf((*MockStore)(nil).GetRunnerByName), ctx, name)
 }
 
+// GetRunnerConnection mocks base method.
+func (m *MockStore) GetRunnerConnection(ctx context.Context, runnerID string) (*store.RunnerConnection, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRunnerConnection", ctx, runnerID)
+	ret0, _ := ret[0].(*store.RunnerConnection)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRunnerConnection indicates an expected call of GetRunnerConnection.
+func (mr *MockStoreMockRecorder) GetRunnerConnection(ctx, runnerID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRunnerConnection", reflect.TypeOf((*MockStore)(nil).GetRunnerConnection), ctx, runnerID)
+}
+
 // GetRunnerToken mocks base method.
 func (m *MockStore) GetRunnerToken(ctx context.Context, id string) (*store.RunnerToken, error) {
 	m.ctrl.T.Helper()
@@ -1347,6 +1405,20 @@ func (mr *MockStoreMockRecorder) GetWorkspace(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWorkspace", reflect.TypeOf((*MockStore)(nil).GetWorkspace), ctx, id)
 }
 
+// HeartbeatServerReplica mocks base method.
+func (m *MockStore) HeartbeatServerReplica(ctx context.Context, id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HeartbeatServerReplica", ctx, id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// HeartbeatServerReplica indicates an expected call of HeartbeatServerReplica.
+func (mr *MockStoreMockRecorder) HeartbeatServerReplica(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeartbeatServerReplica", reflect.TypeOf((*MockStore)(nil).HeartbeatServerReplica), ctx, id)
+}
+
 // IncrementChunkRefCount mocks base method.
 func (m *MockStore) IncrementChunkRefCount(ctx context.Context, tenantID, hash string) error {
 	m.ctrl.T.Helper()
@@ -1524,6 +1596,21 @@ func (m *MockStore) ListScheduledTasks(ctx context.Context, opts store.ListSched
 func (mr *MockStoreMockRecorder) ListScheduledTasks(ctx, opts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListScheduledTasks", reflect.TypeOf((*MockStore)(nil).ListScheduledTasks), ctx, opts)
+}
+
+// ListServerReplicas mocks base method.
+func (m *MockStore) ListServerReplicas(ctx context.Context) ([]*store.ServerReplica, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListServerReplicas", ctx)
+	ret0, _ := ret[0].([]*store.ServerReplica)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListServerReplicas indicates an expected call of ListServerReplicas.
+func (mr *MockStoreMockRecorder) ListServerReplicas(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListServerReplicas", reflect.TypeOf((*MockStore)(nil).ListServerReplicas), ctx)
 }
 
 // ListSessions mocks base method.
@@ -1719,6 +1806,20 @@ func (mr *MockStoreMockRecorder) Ping(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Ping", reflect.TypeOf((*MockStore)(nil).Ping), ctx)
 }
 
+// RegisterServerReplica mocks base method.
+func (m *MockStore) RegisterServerReplica(ctx context.Context, replica *store.ServerReplica) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RegisterServerReplica", ctx, replica)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RegisterServerReplica indicates an expected call of RegisterServerReplica.
+func (mr *MockStoreMockRecorder) RegisterServerReplica(ctx, replica any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RegisterServerReplica", reflect.TypeOf((*MockStore)(nil).RegisterServerReplica), ctx, replica)
+}
+
 // ReleaseRunnerClaim mocks base method.
 func (m *MockStore) ReleaseRunnerClaim(ctx context.Context, runnerID, sessionID string) error {
 	m.ctrl.T.Helper()
@@ -1731,6 +1832,20 @@ func (m *MockStore) ReleaseRunnerClaim(ctx context.Context, runnerID, sessionID 
 func (mr *MockStoreMockRecorder) ReleaseRunnerClaim(ctx, runnerID, sessionID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseRunnerClaim", reflect.TypeOf((*MockStore)(nil).ReleaseRunnerClaim), ctx, runnerID, sessionID)
+}
+
+// ReleaseRunnerConnection mocks base method.
+func (m *MockStore) ReleaseRunnerConnection(ctx context.Context, runnerID, replicaID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseRunnerConnection", ctx, runnerID, replicaID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReleaseRunnerConnection indicates an expected call of ReleaseRunnerConnection.
+func (mr *MockStoreMockRecorder) ReleaseRunnerConnection(ctx, runnerID, replicaID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseRunnerConnection", reflect.TypeOf((*MockStore)(nil).ReleaseRunnerConnection), ctx, runnerID, replicaID)
 }
 
 // UpdateAPIKey mocks base method.

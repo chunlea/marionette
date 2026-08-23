@@ -919,3 +919,23 @@ func TestScheduledSessionActivator_PeriodicPolling(t *testing.T) {
 func (m *mockSessionMgrForActivator) EnsureRunner(_ context.Context, _ string) (*store.Session, error) {
 	return nil, ErrNoRunnerAvailable
 }
+
+// Connection registry stubs: this file's subject does not route commands.
+func (s *activatorTestStore) BindRunnerConnection(_ context.Context, _, _ string) error { return nil }
+func (s *activatorTestStore) ReleaseRunnerConnection(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *activatorTestStore) GetRunnerConnection(_ context.Context, _ string) (*store.RunnerConnection, error) {
+	return nil, store.ErrNotFound
+}
+func (s *activatorTestStore) RegisterServerReplica(_ context.Context, _ *store.ServerReplica) error {
+	return nil
+}
+func (s *activatorTestStore) HeartbeatServerReplica(_ context.Context, _ string) error { return nil }
+func (s *activatorTestStore) DeleteServerReplica(_ context.Context, _ string) error    { return nil }
+func (s *activatorTestStore) DeleteExpiredServerReplicas(_ context.Context, _ time.Duration) (int, error) {
+	return 0, nil
+}
+func (s *activatorTestStore) ListServerReplicas(_ context.Context) ([]*store.ServerReplica, error) {
+	return nil, nil
+}

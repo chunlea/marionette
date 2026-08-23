@@ -1,8 +1,13 @@
 # Performance baseline
 
-First recorded numbers for roadmap 8.4. **There is no regression gate.** These
-exist so a later change has something to be compared against, and so an argument
-about performance can start from a measurement instead of an intuition.
+First recorded numbers for roadmap 8.4. These exist so a later change has
+something to be compared against, and so an argument about performance can
+start from a measurement instead of an intuition.
+
+There is a gate now, but only where it means something: `make bench-gate` on
+this machine class fails on a >2x regression, and CI compares and reports
+without failing. See [The regression gate](#the-regression-gate) for the
+calibration and why CI does not gate.
 
 Recorded **2026-08-23** on branch `restart/round-3`.
 
@@ -35,6 +40,60 @@ make loadtest       # the full stack, fake executor, no model tokens spent
 `BENCHTIME` and `BENCHCOUNT` are overridable (`make bench BENCHTIME=5s
 BENCHCOUNT=6`). Benchmarks never run under `-race`: the detector changes timing
 by an order of magnitude, so a benchmark under it measures the detector.
+
+## The regression gate
+
+```bash
+make bench-gate                      # run the core benchmarks, fail on >2x
+make bench-check BENCH_OUT=bench.txt # compare a recorded run, report only
+```
+
+`test/perf/benchcmp` reads this file's tables and a `go test -bench` run, and
+prints every benchmark it can match with its ratio. It takes the **median** of
+repeated measurements, not the mean, and treats a missing baseline as a `SKIP`
+rather than a failure.
+
+### Threshold: 2x, and where that came from
+
+Seven runs of `./pkg/server/core/...` on the machine above, on an unmodified
+tree, at `-benchtime 1s`:
+
+| Benchmark | baseline | steady-state spread | worst single run |
+|---|---:|---:|---:|
+| `TaskDispatch_CreateToAssigned` | 5,095 | 4,883–5,532 (1.13x) | **14,524 (2.85x)** |
+| `TaskDispatch_DispatchNext` | 3,812 | 3,707–4,771 (1.29x) | 4,771 (1.25x) |
+| `TaskDispatch_NoWorkToDo` | 112 | 111.9–117.7 (1.05x) | 117.7 (1.05x) |
+| `RedispatchPass_Empty/sessions=1` | 204 | 207.0–223.7 (1.08x) | 223.7 (1.10x) |
+| `RedispatchPass_Empty/sessions=10` | 1,300 | 1,327–1,540 (1.16x) | 1,540 (1.18x) |
+| `RedispatchPass_Empty/sessions=50` | 6,102 | 6,261–7,182 (1.15x) | 7,182 (1.18x) |
+| `Permission_RoundTrip` | 1,125 | 1,121–1,184 (1.06x) | 1,184 (1.05x) |
+
+Steady state is tight — nothing moves more than ~1.3x, and repeated
+measurements inside one process (`-count 5`) stay inside 10%. So 2x leaves
+roughly a 1.5x margin over the noise, which is enough that a firing gate is
+worth reading and not so tight that it fires on its own.
+
+The outlier is the interesting number. `CreateToAssigned` came in at 2.85x its
+own steady state on one run — the first run after a full `go build`, with the
+machine still busy compiling. Nothing about the code changed. That single
+sample is why the gate is off in CI:
+
+- **The machines do not match.** These numbers are an Apple M4 Max laptop; the
+  `bench` job is a shared 4-core runner inside a container. A ratio between
+  them is mostly the hardware gap, and would trip 2x before any code did.
+- **A busy machine is CI's permanent condition.** The one local run that broke
+  2x is the condition a shared runner is always in.
+
+An honest report beats a gate people learn to click past. So CI runs the same
+comparison with the gate off and folds the report into the `benchmarks`
+artifact, and `make bench-gate` — same tool, same threshold, one machine on
+both sides of the comparison — is where the gate has teeth.
+
+Re-record this file when the hot paths legitimately change, and prefer
+re-recording on this machine class so the gate keeps meaning what it says.
+`benchcmp` lists any baseline entry a run did not produce under **not
+measured** rather than failing, so a partial run (the store suite skips itself
+without Docker) reports cleanly.
 
 ## Scheduler, in process
 

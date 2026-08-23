@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -356,7 +357,10 @@ func (r *TunnelRouter) UnregisterTunnel(tunnelID string) {
 	)
 }
 
-// GetRunnerForTunnel returns the runner ID associated with a tunnel.
+// GetRunnerForTunnel returns the runner ID cached for a tunnel.
+//
+// This probes the in-memory registration map only. Every routing path must go
+// through runnerFor instead, which falls back to the store.
 func (r *TunnelRouter) GetRunnerForTunnel(tunnelID string) (string, bool) {
 	r.tunnelRunnersMu.RLock()
 	defer r.tunnelRunnersMu.RUnlock()
@@ -364,13 +368,54 @@ func (r *TunnelRouter) GetRunnerForTunnel(tunnelID string) (string, bool) {
 	return runnerID, ok
 }
 
+// runnerFor resolves which runner serves a tunnel, for every path that routes
+// traffic. It is the single lookup: SendRequest, SendData and SendEOF used to
+// carry three copies of a memory-only probe with three different errors.
+//
+// tunnelRunners is a cache, not the record. It is filled by RegisterTunnel when
+// a tunnel is created, so it is empty for every tunnel that outlived a server
+// restart — the proxy layer in front of this router already resolves and
+// authenticates those tunnels through the store, so without this fallback a
+// restart turned every live tunnel into "tunnel not found" at the last hop.
+//
+// The tunnel manager is itself read-through, so a miss here resolves from the
+// store and repopulates the map: the store is read once per tunnel, not once
+// per frame.
+func (r *TunnelRouter) runnerFor(ctx context.Context, tunnelID string) (string, error) {
+	if runnerID, ok := r.GetRunnerForTunnel(tunnelID); ok {
+		return runnerID, nil
+	}
+
+	if r.tm == nil {
+		return "", fmt.Errorf("%w: %s not registered", tunnel.ErrTunnelNotFound, tunnelID)
+	}
+
+	// Get applies the liveness checks, so a closed or expired tunnel is
+	// reported as such rather than silently re-registered.
+	t, err := r.tm.Get(ctx, tunnelID)
+	if err != nil {
+		return "", fmt.Errorf("resolve tunnel %s: %w", tunnelID, err)
+	}
+	if t.RunnerID == "" {
+		return "", fmt.Errorf("%w: tunnel %s has no runner", tunnel.ErrRunnerNotConnected, tunnelID)
+	}
+
+	r.RegisterTunnel(tunnelID, t.RunnerID)
+	r.logger.Info("recovered tunnel routing from store",
+		zap.String("tunnel_id", tunnelID),
+		zap.String("runner_id", t.RunnerID),
+	)
+
+	return t.RunnerID, nil
+}
+
 // SendRequest sends a TunnelData request to a runner and waits for response.
 // This is the main entry point for HTTP proxy handlers.
 func (r *TunnelRouter) SendRequest(ctx context.Context, tunnelID, connectionID string, data []byte) (<-chan *pb.TunnelData, error) {
 	// Get runner for this tunnel
-	runnerID, ok := r.GetRunnerForTunnel(tunnelID)
-	if !ok {
-		return nil, errors.New("tunnel not found or not registered")
+	runnerID, err := r.runnerFor(ctx, tunnelID)
+	if err != nil {
+		return nil, err
 	}
 
 	if r.connManager == nil {
@@ -449,10 +494,10 @@ func (r *TunnelRouter) CloseConnection(connectionID string) {
 }
 
 // SendEOF sends an EOF signal to a runner for a connection.
-func (r *TunnelRouter) SendEOF(tunnelID, connectionID string) error {
-	runnerID, ok := r.GetRunnerForTunnel(tunnelID)
-	if !ok {
-		return errors.New("tunnel not found")
+func (r *TunnelRouter) SendEOF(ctx context.Context, tunnelID, connectionID string) error {
+	runnerID, err := r.runnerFor(ctx, tunnelID)
+	if err != nil {
+		return err
 	}
 
 	if r.connManager == nil {
@@ -475,9 +520,9 @@ func (r *TunnelRouter) SendEOF(tunnelID, connectionID string) error {
 // SendData sends data through the tunnel for bidirectional streaming (e.g., WebSocket).
 // This is used to send data from the HTTP handler back to the runner.
 func (r *TunnelRouter) SendData(ctx context.Context, tunnelID, connectionID string, data []byte, eof bool) error {
-	runnerID, ok := r.GetRunnerForTunnel(tunnelID)
-	if !ok {
-		return errors.New("tunnel not found")
+	runnerID, err := r.runnerFor(ctx, tunnelID)
+	if err != nil {
+		return err
 	}
 
 	if r.connManager == nil {
@@ -601,15 +646,18 @@ func (r *TunnelRouter) HandleCloseTunnel(ctx context.Context, runnerID string, t
 		conn.close()
 	}
 
-	// Unregister the tunnel
-	r.UnregisterTunnel(tunnelID)
-
-	// Close in TunnelManager if configured
+	// Close in the manager BEFORE dropping the registration. Now that
+	// runnerFor falls back to the store, unregistering first leaves a window
+	// where a concurrent send resolves the still-open tunnel and re-registers
+	// the entry we are removing.
+	var closeErr error
 	if r.tm != nil {
-		return r.tm.Close(ctx, tunnelID)
+		closeErr = r.tm.Close(ctx, tunnelID)
 	}
 
-	return nil
+	r.UnregisterTunnel(tunnelID)
+
+	return closeErr
 }
 
 // CleanupIdleConnections closes connections that have carried no data for

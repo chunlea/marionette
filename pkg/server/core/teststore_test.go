@@ -21,6 +21,11 @@ type testStore struct {
 
 	// runnerClaims mirrors runners.claim_session_id / claimed_at.
 	runnerClaims map[string]runnerClaim
+
+	// runnerConnections mirrors runners.connected_replica_id, and replicas
+	// mirrors the server_replicas table.
+	runnerConnections map[string]string
+	replicas          map[string]*store.ServerReplica
 }
 
 // runnerClaim is one held runner claim.
@@ -393,6 +398,126 @@ func (s *testStore) ReleaseRunnerClaim(_ context.Context, runnerID, sessionID st
 		delete(s.runnerClaims, runnerID)
 	}
 	return nil
+}
+
+// BindRunnerConnection and friends mirror the connection registry in memory.
+//
+// Behavioural for the same reason as the claim: the routing tests turn on the
+// fence, so a release by a replica that no longer holds the runner must be a
+// no-op rather than a delete.
+func (s *testStore) BindRunnerConnection(_ context.Context, runnerID, replicaID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.runnerConnections == nil {
+		s.runnerConnections = make(map[string]string)
+	}
+	s.runnerConnections[runnerID] = replicaID
+	return nil
+}
+
+func (s *testStore) ReleaseRunnerConnection(_ context.Context, runnerID, replicaID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if held, ok := s.runnerConnections[runnerID]; ok && held == replicaID {
+		delete(s.runnerConnections, runnerID)
+	}
+	return nil
+}
+
+func (s *testStore) GetRunnerConnection(_ context.Context, runnerID string) (*store.RunnerConnection, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	replicaID, ok := s.runnerConnections[runnerID]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	replica, ok := s.replicas[replicaID]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return &store.RunnerConnection{
+		RunnerID:        runnerID,
+		ReplicaID:       replicaID,
+		AdvertiseAddr:   replica.AdvertiseAddr,
+		LastHeartbeatAt: replica.LastHeartbeatAt,
+	}, nil
+}
+
+func (s *testStore) RegisterServerReplica(_ context.Context, replica *store.ServerReplica) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.replicas == nil {
+		s.replicas = make(map[string]*store.ServerReplica)
+	}
+	now := time.Now()
+	if existing, ok := s.replicas[replica.ID]; ok {
+		replica.StartedAt = existing.StartedAt
+	} else {
+		replica.StartedAt = now
+	}
+	replica.LastHeartbeatAt = now
+	stored := *replica
+	s.replicas[replica.ID] = &stored
+	return nil
+}
+
+func (s *testStore) HeartbeatServerReplica(_ context.Context, replicaID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	replica, ok := s.replicas[replicaID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	replica.LastHeartbeatAt = time.Now()
+	return nil
+}
+
+func (s *testStore) DeleteServerReplica(_ context.Context, replicaID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.replicas, replicaID)
+	// The foreign key does this in Postgres.
+	for runnerID, held := range s.runnerConnections {
+		if held == replicaID {
+			delete(s.runnerConnections, runnerID)
+		}
+	}
+	return nil
+}
+
+func (s *testStore) DeleteExpiredServerReplicas(ctx context.Context, olderThan time.Duration) (int, error) {
+	s.mu.Lock()
+	var expired []string
+	for id, replica := range s.replicas {
+		if time.Since(replica.LastHeartbeatAt) > olderThan {
+			expired = append(expired, id)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, id := range expired {
+		if err := s.DeleteServerReplica(ctx, id); err != nil {
+			return 0, err
+		}
+	}
+	return len(expired), nil
+}
+
+func (s *testStore) ListServerReplicas(_ context.Context) ([]*store.ServerReplica, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	replicas := make([]*store.ServerReplica, 0, len(s.replicas))
+	for _, replica := range s.replicas {
+		replicas = append(replicas, replica)
+	}
+	return replicas, nil
 }
 
 // Other stub methods to satisfy store.Store interface

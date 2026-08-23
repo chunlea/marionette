@@ -1,6 +1,6 @@
 .PHONY: deps build test lint proto migrate dev clean help \
 	schema schema-check openapi openapi-check generate test-store \
-	bench bench-core bench-store loadtest \
+	bench bench-core bench-store bench-gate bench-check loadtest \
 	version dist docker-build docker-up docker-down \
 	certs certs-clean certs-verify \
 	web-install web-dev web-build web-lint web-clean
@@ -265,14 +265,22 @@ test-linux-root:
 test-store:
 	$(GOTEST) -race -count=1 ./pkg/store/...
 
-# Performance baseline. See test/perf/BASELINE.md for recorded numbers and the
-# machine they came from. There is no regression gate: the point is to know the
-# shape before optimising anything.
+# Performance baseline. See test/perf/BASELINE.md for recorded numbers, the
+# machine they came from, and the gate's calibration.
 #
 # Benchmarks never run with -race. The race detector changes timing by an order
 # of magnitude, so a "benchmark" under it measures the detector.
 BENCHTIME ?= 2s
 BENCHCOUNT ?= 1
+
+# Where bench-gate parks the run it compares. Under tmp/, which is gitignored,
+# so a gate run leaves a shared working tree clean.
+BENCH_OUT ?= tmp/bench.txt
+
+# The ratio at which bench-gate calls a benchmark a regression. 2x, from the
+# run-to-run spread measured on the baseline machine — see the gate section of
+# test/perf/BASELINE.md before lowering it.
+BENCH_THRESHOLD ?= 2.0
 
 ## bench: Run every benchmark (core in-process + store against real PostgreSQL)
 bench: bench-core bench-store
@@ -286,6 +294,32 @@ bench-core: proto
 bench-store:
 	$(GOTEST) -run '^$$' -bench . -benchmem \
 		-benchtime $(BENCHTIME) -count $(BENCHCOUNT) ./test/perf/store/...
+
+## bench-gate: Run the core benchmarks and fail on a regression against BASELINE.md
+##
+## The gate is on here and off in CI, deliberately: BASELINE.md was recorded on
+## a developer machine, so the ratio only means something when the run comes
+## from one too. See the bench job in .github/workflows/ci.yml.
+##
+## Output goes to a file rather than through a pipe so a build failure in the
+## benchmarks fails this target instead of being swallowed by `tee`.
+##
+## -count 3, not BENCHCOUNT: the comparison takes a median, and a median of one
+## sample is the cold outlier it exists to reject.
+bench-gate: proto
+	@mkdir -p $(dir $(BENCH_OUT))
+	$(GOTEST) -run '^$$' -bench . -benchmem \
+		-benchtime $(BENCHTIME) -count 3 ./pkg/server/core/... > $(BENCH_OUT)
+	@cat $(BENCH_OUT)
+	$(GOCMD) run ./test/perf/benchcmp \
+		-bench $(BENCH_OUT) -threshold $(BENCH_THRESHOLD) -gate
+
+## bench-check: Compare an already-recorded run against BASELINE.md, report only
+##
+## Point BENCH_OUT at a bench.txt — CI's `benchmarks` artifact, for instance.
+bench-check:
+	$(GOCMD) run ./test/perf/benchcmp \
+		-bench $(BENCH_OUT) -threshold $(BENCH_THRESHOLD)
 
 ## loadtest: Drive the real stack with fake runners (no model tokens are spent)
 loadtest: build

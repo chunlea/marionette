@@ -1170,3 +1170,23 @@ func TestIntegration_Connect_ContextCancellation(t *testing.T) {
 	// Verify disconnected
 	assert.False(t, setup.connManager.IsConnected(runnerID))
 }
+
+// Connection registry stubs: this file's subject does not route commands.
+func (s *integrationTestStore) BindRunnerConnection(_ context.Context, _, _ string) error { return nil }
+func (s *integrationTestStore) ReleaseRunnerConnection(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *integrationTestStore) GetRunnerConnection(_ context.Context, _ string) (*store.RunnerConnection, error) {
+	return nil, store.ErrNotFound
+}
+func (s *integrationTestStore) RegisterServerReplica(_ context.Context, _ *store.ServerReplica) error {
+	return nil
+}
+func (s *integrationTestStore) HeartbeatServerReplica(_ context.Context, _ string) error { return nil }
+func (s *integrationTestStore) DeleteServerReplica(_ context.Context, _ string) error    { return nil }
+func (s *integrationTestStore) DeleteExpiredServerReplicas(_ context.Context, _ time.Duration) (int, error) {
+	return 0, nil
+}
+func (s *integrationTestStore) ListServerReplicas(_ context.Context) ([]*store.ServerReplica, error) {
+	return nil, nil
+}

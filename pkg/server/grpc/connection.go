@@ -121,6 +121,14 @@ type ConnectionManager struct {
 	connections map[string]*RunnerConnection
 	mu          sync.RWMutex
 	logger      *zap.Logger
+
+	// routeMu guards the cross-replica collaborators, which are attached after
+	// construction: the connection manager is built before core.Wire (every
+	// manager takes it as a dependency) and the locator comes out of core.Wire.
+	routeMu   sync.RWMutex
+	locator   RunnerLocator
+	forwarder CommandForwarder
+	metrics   *RoutingMetrics
 }
 
 // NewConnectionManager creates a new ConnectionManager.
@@ -129,6 +137,28 @@ func NewConnectionManager(logger *zap.Logger) *ConnectionManager {
 		connections: make(map[string]*RunnerConnection),
 		logger:      logger,
 	}
+}
+
+// SetRouter attaches cross-replica routing.
+//
+// Without it the manager behaves exactly as it did before routing existed:
+// every lookup is answered from the local map. That is not a fallback, it is
+// the single-process path, and it must stay free of database work.
+func (cm *ConnectionManager) SetRouter(locator RunnerLocator, forwarder CommandForwarder, metrics *RoutingMetrics) {
+	cm.routeMu.Lock()
+	defer cm.routeMu.Unlock()
+
+	cm.locator = locator
+	cm.forwarder = forwarder
+	cm.metrics = metrics
+}
+
+// router returns the attached collaborators, or nils.
+func (cm *ConnectionManager) router() (RunnerLocator, CommandForwarder, *RoutingMetrics) {
+	cm.routeMu.RLock()
+	defer cm.routeMu.RUnlock()
+
+	return cm.locator, cm.forwarder, cm.metrics
 }
 
 // Register adds a new runner connection.
@@ -242,13 +272,51 @@ func (cm *ConnectionManager) Count() int {
 	return len(cm.connections)
 }
 
-// IsConnected checks if a runner is connected.
+// IsConnected checks if a runner is connected, anywhere in the deployment.
+//
+// Local map first, so a single-process deployment never touches the database
+// and a multi-replica one pays a lookup only for runners it does not hold.
+// Without the second half, a runner attached to another replica is invisible
+// to runner selection: each replica could allocate only from the slice of the
+// fleet that happened to connect to it, and a parked session could never be
+// served by an idle runner one hop away.
 func (cm *ConnectionManager) IsConnected(runnerID string) bool {
+	cm.mu.RLock()
+	_, exists := cm.connections[runnerID]
+	cm.mu.RUnlock()
+
+	if exists {
+		return true
+	}
+
+	locator, _, _ := cm.router()
+	if locator == nil {
+		return false
+	}
+	_, held := locator.Locate(runnerID)
+	return held
+}
+
+// LocalCount returns how many runners this process is holding, as opposed to
+// how many the deployment has.
+func (cm *ConnectionManager) LocalCount() int {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 
-	_, exists := cm.connections[runnerID]
-	return exists
+	return len(cm.connections)
+}
+
+// recordSend meters one send attempt. Nil metrics is the norm in tests and in
+// a deployment with observability off.
+func (cm *ConnectionManager) recordSend(path string, err error) {
+	_, _, metrics := cm.router()
+	metrics.send(path, err)
+}
+
+// recordHop meters one cross-replica delivery.
+func (cm *ConnectionManager) recordHop(d time.Duration) {
+	_, _, metrics := cm.router()
+	metrics.hop(d)
 }
 
 // ErrCommandQueueFull is returned when the command queue is full.
@@ -258,11 +326,73 @@ var ErrCommandQueueFull = errors.New("command queue full")
 // connection that is being torn down.
 var ErrRunnerDisconnected = errors.New("runner disconnected")
 
-// SendCommand queues a command to be sent to a runner.
-// Returns ErrRunnerNotFound if the runner is not connected.
+// SendCommand queues a command to be sent to a runner, wherever it is attached.
+//
+// The rule is local first:
+//
+//  1. this process holds the stream        -> write to it. Nothing else happens.
+//  2. a live peer holds it                 -> one hop, and its outcome is the answer.
+//  3. otherwise                            -> ErrRunnerNotFound, as before.
+//
+// Local-first is what keeps a single-process deployment at exactly the cost it
+// had before routing existed - no query, no round trip - and what keeps
+// TunnelData, which flows per chunk, off the database.
+//
+// It accepts one window: a runner connected to two replicas at once (a
+// partition where this process has not yet noticed its stream is dead) is sent
+// to locally although the registry names someone else. If the stream is truly
+// dead the write fails, the connection tears down, and the next attempt routes
+// correctly; if it is alive the agent is holding two streams, which this layer
+// cannot fix and should not paper over. The case is metered.
+//
+// Returns ErrRunnerNotFound if nothing holds the runner.
 // Returns ErrRunnerDisconnected if the connection is being torn down.
 // Returns ErrCommandQueueFull if the command queue is full (backpressure).
+// Returns ErrReplicaUnreachable if the holder could not be reached.
 func (cm *ConnectionManager) SendCommand(runnerID string, cmd *pb.ServerCommand) error {
+	err := cm.sendLocal(runnerID, cmd)
+	if !errors.Is(err, ErrRunnerNotFound) {
+		cm.recordSend(routePathLocal, err)
+		return err
+	}
+
+	locator, forwarder, _ := cm.router()
+	if locator == nil || forwarder == nil {
+		cm.recordSend(routePathLocal, err)
+		return err
+	}
+
+	peer, held := locator.Locate(runnerID)
+	if !held {
+		cm.recordSend(routePathLocal, err)
+		return err
+	}
+
+	started := time.Now()
+	remoteErr := forwarder.Forward(peer, runnerID, cmd)
+	cm.recordHop(time.Since(started))
+	cm.recordSend(routePathRemote, remoteErr)
+	if remoteErr != nil {
+		cm.logger.Warn("could not deliver a command to the replica holding the runner",
+			zap.String("runner_id", runnerID),
+			zap.String("replica_id", peer.ReplicaID),
+			zap.String("addr", peer.Addr),
+			zap.Error(remoteErr),
+		)
+		return remoteErr
+	}
+
+	cm.logger.Debug("command forwarded to the replica holding the runner",
+		zap.String("runner_id", runnerID),
+		zap.String("replica_id", peer.ReplicaID),
+	)
+	return nil
+}
+
+// sendLocal writes to a stream this process holds, and is the whole of the
+// old SendCommand. The internal router service calls it directly: a forwarded
+// command has already been routed and must not be routed again.
+func (cm *ConnectionManager) sendLocal(runnerID string, cmd *pb.ServerCommand) error {
 	cm.mu.RLock()
 	conn, exists := cm.connections[runnerID]
 	cm.mu.RUnlock()
