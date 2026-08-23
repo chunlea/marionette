@@ -1,0 +1,29 @@
+pkg/store/postgres/helpers.go
+  s_476c758fe5506c::t_4d8ec62c737ca3 65-73,75-78
+pkg/store/postgres/partitions_test.go
+  s_30fb41c4a911b8::t_ee3059fe1bd4ce 5,10-11,211-268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "e99d4f7a35e20bf5e26083906c5a5bc39eb77b2d",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
