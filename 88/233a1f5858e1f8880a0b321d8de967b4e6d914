@@ -1,0 +1,21 @@
+cmd/mctl/output.go
+  s_c8578aa5dbeab3::t_cd0cbda6c04c36 45-48,50-54,90-98,101-105,107,110-113,115-119,122-127,129-137,140-150,153-168,171-183,186-246,249,254,259,262-264,267-269,274,277-284,286-287,289-302
+cmd/mctl/output_test.go
+  s_c8578aa5dbeab3::t_9a0bb745f62d42 75-76,79-93,400,419,435,453,467
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "88233a1f5858e1f8880a0b321d8de967b4e6d914",
+  "prompts": {},
+  "sessions": {
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
