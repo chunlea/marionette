@@ -288,6 +288,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionID}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List session logs
+         * @description Every log line the session ever produced, oldest first: the archived ones followed by the rows still in the database. This is the only view that survives archiving, because archives are written per session. `total_count` includes archived records, and for those it ignores the level and stream filters - counting them would mean decompressing the whole archive to answer a number.
+         */
+        get: operations["getSessionsLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionID}/resume": {
         parameters: {
             query?: never;
@@ -451,7 +471,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List task logs */
+        /**
+         * List task logs
+         * @description Logs are archived per session once a session finishes, so a task's older logs may no longer be rows in the database. This reads both, in order, and `archived` narrows it to one side.
+         */
         get: operations["getTasksLogs"];
         put?: never;
         post?: never;
@@ -2256,6 +2279,75 @@ export interface operations {
             };
         };
     };
+    getSessionsLogs: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return. Defaults to 50. */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's next_cursor. */
+                cursor?: string;
+                /** @description Filter by log level. */
+                level?: string[];
+                /** @description Filter by output stream. */
+                stream?: string[];
+                /** @description Which copy to read. Omit for both, oldest first. true reads only the archive; false reads only the rows still in the database. */
+                archived?: boolean;
+            };
+            header?: never;
+            path: {
+                sessionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogList"];
+                };
+            };
+            /** @description The API key is missing, malformed, revoked or expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The credential lacks the tasks:read scope. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     postSessionsResume: {
         parameters: {
             query?: never;
@@ -2837,6 +2929,8 @@ export interface operations {
                 level?: string[];
                 /** @description Filter by output stream. */
                 stream?: string[];
+                /** @description Which copy to read. Omit for both, oldest first. true reads only the archive; false reads only the rows still in the database. */
+                archived?: boolean;
             };
             header?: never;
             path: {

@@ -219,6 +219,10 @@ jobs:
     # same Go toolchain that CI compiled and tested with.
     container:
       image: golang:1.25-bookworm
+    # Container jobs default to sh (dash), which rejects `set -o pipefail`.
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
