@@ -1,0 +1,25 @@
+pkg/client/admin.go
+  s_476c758fe5506c::t_dc7d4805b3ad92 148-153,159-194
+pkg/client/admin_runner_token_decode_test.go
+  s_476c758fe5506c::t_f8afc03c15cdbb 1-136
+pkg/client/testdata/runner_token_create_response.json
+  s_476c758fe5506c::t_10a9b93c516f59 1-19
+pkg/client/testdata/runner_token_rotate_response.json
+  s_476c758fe5506c::t_5f74b5b950f38d 1-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "82af5d5709ed5ab9edad16640a4033dccbc5221c",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
