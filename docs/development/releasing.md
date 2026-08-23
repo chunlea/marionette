@@ -35,8 +35,9 @@ git push origin main
 git push origin v0.2.0
 ```
 
-The tag has to be an annotated or signed tag, and it must exist on the remote:
-the workflow refuses to create a release for a tag it cannot verify.
+Annotate the tag (`-a`, or `-s` to sign it) so the message survives, and push
+the tag itself — the release job runs `gh release create --verify-tag`, which
+refuses to invent a tag that is not on the remote.
 
 **4. Watch it.**
 
