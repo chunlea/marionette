@@ -1,0 +1,29 @@
+pkg/agent/task_runner.go
+  s_b1ee0c9aba1316::t_10e2e0e7b6ae57 18-20,171-182,199,264-266,272-279,283-287
+pkg/agent/task_runner_test.go
+  s_476c758fe5506c::t_fb6cc87066c4d5 1462-1607
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "1d93f46e13cfc574783f1b95d015aece23c0de84",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
