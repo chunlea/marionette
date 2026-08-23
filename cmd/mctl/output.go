@@ -163,7 +163,7 @@ func taskToRow(t *client.Task) []string {
 // PrintRunner outputs a single runner.
 func (p *Printer) PrintRunner(r *client.Runner) error {
 	if p.format == OutputTable {
-		headers := []string{"ID", "NAME", "STATUS", "POOL", "PROVIDER", "LAST SEEN"}
+		headers := []string{"ID", "NAME", "STATUS", "POOL", "SANDBOX", "LAST SEEN"}
 		rows := [][]string{runnerToRow(r)}
 		return p.PrintTable(headers, rows)
 	}
@@ -173,7 +173,7 @@ func (p *Printer) PrintRunner(r *client.Runner) error {
 // PrintRunnerList outputs a list of runners.
 func (p *Printer) PrintRunnerList(runners []*client.Runner) error {
 	if p.format == OutputTable {
-		headers := []string{"ID", "NAME", "STATUS", "POOL", "PROVIDER", "LAST SEEN"}
+		headers := []string{"ID", "NAME", "STATUS", "POOL", "SANDBOX", "LAST SEEN"}
 		rows := make([][]string, len(runners))
 		for i, r := range runners {
 			rows[i] = runnerToRow(r)
@@ -212,10 +212,6 @@ func runnerToRow(r *client.Runner) []string {
 	if r.PoolName != nil {
 		pool = *r.PoolName
 	}
-	provider := ""
-	if r.ProviderConfigID != nil {
-		provider = *r.ProviderConfigID
-	}
 	lastSeen := ""
 	if r.LastSeenAt != nil {
 		lastSeen = formatTime(*r.LastSeenAt)
@@ -225,7 +221,7 @@ func runnerToRow(r *client.Runner) []string {
 		r.Name,
 		r.Status,
 		pool,
-		provider,
+		r.SandboxMode,
 		lastSeen,
 	}
 }
@@ -255,12 +251,12 @@ func (p *Printer) PrintTunnel(t *client.Tunnel) error {
 		// Show access info
 		if t.IsPublic {
 			_, _ = fmt.Fprintf(p.writer, "\nAccess the tunnel (public, no auth required):\n")
-			_, _ = fmt.Fprintf(p.writer, "  curl %s/\n", t.PublicURL)
+			_, _ = fmt.Fprintf(p.writer, "  curl %s/\n", derefString(t.PublicURL))
 		} else if t.Token != "" {
 			_, _ = fmt.Fprintf(p.writer, "\nAccess the tunnel:\n")
-			_, _ = fmt.Fprintf(p.writer, "  curl -H \"X-Marionette-Tunnel-Token: %s\" %s/\n", t.Token, t.PublicURL)
+			_, _ = fmt.Fprintf(p.writer, "  curl -H \"X-Marionette-Tunnel-Token: %s\" %s/\n", t.Token, derefString(t.PublicURL))
 			_, _ = fmt.Fprintf(p.writer, "\nOr open in browser (will prompt for password):\n")
-			_, _ = fmt.Fprintf(p.writer, "  %s/\n", t.PublicURL)
+			_, _ = fmt.Fprintf(p.writer, "  %s/\n", derefString(t.PublicURL))
 			_, _ = fmt.Fprintf(p.writer, "  (leave username empty, enter token as password)\n")
 		}
 		return nil
@@ -283,9 +279,9 @@ func (p *Printer) PrintTunnelList(tunnels []*client.Tunnel) error {
 
 // tunnelToRow converts a tunnel to a table row.
 func tunnelToRow(t *client.Tunnel) []string {
-	expires := t.ExpiresAt
-	if expires == "" {
-		expires = "-"
+	expires := "-"
+	if !t.ExpiresAt.IsZero() {
+		expires = formatTime(t.ExpiresAt)
 	}
 	isPublic := "no"
 	if t.IsPublic {
@@ -297,9 +293,17 @@ func tunnelToRow(t *client.Tunnel) []string {
 		t.Type,
 		fmt.Sprintf("%d", t.LocalPort),
 		isPublic,
-		t.PublicURL,
+		derefString(t.PublicURL),
 		expires,
 	}
+}
+
+// derefString renders an optional string, using the empty string for unset.
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // PrintScheduledTask outputs a single scheduled task.

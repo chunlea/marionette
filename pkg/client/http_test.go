@@ -7,13 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/chunlea/marionette/pkg/store"
 )
 
 func TestHTTPClient_CreateSession(t *testing.T) {
 	now := time.Now()
-	expected := &store.Session{
+	expected := &Session{
 		ID:        "sess_test123",
 		Name:      strPtr("test-session"),
 		Status:    "pending",
@@ -58,7 +56,7 @@ func TestHTTPClient_CreateSession(t *testing.T) {
 
 func TestHTTPClient_GetSession(t *testing.T) {
 	now := time.Now()
-	expected := &store.Session{
+	expected := &Session{
 		ID:        "sess_test123",
 		Name:      strPtr("my-session"),
 		Status:    "active",
@@ -94,7 +92,7 @@ func TestHTTPClient_GetSession(t *testing.T) {
 func TestHTTPClient_ListSessions(t *testing.T) {
 	now := time.Now()
 	expected := &ListResult[Session]{
-		Items: []*store.Session{
+		Items: []*Session{
 			{ID: "sess_1", Name: strPtr("session-1"), Status: "active", Agent: "claude", CreatedAt: now, UpdatedAt: now},
 			{ID: "sess_2", Name: strPtr("session-2"), Status: "pending", Agent: "claude", CreatedAt: now, UpdatedAt: now},
 		},
@@ -155,7 +153,7 @@ func TestHTTPClient_SuspendSession(t *testing.T) {
 
 func TestHTTPClient_CreateTask(t *testing.T) {
 	now := time.Now()
-	expected := &store.Task{
+	expected := &Task{
 		ID:        "task_test123",
 		SessionID: "sess_xxx",
 		Prompt:    "Build an API",
@@ -194,7 +192,7 @@ func TestHTTPClient_CreateTask(t *testing.T) {
 
 func TestHTTPClient_GetTask(t *testing.T) {
 	now := time.Now()
-	expected := &store.Task{
+	expected := &Task{
 		ID:        "task_test123",
 		SessionID: "sess_xxx",
 		Prompt:    "Build an API",
@@ -251,7 +249,7 @@ func TestHTTPClient_ErrorHandling(t *testing.T) {
 
 func TestHTTPClient_GetRunner(t *testing.T) {
 	now := time.Now()
-	expected := &store.Runner{
+	expected := &Runner{
 		ID:        "run_test123",
 		Name:      "test-runner",
 		Hostname:  "localhost",
@@ -329,7 +327,7 @@ func TestHTTPClient_DenyPermission(t *testing.T) {
 func TestHTTPClient_ListTasks(t *testing.T) {
 	now := time.Now()
 	expected := &ListResult[Task]{
-		Items: []*store.Task{
+		Items: []*Task{
 			{ID: "task_1", SessionID: "sess_xxx", Status: "running", Prompt: "Task 1", CreatedAt: now, UpdatedAt: now},
 			{ID: "task_2", SessionID: "sess_xxx", Status: "pending", Prompt: "Task 2", CreatedAt: now, UpdatedAt: now},
 		},
@@ -452,7 +450,7 @@ func TestHTTPClient_GetTaskLogs(t *testing.T) {
 func TestHTTPClient_ListRunners(t *testing.T) {
 	now := time.Now()
 	expected := &ListResult[Runner]{
-		Items: []*store.Runner{
+		Items: []*Runner{
 			{ID: "run_1", Name: "runner-1", Hostname: "host1", Status: "idle", CreatedAt: now, UpdatedAt: now},
 			{ID: "run_2", Name: "runner-2", Hostname: "host2", Status: "busy", CreatedAt: now, UpdatedAt: now},
 		},
@@ -489,7 +487,7 @@ func TestHTTPClient_ListRunners(t *testing.T) {
 
 func TestHTTPClient_GetPermission(t *testing.T) {
 	now := time.Now()
-	expected := &store.PermissionRequest{
+	expected := &PermissionRequest{
 		ID:        "perm_test123",
 		SessionID: "sess_xxx",
 		TaskID:    "task_xxx",
@@ -528,7 +526,7 @@ func TestHTTPClient_GetPermission(t *testing.T) {
 func TestHTTPClient_ListPermissions(t *testing.T) {
 	now := time.Now()
 	expected := &ListResult[PermissionRequest]{
-		Items: []*store.PermissionRequest{
+		Items: []*PermissionRequest{
 			{ID: "perm_1", SessionID: "sess_xxx", TaskID: "task_xxx", RunID: "trun_xxx", Tool: "bash", Action: "cmd1", Status: "pending", RiskLevel: "high", CreatedAt: now},
 		},
 		NextCursor: "cursor789",
@@ -633,7 +631,7 @@ func TestHTTPClient_CreateSessionWithAllOptions(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(&store.Session{ID: "sess_new"})
+		_ = json.NewEncoder(w).Encode(&Session{ID: "sess_new"})
 	}))
 	defer server.Close()
 
@@ -670,7 +668,7 @@ func TestHTTPClient_CreateTaskWithAllOptions(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(&store.Task{ID: "task_new"})
+		_ = json.NewEncoder(w).Encode(&Task{ID: "task_new"})
 	}))
 	defer server.Close()
 
@@ -703,7 +701,7 @@ func TestHTTPClient_ListSessionsWithAllFilters(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(&ListResult[Session]{Items: []*store.Session{}})
+		_ = json.NewEncoder(w).Encode(&ListResult[Session]{Items: []*Session{}})
 	}))
 	defer server.Close()
 
@@ -793,7 +791,7 @@ func TestHTTPClient_TrailingSlashInBaseURL(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(&store.Session{ID: "sess_test"})
+		_ = json.NewEncoder(w).Encode(&Session{ID: "sess_test"})
 	}))
 	defer server.Close()
 

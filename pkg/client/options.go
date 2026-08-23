@@ -157,20 +157,6 @@ type ListTunnelsOptions struct {
 	SessionID string
 }
 
-// Tunnel represents a tunnel.
-type Tunnel struct {
-	ID        string `json:"id"`
-	SessionID string `json:"session_id"`
-	RunnerID  string `json:"runner_id"`
-	Type      string `json:"type"`
-	LocalPort int    `json:"local_port"`
-	IsPublic  bool   `json:"is_public"`
-	Token     string `json:"token,omitempty"`
-	PublicURL string `json:"public_url"`
-	ExpiresAt string `json:"expires_at"`
-	CreatedAt string `json:"created_at"`
-}
-
 // CreateScheduledTaskOptions contains options for creating a scheduled task.
 type CreateScheduledTaskOptions struct {
 	// SessionID is the ID of the session to associate the scheduled task with.
