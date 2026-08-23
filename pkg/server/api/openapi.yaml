@@ -1,81 +1,864 @@
+# GENERATED FILE — DO NOT EDIT.
+#
+# Source of truth: the route table in pkg/server/api/openapi_routes.go and the
+# Go types in pkg/server/api/apitypes.
+# Regenerate with:  make openapi
+# Drift is checked by TestOpenAPIDocumentIsUpToDate, which runs in CI.
 openapi: 3.1.0
 info:
-  title: Marionette Public API
-  description: |
-    Remote agent orchestration and observability platform for controlling coding agents
-    (like Claude Code) running in isolated environments.
-
-    ## Authentication
-
-    All API endpoints use Bearer token authentication with API keys:
-    ```
-    Authorization: Bearer mk_xxxxxxxxxxxxx
-    ```
-
-    API keys are scoped to control access:
-    - `sessions:read`, `sessions:write` - Session management
-    - `tasks:read`, `tasks:write` - Task management
-    - `runners:read` - Runner visibility
-    - `permissions:read`, `permissions:write` - Permission handling
-    - `events:read` - Event streaming
-
-    > **Note**: For admin operations (API key management, agent configs, provider configs),
-    > use the Admin API on port 8081.
-
+  title: Marionette API
   version: 1.0.0
-  contact:
-    name: Marionette Team
-  license:
-    name: MIT
+  description: |-
+    The public Marionette API: create sessions, run tasks on them, answer the
+    agent's permission requests, and stream the output.
 
+    Authenticate with an API key as `Authorization: Bearer mk_...`. Each route
+    requires a scope, listed in its security requirement. The two WebSocket routes
+    also accept the key as a `?token=` query parameter, because a browser cannot
+    set headers on a WebSocket handshake.
+
+    List endpoints are cursor-paginated: pass `next_cursor` from one response as
+    `cursor` on the next request, and stop when `has_more` is false. Repeated
+    filters such as `status` are sent as repeated keys (`?status=a&status=b`),
+    not as `status[]`.
 servers:
   - url: http://localhost:8080
-    description: Public API (development)
-
+    description: Local development
 tags:
   - name: Sessions
-    description: |
-      Manage long-lived work contexts for AI coding agents.
-      **Scopes**: `sessions:read`, `sessions:write`
+    description: Long-lived work contexts that outlive individual runners.
   - name: Tasks
-    description: |
-      Manage units of work within sessions.
-      **Scopes**: `tasks:read`, `tasks:write`
+    description: Units of work executed inside a session.
   - name: Runners
-    description: |
-      View execution environments (read-only for public API).
-      **Scopes**: `runners:read`
+    description: Execution environments, read-only from the public API.
   - name: Permissions
-    description: |
-      Handle agent permission requests.
-      **Scopes**: `permissions:read`, `permissions:write`
-
+    description: Approval requests raised by the agent mid-task.
+  - name: Workspaces
+    description: Persistent working directories.
+  - name: Scheduled Tasks
+    description: Tasks created on a cron schedule.
+  - name: Tunnels
+    description: Ports forwarded out of a runner.
+  - name: Streaming
+    description: WebSocket endpoints for logs, events and frames.
+  - name: Service
+    description: Health and documentation endpoints.
 paths:
-  # Health endpoints
-  /health:
+  /api/v1/events:
     get:
-      summary: Health check
-      operationId: healthCheck
+      tags:
+        - Streaming
+      summary: Stream server events over WebSocket
+      description: Emits permission requests and session, task and runner state changes.
+      operationId: getEvents
+      security:
+        - ApiKeyAuth:
+            - events:read
+      parameters:
+        - name: event_type
+          in: query
+          description: Only deliver these event types.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items:
+              type: string
+        - name: labels
+          in: query
+          description: JSON object of labels to filter on.
+          schema:
+            type: string
+        - name: token
+          in: query
+          description: API key, for clients that cannot set an Authorization header.
+          schema:
+            type: string
       responses:
-        '200':
-          description: Service is healthy
+        "101":
+          description: The connection was upgraded to a WebSocket.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: ok
-
-  # Sessions API
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the events:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/logs/{taskID}/stream:
+    get:
+      tags:
+        - Streaming
+      summary: Stream task logs over WebSocket
+      description: Upgrades to a WebSocket that emits one JSON log message per line. Browsers cannot set headers on a WebSocket handshake, so this route also accepts the API key as a ?token= query parameter.
+      operationId: getLogsStream
+      security:
+        - ApiKeyAuth:
+            - tasks:read
+      parameters:
+        - name: taskID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: token
+          in: query
+          description: API key, for clients that cannot set an Authorization header.
+          schema:
+            type: string
+      responses:
+        "101":
+          description: The connection was upgraded to a WebSocket.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tasks:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/permissions:
+    get:
+      tags:
+        - Permissions
+      summary: List permission requests
+      description: 'Permission requests never expire on their own: they stay pending until approved, denied, or cancelled with the task.'
+      operationId: getPermissions
+      security:
+        - ApiKeyAuth:
+            - permissions:read
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: session_id
+          in: query
+          description: Filter by session.
+          schema:
+            type: string
+        - name: task_id
+          in: query
+          description: Filter by task.
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by request status.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items:
+              type: string
+        - name: risk_level
+          in: query
+          description: Filter by risk level.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRequestList'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the permissions:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/permissions/{permissionID}:
+    get:
+      tags:
+        - Permissions
+      summary: Get a permission request
+      operationId: getPermissionsByPermissionID
+      security:
+        - ApiKeyAuth:
+            - permissions:read
+      parameters:
+        - name: permissionID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionRequest'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the permissions:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/permissions/{permissionID}/approve:
+    post:
+      tags:
+        - Permissions
+      summary: Approve a permission request
+      description: May be called while the session is suspended; the response is delivered when the session resumes.
+      operationId: postPermissionsApprove
+      security:
+        - ApiKeyAuth:
+            - permissions:write
+      parameters:
+        - name: permissionID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveRequest'
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the permissions:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/permissions/{permissionID}/deny:
+    post:
+      tags:
+        - Permissions
+      summary: Deny a permission request
+      operationId: postPermissionsDeny
+      security:
+        - ApiKeyAuth:
+            - permissions:write
+      parameters:
+        - name: permissionID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DenyRequest'
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the permissions:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/runners:
+    get:
+      tags:
+        - Runners
+      summary: List runners
+      description: Runners are managed by the server; this view is read-only. Provisioning lives in the admin API.
+      operationId: getRunners
+      security:
+        - ApiKeyAuth:
+            - runners:read
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by runner status.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items:
+              type: string
+        - name: pool_name
+          in: query
+          description: Filter by pool.
+          schema:
+            type: string
+        - name: labels[key]
+          in: query
+          description: Filter by label. Repeat with different keys to AND several labels, e.g. labels[env]=prod.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerList'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the runners:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/runners/{runnerID}:
+    get:
+      tags:
+        - Runners
+      summary: Get a runner
+      operationId: getRunnersByRunnerID
+      security:
+        - ApiKeyAuth:
+            - runners:read
+      parameters:
+        - name: runnerID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Runner'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the runners:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/scheduled-tasks:
+    post:
+      tags:
+        - Scheduled Tasks
+      summary: Create a scheduled task
+      operationId: postScheduledTasks
+      security:
+        - ApiKeyAuth:
+            - scheduled-tasks:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScheduledTaskRequest'
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the scheduled-tasks:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - Scheduled Tasks
+      summary: List scheduled tasks
+      operationId: getScheduledTasks
+      security:
+        - ApiKeyAuth:
+            - scheduled-tasks:read
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: session_id
+          in: query
+          description: Filter by session.
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by scheduled task status.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTaskList'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the scheduled-tasks:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/scheduled-tasks/{scheduledTaskID}:
+    get:
+      tags:
+        - Scheduled Tasks
+      summary: Get a scheduled task
+      operationId: getScheduledTasksByScheduledTaskID
+      security:
+        - ApiKeyAuth:
+            - scheduled-tasks:read
+      parameters:
+        - name: scheduledTaskID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the scheduled-tasks:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      tags:
+        - Scheduled Tasks
+      summary: Update a scheduled task
+      operationId: patchScheduledTasksByScheduledTaskID
+      security:
+        - ApiKeyAuth:
+            - scheduled-tasks:write
+      parameters:
+        - name: scheduledTaskID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateScheduledTaskRequest'
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the scheduled-tasks:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Scheduled Tasks
+      summary: Delete a scheduled task
+      operationId: deleteScheduledTasksByScheduledTaskID
+      security:
+        - ApiKeyAuth:
+            - scheduled-tasks:write
+      parameters:
+        - name: scheduledTaskID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the scheduled-tasks:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/scheduled-tasks/{scheduledTaskID}/pause:
+    post:
+      tags:
+        - Scheduled Tasks
+      summary: Pause a scheduled task
+      operationId: postScheduledTasksPause
+      security:
+        - ApiKeyAuth:
+            - scheduled-tasks:write
+      parameters:
+        - name: scheduledTaskID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the scheduled-tasks:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/scheduled-tasks/{scheduledTaskID}/resume:
+    post:
+      tags:
+        - Scheduled Tasks
+      summary: Resume a paused scheduled task
+      operationId: postScheduledTasksResume
+      security:
+        - ApiKeyAuth:
+            - scheduled-tasks:write
+      parameters:
+        - name: scheduledTaskID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the scheduled-tasks:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/scheduled-tasks/{scheduledTaskID}/trigger:
+    post:
+      tags:
+        - Scheduled Tasks
+      summary: Trigger a scheduled task now
+      description: Creates the task the schedule would have created, without waiting for the next occurrence.
+      operationId: postScheduledTasksTrigger
+      security:
+        - ApiKeyAuth:
+            - scheduled-tasks:write
+      parameters:
+        - name: scheduledTaskID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the scheduled-tasks:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/sessions:
     post:
-      tags: [Sessions]
-      summary: Create a new session
-      operationId: createSession
+      tags:
+        - Sessions
+      summary: Create a session
+      description: Creates a session and, unless an existing workspace is given, the workspace behind it. The session starts pending and becomes active once a runner is attached.
+      operationId: postSessions
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - sessions:write
       requestBody:
         required: true
         content:
@@ -83,129 +866,429 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateSessionRequest'
       responses:
-        '201':
-          description: Session created
+        "201":
+          description: Created.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Session'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the sessions:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     get:
-      tags: [Sessions]
+      tags:
+        - Sessions
       summary: List sessions
-      operationId: listSessions
+      operationId: getSessions
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - sessions:read
       parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
         - name: status
           in: query
+          description: Filter by session status.
+          explode: true
+          style: form
           schema:
             type: array
             items:
               type: string
-              enum: [pending, active, suspended, resuming, terminated]
         - name: agent
           in: query
+          description: Filter by agent type.
           schema:
             type: string
-        - name: limit
+        - name: lifecycle_mode
           in: query
+          description: Filter by lifecycle mode.
           schema:
-            type: integer
-            default: 50
-        - name: cursor
+            type: string
+        - name: labels[key]
           in: query
+          description: Filter by label. Repeat with different keys to AND several labels, e.g. labels[env]=prod.
           schema:
             type: string
       responses:
-        '200':
-          description: List of sessions
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SessionList'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /api/v1/sessions/{sessionId}:
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the sessions:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/sessions/{sessionID}:
     get:
-      tags: [Sessions]
-      summary: Get session details
-      operationId: getSession
+      tags:
+        - Sessions
+      summary: Get a session
+      operationId: getSessionsBySessionID
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - sessions:read
       parameters:
-        - $ref: '#/components/parameters/sessionId'
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        '200':
-          description: Session details
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Session'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the sessions:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
-      tags: [Sessions]
+      tags:
+        - Sessions
       summary: Terminate a session
-      operationId: terminateSession
+      description: Ends the session and releases its resources. Terminated sessions cannot be resumed.
+      operationId: deleteSessionsBySessionID
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - sessions:write
       parameters:
-        - $ref: '#/components/parameters/sessionId'
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        '204':
-          description: Session terminated
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /api/v1/sessions/{sessionId}/suspend:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the sessions:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/sessions/{sessionID}/resume:
     post:
-      tags: [Sessions]
-      summary: Suspend a session
-      operationId: suspendSession
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/sessionId'
-      responses:
-        '204':
-          description: Session suspended
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-
-  /api/v1/sessions/{sessionId}/resume:
-    post:
-      tags: [Sessions]
+      tags:
+        - Sessions
       summary: Resume a suspended session
-      operationId: resumeSession
+      description: Acquires a runner, restores the workspace and context, and delivers any permission responses that arrived while the session was suspended.
+      operationId: postSessionsResume
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - sessions:write
       parameters:
-        - $ref: '#/components/parameters/sessionId'
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        '204':
-          description: Session resuming
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-
-  # Tasks API
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the sessions:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/sessions/{sessionID}/suspend:
+    post:
+      tags:
+        - Sessions
+      summary: Suspend a session
+      description: Releases the runner while preserving the workspace and the agent context, so the session can be resumed later.
+      operationId: postSessionsSuspend
+      security:
+        - ApiKeyAuth:
+            - sessions:write
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the sessions:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/sessions/{sessionID}/tunnels:
+    post:
+      tags:
+        - Tunnels
+      summary: Open a tunnel into a session
+      description: Forwards a port inside the runner through the API server. The response is the only place the tunnel token is readable.
+      operationId: postSessionsTunnels
+      security:
+        - ApiKeyAuth:
+            - tunnels:write
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTunnelRequest'
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tunnel'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tunnels:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - Tunnels
+      summary: List a session's tunnels
+      operationId: getSessionsTunnels
+      security:
+        - ApiKeyAuth:
+            - tunnels:read
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TunnelList'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tunnels:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/streams/{streamID}/ws:
+    get:
+      tags:
+        - Streaming
+      summary: Stream browser frames over WebSocket
+      description: Sends rendered frames to the client and accepts input events back.
+      operationId: getStreamsWs
+      security:
+        - ApiKeyAuth:
+            - streams:read
+      parameters:
+        - name: streamID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: token
+          in: query
+          description: API key, for clients that cannot set an Authorization header.
+          schema:
+            type: string
+      responses:
+        "101":
+          description: The connection was upgraded to a WebSocket.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the streams:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/tasks:
     post:
-      tags: [Tasks]
-      summary: Create a new task
-      operationId: createTask
+      tags:
+        - Tasks
+      summary: Create a task
+      description: Queues a prompt in a session. If the session is active the task is dispatched immediately; if it is pending or suspended, creating the task also brings it up.
+      operationId: postTasks
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - tasks:write
       requestBody:
         required: true
         content:
@@ -213,513 +1296,876 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateTaskRequest'
       responses:
-        '201':
-          description: Task created
+        "201":
+          description: Created.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tasks:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     get:
-      tags: [Tasks]
+      tags:
+        - Tasks
       summary: List tasks
-      operationId: listTasks
+      operationId: getTasks
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - tasks:read
       parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
         - name: session_id
           in: query
+          description: Filter by session.
           schema:
             type: string
         - name: status
           in: query
+          description: Filter by task status.
+          explode: true
+          style: form
           schema:
             type: array
             items:
               type: string
-              enum: [pending, running, completed, failed, canceled]
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-        - name: cursor
-          in: query
-          schema:
-            type: string
       responses:
-        '200':
-          description: List of tasks
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TaskList'
-
-  /api/v1/tasks/{taskId}:
-    get:
-      tags: [Tasks]
-      summary: Get task details
-      operationId: getTask
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/taskId'
-      responses:
-        '200':
-          description: Task details
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Task'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /api/v1/tasks/{taskId}/cancel:
-    post:
-      tags: [Tasks]
-      summary: Cancel a running task
-      operationId: cancelTask
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/taskId'
-      responses:
-        '204':
-          description: Task canceled
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-
-  /api/v1/tasks/{taskId}/retry:
-    post:
-      tags: [Tasks]
-      summary: Retry a failed task
-      operationId: retryTask
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/taskId'
-      responses:
-        '200':
-          description: Task retry started
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tasks:read scope.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Task'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-
-  /api/v1/tasks/{taskId}/logs:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/tasks/{taskID}:
     get:
-      tags: [Tasks]
-      summary: Get task logs
-      operationId: getTaskLogs
+      tags:
+        - Tasks
+      summary: Get a task
+      operationId: getTasksByTaskID
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - tasks:read
       parameters:
-        - $ref: '#/components/parameters/taskId'
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 1000
-        - name: cursor
-          in: query
+        - name: taskID
+          in: path
+          required: true
           schema:
             type: string
       responses:
-        '200':
-          description: Task logs
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tasks:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/tasks/{taskID}/cancel:
+    post:
+      tags:
+        - Tasks
+      summary: Cancel a task
+      operationId: postTasksCancel
+      security:
+        - ApiKeyAuth:
+            - tasks:write
+      parameters:
+        - name: taskID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tasks:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/tasks/{taskID}/execute:
+    post:
+      tags:
+        - Tasks
+      summary: Execute a pending task
+      description: Dispatches a task that is still pending. Returns as soon as the runner has accepted the work.
+      operationId: postTasksExecute
+      security:
+        - ApiKeyAuth:
+            - tasks:write
+      parameters:
+        - name: taskID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Accepted; the work continues asynchronously.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskExecutionAccepted'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tasks:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/tasks/{taskID}/logs:
+    get:
+      tags:
+        - Tasks
+      summary: List task logs
+      operationId: getTasksLogs
+      security:
+        - ApiKeyAuth:
+            - tasks:read
+      parameters:
+        - name: taskID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: level
+          in: query
+          description: Filter by log level.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items:
+              type: string
+        - name: stream
+          in: query
+          description: Filter by output stream.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LogList'
-
-  # Runners API
-  /api/v1/runners:
-    get:
-      tags: [Runners]
-      summary: List runners
-      operationId: listRunners
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: status
-          in: query
-          schema:
-            type: array
-            items:
-              type: string
-              enum: [offline, idle, busy, paused]
-        - name: pool_name
-          in: query
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-      responses:
-        '200':
-          description: List of runners
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RunnerList'
-
-  /api/v1/runners/{runnerId}:
-    get:
-      tags: [Runners]
-      summary: Get runner details
-      operationId: getRunner
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/runnerId'
-      responses:
-        '200':
-          description: Runner details
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tasks:read scope.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Runner'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  # Permissions API
-  /api/v1/permissions:
-    get:
-      tags: [Permissions]
-      summary: List permission requests
-      operationId: listPermissions
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: session_id
-          in: query
-          schema:
-            type: string
-        - name: task_id
-          in: query
-          schema:
-            type: string
-        - name: status
-          in: query
-          schema:
-            type: array
-            items:
-              type: string
-              enum: [pending, approved, denied, canceled]
-        - name: risk_level
-          in: query
-          schema:
-            type: array
-            items:
-              type: string
-              enum: [low, medium, high, critical]
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-      responses:
-        '200':
-          description: List of permission requests
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PermissionList'
-
-  /api/v1/permissions/{permissionId}:
-    get:
-      tags: [Permissions]
-      summary: Get permission request details
-      operationId: getPermission
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/permissionId'
-      responses:
-        '200':
-          description: Permission request details
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PermissionRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /api/v1/permissions/{permissionId}/approve:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/tasks/{taskID}/retry:
     post:
-      tags: [Permissions]
-      summary: Approve a permission request
-      operationId: approvePermission
+      tags:
+        - Tasks
+      summary: Retry a failed task
+      description: Starts a new run of a failed task. Fails with 409 once max_retries is reached.
+      operationId: postTasksRetry
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - tasks:write
       parameters:
-        - $ref: '#/components/parameters/permissionId'
+        - name: taskID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tasks:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/tunnels/{tunnelID}:
+    get:
+      tags:
+        - Tunnels
+      summary: Get a tunnel
+      operationId: getTunnelsByTunnelID
+      security:
+        - ApiKeyAuth:
+            - tunnels:read
+      parameters:
+        - name: tunnelID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tunnel'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tunnels:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Tunnels
+      summary: Close a tunnel
+      operationId: deleteTunnelsByTunnelID
+      security:
+        - ApiKeyAuth:
+            - tunnels:write
+      parameters:
+        - name: tunnelID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tunnels:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/workspaces:
+    post:
+      tags:
+        - Workspaces
+      summary: Create a workspace
+      operationId: postWorkspaces
+      security:
+        - ApiKeyAuth:
+            - workspaces:write
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                reason:
-                  type: string
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
       responses:
-        '204':
-          description: Permission approved
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-
-  /api/v1/permissions/{permissionId}/deny:
-    post:
-      tags: [Permissions]
-      summary: Deny a permission request
-      operationId: denyPermission
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the workspaces:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - Workspaces
+      summary: List workspaces
+      operationId: getWorkspaces
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - workspaces:read
       parameters:
-        - $ref: '#/components/parameters/permissionId'
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceList'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the workspaces:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/workspaces/{workspaceID}:
+    get:
+      tags:
+        - Workspaces
+      summary: Get a workspace
+      operationId: getWorkspacesByWorkspaceID
+      security:
+        - ApiKeyAuth:
+            - workspaces:read
+      parameters:
+        - name: workspaceID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the workspaces:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      tags:
+        - Workspaces
+      summary: Update a workspace
+      operationId: patchWorkspacesByWorkspaceID
+      security:
+        - ApiKeyAuth:
+            - workspaces:write
+      parameters:
+        - name: workspaceID
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                reason:
-                  type: string
+              $ref: '#/components/schemas/UpdateWorkspaceRequest'
       responses:
-        '204':
-          description: Permission denied
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-
-  # WebSocket endpoints
-  /api/v1/logs/{taskId}/stream:
-    get:
-      tags: [Tasks]
-      summary: Stream task logs via WebSocket
-      operationId: streamTaskLogs
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the workspaces:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Workspaces
+      summary: Delete a workspace
+      description: Soft-deletes the workspace. Fails with 409 while a session still uses it.
+      operationId: deleteWorkspacesByWorkspaceID
       security:
-        - bearerAuth: []
+        - ApiKeyAuth:
+            - workspaces:write
       parameters:
-        - $ref: '#/components/parameters/taskId'
-      responses:
-        '101':
-          description: WebSocket connection established
-
-  /api/v1/events:
-    get:
-      tags: [Sessions]
-      summary: Stream events via WebSocket
-      operationId: streamEvents
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: types
-          in: query
-          schema:
-            type: array
-            items:
-              type: string
-        - name: labels
-          in: query
+        - name: workspaceID
+          in: path
+          required: true
           schema:
             type: string
-            description: JSON object for label filtering
       responses:
-        '101':
-          description: WebSocket connection established
-
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the workspaces:write scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /docs:
+    get:
+      tags:
+        - Service
+      summary: Interactive API documentation
+      operationId: getDocs
+      responses:
+        "200":
+          description: An HTML page rendering this document.
+          content:
+            text/html: {}
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /health:
+    get:
+      tags:
+        - Service
+      summary: Liveness probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /healthz:
+    get:
+      tags:
+        - Service
+      summary: Liveness probe (Kubernetes spelling)
+      operationId: getHealthz
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /openapi.yaml:
+    get:
+      tags:
+        - Service
+      summary: This document
+      operationId: getOpenapiYaml
+      responses:
+        "200":
+          description: The OpenAPI description of this API.
+          content:
+            application/yaml: {}
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /tunnels/{tunnelID}/:
+    get:
+      tags:
+        - Tunnels
+      summary: Tunnel entry point
+      description: 'Serves the tunnelled application. Authenticated by the tunnel token (Authorization: Bearer, the X-Marionette-Tunnel-Token header, or HTTP basic with the token as the password) unless the tunnel is public.'
+      operationId: openTunnel
+      parameters:
+        - name: tunnelID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Whatever the tunnelled service returned.
+          content:
+            '*/*': {}
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /tunnels/{tunnelID}/{path}:
+    get:
+      tags:
+        - Tunnels
+      summary: Tunnel passthrough
+      description: Proxies any path, and any method, to the tunnelled service. WebSocket upgrades are relayed too.
+      operationId: proxyThroughTunnel
+      parameters:
+        - name: tunnelID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Whatever the tunnelled service returned.
+          content:
+            '*/*': {}
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
+    ApiKeyAuth:
+      bearerFormat: mk_...
+      description: An API key minted by the admin API.
       scheme: bearer
-      description: API key authentication (mk_xxxxx)
-
-  parameters:
-    sessionId:
-      name: sessionId
-      in: path
-      required: true
-      schema:
-        type: string
-        pattern: '^sess_[a-zA-Z0-9]+$'
-    taskId:
-      name: taskId
-      in: path
-      required: true
-      schema:
-        type: string
-        pattern: '^task_[a-zA-Z0-9]+$'
-    runnerId:
-      name: runnerId
-      in: path
-      required: true
-      schema:
-        type: string
-        pattern: '^run_[a-zA-Z0-9]+$'
-    permissionId:
-      name: permissionId
-      in: path
-      required: true
-      schema:
-        type: string
-        pattern: '^perm_[a-zA-Z0-9]+$'
-
-  responses:
-    BadRequest:
-      description: Bad request
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    Unauthorized:
-      description: Unauthorized
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    NotFound:
-      description: Resource not found
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    Conflict:
-      description: Conflict - invalid state transition
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
+      type: http
   schemas:
-    Error:
-      type: object
-      required:
-        - code
-        - message
-      properties:
-        code:
-          type: string
-        message:
-          type: string
-
-    Labels:
-      type: object
-      additionalProperties:
-        type: string
-
-    # Session schemas
-    Session:
+    ApproveRequest:
       type: object
       properties:
-        id:
+        reason:
           type: string
-          example: sess_0002xK9mNpV1StGXR8
+    CreateScheduledTaskRequest:
+      type: object
+      properties:
+        session_id:
+          type: string
         name:
           type: string
-        status:
+        description:
           type: string
-          enum: [pending, active, suspended, resuming, terminated]
+        cron_expression:
+          type: string
+        timezone:
+          type: string
+        prompt_template:
+          type: string
+        timeout_seconds:
+          type: integer
+          format: int32
+        max_retries:
+          type: integer
+          format: int32
+        on_failure:
+          type: string
+        max_consecutive_failures:
+          type: integer
+          format: int32
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - session_id
+        - name
+        - cron_expression
+        - prompt_template
+    CreateSessionRequest:
+      type: object
+      properties:
+        name:
+          type: string
         agent:
           type: string
-        runner_id:
+        agent_config_id:
+          type: string
+        api_key:
           type: string
         workspace_id:
           type: string
+        profile_id:
+          type: string
         lifecycle_mode:
           type: string
-          enum: [on_demand, always_on, scheduled]
-        labels:
-          $ref: '#/components/schemas/Labels'
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-
-    CreateSessionRequest:
-      type: object
-      required:
-        - agent
-      properties:
-        name:
-          type: string
-        agent:
-          type: string
-          example: claude
-        agent_config_id:
-          type: string
-        agent_api_key:
-          type: string
-          description: BYOK - API key for the agent
-        lifecycle_mode:
-          type: string
-          enum: [on_demand, always_on, scheduled]
-          default: on_demand
         idle_timeout_seconds:
           type: integer
-        labels:
-          $ref: '#/components/schemas/Labels'
-
-    SessionList:
-      type: object
-      properties:
-        items:
+          format: int32
+        network_policy:
+          type: string
+        allowed_hosts:
           type: array
           items:
-            $ref: '#/components/schemas/Session'
-        next_cursor:
-          type: string
-
-    # Task schemas
-    Task:
-      type: object
-      properties:
-        id:
-          type: string
-          example: task_0002xK9mNqW2TuHYS9
-        session_id:
-          type: string
-        prompt:
-          type: string
-        status:
-          type: string
-          enum: [pending, running, completed, failed, canceled]
-        max_retries:
-          type: integer
-        retry_count:
-          type: integer
-        timeout_seconds:
-          type: integer
+            type: string
         labels:
-          $ref: '#/components/schemas/Labels'
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - agent
     CreateTaskRequest:
       type: object
-      required:
-        - session_id
-        - prompt
       properties:
         session_id:
           type: string
@@ -727,27 +2173,75 @@ components:
           type: string
         continue_from:
           type: string
-          description: Task ID to continue from
-        max_retries:
-          type: integer
-          default: 0
         timeout_seconds:
           type: integer
-          default: 3600
-        labels:
-          $ref: '#/components/schemas/Labels'
-
-    TaskList:
+          format: int32
+        max_retries:
+          type: integer
+          format: int32
+      required:
+        - session_id
+        - prompt
+    CreateTunnelRequest:
       type: object
       properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Task'
-        next_cursor:
+        session_id:
           type: string
-
-    # Log schemas
+        type:
+          type: string
+        local_port:
+          type: integer
+          format: int32
+        public:
+          type: boolean
+      required:
+        - type
+        - local_port
+        - public
+    CreateWorkspaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        persist:
+          type: boolean
+        storage_type:
+          type: string
+        mobility:
+          type: string
+        disk_quota_mb:
+          type: integer
+          format: int32
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+    DenyRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      required:
+        - code
+        - message
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
     Log:
       type: object
       properties:
@@ -759,20 +2253,45 @@ components:
           type: string
         run_id:
           type: string
+        runner_id:
+          type: string
         stream:
           type: string
-          enum: [stdout, stderr, system]
+          enum:
+            - stdout
+            - stderr
+            - system
         level:
           type: string
-          enum: [debug, info, warn, error]
+          enum:
+            - debug
+            - info
+            - warn
+            - error
         content:
           type: string
         sequence:
           type: integer
+          format: int64
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
         created_at:
           type: string
           format: date-time
-
+      required:
+        - id
+        - session_id
+        - task_id
+        - run_id
+        - runner_id
+        - stream
+        - level
+        - content
+        - sequence
+        - metadata
+        - created_at
     LogList:
       type: object
       properties:
@@ -780,54 +2299,24 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Log'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
         next_cursor:
           type: string
-
-    # Runner schemas
-    Runner:
-      type: object
-      properties:
-        id:
-          type: string
-          example: run_0002xK9mNrX3VwIZT1
-        name:
-          type: string
-        hostname:
-          type: string
-        status:
-          type: string
-          enum: [offline, idle, busy, paused]
-        pool_name:
-          type: string
-        sandbox_mode:
-          type: string
-          enum: [runner-is-sandbox, runner-creates-sandbox, none]
-        labels:
-          $ref: '#/components/schemas/Labels'
-        last_seen_at:
-          type: string
-          format: date-time
-        created_at:
-          type: string
-          format: date-time
-
-    RunnerList:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Runner'
-        next_cursor:
-          type: string
-
-    # Permission schemas
+      required:
+        - items
+        - total_count
+        - has_more
     PermissionRequest:
       type: object
       properties:
         id:
           type: string
-          example: perm_0002xK9mNsY4WxJAU2
+        original_request_id:
+          type: string
         session_id:
           type: string
         task_id:
@@ -842,10 +2331,22 @@ components:
           type: string
         risk_level:
           type: string
-          enum: [low, medium, high, critical]
+          enum:
+            - low
+            - medium
+            - high
+            - critical
         status:
           type: string
-          enum: [pending, approved, denied, canceled]
+          enum:
+            - pending
+            - approved
+            - denied
+            - expired
+            - canceled
+        suspend_after_seconds:
+          type: integer
+          format: int32
         responded_by:
           type: string
         response_reason:
@@ -856,13 +2357,614 @@ components:
         created_at:
           type: string
           format: date-time
-
-    PermissionList:
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - original_request_id
+        - session_id
+        - task_id
+        - run_id
+        - tool
+        - action
+        - risk_level
+        - status
+        - suspend_after_seconds
+        - created_at
+        - updated_at
+    PermissionRequestList:
       type: object
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/PermissionRequest'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
         next_cursor:
           type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    Runner:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        hostname:
+          type: string
+        status:
+          type: string
+          enum:
+            - offline
+            - idle
+            - busy
+            - paused
+        tainted:
+          type: boolean
+        taint_reason:
+          type: string
+        sandbox_mode:
+          type: string
+          enum:
+            - runner-is-sandbox
+            - runner-creates-sandbox
+            - none
+        sandbox_types:
+          type: array
+          items:
+            type: string
+        pool_name:
+          type: string
+        profile_id:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        last_seen_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - hostname
+        - status
+        - tainted
+        - sandbox_mode
+        - sandbox_types
+        - capabilities
+        - labels
+        - annotations
+        - created_at
+        - updated_at
+    RunnerList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Runner'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    ScheduledTask:
+      type: object
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        cron_expression:
+          type: string
+        timezone:
+          type: string
+        prompt_template:
+          type: string
+        timeout_seconds:
+          type: integer
+          format: int32
+        max_retries:
+          type: integer
+          format: int32
+        status:
+          type: string
+          enum:
+            - active
+            - paused
+            - disabled
+        next_run_at:
+          type: string
+          format: date-time
+        last_run_at:
+          type: string
+          format: date-time
+        last_task_id:
+          type: string
+        run_count:
+          type: integer
+          format: int32
+        on_failure:
+          type: string
+          enum:
+            - continue
+            - pause_on_failure
+            - disable_on_failure
+        failure_count:
+          type: integer
+          format: int32
+        consecutive_failures:
+          type: integer
+          format: int32
+        max_consecutive_failures:
+          type: integer
+          format: int32
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - session_id
+        - name
+        - cron_expression
+        - timezone
+        - prompt_template
+        - timeout_seconds
+        - max_retries
+        - status
+        - run_count
+        - on_failure
+        - failure_count
+        - consecutive_failures
+        - labels
+        - annotations
+        - created_at
+        - updated_at
+    ScheduledTaskList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScheduledTask'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - active
+            - suspended
+            - resuming
+            - terminated
+        agent:
+          type: string
+        agent_version:
+          type: string
+        agent_config_id:
+          type: string
+        is_byok:
+          type: boolean
+        runner_id:
+          type: string
+        previous_runner_id:
+          type: string
+        workspace_id:
+          type: string
+        profile_id:
+          type: string
+        network_policy:
+          type: string
+          enum:
+            - none
+            - allow_list
+            - proxy
+            - air_gapped
+        allowed_hosts:
+          type: array
+          items:
+            type: string
+        lifecycle_mode:
+          type: string
+          enum:
+            - on_demand
+            - always_on
+            - scheduled
+        idle_timeout_seconds:
+          type: integer
+          format: int32
+        max_lifetime_seconds:
+          type: integer
+          format: int32
+        suspend_strategy:
+          type: string
+        schedule_cron:
+          type: string
+        schedule_timezone:
+          type: string
+        next_scheduled_at:
+          type: string
+          format: date-time
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        last_activity_at:
+          type: string
+          format: date-time
+        suspended_at:
+          type: string
+          format: date-time
+        resumed_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - status
+        - agent
+        - is_byok
+        - workspace_id
+        - network_policy
+        - allowed_hosts
+        - lifecycle_mode
+        - labels
+        - annotations
+        - created_at
+        - updated_at
+    SessionList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Session'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        prompt:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - running
+            - completed
+            - failed
+            - canceled
+        max_retries:
+          type: integer
+          format: int32
+        retry_count:
+          type: integer
+          format: int32
+        timeout_seconds:
+          type: integer
+          format: int32
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - session_id
+        - prompt
+        - status
+        - max_retries
+        - retry_count
+        - timeout_seconds
+        - labels
+        - annotations
+        - created_at
+        - updated_at
+    TaskExecutionAccepted:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    TaskList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    Tunnel:
+      type: object
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        runner_id:
+          type: string
+        type:
+          type: string
+          enum:
+            - http
+            - tcp
+            - desktop
+            - browser
+            - ios
+            - android
+        direction:
+          type: string
+          enum:
+            - inbound
+            - outbound
+        local_port:
+          type: integer
+          format: int32
+        public_url:
+          type: string
+        is_public:
+          type: boolean
+        token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        closed_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - session_id
+        - type
+        - direction
+        - local_port
+        - is_public
+        - expires_at
+        - created_at
+    TunnelList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tunnel'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    UpdateScheduledTaskRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        cron_expression:
+          type: string
+        timezone:
+          type: string
+        prompt_template:
+          type: string
+        timeout_seconds:
+          type: integer
+          format: int32
+        max_retries:
+          type: integer
+          format: int32
+        on_failure:
+          type: string
+        max_consecutive_failures:
+          type: integer
+          format: int32
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+    UpdateWorkspaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        persist:
+          type: boolean
+        disk_quota_mb:
+          type: integer
+          format: int32
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+    Workspace:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        persist:
+          type: boolean
+        storage_type:
+          type: string
+        mobility:
+          type: string
+          enum:
+            - local
+            - shared
+            - object_sync
+        storage_size_bytes:
+          type: integer
+          format: int64
+        disk_quota_mb:
+          type: integer
+          format: int32
+        last_synced_at:
+          type: string
+          format: date-time
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - persist
+        - storage_type
+        - mobility
+        - labels
+        - annotations
+        - created_at
+        - updated_at
+    WorkspaceList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Workspace'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more

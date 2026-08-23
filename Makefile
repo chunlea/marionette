@@ -1,5 +1,5 @@
 .PHONY: deps build test lint proto migrate dev clean help \
-	schema schema-check generate test-store \
+	schema schema-check openapi openapi-check generate test-store \
 	certs certs-clean certs-verify \
 	web-install web-dev web-build web-lint web-clean
 
@@ -128,6 +128,14 @@ schema:
 ## schema-check: Fail if docs/schema.sql has drifted from migrations (requires Docker)
 schema-check:
 	./scripts/gen-schema.sh --check
+
+## openapi: Regenerate pkg/server/api/openapi.yaml from the Go route table and DTOs
+openapi:
+	$(GOCMD) run pkg/server/api/openapi_generate.go pkg/server/api/openapi.yaml
+
+## openapi-check: Fail if the OpenAPI document has drifted from the code
+openapi-check:
+	$(GOTEST) -run TestOpenAPIDocumentIsUpToDate ./pkg/server/api/
 
 ## migrate-create: Create a new migration (usage: make migrate-create name=migration_name)
 migrate-create:
