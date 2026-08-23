@@ -1,0 +1,19 @@
+docs/schema.sql
+  s_829cd3b6a7eda7::t_16422f7e1f8147 533-534,1315-1320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "7f013e63b67d321b3d09ab13b7dc44dad11930ba",
+  "prompts": {},
+  "sessions": {
+    "s_829cd3b6a7eda7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d342e86d-a42f-469e-846f-fd4f6252c53c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
