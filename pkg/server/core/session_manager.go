@@ -422,14 +422,17 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 		return ErrRunnerNotIdle
 	}
 
-	// Detach any existing sessions from this runner
-	// This ensures only one session is attached to a runner at a time
+	// Detach any session still holding this runner. A failure here used to be
+	// logged and ignored, which let two sessions own one runner: both would
+	// then dispatch tasks to it and interleave in the same workspace.
+	// A partial detach must therefore abort the activation.
 	if err := m.detachSessionsFromRunner(ctx, runnerID, sessionID); err != nil {
 		m.logger.Error("failed to detach existing sessions from runner",
+			zap.String("session_id", sessionID),
 			zap.String("runner_id", runnerID),
 			zap.Error(err),
 		)
-		// Continue with activation - don't fail because of cleanup issues
+		return err
 	}
 
 	// Update session
@@ -445,7 +448,20 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 		updates.ResumedAt = &now
 	}
 
-	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
+	// The partial unique index on sessions(runner_id) WHERE status = 'active'
+	// is the real guard: two concurrent activations both pass the checks above,
+	// and the database rejects the loser here.
+	if err := store.WithTx(ctx, m.store, func(tx store.Tx) error {
+		return tx.UpdateSession(ctx, sessionID, updates)
+	}); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) || errors.Is(err, store.ErrConflict) {
+			m.logger.Warn("runner was claimed by another session during activation",
+				zap.String("session_id", sessionID),
+				zap.String("runner_id", runnerID),
+				zap.Error(err),
+			)
+			return ErrRunnerNotIdle
+		}
 		return err
 	}
 
@@ -589,15 +605,6 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 		return ErrInvalidSessionTransition
 	}
 
-	// Send DetachSession command to runner before updating database
-	// This notifies the agent to clean up and save context
-	if err := m.sendDetachSession(ctx, session, opts); err != nil {
-		m.logger.Warn("failed to send DetachSession command, continuing with suspend",
-			zap.String("session_id", sessionID),
-			zap.Error(err),
-		)
-	}
-
 	// Store previous runner ID before detaching
 	previousRunnerID := session.RunnerID
 
@@ -664,7 +671,12 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 	emptyStr := ""
 	updates.RunnerID = &emptyStr
 
-	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
+	// The database write comes first. Sending DetachSession before it meant a
+	// failed or partial write left the runner detached from a session the
+	// database still believed was active, with no way to reconcile the two.
+	if err := store.WithTx(ctx, m.store, func(tx store.Tx) error {
+		return tx.UpdateSession(ctx, sessionID, updates)
+	}); err != nil {
 		return err
 	}
 
@@ -674,6 +686,18 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 		zap.Stringp("previous_runner_id", previousRunnerID),
 		zap.Bool("workspace_synced", opts.WorkspaceSynced),
 	)
+
+	// Now tell the runner to detach. The session is already suspended, so a
+	// failed send is not fatal: the runner has no session to report against and
+	// will be reaped when its heartbeat goes stale. Recovery is therefore
+	// "do nothing" - the database is authoritative and already correct.
+	if err := m.sendDetachSession(ctx, session, opts); err != nil {
+		m.logger.Warn("session suspended but the runner was not notified",
+			zap.String("session_id", sessionID),
+			zap.Stringp("runner_id", previousRunnerID),
+			zap.Error(err),
+		)
+	}
 
 	// Log audit event
 	if m.auditLog != nil {

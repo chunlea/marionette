@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -2070,4 +2071,103 @@ func TestSessionManager_UpdateContextSnapshot_NilSnapshot(t *testing.T) {
 	// Verify session was NOT updated
 	updatedSession := s.GetSessionDirect("sess_123")
 	assert.Nil(t, updatedSession.ContextSnapshot)
+}
+
+// BeginTx shadows the embedded implementation so the transaction is bound to
+// this store rather than the wrapper it embeds. See storeTx.
+func (s *testSessionStore) BeginTx(_ context.Context) (store.Tx, error) {
+	return &storeTx{Store: s}, nil
+}
+
+// =============================================================================
+// Suspend / Activate ordering tests
+// =============================================================================
+
+// observingCmdSender records what the database looked like at the moment a
+// command was published, which is how the suspend ordering is asserted.
+type observingCmdSender struct {
+	store         *testSessionStore
+	sessionID     string
+	statusAtSend  string
+	runnerAtSend  *string
+	commandsCount int
+}
+
+func (c *observingCmdSender) SendCommand(_ string, _ *pb.ServerCommand) error {
+	c.commandsCount++
+	if sess, err := c.store.GetSession(context.Background(), c.sessionID); err == nil {
+		c.statusAtSend = sess.Status
+		c.runnerAtSend = sess.RunnerID
+	}
+	return nil
+}
+
+// TestSessionManager_Suspend_PersistsBeforeDetaching locks in the ordering fix.
+// DetachSession used to be sent before the database write, so a write that
+// failed left the runner detached from a session the database still believed
+// was active - two views of the world with no way to reconcile them.
+func TestSessionManager_Suspend_PersistsBeforeDetaching(t *testing.T) {
+	s := newTestSessionStore()
+	sender := &observingCmdSender{store: s, sessionID: "sess_123"}
+	manager := NewSessionManager(s, &mockConnManagerForSession{}, sender, zap.NewNop())
+
+	runnerID := "run_123"
+	s.SetSession(&store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	})
+
+	require.NoError(t, manager.Suspend(context.Background(), "sess_123", "terminate"))
+
+	require.Equal(t, 1, sender.commandsCount, "DetachSession must be sent exactly once")
+	assert.Equal(t, SessionStatusSuspended, sender.statusAtSend,
+		"the session must already be suspended in the database when DetachSession goes out")
+	assert.True(t, sender.runnerAtSend == nil || *sender.runnerAtSend == "",
+		"the runner must already be released in the database when DetachSession goes out")
+
+	sess, err := s.GetSession(context.Background(), "sess_123")
+	require.NoError(t, err)
+	assert.Equal(t, SessionStatusSuspended, sess.Status)
+	require.NotNil(t, sess.PreviousRunnerID)
+	assert.Equal(t, runnerID, *sess.PreviousRunnerID)
+}
+
+// failingDetachStore fails the session update that suspends a session, so the
+// suspend path can be observed when persistence is impossible.
+type failingDetachStore struct {
+	*testSessionStore
+	failSessionID string
+}
+
+func (s *failingDetachStore) UpdateSession(ctx context.Context, id string, updates store.SessionUpdates) error {
+	if id == s.failSessionID {
+		return errors.New("database unavailable")
+	}
+	return s.testSessionStore.UpdateSession(ctx, id, updates)
+}
+
+func (s *failingDetachStore) BeginTx(_ context.Context) (store.Tx, error) {
+	return &storeTx{Store: s}, nil
+}
+
+// TestSessionManager_Suspend_NoDetachWhenPersistenceFails is the other half of
+// the ordering contract: if the database write fails, the runner is never told
+// to detach, so the two views stay consistent.
+func TestSessionManager_Suspend_NoDetachWhenPersistenceFails(t *testing.T) {
+	inner := newTestSessionStore()
+	s := &failingDetachStore{testSessionStore: inner, failSessionID: "sess_123"}
+	sender := &mockCommandSenderForSession{}
+	manager := NewSessionManager(s, &mockConnManagerForSession{}, sender, zap.NewNop())
+
+	runnerID := "run_123"
+	inner.SetSession(&store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	})
+
+	err := manager.Suspend(context.Background(), "sess_123", "terminate")
+	require.Error(t, err)
+	assert.Nil(t, sender.lastCommand, "no DetachSession may be sent when the suspend did not persist")
 }

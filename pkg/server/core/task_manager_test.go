@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -1662,4 +1663,112 @@ func TestTaskManager_OnTaskCompleted_FailedNoRetry(t *testing.T) {
 
 	// Task should also be failed (no retries)
 	assert.Equal(t, TaskStatusFailed, s.tasks["task_1"].Status)
+}
+
+// BeginTx shadows the embedded implementation so the transaction is bound to
+// this store rather than the store it embeds. See storeTx.
+func (s *testTaskStore) BeginTx(_ context.Context) (store.Tx, error) {
+	return &storeTx{Store: s}, nil
+}
+
+// =============================================================================
+// Dispatch atomicity tests
+// =============================================================================
+
+// TestTaskManager_Execute_SendFailureUnwinds covers the invariant that a task
+// which never reached a runner is not left "running" forever. Execute used to
+// update the task status, then send, then only fail the run on error - leaving
+// the task running with nothing on the other end to finish it.
+func TestTaskManager_Execute_SendFailureUnwinds(t *testing.T) {
+	manager, s, cmdSender := setupTaskManagerTest()
+	cmdSender.sendErr = errors.New("runner disconnected")
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	}
+	s.tasks["task_123"] = &store.Task{
+		ID:             "task_123",
+		SessionID:      "sess_123",
+		Prompt:         "Build a REST API",
+		Status:         TaskStatusPending,
+		MaxRetries:     3,
+		TimeoutSeconds: 3600,
+	}
+
+	err := manager.Execute(context.Background(), "task_123")
+	require.Error(t, err)
+
+	task, err := s.GetTask(context.Background(), "task_123")
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusPending, task.Status,
+		"a task whose command never reached a runner must not stay running")
+	assert.Equal(t, 0, task.RetryCount, "a failed dispatch must not spend the retry budget")
+
+	runs, err := s.ListTaskRuns(context.Background(), store.ListTaskRunsOptions{})
+	require.NoError(t, err)
+	require.Len(t, runs.Items, 1, "the attempt must still be recorded for the audit trail")
+	assert.Equal(t, TaskRunStatusFailed, runs.Items[0].Status)
+	require.NotNil(t, runs.Items[0].Error)
+	assert.Contains(t, *runs.Items[0].Error, "runner disconnected")
+}
+
+// TestTaskManager_Retry_SendFailureRestoresBudget is the retry half of the same
+// invariant: an unreachable runner must not be able to burn a task's retries.
+func TestTaskManager_Retry_SendFailureRestoresBudget(t *testing.T) {
+	manager, s, cmdSender := setupTaskManagerTest()
+	cmdSender.sendErr = errors.New("runner disconnected")
+
+	runnerID := "run_123"
+	s.sessions["sess_123"] = &store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	}
+	s.tasks["task_123"] = &store.Task{
+		ID:             "task_123",
+		SessionID:      "sess_123",
+		Prompt:         "Build a REST API",
+		Status:         TaskStatusRunning,
+		MaxRetries:     3,
+		RetryCount:     1,
+		TimeoutSeconds: 3600,
+	}
+
+	_, err := manager.Retry(context.Background(), "task_123")
+	require.Error(t, err)
+
+	task, err := s.GetTask(context.Background(), "task_123")
+	require.NoError(t, err)
+	assert.Equal(t, 1, task.RetryCount, "retry budget must be handed back on a failed dispatch")
+}
+
+// TestTaskManager_Execute_NoRunRecordedWhenNoRunner proves the run and the task
+// status move together: a rejected dispatch leaves no orphan run behind.
+func TestTaskManager_Execute_NoRunRecordedWhenNoRunner(t *testing.T) {
+	manager, s, cmdSender := setupTaskManagerTest()
+
+	s.sessions["sess_123"] = &store.Session{
+		ID:     "sess_123",
+		Status: SessionStatusPending,
+	}
+	s.tasks["task_123"] = &store.Task{
+		ID:        "task_123",
+		SessionID: "sess_123",
+		Status:    TaskStatusPending,
+	}
+
+	err := manager.Execute(context.Background(), "task_123")
+	require.ErrorIs(t, err, ErrNoRunnerAttached)
+
+	runs, err := s.ListTaskRuns(context.Background(), store.ListTaskRunsOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, runs.Items)
+
+	task, err := s.GetTask(context.Background(), "task_123")
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusPending, task.Status)
+	assert.Empty(t, cmdSender.sentCommands)
 }

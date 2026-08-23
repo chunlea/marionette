@@ -424,9 +424,11 @@ func (w *testStoreWrapper) CleanupExpiredStreams(_ context.Context) (int, error)
 	return 0, nil
 }
 
-func (w *testStoreWrapper) BeginTx(_ context.Context) (store.Tx, error) { return nil, nil }
-func (w *testStoreWrapper) Ping(_ context.Context) error                { return nil }
-func (w *testStoreWrapper) Close() error                                { return nil }
+func (w *testStoreWrapper) BeginTx(_ context.Context) (store.Tx, error) {
+	return &storeTx{Store: w}, nil
+}
+func (w *testStoreWrapper) Ping(_ context.Context) error { return nil }
+func (w *testStoreWrapper) Close() error                 { return nil }
 
 func (w *testStoreWrapper) GetDueScheduledSessions(_ context.Context, _ time.Time, _ int) ([]*store.Session, error) {
 	return nil, nil

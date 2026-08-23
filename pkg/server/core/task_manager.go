@@ -334,69 +334,168 @@ func (m *TaskManager) Cancel(ctx context.Context, taskID string) error {
 
 // Execute sends a task to a runner for execution.
 func (m *TaskManager) Execute(ctx context.Context, taskID string) error {
-	// Get task
-	task, err := m.store.GetTask(ctx, taskID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return ErrTaskNotFound
+	_, err := m.dispatch(ctx, taskID, dispatchOptions{})
+	return err
+}
+
+// dispatchOptions tunes a single dispatch attempt.
+type dispatchOptions struct {
+	// incrementRetry spends one unit of the task's retry budget. The budget is
+	// only spent when the dispatch actually reaches a runner.
+	incrementRetry bool
+}
+
+// dispatch records a task run and sends it to the session's runner.
+//
+// All database work happens in one transaction, and the command is sent only
+// after that transaction commits: a command must never be published for a run
+// the database has not durably recorded. Previously the run creation, the task
+// status update and the send were three independent steps, so a failed send
+// left the task "running" forever with a run nobody would ever finish, and
+// Retry burned a retry before it knew whether the dispatch would work at all.
+//
+// If the send fails, a compensating transaction unwinds the whole attempt: the
+// run is marked failed for the audit trail, the retry budget is handed back,
+// and the task returns to exactly the state it was in before the dispatch.
+func (m *TaskManager) dispatch(ctx context.Context, taskID string, opts dispatchOptions) (*store.TaskRun, error) {
+	var (
+		run      *store.TaskRun
+		runnerID string
+		cmd      *pb.ServerCommand
+	)
+
+	err := store.WithTx(ctx, m.store, func(tx store.Tx) error {
+		task, err := tx.GetTask(ctx, taskID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return ErrTaskNotFound
+			}
+			return err
 		}
-		return err
-	}
 
-	// Get session
-	session, err := m.store.GetSession(ctx, task.SessionID)
-	if err != nil {
-		return err
-	}
+		if opts.incrementRetry && task.RetryCount >= task.MaxRetries {
+			return ErrMaxRetriesExceeded
+		}
 
-	// Check if session has a runner
-	if session.RunnerID == nil || *session.RunnerID == "" {
-		return ErrNoRunnerAttached
-	}
+		session, err := tx.GetSession(ctx, task.SessionID)
+		if err != nil {
+			return err
+		}
+		if session.RunnerID == nil || *session.RunnerID == "" {
+			return ErrNoRunnerAttached
+		}
+		runnerID = *session.RunnerID
 
-	// Create a new task run
-	run, err := m.CreateRun(ctx, taskID)
-	if err != nil {
-		return err
-	}
+		retryCount := task.RetryCount
+		if opts.incrementRetry {
+			retryCount++
+		}
 
-	// Update task status to running
-	if err := m.store.UpdateTask(ctx, taskID, store.TaskUpdates{
-		Status: stringPtr(TaskStatusRunning),
-	}); err != nil {
-		return err
-	}
+		now := time.Now()
+		run = &store.TaskRun{
+			ID:        id.TaskRun(),
+			TaskID:    taskID,
+			Attempt:   retryCount + 1,
+			RunnerID:  session.RunnerID,
+			Status:    TaskRunStatusPending,
+			TenantID:  task.TenantID,
+			QueuedAt:  now,
+			UpdatedAt: now,
+		}
+		if err := tx.CreateTaskRun(ctx, run); err != nil {
+			return err
+		}
 
-	// Send ExecuteTask command to runner
-	// Note: Attempt is bounded by MaxRetries (small value), so int32 conversion is safe
-	cmd := &pb.ServerCommand{
-		Payload: &pb.ServerCommand_ExecuteTask{
-			ExecuteTask: &pb.ExecuteTask{
-				TaskId:    task.ID,
-				RunId:     run.ID,
-				Attempt:   int32(run.Attempt), //nolint:gosec // Attempt is bounded by MaxRetries
-				SessionId: session.ID,
-				Prompt:    task.Prompt,
-				Sandbox: &pb.SandboxConfig{
-					TimeoutSeconds: int64(task.TimeoutSeconds),
+		updates := store.TaskUpdates{Status: stringPtr(TaskStatusRunning)}
+		if opts.incrementRetry {
+			updates.RetryCount = &retryCount
+		}
+		if err := tx.UpdateTask(ctx, taskID, updates); err != nil {
+			return err
+		}
+
+		// Note: Attempt is bounded by MaxRetries (small value), so the int32
+		// conversion is safe.
+		cmd = &pb.ServerCommand{
+			Payload: &pb.ServerCommand_ExecuteTask{
+				ExecuteTask: &pb.ExecuteTask{
+					TaskId:    task.ID,
+					RunId:     run.ID,
+					Attempt:   int32(run.Attempt), //nolint:gosec // Attempt is bounded by MaxRetries
+					SessionId: session.ID,
+					Prompt:    task.Prompt,
+					Sandbox: &pb.SandboxConfig{
+						TimeoutSeconds: int64(task.TimeoutSeconds),
+					},
 				},
 			},
-		},
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	if err := m.cmdSender.SendCommand(*session.RunnerID, cmd); err != nil {
-		// If we can't send the command, fail the run
-		_ = m.FailRun(ctx, run.ID, "failed to send command to runner: "+err.Error())
-		return err
+	if sendErr := m.cmdSender.SendCommand(runnerID, cmd); sendErr != nil {
+		m.unwindDispatch(ctx, taskID, run.ID, opts, sendErr)
+		return nil, sendErr
 	}
 
 	m.logger.Info("task execution started",
 		zap.String("task_id", taskID),
 		zap.String("run_id", run.ID),
-		zap.String("runner_id", *session.RunnerID),
+		zap.String("runner_id", runnerID),
+		zap.Int("attempt", run.Attempt),
 	)
 
-	return nil
+	return run, nil
+}
+
+// unwindDispatch compensates for a dispatch whose command never reached a
+// runner. Best-effort: if the compensating write fails too, the stale
+// "running" task is picked up by the task timeout enforcer.
+func (m *TaskManager) unwindDispatch(ctx context.Context, taskID, runID string, opts dispatchOptions, cause error) {
+	reason := "failed to send command to runner: " + cause.Error()
+
+	err := store.WithTx(ctx, m.store, func(tx store.Tx) error {
+		now := time.Now()
+		if err := tx.UpdateTaskRun(ctx, runID, store.TaskRunUpdates{
+			Status:  stringPtr(TaskRunStatusFailed),
+			Error:   &reason,
+			EndedAt: &now,
+		}); err != nil {
+			return err
+		}
+
+		task, err := tx.GetTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+
+		// The task never reached a runner, so put it back exactly where it was:
+		// pending, with its retry budget intact.
+		updates := store.TaskUpdates{Status: stringPtr(TaskStatusPending)}
+		if opts.incrementRetry && task.RetryCount > 0 {
+			restored := task.RetryCount - 1
+			updates.RetryCount = &restored
+		}
+		return tx.UpdateTask(ctx, taskID, updates)
+	})
+
+	if err != nil {
+		m.logger.Error("failed to unwind task dispatch; task may be stuck running",
+			zap.String("task_id", taskID),
+			zap.String("run_id", runID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	m.logger.Warn("task dispatch unwound after send failure",
+		zap.String("task_id", taskID),
+		zap.String("run_id", runID),
+		zap.String("reason", reason),
+	)
 }
 
 // ReExecute re-sends a running task to a runner after session resume.
@@ -766,50 +865,23 @@ func (m *TaskManager) ShouldRetry(ctx context.Context, taskID string) (bool, err
 }
 
 // Retry creates a new run for a failed task.
+//
+// The retry budget is spent in the same transaction that records the new run,
+// and handed back if the dispatch never reaches a runner - so a runner that is
+// simply unreachable can no longer burn a task's entire retry budget.
 func (m *TaskManager) Retry(ctx context.Context, taskID string) (*store.TaskRun, error) {
-	task, err := m.store.GetTask(ctx, taskID)
+	run, err := m.dispatch(ctx, taskID, dispatchOptions{incrementRetry: true})
 	if err != nil {
-		return nil, err
-	}
-
-	// Validate retry is allowed
-	if task.RetryCount >= task.MaxRetries {
-		return nil, ErrMaxRetriesExceeded
-	}
-
-	// Increment retry count
-	newRetryCount := task.RetryCount + 1
-	if err := m.store.UpdateTask(ctx, taskID, store.TaskUpdates{
-		RetryCount: &newRetryCount,
-	}); err != nil {
 		return nil, err
 	}
 
 	m.logger.Info("retrying task",
 		zap.String("task_id", taskID),
-		zap.Int("attempt", newRetryCount+1),
-		zap.Int("max_retries", task.MaxRetries),
+		zap.String("run_id", run.ID),
+		zap.Int("attempt", run.Attempt),
 	)
 
-	// Execute the task again
-	if err := m.Execute(ctx, taskID); err != nil {
-		return nil, err
-	}
-
-	// Get the newly created run
-	runs, err := m.store.ListTaskRuns(ctx, store.ListTaskRunsOptions{
-		TaskID: &taskID,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if len(runs.Items) == 0 {
-		return nil, errors.New("no runs found after retry")
-	}
-
-	// Return the most recent run (last in list by default ordering)
-	return runs.Items[len(runs.Items)-1], nil
+	return run, nil
 }
 
 // cancelRun marks a task run as canceled.
