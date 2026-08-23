@@ -1,0 +1,19 @@
+pkg/server/grpc/mtls_integration_test.go
+  s_e995f4552d48c1::t_ba139c82488ed1 25,27,30-77,204-205,274-279,412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "7dde74c686fe527f5e56debd5bd1be66dbfceb1e",
+  "prompts": {},
+  "sessions": {
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
