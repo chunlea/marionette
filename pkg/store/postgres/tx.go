@@ -17,8 +17,8 @@ type Tx struct {
 	closed bool
 }
 
-// NOTE: Compile-time interface check is deferred until all CRUD methods are implemented.
-// var _ store.Tx = (*Tx)(nil)
+// Compile-time check: Tx must stay in lockstep with Store.
+var _ store.Tx = (*Tx)(nil)
 
 // Commit commits the transaction.
 func (t *Tx) Commit(ctx context.Context) error {
