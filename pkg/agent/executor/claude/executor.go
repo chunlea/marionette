@@ -191,36 +191,91 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	// Wait for command to exit
 	err = cmd.Wait()
 
-	// Build result
+	return e.buildResult(ctx, err), nil
+}
+
+// buildResult derives the run outcome from the CLI's own result line and the
+// process exit status. The result line is authoritative for what the agent
+// did; the exit status only tells us whether the process itself survived.
+func (e *Executor) buildResult(ctx context.Context, waitErr error) *executor.Result {
 	result := &executor.Result{
 		CompletedAt:  time.Now(),
 		AgentSession: e.parser.SessionID(),
 	}
 
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			result.ExitCode = exitErr.ExitCode()
-			result.Success = false
-			result.Error = fmt.Sprintf("exit code %d", result.ExitCode)
-		} else if ctx.Err() != nil {
-			result.Success = false
-			result.Error = ctx.Err().Error()
-			if ctx.Err() == context.DeadlineExceeded {
-				result.Error = "timeout"
-			} else if ctx.Err() == context.Canceled {
-				result.Error = "canceled"
-			}
-		} else {
-			result.Success = false
-			result.Error = err.Error()
+	// Carry the CLI session id forward so the next task can --resume it.
+	if result.AgentSession != "" {
+		if snapshot, err := json.Marshal(contextSnapshot{ConversationID: result.AgentSession}); err == nil {
+			result.ContextSnapshot = snapshot
 		}
-	} else {
-		result.Success = true
-		result.ExitCode = 0
 	}
 
-	return result, nil
+	// Token counts come from the final result line's usage block, which is the
+	// authoritative per-run total. Input counts everything fed to the model,
+	// including the cached prefix, because the raw input_tokens field excludes
+	// cache hits and is close to meaningless on its own.
+	agentResult := e.parser.Result()
+	if agentResult != nil && agentResult.Usage != nil {
+		u := agentResult.Usage
+		result.TokensInput = u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+		result.TokensOutput = u.OutputTokens
+	}
+
+	// Process-level failures win: if the process died, nothing the agent said
+	// before dying makes the run a success.
+	if waitErr != nil {
+		result.Success = false
+
+		var exitErr *exec.ExitError
+		switch {
+		case ctx.Err() != nil:
+			result.Error = ctx.Err().Error()
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				result.Error = "timeout"
+			} else if errors.Is(ctx.Err(), context.Canceled) {
+				result.Error = "canceled"
+			}
+			if errors.As(waitErr, &exitErr) {
+				result.ExitCode = exitErr.ExitCode()
+			}
+		case errors.As(waitErr, &exitErr):
+			result.ExitCode = exitErr.ExitCode()
+			result.Error = fmt.Sprintf("exit code %d", result.ExitCode)
+			// Prefer the agent's own explanation when it managed to emit one.
+			if agentResult != nil && !agentResult.Succeeded() {
+				result.Error = agentResult.FailureReason()
+			}
+		default:
+			result.Error = waitErr.Error()
+		}
+
+		return result
+	}
+
+	result.ExitCode = 0
+
+	// The process exited cleanly. Now the result line decides the outcome.
+	// A clean exit with no result line means the CLI never finished its turn:
+	// reporting that as success is exactly the silent-failure mode this path
+	// used to have, so it is reported as a failure instead.
+	switch {
+	case agentResult == nil:
+		result.Success = false
+		result.Error = "claude exited without emitting a result message"
+	case !agentResult.Succeeded():
+		result.Success = false
+		result.Error = agentResult.FailureReason()
+	default:
+		result.Success = true
+	}
+
+	return result
+}
+
+// contextSnapshot is the shape the agent stores for session resume. buildArgs
+// reads it back to decide whether to pass --resume.
+type contextSnapshot struct {
+	ConversationID string `json:"conversation_id"`
 }
 
 // buildArgs constructs command line arguments for Claude Code.

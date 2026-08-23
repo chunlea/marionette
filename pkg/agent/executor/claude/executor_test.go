@@ -476,14 +476,6 @@ func TestIsPermissionRequired(t *testing.T) {
 	}
 }
 
-func TestPermissionToolNames(t *testing.T) {
-	assert.True(t, PermissionToolNames["Bash"])
-	assert.True(t, PermissionToolNames["Write"])
-	assert.True(t, PermissionToolNames["Edit"])
-	assert.False(t, PermissionToolNames["Read"])
-	assert.False(t, PermissionToolNames["nonexistent"])
-}
-
 func TestExecutor_processOutput_PermissionRequest(t *testing.T) {
 	e := New()
 	e.parser = NewParser().(*Parser)
@@ -492,7 +484,7 @@ func TestExecutor_processOutput_PermissionRequest(t *testing.T) {
 	handler := newTestOutputHandler()
 
 	// Simulate Claude output with a tool_use event for Bash (permission required)
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"Bash","input":"{\"command\":\"ls -la\"}"}]}}`
+	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"Bash","input":{"command":"ls -la"}}]}}`
 
 	reader := strings.NewReader(toolUseJSON + "\n")
 	e.processOutput(ctx, reader, "stdout", handler, testTask())
@@ -515,7 +507,7 @@ func TestExecutor_processOutput_PermissionApproved(t *testing.T) {
 	handler.permissionApprove = true
 
 	// Simulate Claude output with a tool_use event
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_456","name":"Write","input":"{\"file_path\":\"/tmp/test.txt\"}"}]}}`
+	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_456","name":"Write","input":{"file_path":"/tmp/test.txt"}}]}}`
 
 	reader := strings.NewReader(toolUseJSON + "\n")
 	e.processOutput(ctx, reader, "stdout", handler, testTask())
@@ -541,7 +533,7 @@ func TestExecutor_processOutput_PermissionDenied(t *testing.T) {
 	handler.permissionApprove = false
 
 	// Simulate Claude output with a tool_use event
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_789","name":"Edit","input":"{\"file_path\":\"/etc/passwd\"}"}]}}`
+	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_789","name":"Edit","input":{"file_path":"/etc/passwd"}}]}}`
 
 	reader := strings.NewReader(toolUseJSON + "\n")
 	e.processOutput(ctx, reader, "stdout", handler, testTask())
@@ -567,7 +559,7 @@ func TestExecutor_processOutput_PermissionError(t *testing.T) {
 	handler.permissionErr = errors.New("context canceled")
 
 	// Simulate Claude output with a tool_use event
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_err","name":"Bash","input":"{}"}]}}`
+	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_err","name":"Bash","input":{}}]}}`
 
 	reader := strings.NewReader(toolUseJSON + "\n")
 	e.processOutput(ctx, reader, "stdout", handler, testTask())
@@ -592,7 +584,7 @@ func TestExecutor_processOutput_NoPermissionForReadTools(t *testing.T) {
 	handler := newTestOutputHandler()
 
 	// Simulate Claude output with a tool_use event for Read (no permission required)
-	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":"{\"file_path\":\"/tmp/test.txt\"}"}]}}`
+	toolUseJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/test.txt"}}]}}`
 
 	reader := strings.NewReader(toolUseJSON + "\n")
 	e.processOutput(ctx, reader, "stdout", handler, testTask())
@@ -611,9 +603,9 @@ func TestExecutor_processOutput_MultipleToolUses(t *testing.T) {
 	handler.permissionApprove = true
 
 	// Simulate multiple tool uses - one requiring permission, one not
-	bashJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":"{}"}]}}`
-	readJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Read","input":"{}"}]}}`
-	writeJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_3","name":"Write","input":"{}"}]}}`
+	bashJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}]}}`
+	readJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Read","input":{}}]}}`
+	writeJSON := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_3","name":"Write","input":{}}]}}`
 
 	reader := strings.NewReader(bashJSON + "\n" + readJSON + "\n" + writeJSON + "\n")
 	e.processOutput(ctx, reader, "stdout", handler, testTask())
@@ -673,8 +665,8 @@ func TestExecutor_processOutput_PermissionRequestStopsOnError(t *testing.T) {
 
 	// Simulate two tool uses that require permission
 	// After the first error, processing should stop
-	bashJSON1 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":"{}"}]}}`
-	bashJSON2 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":"{}"}]}}`
+	bashJSON1 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}]}}`
+	bashJSON2 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{}}]}}`
 
 	reader := strings.NewReader(bashJSON1 + "\n" + bashJSON2 + "\n")
 	e.processOutput(ctx, reader, "stdout", handler, testTask())
@@ -891,9 +883,9 @@ func TestExecutor_processOutput_ParseError(t *testing.T) {
 func TestExecutor_Execute_WithMockScript(t *testing.T) {
 	// Create a temp script that simulates Claude output
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"Claude Code started"}'
+echo '{"type":"system","subtype":"init","session_id":"sess_test123","model":"mock","claude_code_version":"2.1.241"}'
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Hello!"}]}}'
-echo '{"type":"result","result":{"success":true,"session_id":"sess_test123"}}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_test123","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}'
 `
 	scriptPath := "/tmp/claude/mock_claude.sh"
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
@@ -917,6 +909,15 @@ echo '{"type":"result","result":{"success":true,"session_id":"sess_test123"}}'
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, "sess_test123", result.AgentSession)
 
+	// Token counts come from the result line's usage block:
+	// input_tokens + cache_creation + cache_read, and output_tokens.
+	assert.Equal(t, int64(18), result.TokensInput)
+	assert.Equal(t, int64(20), result.TokensOutput)
+
+	// The context snapshot must carry the CLI session id so the next task
+	// can --resume it.
+	assert.JSONEq(t, `{"conversation_id":"sess_test123"}`, string(result.ContextSnapshot))
+
 	// Verify outputs were captured
 	outputs := handler.GetOutputs()
 	assert.Greater(t, len(outputs), 0)
@@ -925,8 +926,8 @@ echo '{"type":"result","result":{"success":true,"session_id":"sess_test123"}}'
 func TestExecutor_Execute_WithWorkingDir(t *testing.T) {
 	// Create a script that prints working directory
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"Started in '"$PWD"'"}'
-echo '{"type":"result","result":{"success":true}}'
+echo '{"type":"system","subtype":"init","session_id":"sess_wd","cwd":"'"$PWD"'"}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_wd","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}'
 `
 	scriptPath := "/tmp/claude/mock_claude_wd.sh"
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
@@ -982,7 +983,7 @@ sleep 100
 func TestExecutor_Execute_NonZeroExit(t *testing.T) {
 	// Create a script that exits with error
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"Starting"}'
+echo '{"type":"system","subtype":"init","session_id":"sess_fail"}'
 exit 42
 `
 	scriptPath := "/tmp/claude/mock_claude_fail.sh"
@@ -1007,12 +1008,68 @@ exit 42
 	assert.Equal(t, 42, result.ExitCode)
 }
 
+// TestExecutor_Execute_NoResultLine pins the honesty rule: a CLI that exits 0
+// without ever emitting a result line has not completed the turn, and must not
+// be reported as a successful run.
+func TestExecutor_Execute_NoResultLine(t *testing.T) {
+	scriptContent := `#!/bin/bash
+echo '{"type":"system","subtype":"init","session_id":"sess_silent"}'
+exit 0
+`
+	scriptPath := "/tmp/claude/mock_claude_silent.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath))
+
+	result, err := e.Execute(context.Background(), &executor.Task{
+		Prompt:  "test",
+		Timeout: 10 * time.Second,
+	}, nil, newTestOutputHandler())
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.Equal(t, 0, result.ExitCode)
+	assert.Contains(t, result.Error, "without emitting a result message")
+}
+
+// TestExecutor_Execute_AgentReportedFailure pins the other half: a clean exit
+// whose result line says the agent failed is a failed run, with the CLI's own
+// reason carried through.
+func TestExecutor_Execute_AgentReportedFailure(t *testing.T) {
+	scriptContent := `#!/bin/bash
+echo '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"ran out of turns","session_id":"sess_maxturns","usage":{"input_tokens":1,"output_tokens":2}}'
+exit 0
+`
+	scriptPath := "/tmp/claude/mock_claude_maxturns.sh"
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(scriptPath) }()
+
+	e := New(WithBinaryPath(scriptPath))
+
+	result, err := e.Execute(context.Background(), &executor.Task{
+		Prompt:  "test",
+		Timeout: 10 * time.Second,
+	}, nil, newTestOutputHandler())
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "max turns reached")
+	assert.Contains(t, result.Error, "ran out of turns")
+	assert.Equal(t, int64(1), result.TokensInput)
+	assert.Equal(t, int64(2), result.TokensOutput)
+}
+
 func TestExecutor_Execute_WithStderr(t *testing.T) {
 	// Create a script that outputs to stderr
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"Started"}' >&1
+echo '{"type":"system","subtype":"init","session_id":"sess_stderr"}' >&1
 echo "Warning: something" >&2
-echo '{"type":"result","result":{"success":true}}' >&1
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_stderr","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}' >&1
 `
 	scriptPath := "/tmp/claude/mock_claude_stderr.sh"
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
@@ -1049,8 +1106,8 @@ echo '{"type":"result","result":{"success":true}}' >&1
 func TestExecutor_Execute_WithConfig(t *testing.T) {
 	// Create a script that prints environment variables
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"API_KEY='"${ANTHROPIC_API_KEY}"'"}'
-echo '{"type":"result","result":{"success":true}}'
+echo '{"type":"system","subtype":"init","session_id":"sess_env","apiKeySource":"'"${ANTHROPIC_API_KEY}"'"}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_env","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}'
 `
 	scriptPath := "/tmp/claude/mock_claude_env.sh"
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
@@ -1080,8 +1137,8 @@ echo '{"type":"result","result":{"success":true}}'
 func TestExecutor_Execute_StreamMode(t *testing.T) {
 	// Create a script that just outputs
 	scriptContent := `#!/bin/bash
-echo '{"type":"system","data":"Started"}'
-echo '{"type":"result","result":{"success":true,"session_id":"sess_stream"}}'
+echo '{"type":"system","subtype":"init","session_id":"sess_stream"}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_stream","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}'
 `
 	scriptPath := "/tmp/claude/mock_claude_stream.sh"
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)

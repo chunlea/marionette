@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/chunlea/marionette/pkg/agent/executor"
@@ -8,359 +9,349 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParser_ParseLine_Empty(t *testing.T) {
-	parser := NewParser()
+// parseGolden feeds an entire golden recording through a fresh parser and
+// returns every event it produced. Parsing must never return an error.
+func parseGolden(t *testing.T, name string) (*Parser, []*executor.AgentEvent) {
+	t.Helper()
 
-	events, err := parser.ParseLine([]byte{})
-	assert.NoError(t, err)
-	assert.Nil(t, events)
+	p := NewParser().(*Parser)
+	var events []*executor.AgentEvent
+	for i, line := range goldenLines(t, name) {
+		got, err := p.ParseLine(line)
+		require.NoErrorf(t, err, "%s line %d must parse without error", name, i+1)
+		events = append(events, got...)
+	}
+	return p, events
 }
 
-func TestParser_ParseLine_InvalidJSON(t *testing.T) {
-	parser := NewParser()
+// countByType tallies events by type.
+func countByType(events []*executor.AgentEvent) map[executor.EventType]int {
+	counts := make(map[executor.EventType]int)
+	for _, e := range events {
+		counts[e.Type]++
+	}
+	return counts
+}
 
-	events, err := parser.ParseLine([]byte("not json"))
+// TestParser_Goldens walks every recording end to end. This is the test the
+// old suite could not have passed: the production parse path now reaches the
+// result branch instead of falling through to raw text.
+func TestParser_Goldens(t *testing.T) {
+	tests := []struct {
+		golden      string
+		wantSession string
+		wantResult  string
+		wantInput   int64
+		wantOutput  int64
+		wantToolUse int
+		wantToolRes int
+	}{
+		{
+			golden:      goldenBasic,
+			wantSession: "080a38b4-4ab2-434d-927e-2f3103a3f56e",
+			wantResult:  "hi",
+			wantInput:   2,
+			wantOutput:  4,
+		},
+		{
+			golden:      goldenToolUse,
+			wantSession: "5232e175-c2cc-4cf1-a2d1-b50a1850607e",
+			wantResult:  "marionette-golden",
+			wantInput:   4,
+			wantOutput:  122,
+			wantToolUse: 1,
+			wantToolRes: 1,
+		},
+		{
+			golden:      goldenResume,
+			wantSession: "080a38b4-4ab2-434d-927e-2f3103a3f56e",
+			wantResult:  "hi",
+			wantInput:   2,
+			wantOutput:  4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.golden, func(t *testing.T) {
+			p, events := parseGolden(t, tt.golden)
+
+			assert.Equal(t, tt.wantSession, p.SessionID())
+
+			result := p.Result()
+			require.NotNil(t, result, "the result line must reach parseResultMessage")
+			assert.True(t, result.Succeeded())
+			assert.Equal(t, tt.wantResult, result.Result)
+			assert.Equal(t, tt.wantInput, result.Usage.InputTokens)
+			assert.Equal(t, tt.wantOutput, result.Usage.OutputTokens)
+
+			counts := countByType(events)
+			assert.Equal(t, tt.wantToolUse, counts[executor.EventToolUse])
+			assert.Equal(t, tt.wantToolRes, counts[executor.EventToolResult])
+			assert.Zero(t, counts[executor.EventError], "a successful run emits no error events")
+			assert.Positive(t, counts[executor.EventUsage])
+			assert.Positive(t, counts[executor.EventSystem])
+
+			// Every event keeps the line it came from for storage/debugging.
+			for _, e := range events {
+				assert.NotEmpty(t, e.Raw, "event %s must carry its raw line", e.Type)
+			}
+		})
+	}
+}
+
+// TestParser_GoldenBasicIsNotRawText is the direct regression guard: with the
+// old model the result line failed to unmarshal and was emitted as raw text.
+func TestParser_GoldenBasicIsNotRawText(t *testing.T) {
+	_, events := parseGolden(t, goldenBasic)
+
+	for _, e := range events {
+		if e.Type != executor.EventText {
+			continue
+		}
+		assert.NotContains(t, e.Text, `"total_cost_usd"`,
+			"a result line leaked through as raw text: the result branch is unreachable")
+	}
+}
+
+func TestParser_GoldenInitEvent(t *testing.T) {
+	_, events := parseGolden(t, goldenBasic)
+
+	var init string
+	for _, e := range events {
+		if e.Type == executor.EventSystem && strings.HasPrefix(e.Text, "init:") {
+			init = e.Text
+		}
+	}
+
+	require.NotEmpty(t, init, "the system/init line must produce an init event")
+	assert.Contains(t, init, "session=080a38b4-4ab2-434d-927e-2f3103a3f56e")
+	assert.Contains(t, init, "version=2.1.241")
+	assert.Contains(t, init, "model=claude-fable-5")
+}
+
+// TestParser_GoldenPassesThroughMidStreamNoise pins the trap from the brief:
+// rate_limit_event and the extra system subtypes arrive mid-stream and must be
+// passed through without ending the turn.
+func TestParser_GoldenPassesThroughMidStreamNoise(t *testing.T) {
+	p, events := parseGolden(t, goldenToolUse)
+
+	var texts []string
+	for _, e := range events {
+		if e.Type == executor.EventSystem {
+			texts = append(texts, e.Text)
+		}
+	}
+	joined := strings.Join(texts, "\n")
+
+	assert.Contains(t, joined, "rate_limit:")
+	assert.Contains(t, joined, "hook=")
+	assert.Contains(t, joined, "thinking_tokens")
+	assert.NotContains(t, joined, "unknown message type")
+
+	// The turn still completed despite the mid-stream noise.
+	require.NotNil(t, p.Result())
+	assert.True(t, p.Result().Succeeded())
+}
+
+func TestParser_GoldenToolUseAndResult(t *testing.T) {
+	_, events := parseGolden(t, goldenToolUse)
+
+	var toolUse *executor.ToolUseEvent
+	var toolResult *executor.ToolResultEvent
+	for _, e := range events {
+		switch e.Type {
+		case executor.EventToolUse:
+			toolUse = e.ToolUse
+		case executor.EventToolResult:
+			toolResult = e.ToolResult
+		}
+	}
+
+	require.NotNil(t, toolUse)
+	assert.Equal(t, "Bash", toolUse.Name)
+	assert.True(t, strings.HasPrefix(toolUse.ID, "toolu_"))
+	assert.Contains(t, toolUse.Input, "echo marionette-golden")
+
+	// Tool results arrive as `user` messages. The old parser dropped them.
+	require.NotNil(t, toolResult)
+	assert.Equal(t, toolUse.ID, toolResult.ToolUseID)
+	assert.Equal(t, "marionette-golden", toolResult.Output)
+	assert.False(t, toolResult.IsError)
+}
+
+func TestParser_GoldenThinkingEvents(t *testing.T) {
+	_, events := parseGolden(t, goldenToolUse)
+
+	counts := countByType(events)
+	assert.Positive(t, counts[executor.EventThinking], "thinking blocks must surface as thinking events")
+}
+
+// TestParser_ResultFailure covers the outcomes the goldens cannot contain:
+// a run that the CLI itself reports as failed.
+func TestParser_ResultFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		line       string
+		wantReason string
+	}{
+		{
+			name:       "max turns",
+			line:       `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"","session_id":"s1"}`,
+			wantReason: "max turns reached",
+		},
+		{
+			name:       "error during execution",
+			line:       `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"tool crashed","session_id":"s1"}`,
+			wantReason: "tool crashed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := NewParser().(*Parser)
+			events, err := p.ParseLine([]byte(tt.line))
+			require.NoError(t, err)
+
+			require.NotNil(t, p.Result())
+			assert.False(t, p.Result().Succeeded())
+
+			counts := countByType(events)
+			require.Equal(t, 1, counts[executor.EventError])
+
+			var errText string
+			for _, e := range events {
+				if e.Type == executor.EventError {
+					errText = e.Text
+				}
+			}
+			assert.Contains(t, errText, tt.wantReason)
+		})
+	}
+}
+
+// TestParser_Tolerance is the contract: nothing the CLI can emit turns into a
+// parse error, because an error would abort a running task.
+func TestParser_Tolerance(t *testing.T) {
+	tests := []struct {
+		name      string
+		line      string
+		wantCount int
+		wantType  executor.EventType
+		wantText  string
+	}{
+		{name: "empty line", line: "", wantCount: 0},
+		{name: "whitespace only", line: "   ", wantCount: 0},
+		{
+			name: "non-JSON debug output", line: "Ignoring 30 permissions.allow entries",
+			wantCount: 1, wantType: executor.EventText, wantText: "Ignoring 30 permissions.allow entries",
+		},
+		{
+			name: "truncated JSON", line: `{"type":"result","subtype":`,
+			wantCount: 1, wantType: executor.EventText,
+		},
+		{
+			name: "unknown message type", line: `{"type":"holodeck_event","session_id":"s1"}`,
+			wantCount: 1, wantType: executor.EventSystem, wantText: "unknown message type: holodeck_event",
+		},
+		{
+			name: "system message with unknown subtype", line: `{"type":"system","subtype":"quantum_flux"}`,
+			wantCount: 1, wantType: executor.EventSystem, wantText: "system: quantum_flux",
+		},
+		{
+			name: "assistant with no message", line: `{"type":"assistant"}`,
+			wantCount: 0,
+		},
+		{
+			name: "assistant with malformed message", line: `{"type":"assistant","message":"not-an-object"}`,
+			wantCount: 1, wantType: executor.EventSystem,
+		},
+		{
+			name: "user with no message", line: `{"type":"user"}`,
+			wantCount: 0,
+		},
+		{
+			name: "unknown content block type is skipped", line: `{"type":"assistant","message":{"content":[{"type":"holo_block"}]}}`,
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := NewParser().(*Parser)
+			events, err := p.ParseLine([]byte(tt.line))
+
+			require.NoError(t, err, "ParseLine must never return an error")
+			require.Len(t, events, tt.wantCount)
+
+			if tt.wantCount == 0 {
+				return
+			}
+			assert.Equal(t, tt.wantType, events[0].Type)
+			if tt.wantText != "" {
+				assert.Equal(t, tt.wantText, events[0].Text)
+			}
+		})
+	}
+}
+
+// TestParser_UnknownTypeDoesNotEndTurn makes sure a future message type
+// injected mid-stream leaves the run intact.
+func TestParser_UnknownTypeDoesNotEndTurn(t *testing.T) {
+	p := NewParser().(*Parser)
+
+	lines := goldenLines(t, goldenBasic)
+	injected := make([][]byte, 0, len(lines)+1)
+	for i, line := range lines {
+		if i == len(lines)-1 {
+			injected = append(injected, []byte(`{"type":"future_type_2027","session_id":"s1","payload":{"a":1}}`))
+		}
+		injected = append(injected, line)
+	}
+
+	for _, line := range injected {
+		_, err := p.ParseLine(line)
+		require.NoError(t, err)
+	}
+
+	require.NotNil(t, p.Result())
+	assert.True(t, p.Result().Succeeded())
+	assert.Equal(t, "080a38b4-4ab2-434d-927e-2f3103a3f56e", p.SessionID())
+}
+
+func TestParser_SessionIDTracking(t *testing.T) {
+	p := NewParser().(*Parser)
+	assert.Empty(t, p.SessionID())
+
+	_, err := p.ParseLine([]byte(`{"type":"system","subtype":"init","session_id":"sess-1"}`))
 	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, executor.EventText, events[0].Type)
-	assert.Equal(t, "not json", events[0].Text)
-}
+	assert.Equal(t, "sess-1", p.SessionID())
 
-func TestParser_ParseLine_SystemMessage(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"system","subtype":"init","data":"Starting Claude Code"}`)
-	events, err := parser.ParseLine(line)
-
+	// A line without a session id must not clear the tracked one.
+	_, err = p.ParseLine([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"x"}]}}`))
 	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, executor.EventSystem, events[0].Type)
-	assert.Equal(t, "Starting Claude Code", events[0].Text)
-}
-
-func TestParser_ParseLine_AssistantMessage_Text(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hello, I can help you with that."}]}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, executor.EventText, events[0].Type)
-	assert.Equal(t, "Hello, I can help you with that.", events[0].Text)
-}
-
-func TestParser_ParseLine_AssistantMessage_Thinking(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Let me analyze this..."}]}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, executor.EventThinking, events[0].Type)
-	assert.Equal(t, "Let me analyze this...", events[0].Text)
-}
-
-func TestParser_ParseLine_AssistantMessage_ToolUse(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool_123","name":"Bash","input":{"command":"ls -la"}}]}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, executor.EventToolUse, events[0].Type)
-	require.NotNil(t, events[0].ToolUse)
-	assert.Equal(t, "tool_123", events[0].ToolUse.ID)
-	assert.Equal(t, "Bash", events[0].ToolUse.Name)
-	assert.Equal(t, `{"command":"ls -la"}`, events[0].ToolUse.Input)
-}
-
-func TestParser_ParseLine_AssistantMessage_ToolResult(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_result","tool_use_id":"tool_123","content":"file1.txt\nfile2.txt","is_error":false}]}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, executor.EventToolResult, events[0].Type)
-	require.NotNil(t, events[0].ToolResult)
-	assert.Equal(t, "tool_123", events[0].ToolResult.ToolUseID)
-	assert.Equal(t, "file1.txt\nfile2.txt", events[0].ToolResult.Output)
-	assert.False(t, events[0].ToolResult.IsError)
-}
-
-func TestParser_ParseLine_AssistantMessage_WithUsage(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done!"}],"usage":{"input_tokens":100,"output_tokens":50}}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 2)
-
-	// Text event
-	assert.Equal(t, executor.EventText, events[0].Type)
-	assert.Equal(t, "Done!", events[0].Text)
-
-	// Usage event
-	assert.Equal(t, executor.EventUsage, events[1].Type)
-	require.NotNil(t, events[1].Usage)
-	assert.Equal(t, int64(100), events[1].Usage.InputTokens)
-	assert.Equal(t, int64(50), events[1].Usage.OutputTokens)
-}
-
-func TestParser_ParseLine_AssistantMessage_MultipleBlocks(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Planning..."},{"type":"text","text":"Here's my plan:"},{"type":"tool_use","id":"tool_1","name":"Read","input":{"path":"README.md"}}]}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 3)
-
-	assert.Equal(t, executor.EventThinking, events[0].Type)
-	assert.Equal(t, executor.EventText, events[1].Type)
-	assert.Equal(t, executor.EventToolUse, events[2].Type)
-}
-
-func TestParser_ParseLine_ResultMessage_Success(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"result","result":{"success":true,"exit_code":0,"session_id":"sess_abc123","usage":{"input_tokens":500,"output_tokens":200}}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 2)
-
-	// Usage event
-	assert.Equal(t, executor.EventUsage, events[0].Type)
-
-	// System event for completion
-	assert.Equal(t, executor.EventSystem, events[1].Type)
-	assert.Equal(t, "Task completed", events[1].Text)
-
-	// Session ID should be tracked
-	p := parser.(*Parser)
-	assert.Equal(t, "sess_abc123", p.SessionID())
-}
-
-func TestParser_ParseLine_ResultMessage_Failed(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"result","result":{"success":false,"exit_code":1,"error":"API error"}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 2)
-
-	// Error event
-	assert.Equal(t, executor.EventError, events[0].Type)
-	assert.Equal(t, "API error", events[0].Text)
-
-	// System event for failure
-	assert.Equal(t, executor.EventSystem, events[1].Type)
-	assert.Equal(t, "Task failed", events[1].Text)
-}
-
-func TestParser_ParseLine_ResultMessage_Interrupted(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"result","result":{"success":false,"exit_code":130,"interrupted":true}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-
-	assert.Equal(t, executor.EventSystem, events[0].Type)
-	assert.Equal(t, "Task interrupted", events[0].Text)
-}
-
-func TestParser_ParseLine_UserMessage(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"user","message":"What is the time?"}`)
-	events, err := parser.ParseLine(line)
-
-	assert.NoError(t, err)
-	assert.Nil(t, events) // User messages are ignored
-}
-
-func TestParser_ParseLine_UnknownType(t *testing.T) {
-	parser := NewParser()
-
-	line := []byte(`{"type":"unknown","data":"something"}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, executor.EventSystem, events[0].Type)
-}
-
-func TestParser_SessionID_Tracking(t *testing.T) {
-	parser := NewParser().(*Parser)
-
-	// Initially empty
-	assert.Empty(t, parser.SessionID())
-
-	// Session ID from message
-	_, _ = parser.ParseLine([]byte(`{"type":"system","session_id":"sess_123"}`))
-	assert.Equal(t, "sess_123", parser.SessionID())
-
-	// Session ID from result
-	_, _ = parser.ParseLine([]byte(`{"type":"result","result":{"success":true,"session_id":"sess_456"}}`))
-	assert.Equal(t, "sess_456", parser.SessionID())
-}
-
-func TestParser_Flush(t *testing.T) {
-	parser := NewParser()
-
-	events, err := parser.Flush()
-	assert.NoError(t, err)
-	assert.Nil(t, events)
+	assert.Equal(t, "sess-1", p.SessionID())
 }
 
 func TestParser_Reset(t *testing.T) {
-	parser := NewParser().(*Parser)
+	p, _ := parseGolden(t, goldenBasic)
+	require.NotEmpty(t, p.SessionID())
+	require.NotNil(t, p.Result())
 
-	// Set some state
-	_, _ = parser.ParseLine([]byte(`{"type":"system","session_id":"sess_123"}`))
-	assert.Equal(t, "sess_123", parser.SessionID())
+	p.Reset()
 
-	// Reset
-	parser.Reset()
-	assert.Empty(t, parser.SessionID())
+	assert.Empty(t, p.SessionID())
+	assert.Nil(t, p.Result())
+}
+
+func TestParser_Flush(t *testing.T) {
+	p := NewParser().(*Parser)
+	events, err := p.Flush()
+	require.NoError(t, err)
+	assert.Empty(t, events)
 }
 
 func TestParser_Registration(t *testing.T) {
-	// The parser should be registered with the default registry
-	parser, err := executor.GetParser("claude")
+	p, err := executor.GetParser("claude")
 	require.NoError(t, err)
-	assert.NotNil(t, parser)
-}
-
-func TestParser_ParseLine_AssistantMessage_NilMessage(t *testing.T) {
-	parser := NewParser()
-
-	// Assistant message with nil message field
-	line := []byte(`{"type":"assistant"}`)
-	events, err := parser.ParseLine(line)
-
-	assert.NoError(t, err)
-	assert.Nil(t, events)
-}
-
-func TestParser_ParseLine_AssistantMessage_InvalidMessage(t *testing.T) {
-	parser := NewParser()
-
-	// Assistant message with invalid nested JSON
-	line := []byte(`{"type":"assistant","message":"not an object"}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	// Invalid message should be returned as system event
-	assert.Equal(t, executor.EventSystem, events[0].Type)
-}
-
-func TestParser_ParseLine_ContentBlock_UnknownType(t *testing.T) {
-	parser := NewParser()
-
-	// Content block with unknown type
-	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"unknown_block_type","data":"test"}]}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	// Unknown block types are silently skipped
-	assert.Len(t, events, 0)
-}
-
-func TestParser_ParseLine_ResultMessage_NilResult(t *testing.T) {
-	parser := NewParser()
-
-	// Result message with nil result field
-	line := []byte(`{"type":"result"}`)
-	events, err := parser.ParseLine(line)
-
-	assert.NoError(t, err)
-	assert.Nil(t, events)
-}
-
-func TestParser_ParseLine_ResultMessage_NoUsage(t *testing.T) {
-	parser := NewParser()
-
-	// Result message without usage
-	line := []byte(`{"type":"result","result":{"success":true,"session_id":"sess_789"}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	// Only system event, no usage event
-	assert.Equal(t, executor.EventSystem, events[0].Type)
-	assert.Equal(t, "Task completed", events[0].Text)
-}
-
-func TestParser_ParseLine_SystemMessage_SubtypeOnly(t *testing.T) {
-	parser := NewParser()
-
-	// System message with only subtype, no data
-	line := []byte(`{"type":"system","subtype":"shutdown"}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, executor.EventSystem, events[0].Type)
-	assert.Equal(t, "shutdown", events[0].Text)
-}
-
-func TestParser_ParseLine_ToolUse_NilInput(t *testing.T) {
-	parser := NewParser()
-
-	// Tool use with nil input
-	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool_456","name":"Read"}]}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, executor.EventToolUse, events[0].Type)
-	require.NotNil(t, events[0].ToolUse)
-	assert.Equal(t, "tool_456", events[0].ToolUse.ID)
-	assert.Equal(t, "Read", events[0].ToolUse.Name)
-	assert.Equal(t, "", events[0].ToolUse.Input)
-}
-
-func TestParser_ParseLine_ToolResult_WithError(t *testing.T) {
-	parser := NewParser()
-
-	// Tool result with error
-	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_result","tool_use_id":"tool_789","content":"Command failed: permission denied","is_error":true}]}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, executor.EventToolResult, events[0].Type)
-	require.NotNil(t, events[0].ToolResult)
-	assert.True(t, events[0].ToolResult.IsError)
-	assert.Equal(t, "Command failed: permission denied", events[0].ToolResult.Output)
-}
-
-func TestParser_ParseLine_Usage_WithCache(t *testing.T) {
-	parser := NewParser()
-
-	// Usage with cache tokens
-	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi"}],"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":30,"cache_creation_input_tokens":10}}}`)
-	events, err := parser.ParseLine(line)
-
-	require.NoError(t, err)
-	require.Len(t, events, 2)
-
-	// Usage event
-	assert.Equal(t, executor.EventUsage, events[1].Type)
-	require.NotNil(t, events[1].Usage)
-	assert.Equal(t, int64(100), events[1].Usage.InputTokens)
-	assert.Equal(t, int64(50), events[1].Usage.OutputTokens)
-	assert.Equal(t, int64(30), events[1].Usage.CacheRead)
-	assert.Equal(t, int64(10), events[1].Usage.CacheWrite)
+	assert.IsType(t, &Parser{}, p)
 }

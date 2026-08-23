@@ -20,18 +20,29 @@ instead.
 ## Recording commands
 
 ```bash
-claude --output-format stream-json --verbose --permission-mode acceptEdits \
-    --print 'say hi' > basic.jsonl 2> basic.err
+claude --output-format stream-json --verbose \
+    --print '<prompt>' > <name>.jsonl 2> <name>.err
 
-claude --output-format stream-json --verbose --permission-mode acceptEdits \
-    --print 'run: echo marionette-golden' > tooluse.jsonl 2> tooluse.err
-
-# session id taken from the `system`/`init` line of basic.jsonl,
-# deliberately run from a different cwd to prove resume is not cwd-bound
-claude --output-format stream-json --verbose --permission-mode acceptEdits \
+# resume takes the session id from the `system`/`init` line of basic.jsonl
+claude --output-format stream-json --verbose \
     --resume 080a38b4-4ab2-434d-927e-2f3103a3f56e \
-    --print 'say hi again' > resume.jsonl 2> resume.err
+    --print '<prompt>' > resume.jsonl 2> resume.err
 ```
+
+The exact invocation is not identical across the three files. The CLI echoes
+back what it actually ran with on the `system`/`init` line, and that is what
+the tests assert against:
+
+| File | `init.cwd` | `init.permissionMode` | `init.model` | `init.session_id` |
+|------|-----------|----------------------|--------------|-------------------|
+| `basic.jsonl` | `/private/var/folders/.../T/golden` | `auto` | `claude-fable-5` | `080a38b4-4ab2-434d-927e-2f3103a3f56e` |
+| `tooluse.jsonl` | `.../scratchpad/golden` | `auto` | `claude-sonnet-5` | `5232e175-c2cc-4cf1-a2d1-b50a1850607e` |
+| `resume.jsonl` | `/Users/chunlea/workspace/lab/marionette` | `acceptEdits` | `claude-sonnet-5` | `080a38b4-4ab2-434d-927e-2f3103a3f56e` |
+
+`resume.jsonl` resumes the session created by `basic.jsonl` from a **different
+working directory** and succeeds, so `--resume` is keyed on session id alone on
+2.1.241. Nothing in the executor may assume the resumed session shares a cwd
+with the session that created it.
 
 ## Facts these recordings pin down
 
