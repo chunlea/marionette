@@ -10,7 +10,7 @@ import {
   useStartDesktopStream,
   useStopDesktopStream,
 } from '@/api/hooks/useStreams'
-import type { StreamStatus } from '@/types/stream'
+import type { StreamState } from '@/types/stream'
 
 export interface DesktopStreamCardProps {
   sessionId: string
@@ -30,7 +30,7 @@ export function DesktopStreamCard({
   const stopStream = useStopDesktopStream()
 
   const canStartStream = sessionStatus === 'active' && !!runnerId && !activeStream
-  const canStopStream = !!activeStream && activeStream.status !== 'stopping'
+  const canStopStream = !!activeStream && activeStream.state !== 'stopping'
 
   const handleStartStream = async () => {
     try {
@@ -38,12 +38,9 @@ export function DesktopStreamCard({
         sessionId,
         runnerId,
         config: {
-          config: {
-            width: 1920,
-            height: 1080,
-            frame_rate: 30,
-            input_enabled: true,
-          },
+          resolution: { width: 1920, height: 1080 },
+          frame_rate: 30,
+          input_enabled: true,
         },
       })
     } catch (error) {
@@ -74,7 +71,7 @@ export function DesktopStreamCard({
       return <Badge variant="default">No Stream</Badge>
     }
 
-    return <StreamStatusBadge status={activeStream.status} />
+    return <StreamStateBadge state={activeStream.state} />
   }
 
   const renderContent = () => {
@@ -109,26 +106,26 @@ export function DesktopStreamCard({
             </div>
             <div>
               <dt className="font-medium text-gray-500">Provider</dt>
-              <dd className="mt-1">{activeStream.provider || 'Unknown'}</dd>
+              <dd className="mt-1">{activeStream.provider_name || 'Unknown'}</dd>
             </div>
-            {activeStream.config && (
-              <>
-                <div>
-                  <dt className="font-medium text-gray-500">Resolution</dt>
-                  <dd className="mt-1">
-                    {activeStream.config.width}x{activeStream.config.height}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">Frame Rate</dt>
-                  <dd className="mt-1">{activeStream.config.frame_rate} fps</dd>
-                </div>
-              </>
+            {activeStream.resolution && (
+              <div>
+                <dt className="font-medium text-gray-500">Resolution</dt>
+                <dd className="mt-1">
+                  {activeStream.resolution.width}x{activeStream.resolution.height}
+                </dd>
+              </div>
+            )}
+            {activeStream.frame_rate !== undefined && (
+              <div>
+                <dt className="font-medium text-gray-500">Frame Rate</dt>
+                <dd className="mt-1">{activeStream.frame_rate} fps</dd>
+              </div>
             )}
           </dl>
 
           {/* Preview (mini viewer) */}
-          {activeStream.status === 'active' && (
+          {activeStream.state === 'active' && (
             <div className="relative aspect-video bg-gray-900 rounded-lg overflow-hidden">
               <DesktopViewer
                 streamId={activeStream.id}
@@ -146,7 +143,7 @@ export function DesktopStreamCard({
 
           {/* Actions */}
           <div className="flex gap-2">
-            {activeStream.status === 'active' && (
+            {activeStream.state === 'active' && (
               <Button variant="secondary" onClick={() => setIsViewerOpen(true)}>
                 <Maximize2 className="mr-2 h-4 w-4" />
                 Open Viewer
@@ -226,8 +223,8 @@ export function DesktopStreamCard({
   )
 }
 
-function StreamStatusBadge({ status }: { status: StreamStatus }) {
-  switch (status) {
+function StreamStateBadge({ state }: { state: StreamState }) {
+  switch (state) {
     case 'active':
       return (
         <Badge variant="success" className="flex items-center gap-1">

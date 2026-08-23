@@ -2,6 +2,7 @@ package cas
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,22 +10,37 @@ import (
 )
 
 // ChunkMetadataStore defines the database operations needed for GC.
-// This is a subset of the store.Store interface focused on chunk metadata.
+// *postgres.Store implements it.
+//
+// Mark and sweep are single statements that re-check ref_count as they write,
+// rather than a read followed by a write. The read-then-write version could
+// mark a chunk that had been referenced in between, and the sweep then deleted
+// it because it only looked at deleted_at.
 type ChunkMetadataStore interface {
-	// ListUnreferencedChunks returns chunks with ref_count = 0 that haven't been marked.
+	// MarkUnreferencedChunks marks up to limit unreferenced chunks older than
+	// minAge, and returns the rows it actually marked.
+	//
+	// Ages are measured against the store's own clock, not the caller's: these
+	// timestamps are written by the store, and comparing them against an
+	// application clock that drifts makes a short grace period behave
+	// erratically.
+	MarkUnreferencedChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error)
+
+	// ListSweepableChunks returns chunks that are still unreferenced and have
+	// been marked for at least minAge.
+	ListSweepableChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error)
+
+	// DeleteChunkIfUnreferenced removes a chunk only while it is still
+	// unreferenced and has been marked for at least minAge, reporting whether
+	// it did.
+	DeleteChunkIfUnreferenced(ctx context.Context, tenantID, hash string, minAge time.Duration) (bool, error)
+
+	// ListUnreferencedChunks returns chunks with ref_count = 0 that haven't been
+	// marked. Used by dry runs, which must not write.
 	ListUnreferencedChunks(ctx context.Context, tenantID string, limit int) ([]*store.Chunk, error)
-
-	// ListSoftDeletedChunks returns chunks marked for deletion past the grace period.
-	ListSoftDeletedChunks(ctx context.Context, tenantID string, olderThan time.Time, limit int) ([]*store.Chunk, error)
-
-	// MarkChunkDeleted sets the deleted_at timestamp on a chunk.
-	MarkChunkDeleted(ctx context.Context, tenantID, hash string) error
 
 	// ClearChunkDeleted clears the deleted_at timestamp (resurrection).
 	ClearChunkDeleted(ctx context.Context, tenantID, hash string) error
-
-	// DeleteChunk permanently removes a chunk from the database.
-	DeleteChunk(ctx context.Context, tenantID, hash string) error
 
 	// GetChunk retrieves chunk metadata.
 	GetChunk(ctx context.Context, tenantID, hash string) (*store.Chunk, error)
@@ -60,6 +76,11 @@ func NewGC(metadataStore ChunkMetadataStore, chunkStore ChunkStore, config GCCon
 }
 
 // Mark identifies unreferenced chunks and marks them for deletion.
+//
+// Chunks created within the grace period are left alone: a chunk that has been
+// uploaded but whose manifest has not been committed yet is legitimately
+// unreferenced, and marking it immediately would put the commit in a race with
+// the sweep.
 func (g *GC) Mark(ctx context.Context, tenantID string) (int, error) {
 	totalMarked := 0
 
@@ -70,26 +91,26 @@ func (g *GC) Mark(ctx context.Context, tenantID string) (int, error) {
 		default:
 		}
 
-		// Get a batch of unreferenced chunks
-		chunks, err := g.metadataStore.ListUnreferencedChunks(ctx, tenantID, g.config.BatchSize)
-		if err != nil {
-			return totalMarked, fmt.Errorf("listing unreferenced chunks: %w", err)
-		}
-
-		if len(chunks) == 0 {
-			break
-		}
-
-		// Mark each chunk for deletion
-		for _, chunk := range chunks {
-			if err := g.metadataStore.MarkChunkDeleted(ctx, tenantID, chunk.Hash); err != nil {
-				return totalMarked, fmt.Errorf("marking chunk %s: %w", chunk.Hash, err)
+		if g.config.DryRun {
+			// A dry run must not write, so it reports the candidate set instead.
+			chunks, err := g.metadataStore.ListUnreferencedChunks(ctx, tenantID, g.config.BatchSize)
+			if err != nil {
+				return totalMarked, fmt.Errorf("listing unreferenced chunks: %w", err)
 			}
-			totalMarked++
+			totalMarked += len(chunks)
+			return totalMarked, nil
 		}
 
-		// If we got fewer than batch size, we're done
-		if len(chunks) < g.config.BatchSize {
+		marked, err := g.metadataStore.MarkUnreferencedChunks(ctx, tenantID, g.config.GracePeriod, g.config.BatchSize)
+		if err != nil {
+			return totalMarked, fmt.Errorf("marking unreferenced chunks: %w", err)
+		}
+
+		totalMarked += len(marked)
+
+		// A short batch means the candidate set is exhausted. Marked rows leave
+		// that set, so this terminates.
+		if len(marked) < g.config.BatchSize {
 			break
 		}
 	}
@@ -97,13 +118,17 @@ func (g *GC) Mark(ctx context.Context, tenantID string) (int, error) {
 	return totalMarked, nil
 }
 
-// Sweep permanently deletes chunks that have been marked and passed the grace period.
+// Sweep permanently deletes chunks that have been marked and passed the grace
+// period and are still unreferenced.
+//
+// Ordering is deliberate: the database row goes first. A crash between the two
+// deletes then leaves an orphaned blob, which wastes space and can be swept
+// later. The reverse order leaves metadata claiming a chunk whose bytes are
+// gone, which is silent corruption for anything that restores from it.
 func (g *GC) Sweep(ctx context.Context, tenantID string) (int, int64, error) {
 	totalDeleted := 0
 	totalBytes := int64(0)
-
-	// Calculate the cutoff time (chunks marked before this are eligible for deletion)
-	cutoff := time.Now().Add(-g.config.GracePeriod)
+	var blobErrs []error
 
 	for {
 		select {
@@ -112,65 +137,61 @@ func (g *GC) Sweep(ctx context.Context, tenantID string) (int, int64, error) {
 		default:
 		}
 
-		// Get a batch of chunks eligible for deletion
-		chunks, err := g.metadataStore.ListSoftDeletedChunks(ctx, tenantID, cutoff, g.config.BatchSize)
+		chunks, err := g.metadataStore.ListSweepableChunks(ctx, tenantID, g.config.GracePeriod, g.config.BatchSize)
 		if err != nil {
-			return totalDeleted, totalBytes, fmt.Errorf("listing soft-deleted chunks: %w", err)
+			return totalDeleted, totalBytes, fmt.Errorf("listing sweepable chunks: %w", err)
 		}
 
 		if len(chunks) == 0 {
 			break
 		}
 
-		// Delete each chunk
 		for _, chunk := range chunks {
-			// Skip if dry run
 			if g.config.DryRun {
 				totalDeleted++
 				totalBytes += chunk.Size
 				continue
 			}
 
-			// Delete from blob storage first
-			// Ignore errors - chunk might already be deleted from storage
-			// We still want to clean up the database record
-			_ = g.chunkStore.DeleteChunk(ctx, tenantID, chunk.Hash)
-
-			// Delete from database
-			if err := g.metadataStore.DeleteChunk(ctx, tenantID, chunk.Hash); err != nil {
+			// The same age bound is re-applied by the delete, so a chunk that
+			// was re-marked in the meantime is not caught out.
+			deleted, err := g.metadataStore.DeleteChunkIfUnreferenced(ctx, tenantID, chunk.Hash, g.config.GracePeriod)
+			if err != nil {
 				return totalDeleted, totalBytes, fmt.Errorf("deleting chunk %s from database: %w", chunk.Hash, err)
+			}
+			if !deleted {
+				// Referenced again between the list and the delete. Its blob
+				// must stay.
+				continue
+			}
+
+			if err := g.chunkStore.DeleteChunk(ctx, tenantID, chunk.Hash); err != nil {
+				// The row is already gone, so the accounting stands; report the
+				// orphaned blob rather than aborting the rest of the sweep.
+				blobErrs = append(blobErrs, fmt.Errorf("deleting blob for chunk %s: %w", chunk.Hash, err))
 			}
 
 			totalDeleted++
 			totalBytes += chunk.Size
 		}
 
-		// If we got fewer than batch size, we're done
 		if len(chunks) < g.config.BatchSize {
 			break
 		}
 	}
 
-	return totalDeleted, totalBytes, nil
+	return totalDeleted, totalBytes, errors.Join(blobErrs...)
 }
 
 // Resurrect clears the deletion mark on a chunk that has been re-referenced.
+//
+// Note that referencing a chunk already resurrects it: IncrementChunkRef clears
+// deleted_at in the same statement. This exists for the upload-then-commit
+// window, where a chunk is rewritten before anything references it.
 func (g *GC) Resurrect(ctx context.Context, tenantID, hash string) error {
-	// First check if the chunk exists and is marked for deletion
-	chunk, err := g.metadataStore.GetChunk(ctx, tenantID, hash)
-	if err != nil {
-		return fmt.Errorf("getting chunk: %w", err)
-	}
-
-	// Only resurrect if actually marked for deletion
-	if chunk.DeletedAt == nil {
-		return nil // Already alive
-	}
-
 	if err := g.metadataStore.ClearChunkDeleted(ctx, tenantID, hash); err != nil {
 		return fmt.Errorf("clearing deleted_at: %w", err)
 	}
-
 	return nil
 }
 

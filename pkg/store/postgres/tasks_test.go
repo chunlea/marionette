@@ -560,3 +560,81 @@ func TestListTasks(t *testing.T) {
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+// TestUpdateTask_ExpectedStatusIsACompareAndSet proves the precondition is
+// enforced by Postgres, not by the caller reading first and hoping.
+//
+// This is the guard automatic redispatch rests on: an in-memory lock covers one
+// process, and the moment there are two, only the database can arbitrate.
+func TestUpdateTask_ExpectedStatusIsACompareAndSet(t *testing.T) {
+	ctx := context.Background()
+
+	ws := &store.Workspace{Name: "cas-ws", Persist: true, StorageType: "volume", Mobility: "local"}
+	require.NoError(t, testStore.CreateWorkspace(ctx, ws))
+	sess := &store.Session{
+		WorkspaceID: ws.ID, Agent: "claude", Status: "pending",
+		NetworkPolicy: "allow_list", LifecycleMode: "on_demand", AllowedHosts: []string{},
+	}
+	require.NoError(t, testStore.CreateSession(ctx, sess))
+
+	task := &store.Task{SessionID: sess.ID, Prompt: "cas", Status: "pending"}
+	require.NoError(t, testStore.CreateTask(ctx, task))
+
+	running := "running"
+	pending := "pending"
+
+	t.Run("applies while the precondition holds", func(t *testing.T) {
+		require.NoError(t, testStore.UpdateTask(ctx, task.ID, store.TaskUpdates{
+			Status:         &running,
+			ExpectedStatus: &pending,
+		}))
+
+		got, err := testStore.GetTask(ctx, task.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "running", got.Status)
+	})
+
+	t.Run("the second writer loses", func(t *testing.T) {
+		err := testStore.UpdateTask(ctx, task.ID, store.TaskUpdates{
+			Status:         &running,
+			ExpectedStatus: &pending,
+		})
+		require.ErrorIs(t, err, store.ErrConflict,
+			"a task that is no longer pending must refuse the transition")
+	})
+
+	t.Run("without a precondition the update still applies", func(t *testing.T) {
+		completed := "completed"
+		require.NoError(t, testStore.UpdateTask(ctx, task.ID, store.TaskUpdates{Status: &completed}))
+
+		got, err := testStore.GetTask(ctx, task.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "completed", got.Status)
+	})
+}
+
+// TestCreateTaskRun_DuplicateAttemptIsRejected pins the second guard: two
+// racing retries compute the same attempt from the same retry_count, and the
+// schema's UNIQUE(task_id, attempt) is what stops both running.
+func TestCreateTaskRun_DuplicateAttemptIsRejected(t *testing.T) {
+	ctx := context.Background()
+
+	ws := &store.Workspace{Name: "attempt-ws", Persist: true, StorageType: "volume", Mobility: "local"}
+	require.NoError(t, testStore.CreateWorkspace(ctx, ws))
+	sess := &store.Session{
+		WorkspaceID: ws.ID, Agent: "claude", Status: "pending",
+		NetworkPolicy: "allow_list", LifecycleMode: "on_demand", AllowedHosts: []string{},
+	}
+	require.NoError(t, testStore.CreateSession(ctx, sess))
+	task := &store.Task{SessionID: sess.ID, Prompt: "attempts", Status: "pending"}
+	require.NoError(t, testStore.CreateTask(ctx, task))
+
+	require.NoError(t, testStore.CreateTaskRun(ctx, &store.TaskRun{
+		TaskID: task.ID, Attempt: 1, Status: "pending",
+	}))
+
+	err := testStore.CreateTaskRun(ctx, &store.TaskRun{
+		TaskID: task.ID, Attempt: 1, Status: "pending",
+	})
+	require.ErrorIs(t, err, store.ErrAlreadyExists)
+}

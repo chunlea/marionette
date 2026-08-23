@@ -20,7 +20,7 @@ const runnerColumns = `id, name, hostname, status, tainted, taint_reason,
 
 // CreateRunner creates a new runner.
 func (s *Store) CreateRunner(ctx context.Context, runner *store.Runner) error {
-	return createRunner(ctx, s.pool, runner)
+	return createRunner(ctx, s.db, runner)
 }
 
 // CreateRunner creates a new runner within a transaction.
@@ -62,7 +62,7 @@ func createRunner(ctx context.Context, q querier, runner *store.Runner) error {
 
 // GetRunner retrieves a runner by ID.
 func (s *Store) GetRunner(ctx context.Context, runnerID string) (*store.Runner, error) {
-	return getRunner(ctx, s.pool, runnerID)
+	return getRunner(ctx, s.db, runnerID)
 }
 
 // GetRunner retrieves a runner by ID within a transaction.
@@ -78,7 +78,7 @@ func getRunner(ctx context.Context, q querier, runnerID string) (*store.Runner, 
 
 // GetRunnerByName retrieves a runner by name.
 func (s *Store) GetRunnerByName(ctx context.Context, name string) (*store.Runner, error) {
-	return getRunnerByName(ctx, s.pool, name)
+	return getRunnerByName(ctx, s.db, name)
 }
 
 // GetRunnerByName retrieves a runner by name within a transaction.
@@ -94,7 +94,7 @@ func getRunnerByName(ctx context.Context, q querier, name string) (*store.Runner
 
 // ListRunners retrieves runners with optional filtering.
 func (s *Store) ListRunners(ctx context.Context, opts store.ListRunnersOptions) (*store.ListResult[store.Runner], error) {
-	return listRunners(ctx, s.pool, opts)
+	return listRunners(ctx, s.db, opts)
 }
 
 // ListRunners retrieves runners within a transaction.
@@ -192,7 +192,7 @@ func listRunners(ctx context.Context, q querier, opts store.ListRunnersOptions) 
 
 // UpdateRunner updates runner fields.
 func (s *Store) UpdateRunner(ctx context.Context, runnerID string, updates store.RunnerUpdates) error {
-	return updateRunner(ctx, s.pool, runnerID, updates)
+	return updateRunner(ctx, s.db, runnerID, updates)
 }
 
 // UpdateRunner updates runner fields within a transaction.
@@ -305,7 +305,7 @@ func updateRunner(ctx context.Context, q querier, runnerID string, updates store
 
 // DeleteRunner deletes a runner.
 func (s *Store) DeleteRunner(ctx context.Context, runnerID string) error {
-	return deleteRunner(ctx, s.pool, runnerID)
+	return deleteRunner(ctx, s.db, runnerID)
 }
 
 // DeleteRunner deletes a runner within a transaction.

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chunlea/marionette/pkg/server/admin/admintypes"
 	"github.com/chunlea/marionette/pkg/store"
 )
 
@@ -232,7 +233,7 @@ func TestRunnerTokenHandlers(t *testing.T) {
 			t.Errorf("expected status %d, got %d: %s", http.StatusCreated, rr.Code, rr.Body.String())
 		}
 
-		var resp CreateRunnerTokenResponse
+		var resp admintypes.CreatedRunnerToken
 		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
@@ -314,7 +315,7 @@ func TestRunnerTokenHandlers(t *testing.T) {
 			t.Errorf("expected status %d, got %d: %s", http.StatusOK, rr.Code, rr.Body.String())
 		}
 
-		var resp RotateRunnerTokenResponse
+		var resp admintypes.CreatedRunnerToken
 		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}

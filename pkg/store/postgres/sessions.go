@@ -16,14 +16,14 @@ import (
 // Session column list for SELECT queries.
 const sessionColumns = `id, name, status, runner_id, workspace_id, profile_id, agent, is_byok,
 	agent_config_id, agent_config_metadata, context_snapshot, agent_version,
-	suspend_strategy, suspend_snapshot_id, suspend_workspace_synced, previous_runner_id,
+	suspend_strategy, suspend_snapshot_id, suspend_workspace_synced, workspace_manifest_id, previous_runner_id,
 	network_policy, allowed_hosts, lifecycle_mode, idle_timeout_seconds, max_lifetime_seconds,
 	schedule_cron, schedule_timezone, next_scheduled_at, tenant_id, labels, annotations,
 	last_activity_at, suspended_at, resumed_at, created_at, updated_at`
 
 // CreateSession creates a new session.
 func (s *Store) CreateSession(ctx context.Context, session *store.Session) error {
-	return createSession(ctx, s.pool, session)
+	return createSession(ctx, s.db, session)
 }
 
 // CreateSession creates a new session within a transaction.
@@ -40,13 +40,13 @@ func createSession(ctx context.Context, q querier, session *store.Session) error
 		INSERT INTO sessions (
 			id, name, status, runner_id, workspace_id, profile_id, agent, is_byok,
 			agent_config_id, agent_config_metadata, context_snapshot, agent_version,
-			suspend_strategy, suspend_snapshot_id, suspend_workspace_synced, previous_runner_id,
+			suspend_strategy, suspend_snapshot_id, suspend_workspace_synced, workspace_manifest_id, previous_runner_id,
 			network_policy, allowed_hosts, lifecycle_mode, idle_timeout_seconds, max_lifetime_seconds,
 			schedule_cron, schedule_timezone, next_scheduled_at, tenant_id, labels, annotations,
 			last_activity_at, suspended_at, resumed_at, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW()
+			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, NOW(), NOW()
 		)
 		RETURNING created_at, updated_at`
 
@@ -54,7 +54,8 @@ func createSession(ctx context.Context, q querier, session *store.Session) error
 		session.ID, session.Name, session.Status, session.RunnerID, session.WorkspaceID,
 		session.ProfileID, session.Agent, session.IsBYOK, session.AgentConfigID, session.AgentConfigMetadata,
 		session.ContextSnapshot, session.AgentVersion, session.SuspendStrategy,
-		session.SuspendSnapshotID, session.SuspendWorkspaceSynced, session.PreviousRunnerID,
+		session.SuspendSnapshotID, session.SuspendWorkspaceSynced, session.WorkspaceManifestID,
+		session.PreviousRunnerID,
 		session.NetworkPolicy, session.AllowedHosts, session.LifecycleMode,
 		session.IdleTimeoutSeconds, session.MaxLifetimeSeconds, session.ScheduleCron,
 		session.ScheduleTimezone, session.NextScheduledAt, session.TenantID,
@@ -70,7 +71,7 @@ func createSession(ctx context.Context, q querier, session *store.Session) error
 
 // GetSession retrieves a session by ID.
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*store.Session, error) {
-	return getSession(ctx, s.pool, sessionID)
+	return getSession(ctx, s.db, sessionID)
 }
 
 // GetSession retrieves a session by ID within a transaction.
@@ -86,7 +87,7 @@ func getSession(ctx context.Context, q querier, sessionID string) (*store.Sessio
 
 // ListSessions retrieves sessions with optional filtering.
 func (s *Store) ListSessions(ctx context.Context, opts store.ListSessionsOptions) (*store.ListResult[store.Session], error) {
-	return listSessions(ctx, s.pool, opts)
+	return listSessions(ctx, s.db, opts)
 }
 
 // ListSessions retrieves sessions within a transaction.
@@ -194,7 +195,7 @@ func listSessions(ctx context.Context, q querier, opts store.ListSessionsOptions
 
 // UpdateSession updates session fields.
 func (s *Store) UpdateSession(ctx context.Context, sessionID string, updates store.SessionUpdates) error {
-	return updateSession(ctx, s.pool, sessionID, updates)
+	return updateSession(ctx, s.db, sessionID, updates)
 }
 
 // UpdateSession updates session fields within a transaction.
@@ -270,6 +271,11 @@ func updateSession(ctx context.Context, q querier, sessionID string, updates sto
 	if updates.SuspendWorkspaceSynced != nil {
 		setClauses = append(setClauses, fmt.Sprintf("suspend_workspace_synced = $%d", argNum))
 		args = append(args, *updates.SuspendWorkspaceSynced)
+		argNum++
+	}
+	if updates.WorkspaceManifestID != nil {
+		setClauses = append(setClauses, fmt.Sprintf("workspace_manifest_id = $%d", argNum))
+		args = append(args, *updates.WorkspaceManifestID)
 		argNum++
 	}
 	if updates.PreviousRunnerID != nil {
@@ -367,7 +373,7 @@ func updateSession(ctx context.Context, q querier, sessionID string, updates sto
 
 // DeleteSession deletes a session.
 func (s *Store) DeleteSession(ctx context.Context, sessionID string) error {
-	return deleteSession(ctx, s.pool, sessionID)
+	return deleteSession(ctx, s.db, sessionID)
 }
 
 // DeleteSession deletes a session within a transaction.
@@ -395,7 +401,7 @@ func scanSession(row pgx.Row, identifier string) (*store.Session, error) {
 	err := row.Scan(
 		&s.ID, &s.Name, &s.Status, &s.RunnerID, &s.WorkspaceID, &s.ProfileID, &s.Agent, &s.IsBYOK,
 		&s.AgentConfigID, &s.AgentConfigMetadata, &s.ContextSnapshot, &s.AgentVersion,
-		&s.SuspendStrategy, &s.SuspendSnapshotID, &s.SuspendWorkspaceSynced, &s.PreviousRunnerID,
+		&s.SuspendStrategy, &s.SuspendSnapshotID, &s.SuspendWorkspaceSynced, &s.WorkspaceManifestID, &s.PreviousRunnerID,
 		&s.NetworkPolicy, &s.AllowedHosts, &s.LifecycleMode, &s.IdleTimeoutSeconds, &s.MaxLifetimeSeconds,
 		&s.ScheduleCron, &s.ScheduleTimezone, &s.NextScheduledAt, &s.TenantID, &s.Labels, &s.Annotations,
 		&s.LastActivityAt, &s.SuspendedAt, &s.ResumedAt, &s.CreatedAt, &s.UpdatedAt,
@@ -415,7 +421,7 @@ func scanSessionFromRows(rows pgx.Rows) (*store.Session, error) {
 	err := rows.Scan(
 		&s.ID, &s.Name, &s.Status, &s.RunnerID, &s.WorkspaceID, &s.ProfileID, &s.Agent, &s.IsBYOK,
 		&s.AgentConfigID, &s.AgentConfigMetadata, &s.ContextSnapshot, &s.AgentVersion,
-		&s.SuspendStrategy, &s.SuspendSnapshotID, &s.SuspendWorkspaceSynced, &s.PreviousRunnerID,
+		&s.SuspendStrategy, &s.SuspendSnapshotID, &s.SuspendWorkspaceSynced, &s.WorkspaceManifestID, &s.PreviousRunnerID,
 		&s.NetworkPolicy, &s.AllowedHosts, &s.LifecycleMode, &s.IdleTimeoutSeconds, &s.MaxLifetimeSeconds,
 		&s.ScheduleCron, &s.ScheduleTimezone, &s.NextScheduledAt, &s.TenantID, &s.Labels, &s.Annotations,
 		&s.LastActivityAt, &s.SuspendedAt, &s.ResumedAt, &s.CreatedAt, &s.UpdatedAt,
@@ -429,7 +435,7 @@ func scanSessionFromRows(rows pgx.Rows) (*store.Session, error) {
 // GetDueScheduledSessions retrieves sessions with lifecycle_mode='scheduled'
 // that are suspended and have next_scheduled_at <= now.
 func (s *Store) GetDueScheduledSessions(ctx context.Context, now time.Time, limit int) ([]*store.Session, error) {
-	return getDueScheduledSessions(ctx, s.pool, now, limit)
+	return getDueScheduledSessions(ctx, s.db, now, limit)
 }
 
 // GetDueScheduledSessions retrieves due scheduled sessions within a transaction.

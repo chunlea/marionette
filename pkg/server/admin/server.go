@@ -11,6 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
+
+	"github.com/chunlea/marionette/pkg/server/admin/admintypes"
 )
 
 // Server is the admin API HTTP server.
@@ -387,10 +389,7 @@ func (s *Server) handleActivateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse request body for runner_id
-	var req struct {
-		RunnerID string `json:"runner_id"`
-	}
+	var req admintypes.ActivateSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid_json", "Invalid request body")
 		return
@@ -407,7 +406,7 @@ func (s *Server) handleActivateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "activated"})
+	WriteJSON(w, http.StatusOK, admintypes.Accepted{Status: "activated"})
 }
 
 // handleSuspendSession handles POST /admin/api/v1/sessions/{sessionID}/suspend.
@@ -423,10 +422,7 @@ func (s *Server) handleSuspendSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse request body for strategy (optional)
-	var req struct {
-		Strategy string `json:"strategy"`
-	}
+	var req admintypes.SuspendSessionRequest
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
@@ -442,5 +438,5 @@ func (s *Server) handleSuspendSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "suspended"})
+	WriteJSON(w, http.StatusOK, admintypes.Accepted{Status: "suspended"})
 }

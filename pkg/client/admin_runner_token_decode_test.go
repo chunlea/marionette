@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-//go:generate go run gen_runner_token_fixtures.go
+//go:generate go run gen_admin_fixtures.go
 
 // The admin API returns runner tokens as {"token": {...}, "raw_token": "..."}.
 // RunnerTokenWithSecret flattens that, so it needs custom JSON methods; without
@@ -22,9 +22,9 @@ import (
 // `mctl admin runner-tokens create` printed a blank ID, pool and prefix.
 //
 // The fixtures are generated from the server's own response types
-// (admin.CreateRunnerTokenResponse / admin.RotateRunnerTokenResponse) so they
+// (admintypes.CreatedRunnerToken and admintypes.CreatedAPIKey) so they
 // cannot drift into a hand-written guess of the shape. Regenerate them with
-// `go generate ./pkg/client/...` (see gen_runner_token_fixtures.go).
+// `go generate ./pkg/client/...` (see gen_admin_fixtures.go).
 
 func loadFixture(t *testing.T, name string) []byte {
 	t.Helper()
@@ -53,12 +53,15 @@ func assertDecodedToken(t *testing.T, got *RunnerTokenWithSecret, wantRawToken s
 	assert.Equal(t, "run_0002xK9mNpV1StGXR8", *got.RunnerID)
 	require.NotNil(t, got.CreatedBy)
 	assert.Equal(t, "admin", *got.CreatedBy)
-	assert.JSONEq(t, `{"env":"prod","tier":"premium"}`, string(got.Labels))
+	assert.Equal(t, map[string]string{"env": "prod", "tier": "premium"}, got.Labels)
 
 	assert.Equal(t, wantRawToken, got.RawToken)
 
-	// The server never exposes the hash; decoding must not invent one.
-	assert.Empty(t, got.TokenHash)
+	// The hash is not a field of the wire type at all any more, so there is
+	// nothing to decode into and nothing for a caller to read back. That the
+	// server withholds it is proved at the source, by
+	// TestAdminResponsesWithholdSecrets in pkg/server/admin.
+	assert.NotContains(t, string(loadFixture(t, "runner_token_create_response.json")), "hash")
 }
 
 func TestRunnerTokenWithSecret_UnmarshalJSON_CreateResponse(t *testing.T) {
@@ -136,4 +139,45 @@ func TestHTTPAdminClient_RotateRunnerToken_DecodesServerShape(t *testing.T) {
 	got, err := c.RotateRunnerToken(context.Background(), "rtok_0002xK9mNqW2TuHYS9")
 	require.NoError(t, err)
 	assertDecodedToken(t, got, "rtok_9Ne3pWq2RotatedSecretValue")
+}
+
+// The API key response has the same nested shape as the runner token one, and
+// the SDK used to declare `Key string` against the {"key": {...}} object — so
+// CreateAPIKey failed outright with "cannot unmarshal object into Go struct
+// field ... of type string". It had never worked.
+func TestAPIKeyWithSecret_UnmarshalJSON_CreateResponse(t *testing.T) {
+	var got APIKeyWithSecret
+	require.NoError(t, json.Unmarshal(loadFixture(t, "api_key_create_response.json"), &got))
+
+	assert.Equal(t, "key_0002xK9mNrX3UvIZT0", got.ID, "ID must not be blank")
+	assert.Equal(t, "ci", got.Name)
+	assert.Equal(t, "mk_7Jc1lUo0", got.KeyPrefix, "prefix must not be blank")
+	assert.Equal(t, []string{"sessions:*", "tasks:*"}, got.Scopes)
+	assert.Equal(t, map[string]string{"env": "prod"}, got.Labels)
+	assert.Equal(t, "mk_7Jc1lUo0SecretValueDoNotLog", got.RawToken)
+	require.NotNil(t, got.CreatedBy)
+	assert.Equal(t, "admin", *got.CreatedBy)
+
+	assert.NotContains(t, string(loadFixture(t, "api_key_create_response.json")), "hash")
+}
+
+func TestAPIKeyWithSecret_RejectsAResponseWithNoKeyObject(t *testing.T) {
+	var got APIKeyWithSecret
+	err := json.Unmarshal([]byte(`{"raw_token":"mk_plain"}`), &got)
+	require.Error(t, err, "decoding into zero values is the bug this guards")
+	assert.Contains(t, err.Error(), "key")
+}
+
+func TestAPIKeyWithSecret_RoundTrip(t *testing.T) {
+	original := loadFixture(t, "api_key_create_response.json")
+
+	var got APIKeyWithSecret
+	require.NoError(t, json.Unmarshal(original, &got))
+	reEmitted, err := json.Marshal(got)
+	require.NoError(t, err)
+
+	var want, have map[string]any
+	require.NoError(t, json.Unmarshal(original, &want))
+	require.NoError(t, json.Unmarshal(reEmitted, &have))
+	assert.Equal(t, want, have, "the type must re-emit the shape it accepts")
 }

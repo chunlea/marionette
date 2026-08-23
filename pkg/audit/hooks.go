@@ -3,6 +3,8 @@ package audit
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/chunlea/marionette/pkg/store"
 )
 
 // Common action constants for audit logging.
@@ -155,6 +157,14 @@ func (b *EventBuilder) Build() Event {
 
 // Log logs the event using the provided logger.
 func (b *EventBuilder) Log(ctx context.Context, logger Logger) error {
+	// Stamp the tenant from the request unless the caller named one. An audit
+	// trail that cannot say which tenant an action belonged to is not much of
+	// an audit trail, and every call site would otherwise have to remember.
+	if b.event.TenantID == "" {
+		if tenantID, ok := store.TenantFromContext(ctx); ok {
+			b.event.TenantID = tenantID
+		}
+	}
 	return logger.Log(ctx, b.event)
 }
 

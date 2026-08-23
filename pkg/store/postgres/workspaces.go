@@ -20,7 +20,7 @@ const workspaceColumns = `id, name, persist, storage_type, storage_config, mobil
 
 // CreateWorkspace creates a new workspace.
 func (s *Store) CreateWorkspace(ctx context.Context, workspace *store.Workspace) error {
-	return createWorkspace(ctx, s.pool, workspace)
+	return createWorkspace(ctx, s.db, workspace)
 }
 
 // CreateWorkspace creates a new workspace within a transaction.
@@ -61,7 +61,7 @@ func createWorkspace(ctx context.Context, q querier, workspace *store.Workspace)
 
 // GetWorkspace retrieves a workspace by ID.
 func (s *Store) GetWorkspace(ctx context.Context, workspaceID string) (*store.Workspace, error) {
-	return getWorkspace(ctx, s.pool, workspaceID)
+	return getWorkspace(ctx, s.db, workspaceID)
 }
 
 // GetWorkspace retrieves a workspace by ID within a transaction.
@@ -77,7 +77,7 @@ func getWorkspace(ctx context.Context, q querier, workspaceID string) (*store.Wo
 
 // ListWorkspaces retrieves workspaces with optional filtering.
 func (s *Store) ListWorkspaces(ctx context.Context, opts store.ListWorkspacesOptions) (*store.ListResult[store.Workspace], error) {
-	return listWorkspaces(ctx, s.pool, opts)
+	return listWorkspaces(ctx, s.db, opts)
 }
 
 // ListWorkspaces retrieves workspaces within a transaction.
@@ -168,7 +168,7 @@ func listWorkspaces(ctx context.Context, q querier, opts store.ListWorkspacesOpt
 
 // UpdateWorkspace updates workspace fields.
 func (s *Store) UpdateWorkspace(ctx context.Context, workspaceID string, updates store.WorkspaceUpdates) error {
-	return updateWorkspace(ctx, s.pool, workspaceID, updates)
+	return updateWorkspace(ctx, s.db, workspaceID, updates)
 }
 
 // UpdateWorkspace updates workspace fields within a transaction.
@@ -271,7 +271,7 @@ func updateWorkspace(ctx context.Context, q querier, workspaceID string, updates
 
 // DeleteWorkspace soft-deletes a workspace by setting deleted_at.
 func (s *Store) DeleteWorkspace(ctx context.Context, workspaceID string) error {
-	return deleteWorkspace(ctx, s.pool, workspaceID)
+	return deleteWorkspace(ctx, s.db, workspaceID)
 }
 
 // DeleteWorkspace soft-deletes a workspace within a transaction.

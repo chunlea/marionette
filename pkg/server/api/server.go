@@ -22,6 +22,10 @@ type Server struct {
 	router chi.Router
 	logger *zap.Logger
 
+	// multiTenant makes an untenanted API key an error instead of a
+	// single-tenant request. See Config.MultiTenant.
+	multiTenant bool
+
 	// Services
 	sessions       SessionService
 	tasks          TaskService
@@ -52,6 +56,11 @@ type Server struct {
 type Config struct {
 	Host string
 	Port int
+
+	// MultiTenant refuses to serve a request whose API key is not scoped to a
+	// tenant. Off for single-tenant deployments, where every key and every row
+	// has a NULL tenant.
+	MultiTenant bool
 }
 
 // Option is a functional option for configuring the server.
@@ -152,7 +161,8 @@ func WithTunnelProxy(h *TunnelProxyHandler) Option {
 // New creates a new public API server.
 func New(cfg Config, logger *zap.Logger, opts ...Option) *Server {
 	srv := &Server{
-		logger: logger,
+		logger:      logger,
+		multiTenant: cfg.MultiTenant,
 	}
 
 	// Apply options

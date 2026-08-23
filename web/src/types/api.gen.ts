@@ -481,6 +481,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tasks/{taskID}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List task runs
+         * @description Lists the execution attempts of a task, oldest attempt first. The task itself only carries the latest status, so this is where a retry that failed before a later attempt succeeded is visible.
+         */
+        get: operations["getTasksRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tunnels/{tunnelID}": {
         parameters: {
             query?: never;
@@ -953,6 +973,39 @@ export interface components {
             has_more: boolean;
             next_cursor?: string;
         };
+        TaskRun: {
+            id: string;
+            task_id: string;
+            /** Format: int32 */
+            attempt: number;
+            runner_id?: string;
+            /** @enum {string} */
+            status: "pending" | "assigned" | "running" | "completed" | "failed" | "timeout" | "canceled";
+            error?: string;
+            /** Format: int32 */
+            exit_code?: number;
+            /** Format: int32 */
+            tokens_input?: number;
+            /** Format: int32 */
+            tokens_output?: number;
+            /** Format: date-time */
+            queued_at: string;
+            /** Format: date-time */
+            assigned_at?: string;
+            /** Format: date-time */
+            started_at?: string;
+            /** Format: date-time */
+            ended_at?: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        TaskRunList: {
+            items: components["schemas"]["TaskRun"][];
+            /** Format: int64 */
+            total_count: number;
+            has_more: boolean;
+            next_cursor?: string;
+        };
         Tunnel: {
             id: string;
             session_id: string;
@@ -1088,7 +1141,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the events:read scope. */
+            /** @description The credential lacks the events:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1138,7 +1191,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tasks:read scope. */
+            /** @description The credential lacks the tasks:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1207,7 +1260,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the permissions:read scope. */
+            /** @description The credential lacks the permissions:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1256,7 +1309,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the permissions:read scope. */
+            /** @description The credential lacks the permissions:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1316,7 +1369,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the permissions:write scope. */
+            /** @description The credential lacks the permissions:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1376,7 +1429,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the permissions:write scope. */
+            /** @description The credential lacks the permissions:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1416,8 +1469,8 @@ export interface operations {
                 status?: string[];
                 /** @description Filter by pool. */
                 pool_name?: string;
-                /** @description Filter by label. Repeat with different keys to AND several labels, e.g. labels[env]=prod. */
-                "labels[key]"?: string;
+                /** @description Filter by label, e.g. labels[env]=prod. */
+                labels?: string;
             };
             header?: never;
             path?: never;
@@ -1443,7 +1496,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the runners:read scope. */
+            /** @description The credential lacks the runners:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1492,7 +1545,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the runners:read scope. */
+            /** @description The credential lacks the runners:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1557,7 +1610,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the scheduled-tasks:read scope. */
+            /** @description The credential lacks the scheduled-tasks:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1608,7 +1661,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
+            /** @description The credential lacks the scheduled-tasks:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1657,7 +1710,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the scheduled-tasks:read scope. */
+            /** @description The credential lacks the scheduled-tasks:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1713,7 +1766,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
+            /** @description The credential lacks the scheduled-tasks:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1775,7 +1828,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
+            /** @description The credential lacks the scheduled-tasks:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1833,7 +1886,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
+            /** @description The credential lacks the scheduled-tasks:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1891,7 +1944,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
+            /** @description The credential lacks the scheduled-tasks:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1949,7 +2002,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the scheduled-tasks:write scope. */
+            /** @description The credential lacks the scheduled-tasks:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1991,8 +2044,8 @@ export interface operations {
                 agent?: string;
                 /** @description Filter by lifecycle mode. */
                 lifecycle_mode?: string;
-                /** @description Filter by label. Repeat with different keys to AND several labels, e.g. labels[env]=prod. */
-                "labels[key]"?: string;
+                /** @description Filter by label, e.g. labels[env]=prod. */
+                labels?: string;
             };
             header?: never;
             path?: never;
@@ -2018,7 +2071,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the sessions:read scope. */
+            /** @description The credential lacks the sessions:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2069,7 +2122,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the sessions:write scope. */
+            /** @description The credential lacks the sessions:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2118,7 +2171,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the sessions:read scope. */
+            /** @description The credential lacks the sessions:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2174,7 +2227,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the sessions:write scope. */
+            /** @description The credential lacks the sessions:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2230,7 +2283,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the sessions:write scope. */
+            /** @description The credential lacks the sessions:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2286,7 +2339,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the sessions:write scope. */
+            /** @description The credential lacks the sessions:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2344,7 +2397,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tunnels:read scope. */
+            /** @description The credential lacks the tunnels:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2406,7 +2459,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tunnels:write scope. */
+            /** @description The credential lacks the tunnels:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2465,7 +2518,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the streams:read scope. */
+            /** @description The credential lacks the streams:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2530,7 +2583,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tasks:read scope. */
+            /** @description The credential lacks the tasks:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2581,7 +2634,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tasks:write scope. */
+            /** @description The credential lacks the tasks:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2630,7 +2683,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tasks:read scope. */
+            /** @description The credential lacks the tasks:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2686,7 +2739,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tasks:write scope. */
+            /** @description The credential lacks the tasks:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2744,7 +2797,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tasks:write scope. */
+            /** @description The credential lacks the tasks:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2811,7 +2864,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tasks:read scope. */
+            /** @description The credential lacks the tasks:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2867,7 +2920,72 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tasks:write scope. */
+            /** @description The credential lacks the tasks:write scope. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An error occurred. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getTasksRuns: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return. Defaults to 50. */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's next_cursor. */
+                cursor?: string;
+                /** @description Filter by run status. */
+                status?: string[];
+            };
+            header?: never;
+            path: {
+                taskID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskRunList"];
+                };
+            };
+            /** @description The API key is missing, malformed, revoked or expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The credential lacks the tasks:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2925,7 +3043,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tunnels:read scope. */
+            /** @description The credential lacks the tunnels:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2981,7 +3099,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the tunnels:write scope. */
+            /** @description The credential lacks the tunnels:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3042,7 +3160,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the workspaces:read scope. */
+            /** @description The credential lacks the workspaces:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3093,7 +3211,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the workspaces:write scope. */
+            /** @description The credential lacks the workspaces:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3142,7 +3260,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the workspaces:read scope. */
+            /** @description The credential lacks the workspaces:read scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3198,7 +3316,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the workspaces:write scope. */
+            /** @description The credential lacks the workspaces:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3260,7 +3378,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The API key lacks the workspaces:write scope. */
+            /** @description The credential lacks the workspaces:write scope. */
             403: {
                 headers: {
                     [name: string]: unknown;

@@ -1917,6 +1917,7 @@ type mockTaskManagerForSession struct {
 	executedTasks   []string
 	reExecutedTasks []string
 	dispatched      []string
+	dispatchedNow   []string
 	executeErr      error
 	reExecuteErr    error
 	dispatchErr     error
@@ -2823,6 +2824,11 @@ func TestSessionManager_Activate_DispatchesPendingBacklog(t *testing.T) {
 		return len(mockTM.dispatchedSessions()) == 1
 	}, 5*time.Second, 20*time.Millisecond, "activation must dispatch the session backlog")
 	assert.Equal(t, []string{"sess_123"}, mockTM.dispatchedSessions())
+
+	// Gaining a runner is new information, so the backlog gets an immediate
+	// attempt rather than waiting out a backoff set when there was no runner.
+	assert.Equal(t, []string{"sess_123"}, mockTM.dispatchedNowSessions(),
+		"activation is an edge trigger and must bypass the backoff timer")
 }
 
 func TestSessionManager_Activate_DispatchesBacklogAfterResume(t *testing.T) {
@@ -2849,4 +2855,90 @@ func TestSessionManager_Activate_DispatchesBacklogAfterResume(t *testing.T) {
 // ListRuns satisfies TaskManagerInterface. These fakes keep no run history.
 func (m *mockTaskManagerForSession) ListRuns(_ context.Context, _ string, _ ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
 	return &store.ListResult[store.TaskRun]{}, nil
+}
+
+// TestSessionManager_AttachSession_SendsWorkspaceIdentity is the fix for a CAS
+// key collision A1 would otherwise inherit: workspace_path is "/workspace" for
+// every container-mode session, so identity has to travel separately.
+func TestSessionManager_AttachSession_SendsWorkspaceIdentity(t *testing.T) {
+	sender := &mockCommandSenderForSession{}
+	s := newTestSessionStore()
+	tenant := "tenant_a"
+	manager := NewSessionManagerWithConfig(SessionManagerConfig{
+		Store:       s,
+		ConnManager: &mockConnManagerForSession{},
+		CmdSender:   sender,
+		WorkspaceManager: &mockWorkspaceManagerForSession{
+			hostPath: "/var/marionette/workspaces/ws_123",
+		},
+		Logger: zap.NewNop(),
+	})
+
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "mine", TenantID: &tenant})
+	s.SetRunner(&store.Runner{
+		ID: "run_123", Name: "r", Status: StatusIdle,
+		SandboxMode: "runner-is-sandbox", TenantID: &tenant,
+	})
+	session := &store.Session{
+		ID: "sess_123", Status: SessionStatusPending,
+		WorkspaceID: "ws_123", TenantID: &tenant,
+	}
+	s.SetSession(session)
+
+	require.NoError(t, manager.sendAttachSession(context.Background(), session, "run_123"))
+
+	require.NotNil(t, sender.lastCommand)
+	attach := sender.lastCommand.GetAttachSession()
+	require.NotNil(t, attach)
+
+	assert.Equal(t, "/workspace", attach.GetWorkspacePath(),
+		"a container still mounts the workspace at /workspace")
+	assert.Equal(t, "ws_123", attach.GetWorkspaceId(),
+		"identity must travel separately from the mount point")
+	assert.Equal(t, "tenant_a", attach.GetTenantId(),
+		"chunks dedupe per tenant, so the tenant is part of the CAS key")
+}
+
+// TestSessionManager_AttachSession_TenantIsEmptyForSingleTenant keeps the
+// zero-config path honest: no tenant means an empty string, not a placeholder.
+func TestSessionManager_AttachSession_TenantIsEmptyForSingleTenant(t *testing.T) {
+	sender := &mockCommandSenderForSession{}
+	s := newTestSessionStore()
+	manager := NewSessionManagerWithConfig(SessionManagerConfig{
+		Store:            s,
+		ConnManager:      &mockConnManagerForSession{},
+		CmdSender:        sender,
+		WorkspaceManager: &mockWorkspaceManagerForSession{hostPath: "/var/ws/ws_1"},
+		Logger:           zap.NewNop(),
+	})
+
+	s.SetWorkspace(&store.Workspace{ID: "ws_1", Name: "mine"})
+	s.SetRunner(&store.Runner{ID: "run_1", Name: "r", Status: StatusIdle, SandboxMode: "none"})
+	session := &store.Session{ID: "sess_1", Status: SessionStatusPending, WorkspaceID: "ws_1"}
+	s.SetSession(session)
+
+	require.NoError(t, manager.sendAttachSession(context.Background(), session, "run_1"))
+
+	attach := sender.lastCommand.GetAttachSession()
+	require.NotNil(t, attach)
+	assert.Equal(t, "ws_1", attach.GetWorkspaceId())
+	assert.Empty(t, attach.GetTenantId())
+	assert.Equal(t, "/var/ws/ws_1", attach.GetWorkspacePath(),
+		"a native runner gets the real host path")
+}
+
+// DispatchNextNow records edge-triggered dispatches alongside the ordinary ones.
+func (m *mockTaskManagerForSession) DispatchNextNow(_ context.Context, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dispatchedNow = append(m.dispatchedNow, sessionID)
+	m.dispatched = append(m.dispatched, sessionID)
+	return m.dispatchErr
+}
+
+// dispatchedNowSessions returns a copy of the edge-triggered dispatch calls.
+func (m *mockTaskManagerForSession) dispatchedNowSessions() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.dispatchedNow...)
 }

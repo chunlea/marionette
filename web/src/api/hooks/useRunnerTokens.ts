@@ -22,15 +22,10 @@ export function useRunnerTokens(params: RunnerTokensQueryParams = {}) {
   return useQuery({
     queryKey: runnerTokenKeys.list(params),
     queryFn: async () => {
-      const queryParams = new URLSearchParams()
-      if (params.limit) queryParams.set('limit', params.limit.toString())
-      if (params.cursor) queryParams.set('cursor', params.cursor)
-      if (params.pool_name) queryParams.set('pool_name', params.pool_name)
-      if (params.status?.length) queryParams.set('status', params.status.join(','))
-      if (params.include_revoked) queryParams.set('include_revoked', 'true')
-
-      const url = queryParams.toString() ? `/runner-tokens?${queryParams}` : '/runner-tokens'
-      const { data } = await adminClient.get<RunnerTokenList>(url)
+      // This endpoint takes status as one comma-separated value, not as a
+      // repeated key — the generated parameter type says so, which is why the
+      // hand-rolled join that used to live here is gone.
+      const { data } = await adminClient.get<RunnerTokenList>('/runner-tokens', { params })
       return data
     },
   })

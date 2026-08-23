@@ -273,18 +273,12 @@ Examples:
 		printf("Created:     %s\n", profile.CreatedAt.Format(time.RFC3339))
 		printf("Updated:     %s\n", profile.UpdatedAt.Format(time.RFC3339))
 
-		// Print JSON fields if they have content
-		if len(profile.Resources) > 2 { // More than just "{}"
-			printf("\nResources:\n")
-			prettyJSON, _ := json.MarshalIndent(profile.Resources, "  ", "  ")
-			printf("  %s\n", prettyJSON)
-		}
-
-		if len(profile.Network) > 2 {
-			printf("\nNetwork:\n")
-			prettyJSON, _ := json.MarshalIndent(profile.Network, "  ", "  ")
-			printf("  %s\n", prettyJSON)
-		}
+		// These used to be json.RawMessage and the guard was a byte count —
+		// "longer than {}". They are decoded maps now, so a length is a
+		// number of entries: the old test would have hidden any profile with
+		// one or two resources, or fewer than three labels.
+		printProfileSection("Resources", profile.Resources)
+		printProfileSection("Network", profile.Network)
 
 		if profile.InitScript != nil && *profile.InitScript != "" {
 			printf("\nInit Script:\n  %s\n", *profile.InitScript)
@@ -294,32 +288,27 @@ Examples:
 			printf("\nCleanup Script:\n  %s\n", *profile.CleanupScript)
 		}
 
-		if len(profile.Tunnels) > 2 { // More than just "[]"
-			printf("\nTunnels:\n")
-			prettyJSON, _ := json.MarshalIndent(profile.Tunnels, "  ", "  ")
-			printf("  %s\n", prettyJSON)
-		}
-
-		if len(profile.Selector) > 2 {
-			printf("\nSelector:\n")
-			prettyJSON, _ := json.MarshalIndent(profile.Selector, "  ", "  ")
-			printf("  %s\n", prettyJSON)
-		}
-
-		if len(profile.Labels) > 2 {
-			printf("\nLabels:\n")
-			prettyJSON, _ := json.MarshalIndent(profile.Labels, "  ", "  ")
-			printf("  %s\n", prettyJSON)
-		}
-
-		if len(profile.Annotations) > 2 {
-			printf("\nAnnotations:\n")
-			prettyJSON, _ := json.MarshalIndent(profile.Annotations, "  ", "  ")
-			printf("  %s\n", prettyJSON)
-		}
+		printProfileSection("Tunnels", profile.Tunnels)
+		printProfileSection("Selector", profile.Selector)
+		printProfileSection("Labels", profile.Labels)
+		printProfileSection("Annotations", profile.Annotations)
 
 		return nil
 	},
+}
+
+// printProfileSection prints one of a profile's structured fields, or nothing
+// when it is empty.
+func printProfileSection[T ~map[string]any | ~[]map[string]any | ~map[string]string](title string, value T) {
+	if len(value) == 0 {
+		return
+	}
+	pretty, err := json.MarshalIndent(value, "  ", "  ")
+	if err != nil {
+		printf("\n%s:\n  <unprintable: %v>\n", title, err)
+		return
+	}
+	printf("\n%s:\n  %s\n", title, pretty)
 }
 
 // Update command flags

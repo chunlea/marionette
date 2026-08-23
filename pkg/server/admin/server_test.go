@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chunlea/marionette/pkg/server/admin/admintypes"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,7 +106,7 @@ func TestAPIKeyHandlers(t *testing.T) {
 			t.Errorf("expected status %d, got %d: %s", http.StatusCreated, rr.Code, rr.Body.String())
 		}
 
-		var resp CreateAPIKeyResponse
+		var resp admintypes.CreatedAPIKey
 		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}

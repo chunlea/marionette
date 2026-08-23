@@ -1,4 +1,17 @@
-package api
+// Package openapi renders an OpenAPI 3.1 document from Go types and a route
+// table.
+//
+// It exists because the repository had three hand-written specs that had
+// drifted from each other and from the code. Schemas are produced by
+// reflecting over the exact types the handlers serialize, so the schema
+// section is true by construction; everything reflection cannot recover —
+// summaries, status codes, query parameters, scopes — is declared explicitly
+// by the caller in a Route table, which a coverage test can hold against the
+// router.
+//
+// Both the public API and the admin API render their documents through this
+// package, so the two cannot describe the same shapes differently.
+package openapi
 
 import (
 	"fmt"
@@ -10,33 +23,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// This file turns Go types into OpenAPI schemas by reflection.
-//
-// Why reflection rather than swaggo annotations or a spec-first generator:
-// the repository already had three hand-written specs that had drifted from
-// each other and from the code, so the requirement is that the spec cannot be
-// wrong, not that it be expressive. apitypes is the exact set of types the
-// handlers serialize, so reflecting over it makes the schema section true by
-// construction, and it needs no new dependency, no code generator in the build
-// path, and no annotation comments that can rot next to the struct they
-// describe. What reflection cannot do — summaries, status codes, query
-// parameters, scopes — is declared explicitly in openapi_routes.go.
-
-// orderedMap is a YAML mapping with a deterministic key order.
+// OrderedMap is a YAML mapping with a deterministic key order.
 //
 // The document is checked into the repository and diffed by CI, so map
 // iteration order would make it flap. Keys are emitted in insertion order.
-type orderedMap struct {
+type OrderedMap struct {
 	keys   []string
 	values map[string]any
 }
 
-func newOrderedMap() *orderedMap {
-	return &orderedMap{values: map[string]any{}}
+func NewOrderedMap() *OrderedMap {
+	return &OrderedMap{values: map[string]any{}}
 }
 
 // Set inserts or replaces a key, preserving first-insertion order.
-func (m *orderedMap) Set(key string, value any) *orderedMap {
+func (m *OrderedMap) Set(key string, value any) *OrderedMap {
 	if _, ok := m.values[key]; !ok {
 		m.keys = append(m.keys, key)
 	}
@@ -45,22 +46,22 @@ func (m *orderedMap) Set(key string, value any) *orderedMap {
 }
 
 // Get returns the value stored under key, if any.
-func (m *orderedMap) Get(key string) (any, bool) {
+func (m *OrderedMap) Get(key string) (any, bool) {
 	v, ok := m.values[key]
 	return v, ok
 }
 
 // SortKeys switches the map to alphabetical order, used for the sections
 // (paths, schemas) where insertion order carries no meaning.
-func (m *orderedMap) SortKeys() {
+func (m *OrderedMap) SortKeys() {
 	sort.Strings(m.keys)
 }
 
 // Len reports how many keys the map holds.
-func (m *orderedMap) Len() int { return len(m.keys) }
+func (m *OrderedMap) Len() int { return len(m.keys) }
 
 // MarshalYAML renders the map as an ordered YAML mapping node.
-func (m *orderedMap) MarshalYAML() (any, error) {
+func (m *OrderedMap) MarshalYAML() (any, error) {
 	node := &yaml.Node{Kind: yaml.MappingNode}
 	for _, key := range m.keys {
 		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
@@ -78,97 +79,102 @@ func (m *orderedMap) MarshalYAML() (any, error) {
 	return node, nil
 }
 
-// oaSchema is a JSON Schema subset sufficient for this API.
-type oaSchema struct {
+// Schema is a JSON Schema subset sufficient for this API.
+type Schema struct {
 	Ref                  string      `yaml:"$ref,omitempty"`
 	Description          string      `yaml:"description,omitempty"`
 	Type                 string      `yaml:"type,omitempty"`
 	Format               string      `yaml:"format,omitempty"`
 	Enum                 []string    `yaml:"enum,omitempty"`
-	Items                *oaSchema   `yaml:"items,omitempty"`
-	Properties           *orderedMap `yaml:"properties,omitempty"`
-	AdditionalProperties *oaSchema   `yaml:"additionalProperties,omitempty"`
+	Items                *Schema     `yaml:"items,omitempty"`
+	Properties           *OrderedMap `yaml:"properties,omitempty"`
+	AdditionalProperties *Schema     `yaml:"additionalProperties,omitempty"`
 	Required             []string    `yaml:"required,omitempty"`
 }
 
-// schemaRegistry collects the named schemas referenced by the document.
-type schemaRegistry struct {
-	schemas *orderedMap
+// SchemaRegistry collects the named schemas referenced by the document.
+type SchemaRegistry struct {
+	schemas *OrderedMap
 }
 
-func newSchemaRegistry() *schemaRegistry {
-	return &schemaRegistry{schemas: newOrderedMap()}
+func NewSchemaRegistry() *SchemaRegistry {
+	return &SchemaRegistry{schemas: NewOrderedMap()}
 }
 
 var timeType = reflect.TypeOf(time.Time{})
 
 // ref returns a schema that references a named component.
-func ref(name string) *oaSchema {
-	return &oaSchema{Ref: "#/components/schemas/" + name}
+func Ref(name string) *Schema {
+	return &Schema{Ref: "#/components/schemas/" + name}
 }
 
-// Schema returns the schema for v, registering every named struct it reaches.
+// For returns the schema for v, registering every named struct it reaches.
 // Passing a nil-typed value is a programming error and panics, because the
 // route table is compiled in and a missing type is not a runtime condition.
-func (r *schemaRegistry) Schema(v any) *oaSchema {
+func (r *SchemaRegistry) For(v any) *Schema {
 	return r.schemaForType(reflect.TypeOf(v))
 }
 
-func (r *schemaRegistry) schemaForType(t reflect.Type) *oaSchema {
+func (r *SchemaRegistry) schemaForType(t reflect.Type) *Schema {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
 	if t == timeType {
-		return &oaSchema{Type: "string", Format: "date-time"}
+		return &Schema{Type: "string", Format: "date-time"}
 	}
 
 	switch t.Kind() {
 	case reflect.String:
-		return &oaSchema{Type: "string"}
+		return &Schema{Type: "string"}
 	case reflect.Bool:
-		return &oaSchema{Type: "boolean"}
+		return &Schema{Type: "boolean"}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
-		return &oaSchema{Type: "integer", Format: "int32"}
+		return &Schema{Type: "integer", Format: "int32"}
 	case reflect.Int64:
-		return &oaSchema{Type: "integer", Format: "int64"}
+		return &Schema{Type: "integer", Format: "int64"}
 	case reflect.Float32, reflect.Float64:
-		return &oaSchema{Type: "number"}
+		return &Schema{Type: "number"}
 	case reflect.Slice, reflect.Array:
 		if t.Elem().Kind() == reflect.Uint8 {
 			// []byte is base64-encoded by encoding/json.
-			return &oaSchema{Type: "string", Format: "byte"}
+			return &Schema{Type: "string", Format: "byte"}
 		}
-		return &oaSchema{Type: "array", Items: r.schemaForType(t.Elem())}
+		return &Schema{Type: "array", Items: r.schemaForType(t.Elem())}
 	case reflect.Map:
-		return &oaSchema{Type: "object", AdditionalProperties: r.schemaForType(t.Elem())}
+		return &Schema{Type: "object", AdditionalProperties: r.schemaForType(t.Elem())}
 	case reflect.Struct:
 		return r.registerStruct(t)
+	case reflect.Interface:
+		// `any` is how a free-form JSON value reaches the wire — a provider's
+		// config block, an action log's details. An empty schema is OpenAPI's
+		// way of saying "any value", which is the honest description.
+		return &Schema{}
 	default:
 		panic(fmt.Sprintf("openapi: unsupported kind %s for type %s", t.Kind(), t))
 	}
 }
 
 // registerStruct adds t to the component list (once) and returns a reference.
-func (r *schemaRegistry) registerStruct(t reflect.Type) *oaSchema {
+func (r *SchemaRegistry) registerStruct(t reflect.Type) *Schema {
 	name := schemaName(t)
 	if _, exists := r.schemas.Get(name); exists {
-		return ref(name)
+		return Ref(name)
 	}
 	// Reserve the name before walking the fields so a self-referencing type
 	// cannot recurse forever.
-	r.schemas.Set(name, &oaSchema{Type: "object"})
+	r.schemas.Set(name, &Schema{Type: "object"})
 
-	schema := &oaSchema{Type: "object", Properties: newOrderedMap()}
+	schema := &Schema{Type: "object", Properties: NewOrderedMap()}
 	r.collectFields(t, schema)
 	if schema.Properties.Len() == 0 {
 		schema.Properties = nil
 	}
 	r.schemas.Set(name, schema)
-	return ref(name)
+	return Ref(name)
 }
 
-func (r *schemaRegistry) collectFields(t reflect.Type, schema *oaSchema) {
+func (r *SchemaRegistry) collectFields(t reflect.Type, schema *Schema) {
 	for i := range t.NumField() {
 		field := t.Field(i)
 		if field.Anonymous && field.Type.Kind() == reflect.Struct {
@@ -187,7 +193,7 @@ func (r *schemaRegistry) collectFields(t reflect.Type, schema *oaSchema) {
 		fieldSchema := r.schemaForType(field.Type)
 		if enum := field.Tag.Get("enum"); enum != "" {
 			// The enum belongs to the field, not to the shared string schema.
-			fieldSchema = &oaSchema{Type: fieldSchema.Type, Format: fieldSchema.Format, Enum: strings.Split(enum, ",")}
+			fieldSchema = &Schema{Type: fieldSchema.Type, Format: fieldSchema.Format, Enum: strings.Split(enum, ",")}
 		}
 		schema.Properties.Set(name, fieldSchema)
 
@@ -262,7 +268,7 @@ func listEnvelopeItem(name string) (string, bool) {
 }
 
 // Schemas returns the registered components, alphabetically ordered.
-func (r *schemaRegistry) Schemas() *orderedMap {
+func (r *SchemaRegistry) Schemas() *OrderedMap {
 	r.schemas.SortKeys()
 	return r.schemas
 }

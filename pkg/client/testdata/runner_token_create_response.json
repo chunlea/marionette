@@ -2,7 +2,6 @@
   "token": {
     "id": "rtok_0002xK9mNqW2TuHYS9",
     "token_prefix": "rtok_8Kd2mVp1",
-    "hash_version": 1,
     "runner_id": "run_0002xK9mNpV1StGXR8",
     "pool_name": "gpu-pool",
     "status": "active",

@@ -10,6 +10,16 @@ Every session has a workspace mounted at `/workspace`. This directory:
 - Survives runner changes (suspend/resume)
 - Can sync to object storage for cross-region mobility
 
+!!! info "How much of this is wired"
+    The workspace itself is real and persists. Content-addressable sync is
+    **partly** wired: a runner configured with a storage backend chunks the
+    workspace, stores a manifest, and restores it byte-for-byte on attach.
+    What is missing is on the wire — the server does not yet tell the runner
+    which workspace it holds or which snapshot to restore — so with a default
+    configuration a suspend reports the workspace as **not** synced rather than
+    implying a snapshot exists. Cross-region mobility follows from that work,
+    and is not available today.
+
 ## Storage Types
 
 | Type | Description | Use Case |
@@ -97,15 +107,19 @@ Workspaces can be synced across regions/providers:
 
 ### Example: Cross-Region Resume
 
+!!! warning "Target design, not current behaviour"
+    This is what `object_sync` mobility is for. See the note at the top of this
+    page for what is wired today.
+
 ```
 1. Session active in us-west-2
    └── Workspace on local volume
 
 2. Session suspended
-   └── Workspace synced to S3
+   └── Workspace synced to object storage
 
 3. Session resumed in eu-west-1
-   └── Workspace restored from S3
+   └── Workspace restored from object storage
 ```
 
 ## Configuration
@@ -130,15 +144,29 @@ storage:
     prefix: "workspaces/"
 ```
 
-### Workspace Options
+### Runner-side sync
+
+The runner needs its own backend to sync to, configured on `bin/agent`. It is
+off by default:
 
 ```bash
-# Create session with workspace config
-mctl sessions create \
-  --agent claude \
-  --workspace-quota 20480 \  # 20GB
-  --workspace-mobility object_sync
+./bin/agent ... \
+  --storage-backend local \
+  --storage-local-path /var/marionette/cas \
+  --storage-encryption none
 ```
+
+`--storage-encryption` has no default: storing workspace contents unencrypted is
+a decision an operator makes explicitly. Per-tenant encryption is refused rather
+than silently downgraded, because the runner has no way to obtain a tenant data
+key yet. Only the `local` backend exists on the runner side today; it works
+against a shared volume or a mounted object store.
+
+### Workspace Options
+
+!!! note "Not on the CLI yet"
+    `mctl sessions create` has no workspace flags. Quota and mobility are set
+    through the workspace API (`/api/v1/workspaces`).
 
 ## Workspace Lifecycle
 

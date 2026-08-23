@@ -30,7 +30,7 @@ const profileColumns = `id, name, description, provider_config_id, tenant_id, re
 
 // CreateAgentConfig creates a new agent config.
 func (s *Store) CreateAgentConfig(ctx context.Context, config *store.AgentConfig) error {
-	return createAgentConfig(ctx, s.pool, config)
+	return createAgentConfig(ctx, s.db, config)
 }
 
 // CreateAgentConfig creates a new agent config within a transaction.
@@ -66,7 +66,7 @@ func createAgentConfig(ctx context.Context, q querier, config *store.AgentConfig
 
 // GetAgentConfig retrieves an agent config by ID.
 func (s *Store) GetAgentConfig(ctx context.Context, configID string) (*store.AgentConfig, error) {
-	return getAgentConfig(ctx, s.pool, configID)
+	return getAgentConfig(ctx, s.db, configID)
 }
 
 // GetAgentConfig retrieves an agent config by ID within a transaction.
@@ -82,7 +82,7 @@ func getAgentConfig(ctx context.Context, q querier, configID string) (*store.Age
 
 // GetAgentConfigByName retrieves an agent config by name.
 func (s *Store) GetAgentConfigByName(ctx context.Context, name string) (*store.AgentConfig, error) {
-	return getAgentConfigByName(ctx, s.pool, name)
+	return getAgentConfigByName(ctx, s.db, name)
 }
 
 // GetAgentConfigByName retrieves an agent config by name within a transaction.
@@ -98,7 +98,7 @@ func getAgentConfigByName(ctx context.Context, q querier, name string) (*store.A
 
 // GetDefaultAgentConfig retrieves the default agent config for an agent type.
 func (s *Store) GetDefaultAgentConfig(ctx context.Context, agent string) (*store.AgentConfig, error) {
-	return getDefaultAgentConfig(ctx, s.pool, agent)
+	return getDefaultAgentConfig(ctx, s.db, agent)
 }
 
 // GetDefaultAgentConfig retrieves the default agent config within a transaction.
@@ -114,7 +114,7 @@ func getDefaultAgentConfig(ctx context.Context, q querier, agent string) (*store
 
 // ListAgentConfigs retrieves agent configs with optional filtering.
 func (s *Store) ListAgentConfigs(ctx context.Context, opts store.ListAgentConfigsOptions) (*store.ListResult[store.AgentConfig], error) {
-	return listAgentConfigs(ctx, s.pool, opts)
+	return listAgentConfigs(ctx, s.db, opts)
 }
 
 // ListAgentConfigs retrieves agent configs within a transaction.
@@ -198,7 +198,7 @@ func listAgentConfigs(ctx context.Context, q querier, opts store.ListAgentConfig
 
 // UpdateAgentConfig updates agent config fields.
 func (s *Store) UpdateAgentConfig(ctx context.Context, configID string, updates store.AgentConfigUpdates) error {
-	return updateAgentConfig(ctx, s.pool, configID, updates)
+	return updateAgentConfig(ctx, s.db, configID, updates)
 }
 
 // UpdateAgentConfig updates agent config fields within a transaction.
@@ -276,7 +276,7 @@ func updateAgentConfig(ctx context.Context, q querier, configID string, updates 
 
 // DeleteAgentConfig deletes an agent config.
 func (s *Store) DeleteAgentConfig(ctx context.Context, configID string) error {
-	return deleteAgentConfig(ctx, s.pool, configID)
+	return deleteAgentConfig(ctx, s.db, configID)
 }
 
 // DeleteAgentConfig deletes an agent config within a transaction.
@@ -331,7 +331,7 @@ func scanAgentConfigFromRows(rows pgx.Rows) (*store.AgentConfig, error) {
 
 // CreateProviderConfig creates a new provider config.
 func (s *Store) CreateProviderConfig(ctx context.Context, config *store.ProviderConfig) error {
-	return createProviderConfig(ctx, s.pool, config)
+	return createProviderConfig(ctx, s.db, config)
 }
 
 // CreateProviderConfig creates a new provider config within a transaction.
@@ -367,7 +367,7 @@ func createProviderConfig(ctx context.Context, q querier, config *store.Provider
 
 // GetProviderConfig retrieves a provider config by ID.
 func (s *Store) GetProviderConfig(ctx context.Context, configID string) (*store.ProviderConfig, error) {
-	return getProviderConfig(ctx, s.pool, configID)
+	return getProviderConfig(ctx, s.db, configID)
 }
 
 // GetProviderConfig retrieves a provider config by ID within a transaction.
@@ -383,7 +383,7 @@ func getProviderConfig(ctx context.Context, q querier, configID string) (*store.
 
 // GetProviderConfigByName retrieves a provider config by name.
 func (s *Store) GetProviderConfigByName(ctx context.Context, name string) (*store.ProviderConfig, error) {
-	return getProviderConfigByName(ctx, s.pool, name)
+	return getProviderConfigByName(ctx, s.db, name)
 }
 
 // GetProviderConfigByName retrieves a provider config by name within a transaction.
@@ -399,7 +399,7 @@ func getProviderConfigByName(ctx context.Context, q querier, name string) (*stor
 
 // GetDefaultProviderConfig retrieves the default provider config for a provider type.
 func (s *Store) GetDefaultProviderConfig(ctx context.Context, provider string) (*store.ProviderConfig, error) {
-	return getDefaultProviderConfig(ctx, s.pool, provider)
+	return getDefaultProviderConfig(ctx, s.db, provider)
 }
 
 // GetDefaultProviderConfig retrieves the default provider config within a transaction.
@@ -415,7 +415,7 @@ func getDefaultProviderConfig(ctx context.Context, q querier, provider string) (
 
 // ListProviderConfigs retrieves provider configs with optional filtering.
 func (s *Store) ListProviderConfigs(ctx context.Context, opts store.ListProviderConfigsOptions) (*store.ListResult[store.ProviderConfig], error) {
-	return listProviderConfigs(ctx, s.pool, opts)
+	return listProviderConfigs(ctx, s.db, opts)
 }
 
 // ListProviderConfigs retrieves provider configs within a transaction.
@@ -499,7 +499,7 @@ func listProviderConfigs(ctx context.Context, q querier, opts store.ListProvider
 
 // UpdateProviderConfig updates provider config fields.
 func (s *Store) UpdateProviderConfig(ctx context.Context, configID string, updates store.ProviderConfigUpdates) error {
-	return updateProviderConfig(ctx, s.pool, configID, updates)
+	return updateProviderConfig(ctx, s.db, configID, updates)
 }
 
 // UpdateProviderConfig updates provider config fields within a transaction.
@@ -567,7 +567,7 @@ func updateProviderConfig(ctx context.Context, q querier, configID string, updat
 
 // DeleteProviderConfig deletes a provider config.
 func (s *Store) DeleteProviderConfig(ctx context.Context, configID string) error {
-	return deleteProviderConfig(ctx, s.pool, configID)
+	return deleteProviderConfig(ctx, s.db, configID)
 }
 
 // DeleteProviderConfig deletes a provider config within a transaction.
@@ -622,7 +622,7 @@ func scanProviderConfigFromRows(rows pgx.Rows) (*store.ProviderConfig, error) {
 
 // CreateProfile creates a new profile.
 func (s *Store) CreateProfile(ctx context.Context, profile *store.Profile) error {
-	return createProfile(ctx, s.pool, profile)
+	return createProfile(ctx, s.db, profile)
 }
 
 // CreateProfile creates a new profile within a transaction.
@@ -661,7 +661,7 @@ func createProfile(ctx context.Context, q querier, profile *store.Profile) error
 
 // GetProfile retrieves a profile by ID.
 func (s *Store) GetProfile(ctx context.Context, profileID string) (*store.Profile, error) {
-	return getProfile(ctx, s.pool, profileID)
+	return getProfile(ctx, s.db, profileID)
 }
 
 // GetProfile retrieves a profile by ID within a transaction.
@@ -677,7 +677,7 @@ func getProfile(ctx context.Context, q querier, profileID string) (*store.Profil
 
 // GetProfileByName retrieves a profile by name.
 func (s *Store) GetProfileByName(ctx context.Context, name string) (*store.Profile, error) {
-	return getProfileByName(ctx, s.pool, name)
+	return getProfileByName(ctx, s.db, name)
 }
 
 // GetProfileByName retrieves a profile by name within a transaction.
@@ -693,7 +693,7 @@ func getProfileByName(ctx context.Context, q querier, name string) (*store.Profi
 
 // ListProfiles retrieves profiles with optional filtering.
 func (s *Store) ListProfiles(ctx context.Context, opts store.ListProfilesOptions) (*store.ListResult[store.Profile], error) {
-	return listProfiles(ctx, s.pool, opts)
+	return listProfiles(ctx, s.db, opts)
 }
 
 // ListProfiles retrieves profiles within a transaction.
@@ -780,7 +780,7 @@ func listProfiles(ctx context.Context, q querier, opts store.ListProfilesOptions
 
 // UpdateProfile updates profile fields.
 func (s *Store) UpdateProfile(ctx context.Context, profileID string, updates store.ProfileUpdates) error {
-	return updateProfile(ctx, s.pool, profileID, updates)
+	return updateProfile(ctx, s.db, profileID, updates)
 }
 
 // UpdateProfile updates profile fields within a transaction.
@@ -873,7 +873,7 @@ func updateProfile(ctx context.Context, q querier, profileID string, updates sto
 
 // DeleteProfile deletes a profile.
 func (s *Store) DeleteProfile(ctx context.Context, profileID string) error {
-	return deleteProfile(ctx, s.pool, profileID)
+	return deleteProfile(ctx, s.db, profileID)
 }
 
 // DeleteProfile deletes a profile within a transaction.

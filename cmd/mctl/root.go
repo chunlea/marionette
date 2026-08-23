@@ -82,8 +82,12 @@ func init() {
 	// rootCmd.AddCommand(permissionsCmd)
 }
 
-// getOutput returns the output writer for commands (allows testing).
-func getOutput() io.Writer {
+// getOutput returns the output writer for commands.
+//
+// It is a variable so a test can swap it; as a function it could not be, and
+// every command test had to skip asserting on what was printed — the comment
+// claimed otherwise. Use captureOutput in tests rather than assigning here.
+var getOutput = func() io.Writer {
 	return os.Stdout
 }
 

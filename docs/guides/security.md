@@ -142,11 +142,56 @@ spec:
           protocol: TCP
 ```
 
+## Permission gating
+
+Marionette gates tool calls **before** they execute. When the agent wants to use
+a tool, Claude Code runs a `PreToolUse` hook and waits for it; that hook is the
+agent binary re-invoked as `marionette-agent permission-hook`, talking over a
+unix socket to a broker inside the running agent, which raises a permission
+request on the server. The tool does not run until someone answers.
+
+### Policy
+
+Deny-by-default on the unknown:
+
+| Tools | Gated? |
+|-------|--------|
+| Known read-only built-ins (`Read`, `Grep`, `Glob`, …) | No |
+| Mutating built-ins (`Bash`, `Write`, `Edit`, `NotebookEdit`, …) | Yes |
+| Tools with outbound effects (`WebFetch`, `SendMessage`, `CronCreate`, …) | Yes |
+| Every `mcp__*` tool | Yes |
+| Any tool name the policy does not recognise | Yes |
+
+Gating unknown names is deliberate: a CLI upgrade that introduces a tool must
+not silently open a hole.
+
+### Failure behaviour
+
+Two properties matter for anyone reasoning about this as a control:
+
+- **The CLI fails open on hook timeout.** If a hook overruns its budget, Claude
+  Code runs the tool anyway. Every failure path inside the gate therefore
+  *denies*, and the hook's own deadline is set shorter than the CLI's so its
+  answer always wins the race.
+- **The gate cannot fail quietly.** If the broker will not start, the task fails
+  rather than running unsupervised.
+
+An unanswered request suspends the session after `suspend_after_seconds`
+(30 minutes by default). It stays pending across the suspend; answering it and
+resuming re-runs the task.
+
 ## Multi-Tenant Isolation
+
+!!! note "Behind a flag"
+    Tenant enforcement is gated on `multi_tenant` in the server config, which
+    defaults to false. With it off the `tenant_id` columns are present and
+    populated but are not treated as a boundary — a single-tenant deployment
+    stores everything under the empty tenant. Turn it on for anything serving
+    more than one customer.
 
 ### Tenant ID Enforcement
 
-All resources are scoped by `tenant_id`:
+All resources carry a `tenant_id`:
 
 - Injected by auth middleware (never from user input)
 - All queries filtered by tenant

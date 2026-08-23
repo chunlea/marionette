@@ -133,7 +133,7 @@ func TestValidateRunnerAuth_NoTokenService(t *testing.T) {
 	)
 
 	// Should succeed when tokenSvc is nil (skip validation)
-	err := svc.validateRunnerAuth(ctx, "run_123")
+	_, err := svc.validateRunnerAuth(ctx, "run_123")
 	require.NoError(t, err)
 }
 
@@ -195,7 +195,7 @@ func TestValidateRunnerAuth_WithTokenService(t *testing.T) {
 		context.Background(),
 		metadata.Pairs("x-runner-token", plaintext),
 	)
-	err = svc.validateRunnerAuth(ctxWithToken, "run_123")
+	_, err = svc.validateRunnerAuth(ctxWithToken, "run_123")
 	require.NoError(t, err)
 }
 
@@ -211,7 +211,7 @@ func TestValidateRunnerAuth_InvalidToken(t *testing.T) {
 		context.Background(),
 		metadata.Pairs("x-runner-token", "invalid_token"),
 	)
-	err := svc.validateRunnerAuth(ctxWithToken, "run_123")
+	_, err := svc.validateRunnerAuth(ctxWithToken, "run_123")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid token")
 }
@@ -239,7 +239,7 @@ func TestValidateRunnerAuth_TokenBoundToDifferentRunner(t *testing.T) {
 		context.Background(),
 		metadata.Pairs("x-runner-token", plaintext),
 	)
-	err = svc.validateRunnerAuth(ctxWithToken, "run_123")
+	_, err = svc.validateRunnerAuth(ctxWithToken, "run_123")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bound to different runner")
 }
@@ -264,7 +264,7 @@ func TestValidateRunnerAuth_UnboundToken(t *testing.T) {
 		context.Background(),
 		metadata.Pairs("x-runner-token", plaintext),
 	)
-	err = svc.validateRunnerAuth(ctxWithToken, "run_123")
+	_, err = svc.validateRunnerAuth(ctxWithToken, "run_123")
 	require.NoError(t, err)
 }
 
@@ -280,7 +280,7 @@ func TestValidateRunnerAuth_MissingToken(t *testing.T) {
 		context.Background(),
 		metadata.Pairs("x-runner-id", "run_123"),
 	)
-	err := svc.validateRunnerAuth(ctxWithoutToken, "run_123")
+	_, err := svc.validateRunnerAuth(ctxWithoutToken, "run_123")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "x-runner-token")
 }

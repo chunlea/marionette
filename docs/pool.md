@@ -177,7 +177,7 @@ type ScriptContext struct {
 }
 
 // PrepareScriptEnv creates environment variables for script execution
-func (p *PoolProvider) PrepareScriptEnv(ctx context.Context, task *Task) (map[string]string, error) {
+func (p *PoolAcquirer) PrepareScriptEnv(ctx context.Context, task *Task) (map[string]string, error) {
     env := make(map[string]string)
 
     // Safe: server-generated IDs
@@ -391,9 +391,17 @@ mctl admin runners restore --snapshot snap-123 --name "runner-restored"
 mctl admin runners snapshot-delete snap-123
 ```
 
-## Watchdog & Taint Mechanism
+## Taint & pool hygiene
 
-Pool runners need careful lifecycle management to prevent state pollution between tasks.
+!!! warning "Partly implemented"
+    The taint *state* is real: runners carry `tainted` and `taint_reason`,
+    and `PoolAcquirer.ReleaseToPool` takes both, so a runner can be handed
+    back marked dirty. Everything that would act on that state - the
+    watchdog loop, automatic taint detection on the runner, and automatic
+    cleanup - is design, not code. Nothing untaints a runner today.
+
+Pool runners need careful lifecycle management to prevent state pollution
+between tasks.
 
 ### Taint Status
 
@@ -405,161 +413,28 @@ Pool runners need careful lifecycle management to prevent state pollution betwee
 | `true` | `state_pollution` | Workspace not cleaned | Cleanup or destroy |
 | `true` | `health_check_failed` | Health check failed | Destroy and replace |
 
-### Watchdog Implementation
+### What is not built yet
 
-```go
-// pkg/pool/watchdog.go
-package pool
+This section used to carry implementations of a `pkg/pool/watchdog.go`, a
+`pkg/runner/taint.go` and a `pkg/runner/cleanup.go`. None of those packages
+exist, so the code has been removed rather than left to read as if it shipped.
 
-// Watchdog monitors pool health and manages runner lifecycle
-type Watchdog struct {
-    poolMgr    *Manager
-    runnerRepo RunnerRepository
-    interval   time.Duration
-}
+The design intent, kept because it is still the plan:
 
-// Run starts the watchdog loop
-func (w *Watchdog) Run(ctx context.Context) {
-    ticker := time.NewTicker(w.interval)
-    defer ticker.Stop()
+| Piece | Intent |
+|-------|--------|
+| Watchdog loop | Periodically health-check pool runners, clean tainted ones, enforce scaling bounds, recycle aged runners |
+| Taint detection | The runner marks itself dirty after a crash, a timeout, leftover processes, or an unclean workspace |
+| Cleanup | Kill stray processes, clear the workspace, reset network state; destroy and replace the runner if cleaning fails |
 
-    for {
-        select {
-        case <-ctx.Done():
-            return
-        case <-ticker.C:
-            w.runChecks(ctx)
-        }
-    }
-}
-
-func (w *Watchdog) runChecks(ctx context.Context) {
-    pools := w.poolMgr.ListPools()
-
-    for _, pool := range pools {
-        // 1. Health check all runners
-        w.checkRunnerHealth(ctx, pool)
-
-        // 2. Clean up tainted runners
-        w.cleanupTaintedRunners(ctx, pool)
-
-        // 3. Enforce scaling constraints
-        w.enforceScaling(ctx, pool)
-
-        // 4. Recycle aged runners
-        w.recycleAgedRunners(ctx, pool)
-    }
-}
-
-// cleanupTaintedRunners handles tainted runner cleanup
-func (w *Watchdog) cleanupTaintedRunners(ctx context.Context, pool *Pool) {
-    tainted, _ := w.runnerRepo.ListTainted(ctx, pool.Name)
-
-    for _, runner := range tainted {
-        // Try to clean the runner
-        if err := w.cleanRunner(ctx, runner); err != nil {
-            // Can't clean, need to destroy and replace
-            w.destroyRunner(ctx, runner)
-            w.provisionReplacement(ctx, pool)
-        } else {
-            // Successfully cleaned, untaint
-            w.untaintRunner(ctx, runner.ID)
-        }
-    }
-}
-```
-
-### Taint Detection
-
-The runner agent detects conditions that should taint the runner:
-
-```go
-// pkg/runner/taint.go
-package runner
-
-// TaintDetector monitors for conditions that taint runners
-type TaintDetector struct {
-    agent      *Agent
-    cleanState *StateSnapshot
-}
-
-// DetectAfterTask checks for state pollution after task completion
-func (d *TaintDetector) DetectAfterTask(ctx context.Context, result TaskResult) *TaintReason {
-    // 1. Check for crash
-    if result.Crashed {
-        return &TaintReason{Reason: "crash", Details: result.Error}
-    }
-
-    // 2. Check for timeout
-    if result.TimedOut {
-        return &TaintReason{Reason: "timeout", Details: "agent may still be running"}
-    }
-
-    // 3. Check for leftover processes
-    if procs := d.findLeftoverProcesses(); len(procs) > 0 {
-        return &TaintReason{
-            Reason:  "state_pollution",
-            Details: fmt.Sprintf("leftover processes: %v", procs),
-        }
-    }
-
-    // 4. Check workspace state
-    if !d.isWorkspaceClean() {
-        return &TaintReason{
-            Reason:  "state_pollution",
-            Details: "workspace not properly cleaned",
-        }
-    }
-
-    return nil
-}
-```
-
-### Runner Cleanup
-
-```go
-// pkg/runner/cleanup.go
-package runner
-
-// Clean attempts to restore runner to clean state
-func (c *Cleaner) Clean(ctx context.Context) error {
-    var errs []error
-
-    // 1. Kill any remaining processes
-    if err := c.killAllUserProcesses(ctx); err != nil {
-        errs = append(errs, fmt.Errorf("killing processes: %w", err))
-    }
-
-    // 2. Clean workspace
-    if err := c.cleanWorkspace(ctx); err != nil {
-        errs = append(errs, fmt.Errorf("cleaning workspace: %w", err))
-    }
-
-    // 3. Reset network state
-    if err := c.resetNetwork(ctx); err != nil {
-        errs = append(errs, fmt.Errorf("resetting network: %w", err))
-    }
-
-    // 4. Clear tmp directories
-    if err := c.clearTmp(ctx); err != nil {
-        errs = append(errs, fmt.Errorf("clearing tmp: %w", err))
-    }
-
-    // 5. Run custom cleanup script (from profile)
-    if c.runner.Profile.CleanupScript != "" {
-        if err := c.runCleanupScript(ctx); err != nil {
-            errs = append(errs, fmt.Errorf("cleanup script: %w", err))
-        }
-    }
-
-    if len(errs) > 0 {
-        return fmt.Errorf("cleanup failed: %v", errs)
-    }
-    return nil
-}
-```
+Until then a pool runner is only untainted by an operator, and a tainted
+runner stays out of rotation.
 
 ### Pool Scaling Configuration
+
+!!! note "Design only"
+    Pool scaling is not implemented. `min_runners` and `max_runners` exist in
+    the pool provider config and are not enforced by anything.
 
 ```yaml
 # config.yaml
@@ -612,6 +487,9 @@ WHERE id = $1;
 ```
 
 ### Monitoring Metrics
+
+!!! note "Design only"
+    None of these metrics are emitted yet.
 
 | Metric | Description |
 |--------|-------------|

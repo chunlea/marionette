@@ -11,6 +11,7 @@ import (
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
 	"github.com/chunlea/marionette/pkg/jobs"
+	"github.com/chunlea/marionette/pkg/storage/cas"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/webhook"
 	"go.uber.org/zap"
@@ -57,6 +58,12 @@ type JobsConfig struct {
 	PartitionDaysAhead         int
 	DisablePartitionMaintainer bool
 
+	ChunkGCInterval time.Duration
+	DisableChunkGC  bool
+
+	RedispatchInterval time.Duration
+	DisableRedispatch  bool
+
 	// LogRetentionDays drops log partitions older than this many days.
 	//
 	// It MUST stay zero (the default, meaning "never drop") until log archiving
@@ -89,6 +96,14 @@ type WireDeps struct {
 	WorkspaceConfig config.WorkspaceStorageConfig
 	// WebhookConfig configures webhook delivery.
 	WebhookConfig webhook.Config
+	// ChunkGC collects unreferenced content-addressed chunks. Optional: when
+	// nil, or when JobsConfig.DisableChunkGC is set, the job is not built.
+	ChunkGC cas.GarbageCollector
+
+	// ChunkTenants enumerates the tenants that hold chunks, which chunk GC
+	// needs in order to sweep more than one of them.
+	ChunkTenants jobs.TenantLister
+
 	// Jobs tunes the background jobs.
 	Jobs JobsConfig
 }
@@ -158,7 +173,12 @@ func Wire(deps WireDeps) (*App, error) {
 
 	workspaces := NewWorkspaceManager(deps.Store, deps.WorkspaceConfig, logger.Named("workspace"))
 
-	appCtx, cancel := context.WithCancel(context.Background())
+	// Background jobs run for the deployment, not for a tenant: the reaper
+	// destroys any tenant's orphaned runners, chunk GC collects every tenant's
+	// chunks, the partition maintainer serves them all. Without this they would
+	// see only NULL-tenant rows and quietly stop working the moment
+	// multi_tenant was switched on.
+	appCtx, cancel := context.WithCancel(store.WithSystemAccess(context.Background()))
 	background := newBackgroundTasks(appCtx, deps.Jobs.BackgroundWorkers, logger.Named("background"))
 
 	sessions := NewSessionManagerWithConfig(SessionManagerConfig{
@@ -333,6 +353,43 @@ func (a *App) buildJobs(deps WireDeps) {
 		} else {
 			a.Logger.Warn("store does not maintain log partitions; log inserts will fail once the existing partitions run out")
 		}
+	}
+
+	// Chunk garbage collection deletes blobs, so it only runs when an operator
+	// asks for it: until workspace sync is writing manifests there is nothing
+	// referencing chunks, and a sweep would collect everything it found.
+	if !cfg.DisableChunkGC && deps.ChunkGC != nil {
+		gcJob := jobs.NewChunkGCJob(deps.ChunkGC, jobs.ChunkGCJobConfig{
+			Tenants:  deps.ChunkTenants,
+			Interval: cfg.ChunkGCInterval,
+			Logger:   newSlogLogger(a.Logger.Named("chunk-gc")),
+		})
+		a.jobs = append(a.jobs, backgroundJob{
+			name:  "chunk-gc",
+			start: gcJob.Start,
+			stop: func(ctx context.Context) {
+				if err := gcJob.Stop(ctx); err != nil {
+					a.Logger.Warn("chunk gc did not stop cleanly", zap.Error(err))
+				}
+			},
+		})
+	}
+
+	// The backstop trigger for automatic redispatch. Every other trigger is an
+	// edge, and edges get missed - a restart loses in-memory state, a runner
+	// frees up in a way nothing watches. A task nothing ever retries is the bug
+	// this exists to close.
+	if !cfg.DisableRedispatch {
+		var opts []RedispatchSweeperOption
+		if cfg.RedispatchInterval > 0 {
+			opts = append(opts, WithRedispatchInterval(cfg.RedispatchInterval))
+		}
+		sweeper := NewRedispatchSweeper(a.Store, a.Tasks, a.Logger.Named("redispatch"), opts...)
+		a.jobs = append(a.jobs, backgroundJob{
+			name:  "redispatch-sweeper",
+			start: func(ctx context.Context) error { sweeper.Start(ctx); return nil },
+			stop:  func(context.Context) { sweeper.Stop() },
+		})
 	}
 
 	if !cfg.DisableReaper {

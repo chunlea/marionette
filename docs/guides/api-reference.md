@@ -1,425 +1,129 @@
 # API Reference
 
-REST API documentation for Marionette.
+Marionette generates its OpenAPI spec from the routes the server actually
+registers, and serves it. That spec is the reference — this page tells you where
+it is and the conventions that apply across all of it.
 
-## Base URL
+!!! tip "The spec is generated, this page is not"
+    A hand-maintained endpoint list drifts the moment someone adds a field. If
+    this page and the served spec disagree, the spec is right.
 
+## Where the spec lives
+
+| | Public API | Admin API |
+|---|---|---|
+| Base URL | `http://localhost:8080` | `http://localhost:8081` |
+| Browsable docs | `/docs` | `/docs` |
+| Raw spec | `/openapi.yaml` | `/openapi.yaml` |
+| Auth | API key | Basic auth |
+
+```bash
+# Browse it
+open http://localhost:8080/docs
+
+# Or pull the spec
+curl -s http://localhost:8080/openapi.yaml -o openapi.yaml
 ```
-http://localhost:8080/api/v1
-```
+
+`make openapi` regenerates the checked-in copy, and `make openapi-check` fails
+the build if it has drifted from the routes.
 
 ## Authentication
 
-All API requests require an API key in the `Authorization` header:
+Public API requests carry an API key:
 
 ```bash
-Authorization: Bearer mk_your_api_key
+curl -H "Authorization: Bearer $MARIONETTE_API_KEY" \
+  http://localhost:8080/api/v1/sessions
 ```
 
-## Sessions
+API keys are minted through the admin API and shown exactly once. They carry
+scopes (`sessions:read`, `tasks:write`, `permissions:write`, …); `*` grants all.
 
-### Create Session
+The admin API uses basic auth and **fails closed** — the server will not start
+without credentials for it unless you pass `--dev-insecure-admin`. See
+[Security](security.md).
 
-```http
-POST /api/v1/sessions
-```
+## What the public API covers
 
-**Request:**
+| Group | Endpoints |
+|-------|-----------|
+| Sessions | create, list, get, suspend, resume, terminate |
+| Tasks | create, list, get, execute, cancel, retry, logs, runs |
+| Permissions | list, get, approve, deny |
+| Runners | list, get |
+| Workspaces | create, list, get, update, delete |
+| Scheduled tasks | create, list, get, update, delete, pause, resume, trigger |
+| Tunnels | create, list, get, delete, plus the proxied `/tunnels/{id}/…` paths |
+| Streaming | `/api/v1/events`, task log streams, stream WebSockets |
+| Service | `/health`, `/healthz`, `/docs`, `/openapi.yaml` |
+
+Two things worth knowing before you go looking for them:
+
+- A task is created at `POST /api/v1/tasks` with the session in the body, not
+  under the session path.
+- There is no runner-management endpoint beyond read. Runners are created by
+  starting an agent with a runner token, not through the API.
+
+## Conventions
+
+### Pagination
+
+List endpoints are cursor-paginated. Pass `next_cursor` from one response as
+`cursor` on the next, and stop when `has_more` is false.
 
 ```json
 {
-  "agent": "claude",
-  "api_key": "sk-ant-xxx",
-  "name": "my-session",
-  "labels": {
-    "user": "alice",
-    "project": "api"
-  },
-  "lifecycle_mode": "on_demand",
-  "idle_timeout_seconds": 1800
+  "items": [ ... ],
+  "has_more": true,
+  "next_cursor": "eyJpZCI6InNlc3NfMDAwMngifQ",
+  "total_count": 137
 }
 ```
 
-**Response:**
+`limit` defaults to 50.
 
-```json
-{
-  "id": "sess_0002xK9mNpV1StGXR8",
-  "name": "my-session",
-  "status": "pending",
-  "agent": "claude",
-  "workspace_id": "ws_0002xK9mNpV1StGXR9",
-  "labels": {"user": "alice", "project": "api"},
-  "created_at": "2024-01-15T10:30:00Z"
-}
-```
+### Errors
 
-### List Sessions
-
-```http
-GET /api/v1/sessions
-GET /api/v1/sessions?status=active
-GET /api/v1/sessions?labels=user:alice
-```
-
-### Get Session
-
-```http
-GET /api/v1/sessions/{session_id}
-```
-
-### Suspend Session
-
-```http
-POST /api/v1/sessions/{session_id}/suspend
-```
-
-### Resume Session
-
-```http
-POST /api/v1/sessions/{session_id}/resume
-```
-
-### Terminate Session
-
-```http
-DELETE /api/v1/sessions/{session_id}
-```
-
-## Tasks
-
-### Create Task
-
-```http
-POST /api/v1/tasks
-```
-
-**Request:**
-
-```json
-{
-  "session_id": "sess_0002xK9mNpV1StGXR8",
-  "prompt": "Build a REST API with authentication",
-  "timeout_seconds": 3600,
-  "max_retries": 2
-}
-```
-
-**Response:**
-
-```json
-{
-  "id": "task_0002xK9mNqW2TuHYS9",
-  "session_id": "sess_0002xK9mNpV1StGXR8",
-  "prompt": "Build a REST API with authentication",
-  "status": "pending",
-  "created_at": "2024-01-15T10:35:00Z"
-}
-```
-
-### List Tasks
-
-```http
-GET /api/v1/tasks
-GET /api/v1/tasks?status=running
-GET /api/v1/tasks?session_id=sess_xxx
-```
-
-### Get Task
-
-```http
-GET /api/v1/tasks/{task_id}
-```
-
-### Get Task Logs
-
-```http
-GET /api/v1/tasks/{task_id}/logs
-GET /api/v1/tasks/{task_id}/logs?stream=stdout
-```
-
-**Response:**
-
-```json
-{
-  "items": [
-    {"stream": "stdout", "content": "Creating main.go...", "sequence": 1, "created_at": "..."},
-    {"stream": "stdout", "content": "Writing code...", "sequence": 2, "created_at": "..."}
-  ],
-  "total": 2
-}
-```
-
-### Execute Task
-
-Manually trigger execution of a pending task.
-
-```http
-POST /api/v1/tasks/{task_id}/execute
-```
-
-### Cancel Task
-
-```http
-POST /api/v1/tasks/{task_id}/cancel
-```
-
-### Retry Task
-
-Retry a failed task.
-
-```http
-POST /api/v1/tasks/{task_id}/retry
-```
-
-## Permission Requests
-
-### List Permissions
-
-```http
-GET /api/v1/permissions
-GET /api/v1/permissions?status=pending
-GET /api/v1/permissions?session_id=sess_xxx
-```
-
-### Get Permission
-
-```http
-GET /api/v1/permissions/{permission_id}
-```
-
-### Approve Permission
-
-```http
-POST /api/v1/permissions/{permission_id}/approve
-```
-
-**Request:**
-
-```json
-{
-  "reason": "Approved for testing"
-}
-```
-
-### Deny Permission
-
-```http
-POST /api/v1/permissions/{permission_id}/deny
-```
-
-**Request:**
-
-```json
-{
-  "reason": "Command not allowed"
-}
-```
-
-## Runners
-
-### List Runners
-
-```http
-GET /api/v1/runners
-GET /api/v1/runners?status=idle
-GET /api/v1/runners?pool=macos
-```
-
-### Get Runner
-
-```http
-GET /api/v1/runners/{runner_id}
-```
-
-## Tunnels
-
-### Create Tunnel
-
-```http
-POST /api/v1/sessions/{session_id}/tunnels
-```
-
-**Request:**
-
-```json
-{
-  "type": "http",
-  "local_port": 3000,
-  "is_public": false
-}
-```
-
-**Response:**
-
-```json
-{
-  "id": "tun_0002xK9mNrX3UvIZT0",
-  "session_id": "sess_0002xK9mNpV1StGXR8",
-  "type": "http",
-  "local_port": 3000,
-  "public_url": "https://tun-abc123.marionette.example.com",
-  "token": "ttok_xxx",
-  "expires_at": "2024-01-15T12:30:00Z"
-}
-```
-
-### List Tunnels
-
-```http
-GET /api/v1/sessions/{session_id}/tunnels
-```
-
-### Close Tunnel
-
-```http
-DELETE /api/v1/tunnels/{tunnel_id}
-```
-
-## Workspaces
-
-### Create Workspace
-
-```http
-POST /api/v1/workspaces
-```
-
-**Request:**
-
-```json
-{
-  "name": "my-workspace",
-  "persist": true,
-  "storage_type": "volume",
-  "disk_quota_mb": 1024
-}
-```
-
-### List Workspaces
-
-```http
-GET /api/v1/workspaces
-```
-
-### Get Workspace
-
-```http
-GET /api/v1/workspaces/{workspace_id}
-```
-
-### Update Workspace
-
-```http
-PATCH /api/v1/workspaces/{workspace_id}
-```
-
-### Delete Workspace
-
-```http
-DELETE /api/v1/workspaces/{workspace_id}
-```
-
-## WebSocket Endpoints
-
-### Log Streaming
-
-Stream task logs in real-time via WebSocket.
-
-```
-ws://localhost:8080/api/v1/logs/{task_id}/stream
-```
-
-Messages:
-
-```json
-{"stream": "stdout", "content": "Building...", "sequence": 42, "created_at": "..."}
-```
-
-### Event Stream
-
-Stream server events (sessions, tasks, permissions).
-
-```
-ws://localhost:8080/api/v1/events
-```
-
-Events:
-
-- `session.status_changed`
-- `task.created`
-- `task.status_changed`
-- `permission.requested`
-- `permission.responded`
-
-### Browser/Desktop Streaming
-
-Stream browser or desktop frames via WebSocket.
-
-```
-ws://localhost:8080/api/v1/streams/{stream_id}/ws?token=ttok_xxx
-```
-
-## Error Responses
-
-All errors follow this format:
+Errors carry a machine-readable code and a human-readable message:
 
 ```json
 {
   "error": {
     "code": "not_found",
-    "message": "Session not found",
-    "details": {
-      "session_id": "sess_invalid"
-    }
+    "message": "session sess_0002xK9mNpV1StGXR8 does not exist"
   }
 }
 ```
 
-### Error Codes
+| Status | Meaning |
+|--------|---------|
+| 400 | Malformed request |
+| 401 | Missing or invalid credentials |
+| 403 | Authenticated, but the key lacks the scope |
+| 404 | No such resource |
+| 409 | Conflicts with current state, e.g. suspending a terminated session |
+| 422 | Well-formed but semantically invalid |
+| 500 | Server error |
 
-| Code | HTTP Status | Description |
-|------|-------------|-------------|
-| `bad_request` | 400 | Invalid request format |
-| `unauthorized` | 401 | Invalid or missing API key |
-| `forbidden` | 403 | Insufficient permissions |
-| `not_found` | 404 | Resource not found |
-| `conflict` | 409 | Resource state conflict |
-| `rate_limited` | 429 | Too many requests |
-| `internal_error` | 500 | Server error |
+### Identifiers
 
-## Rate Limiting
+Every id is prefixed by its type — `sess_`, `task_`, `trun_`, `perm_`, `ws_`,
+`run_` — and is time-ordered, so sorting by id sorts by creation. See
+[ID generation](../reference/id.md).
 
-Default limits:
+### Timestamps
 
-| Endpoint | Limit |
-|----------|-------|
-| Session creation | 10/minute |
-| Task creation | 30/minute |
-| Log streaming | 100 connections |
+RFC 3339, UTC. Fields that cross the gRPC boundary use `_unix_ms` suffixes and
+carry milliseconds since the epoch.
 
-Rate limit headers:
+## Rate limiting
 
-```
-X-RateLimit-Limit: 10
-X-RateLimit-Remaining: 7
-X-RateLimit-Reset: 1705315200
-```
+There is none. Nothing throttles a client today; do not build against headers
+that are not sent.
 
-## Pagination
+## See also
 
-List endpoints support pagination:
-
-```http
-GET /api/v1/sessions?limit=20&offset=40
-```
-
-Response includes pagination info:
-
-```json
-{
-  "items": [...],
-  "total": 156,
-  "limit": 20,
-  "offset": 40
-}
-```
+- [CLI reference](cli-reference.md) — `mctl` covers most of this API
+- [Security](security.md) — keys, scopes, permission gating
+- [Sessions & tasks](../concepts/sessions-tasks.md) — the state machines behind the verbs

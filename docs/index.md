@@ -40,16 +40,34 @@ Marionette enables you to deploy, manage, and observe AI coding agents (like Cla
 
 </div>
 
-## Features
+## What works today
 
-- **Multi-Agent Support** - Run Claude Code, Codex, or custom AI coding agents
-- **Flexible Deployment** - Docker, Kubernetes, E2B, Firecracker, or bare metal pools
-- **Session Management** - Long-lived work contexts with suspend/resume capabilities
-- **Workspace Persistence** - Encrypted storage with content-addressable deduplication
-- **Real-time Streaming** - Live logs, permission requests, and progress updates
-- **Port Forwarding** - HTTP tunnels, desktop streaming (WebRTC), mobile emulators
-- **Multi-tenant** - Built for SaaS integration with tenant isolation
-- **Observability** - Prometheus metrics, structured logging, OpenTelemetry tracing
+The end-to-end acceptance walk (`scripts/smoke.sh`) is run against every change,
+so this table describes the system rather than the plan.
+
+| Capability | State |
+|------------|-------|
+| Sessions, tasks, and task runs | Working |
+| Claude Code execution with real token accounting | Working |
+| Permission gating *before* a tool runs | Working |
+| Live logs and log retrieval | Working |
+| Suspend, resume, terminate | Working |
+| Pool runners and the Docker provider | Working |
+| Workspace sync to content-addressable storage | Runner side working; carrying the workspace identity across the wire is in progress |
+| HTTP and TCP tunnels | Behind `tunnels.enabled` |
+| Desktop and browser streaming (WebRTC) | **Frozen** - compiled but not wired; see [Frozen features](#frozen-features) |
+| Multi-tenancy | Columns everywhere; enforcement behind `multi_tenant` |
+| Kubernetes, E2B, Firecracker providers | Interfaces exist; not exercised by the acceptance walk |
+| Prometheus metrics, OpenTelemetry tracing | Partial |
+
+### Frozen features
+
+Some subsystems are compiled but deliberately not wired. They are documented as
+frozen so nobody builds on a floor that is not there.
+
+**Desktop and browser streaming** (`streaming.enabled: false`) is the main one:
+the SFU has no media source, no renegotiation, and never reads RTCP, so it
+cannot deliver a frame. Leave it off unless you are the one fixing it.
 
 ## Architecture Overview
 

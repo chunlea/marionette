@@ -90,7 +90,11 @@ func (t *Tx) IncrementChunkRefCount(ctx context.Context, tenantID, hash string) 
 }
 
 func incrementChunkRef(ctx context.Context, q querier, tenantID, hash string) error {
-	query := `UPDATE chunks SET ref_count = ref_count + 1 WHERE tenant_id = $1 AND hash = $2`
+	// Clearing deleted_at in the same statement is the resurrection path: a
+	// chunk the GC marked while it was unreferenced becomes live again the
+	// instant something references it, with no window in between. Doing it as a
+	// separate call would reopen the race the mark/sweep guards close.
+	query := `UPDATE chunks SET ref_count = ref_count + 1, deleted_at = NULL WHERE tenant_id = $1 AND hash = $2`
 	result, err := q.Exec(ctx, query, tenantID, hash)
 	if err != nil {
 		return handlePgError(err, "chunk", hash)
@@ -364,6 +368,231 @@ func scanChunk(row pgx.Row, identifier string) (*store.Chunk, error) {
 	return &c, nil
 }
 
+// =============================================================================
+// Garbage collection primitives
+//
+// Mark and sweep are expressed as single statements that re-check ref_count at
+// the moment they write. The previous read-then-write pair could mark a chunk
+// that had been referenced between the SELECT and the UPDATE, and the sweep
+// then deleted it because it only looked at deleted_at — losing live data.
+// =============================================================================
+
+// RegisterChunk records a chunk that has just been written to blob storage, or
+// revives an existing row that the collector had marked.
+//
+// ref_count starts at 0: the chunk exists but nothing points at it yet. That is
+// the upload-then-commit window, and it is why Mark ignores chunks younger than
+// the grace period.
+func (s *Store) RegisterChunk(ctx context.Context, tenantID, hash string, size int64) error {
+	return registerChunk(ctx, s.pool, tenantID, hash, size)
+}
+
+// RegisterChunk records a chunk within a transaction.
+func (t *Tx) RegisterChunk(ctx context.Context, tenantID, hash string, size int64) error {
+	return registerChunk(ctx, t.tx, tenantID, hash, size)
+}
+
+func registerChunk(ctx context.Context, q querier, tenantID, hash string, size int64) error {
+	// Content-addressed: the same hash is the same bytes, so a conflict means
+	// someone stored this chunk already and the row only needs reviving.
+	query := `
+		INSERT INTO chunks (hash, tenant_id, size, ref_count, created_at)
+		VALUES ($1, $2, $3, 0, NOW())
+		ON CONFLICT (tenant_id, hash) DO UPDATE
+		SET deleted_at = NULL`
+
+	if _, err := q.Exec(ctx, query, hash, tenantID, size); err != nil {
+		return handlePgError(err, "chunk", hash)
+	}
+	return nil
+}
+
+// MarkUnreferencedChunks marks up to limit unreferenced chunks for deletion and
+// returns the rows it actually marked.
+//
+// Only chunks older than minAge are considered, so a chunk that has been
+// uploaded but not yet referenced survives its commit window.
+//
+// Ages are measured against the database clock rather than the caller's. The
+// timestamps being compared were written by the database, and an application
+// clock that runs a few milliseconds behind would otherwise make a short grace
+// period collect nothing at all.
+func (s *Store) MarkUnreferencedChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
+	return markUnreferencedChunks(ctx, s.pool, tenantID, minAge, limit)
+}
+
+// MarkUnreferencedChunks marks unreferenced chunks within a transaction.
+func (t *Tx) MarkUnreferencedChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
+	return markUnreferencedChunks(ctx, t.tx, tenantID, minAge, limit)
+}
+
+func markUnreferencedChunks(ctx context.Context, q querier, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// FOR UPDATE makes a concurrent IncrementChunkRef wait; the ref_count = 0
+	// predicate is repeated on the UPDATE so that a reference committed between
+	// the snapshot and the lock drops the row instead of marking a live chunk.
+	query := `
+		WITH candidates AS (
+			SELECT hash FROM chunks
+			WHERE tenant_id = $1
+			  AND ref_count = 0
+			  AND deleted_at IS NULL
+			  AND created_at <= NOW() - ($2::double precision * INTERVAL '1 second')
+			ORDER BY created_at ASC
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE chunks c
+		SET deleted_at = NOW()
+		FROM candidates cd
+		WHERE c.tenant_id = $1
+		  AND c.hash = cd.hash
+		  AND c.ref_count = 0
+		  AND c.deleted_at IS NULL
+		RETURNING c.hash, c.tenant_id, c.size, c.ref_count, c.deleted_at, c.created_at`
+
+	rows, err := q.Query(ctx, query, tenantID, minAge.Seconds(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("marking unreferenced chunks: %w", err)
+	}
+	defer rows.Close()
+
+	var chunks []*store.Chunk
+	for rows.Next() {
+		chunk, err := scanChunkFromRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning chunk: %w", err)
+		}
+		chunks = append(chunks, chunk)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating marked chunks: %w", err)
+	}
+
+	return chunks, nil
+}
+
+// ListChunkTenants returns every tenant that currently holds chunks.
+//
+// Garbage collection is per-tenant because chunks are: the primary key is
+// (tenant_id, hash) and every GC statement filters on it. A collector that only
+// knows one tenant id silently leaves every other tenant's garbage in place.
+func (s *Store) ListChunkTenants(ctx context.Context) ([]string, error) {
+	return listChunkTenants(ctx, s.pool)
+}
+
+// ListChunkTenants returns the tenants holding chunks, within a transaction.
+func (t *Tx) ListChunkTenants(ctx context.Context) ([]string, error) {
+	return listChunkTenants(ctx, t.tx)
+}
+
+func listChunkTenants(ctx context.Context, q querier) ([]string, error) {
+	rows, err := q.Query(ctx, `SELECT DISTINCT tenant_id FROM chunks ORDER BY tenant_id`)
+	if err != nil {
+		return nil, fmt.Errorf("listing chunk tenants: %w", err)
+	}
+	defer rows.Close()
+
+	var tenants []string
+	for rows.Next() {
+		var tenant string
+		if err := rows.Scan(&tenant); err != nil {
+			return nil, fmt.Errorf("scanning tenant: %w", err)
+		}
+		tenants = append(tenants, tenant)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating tenants: %w", err)
+	}
+
+	return tenants, nil
+}
+
+// ListSweepableChunks returns chunks that are still unreferenced and whose
+// grace period has expired.
+//
+// Unlike ListSoftDeletedChunks it excludes chunks that were referenced again
+// after being marked, which is the set the old sweep happily deleted.
+func (s *Store) ListSweepableChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
+	return listSweepableChunks(ctx, s.pool, tenantID, minAge, limit)
+}
+
+// ListSweepableChunks lists sweepable chunks within a transaction.
+func (t *Tx) ListSweepableChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
+	return listSweepableChunks(ctx, t.tx, tenantID, minAge, limit)
+}
+
+func listSweepableChunks(ctx context.Context, q querier, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s FROM chunks
+		WHERE tenant_id = $1
+		  AND ref_count = 0
+		  AND deleted_at IS NOT NULL
+		  AND deleted_at < NOW() - ($2::double precision * INTERVAL '1 second')
+		ORDER BY deleted_at ASC
+		LIMIT $3`,
+		chunkColumns)
+
+	rows, err := q.Query(ctx, query, tenantID, minAge.Seconds(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying sweepable chunks: %w", err)
+	}
+	defer rows.Close()
+
+	var chunks []*store.Chunk
+	for rows.Next() {
+		chunk, err := scanChunkFromRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning chunk: %w", err)
+		}
+		chunks = append(chunks, chunk)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating chunks: %w", err)
+	}
+
+	return chunks, nil
+}
+
+// DeleteChunkIfUnreferenced deletes a chunk only while it is still unreferenced
+// and still marked. It reports whether the row was actually removed, so the
+// caller knows not to delete the blob of a chunk that was resurrected under it.
+func (s *Store) DeleteChunkIfUnreferenced(ctx context.Context, tenantID, hash string, minAge time.Duration) (bool, error) {
+	return deleteChunkIfUnreferenced(ctx, s.pool, tenantID, hash, minAge)
+}
+
+// DeleteChunkIfUnreferenced deletes a chunk within a transaction.
+func (t *Tx) DeleteChunkIfUnreferenced(ctx context.Context, tenantID, hash string, minAge time.Duration) (bool, error) {
+	return deleteChunkIfUnreferenced(ctx, t.tx, tenantID, hash, minAge)
+}
+
+func deleteChunkIfUnreferenced(ctx context.Context, q querier, tenantID, hash string, minAge time.Duration) (bool, error) {
+	query := `
+		DELETE FROM chunks
+		WHERE tenant_id = $1
+		  AND hash = $2
+		  AND ref_count = 0
+		  AND deleted_at IS NOT NULL
+		  AND deleted_at < NOW() - ($3::double precision * INTERVAL '1 second')`
+
+	result, err := q.Exec(ctx, query, tenantID, hash, minAge.Seconds())
+	if err != nil {
+		return false, handlePgError(err, "chunk", hash)
+	}
+
+	return result.RowsAffected() > 0, nil
+}
+
 func scanChunkFromRows(rows pgx.Rows) (*store.Chunk, error) {
 	var c store.Chunk
 	err := rows.Scan(
@@ -373,6 +602,136 @@ func scanChunkFromRows(rows pgx.Rows) (*store.Chunk, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// =============================================================================
+// Manifest commit
+// =============================================================================
+
+// CommitManifest registers every chunk, creates the manifest and takes a
+// reference on each chunk, in one transaction.
+//
+// The pieces existed separately but nothing performed them together, which left
+// two holes. A manifest could be created referring to chunks whose rows were
+// never written; and between registering a chunk and referencing it the
+// collector was free to reclaim it, so a commit could silently end up pointing
+// at a chunk that no longer exists. Inside one transaction the references are
+// taken before anything is visible, and referencing clears any deletion mark.
+//
+// Chunks must already be in blob storage: this records metadata only. Storing
+// the bytes first is what the grace period protects.
+func (s *Store) CommitManifest(ctx context.Context, manifest *store.Manifest, chunks []*store.Chunk) error {
+	if manifest == nil {
+		return &store.InvalidInputError{Field: "manifest", Message: "must not be nil"}
+	}
+	if manifest.TenantID == "" {
+		return &store.InvalidInputError{Field: "tenant_id", Message: "must not be empty"}
+	}
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	pgTx, ok := tx.(*Tx)
+	if !ok {
+		return fmt.Errorf("unexpected transaction type %T", tx)
+	}
+
+	// Deduplicate: a workspace commonly contains the same chunk more than once,
+	// and each occurrence must not inflate the reference count.
+	seen := make(map[string]struct{}, len(chunks))
+	for _, chunk := range chunks {
+		if chunk == nil || chunk.Hash == "" {
+			return &store.InvalidInputError{Field: "chunks", Message: "chunk hash must not be empty"}
+		}
+		if _, dup := seen[chunk.Hash]; dup {
+			continue
+		}
+		seen[chunk.Hash] = struct{}{}
+
+		if err := pgTx.RegisterChunk(ctx, manifest.TenantID, chunk.Hash, chunk.Size); err != nil {
+			return fmt.Errorf("registering chunk %s: %w", chunk.Hash, err)
+		}
+		if err := pgTx.IncrementChunkRef(ctx, manifest.TenantID, chunk.Hash); err != nil {
+			return fmt.Errorf("referencing chunk %s: %w", chunk.Hash, err)
+		}
+	}
+
+	if err := pgTx.CreateManifest(ctx, manifest); err != nil {
+		return fmt.Errorf("creating manifest: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+
+	return nil
+}
+
+// ReleaseManifest deletes a manifest and drops its references, in one
+// transaction. The chunks themselves are left to the collector: another
+// manifest may still reference them, and the grace period is what decides.
+func (s *Store) ReleaseManifest(ctx context.Context, manifestID string, chunks []*store.Chunk) error {
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	pgTx, ok := tx.(*Tx)
+	if !ok {
+		return fmt.Errorf("unexpected transaction type %T", tx)
+	}
+
+	manifest, err := pgTx.GetManifest(ctx, manifestID)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[string]struct{}, len(chunks))
+	for _, chunk := range chunks {
+		if chunk == nil || chunk.Hash == "" {
+			continue
+		}
+		if _, dup := seen[chunk.Hash]; dup {
+			continue
+		}
+		seen[chunk.Hash] = struct{}{}
+
+		if err := pgTx.DecrementChunkRef(ctx, manifest.TenantID, chunk.Hash); err != nil {
+			// A chunk that is already gone is not a reason to fail the release:
+			// the manifest is being torn down either way.
+			if !errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("releasing chunk %s: %w", chunk.Hash, err)
+			}
+		}
+	}
+
+	if err := pgTx.DeleteManifest(ctx, manifestID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+
+	return nil
 }
 
 // =============================================================================

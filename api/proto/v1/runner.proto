@@ -163,6 +163,10 @@ message SessionSuspended {
   string error = 7;
 
   int64 suspended_at_unix_ms = 8;
+
+  // Manifest the runner wrote when it synced the workspace to CAS.
+  // Empty when workspace_synced is false.
+  string manifest_id = 9;
 }
 
 // ContextUpdate is sent by runner to update session context during task execution.
@@ -270,13 +274,35 @@ message ExecuteTask {
 
 message AttachSession {
   string session_id = 1;
+
+  // Where the workspace is mounted for this runner. A container sees
+  // /workspace; a native runner sees the host path. It is a location, not an
+  // identity: every container-mode session sees the same string.
   string workspace_path = 2;
+
   bytes context_snapshot = 3;
   AgentConfig agent_config = 4;
 
   // Pending permission requests that were responded to while session was suspended
   // Runner should process these immediately after attach
   repeated PendingPermissionResponse pending_permissions = 5;
+
+  // Identity of the workspace, as opposed to where it happens to be mounted.
+  // The runner needs this to key content-addressed storage: keying on
+  // workspace_path would collide every container-mode session onto "/workspace".
+  string workspace_id = 6;
+
+  // Tenant that owns the session. Chunks are deduplicated per tenant, never
+  // across them, so this is part of the CAS key rather than a label.
+  // Empty in single-tenant deployments.
+  string tenant_id = 7;
+
+  // Manifest to restore the workspace from, as reported by whichever runner
+  // last synced it. Empty when the workspace has never been synced, which is
+  // the signal to start empty rather than guess. The runner that made a
+  // snapshot is the only thing that knew its id and it is gone by now, so the
+  // server hands it back here.
+  string workspace_manifest_id = 8;
 }
 
 // Permission response that was made while session was suspended

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/store"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -27,8 +28,9 @@ func (s *RunnerService) Connect(stream grpc.BidiStreamingServer[pb.RunnerMessage
 		return status.Errorf(codes.Unauthenticated, "missing runner credentials: %v", err)
 	}
 
-	// Validate runner auth token
-	if err := s.validateRunnerAuth(ctx, runnerID); err != nil {
+	// Validate runner auth token and bind the tenant it belongs to.
+	ctx, err = s.validateRunnerAuth(ctx, runnerID)
+	if err != nil {
 		s.logger.Warn("runner auth validation failed",
 			zap.String("runner_id", runnerID),
 			zap.Error(err),
@@ -198,31 +200,40 @@ func (s *RunnerService) extractRunnerToken(ctx context.Context) (string, error) 
 	return tokens[0], nil
 }
 
-// validateRunnerAuth validates the runner's authentication credentials.
-func (s *RunnerService) validateRunnerAuth(ctx context.Context, runnerID string) error {
+// validateRunnerAuth validates the runner's authentication credentials and
+// returns a context bound to the token's tenant.
+//
+// This is the runner-side counterpart of the API key middleware: a runner acts
+// for exactly the tenant that issued its token, and everything the stream does
+// afterwards - status updates, task runs, logs - is filtered by it.
+func (s *RunnerService) validateRunnerAuth(ctx context.Context, runnerID string) (context.Context, error) {
 	if s.tokenSvc == nil {
 		// Token service not configured, skip validation
-		return nil
+		return ctx, nil
 	}
 
 	token, err := s.extractRunnerToken(ctx)
 	if err != nil {
-		return err
+		return ctx, err
 	}
 
 	// Validate token
 	tokenInfo, err := s.tokenSvc.Validate(ctx, token)
 	if err != nil {
-		return status.Errorf(codes.Unauthenticated, "invalid token: %v", err)
+		return ctx, status.Errorf(codes.Unauthenticated, "invalid token: %v", err)
 	}
 
 	// Verify token is bound to this runner (or unbound)
 	if tokenInfo.RunnerID != nil && *tokenInfo.RunnerID != runnerID {
-		return status.Error(codes.PermissionDenied, "token bound to different runner")
+		return ctx, status.Error(codes.PermissionDenied, "token bound to different runner")
 	}
 
 	// Update last used timestamp
 	_ = s.tokenSvc.UpdateLastUsed(ctx, tokenInfo.ID)
 
-	return nil
+	if tokenInfo.TenantID != nil && *tokenInfo.TenantID != "" {
+		ctx = store.WithTenant(ctx, *tokenInfo.TenantID)
+	}
+
+	return ctx, nil
 }

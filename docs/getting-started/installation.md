@@ -17,8 +17,9 @@ The fastest way to get started:
 git clone https://github.com/chunlea/marionette.git
 cd marionette
 
-# Start all services
-docker compose up -d
+# Start all services. The compose file lives under deploy/docker/.
+make docker-up
+# equivalently: docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
 This starts:
@@ -26,6 +27,14 @@ This starts:
 - **Server** on ports 8080 (API), 8081 (Admin), 9090 (gRPC)
 - **PostgreSQL** on port 5432
 - **Agent** ready to accept tasks
+
+!!! note "The schema comes from migrations"
+    The database is provisioned by running `migrations/`, never by mounting a
+    `.sql` file. To start from scratch:
+    `docker compose -f deploy/docker/docker-compose.yml down -v`.
+
+You still need credentials before anything is usable — see
+[Quick start](quick-start.md), step 3.
 
 ## Building from Source
 

@@ -127,14 +127,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check the generated API types match the OpenAPI document
-        # The Go side has its own drift check (TestOpenAPIDocumentIsUpToDate in
-        # the test job) for the document itself; this one catches a document
-        # that changed without src/types/api.gen.ts being regenerated.
+      - name: Check the generated API types match the OpenAPI documents
+        # The Go side has its own drift checks for the documents themselves
+        # (TestOpenAPIDocumentIsUpToDate and TestAdminOpenAPIDocumentIsUpToDate,
+        # in the test job); this one catches a document that changed without
+        # the TypeScript being regenerated from it.
         run: |
           pnpm generate:api
-          git diff --exit-code src/types/api.gen.ts \
-            || { echo "::error::run 'pnpm generate:api' and commit src/types/api.gen.ts"; exit 1; }
+          git diff --exit-code src/types/api.gen.ts src/types/admin.gen.ts \
+            || { echo "::error::run 'pnpm generate:api' and commit the generated types"; exit 1; }
 
       - name: Lint
         run: pnpm lint

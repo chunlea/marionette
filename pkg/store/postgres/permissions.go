@@ -19,7 +19,7 @@ const permissionRequestColumns = `id, original_request_id, session_id, task_id, 
 
 // CreatePermissionRequest creates a new permission request.
 func (s *Store) CreatePermissionRequest(ctx context.Context, req *store.PermissionRequest) error {
-	return createPermissionRequest(ctx, s.pool, req)
+	return createPermissionRequest(ctx, s.db, req)
 }
 
 // CreatePermissionRequest creates a new permission request within a transaction.
@@ -56,7 +56,7 @@ func createPermissionRequest(ctx context.Context, q querier, req *store.Permissi
 
 // GetPermissionRequest retrieves a permission request by ID.
 func (s *Store) GetPermissionRequest(ctx context.Context, reqID string) (*store.PermissionRequest, error) {
-	return getPermissionRequest(ctx, s.pool, reqID)
+	return getPermissionRequest(ctx, s.db, reqID)
 }
 
 // GetPermissionRequest retrieves a permission request by ID within a transaction.
@@ -72,7 +72,7 @@ func getPermissionRequest(ctx context.Context, q querier, reqID string) (*store.
 
 // ListPermissionRequests retrieves permission requests with optional filtering.
 func (s *Store) ListPermissionRequests(ctx context.Context, opts store.ListPermissionRequestsOptions) (*store.ListResult[store.PermissionRequest], error) {
-	return listPermissionRequests(ctx, s.pool, opts)
+	return listPermissionRequests(ctx, s.db, opts)
 }
 
 // ListPermissionRequests retrieves permission requests within a transaction.
@@ -176,7 +176,7 @@ func listPermissionRequests(ctx context.Context, q querier, opts store.ListPermi
 
 // UpdatePermissionRequest updates permission request fields.
 func (s *Store) UpdatePermissionRequest(ctx context.Context, reqID string, updates store.PermissionRequestUpdates) error {
-	return updatePermissionRequest(ctx, s.pool, reqID, updates)
+	return updatePermissionRequest(ctx, s.db, reqID, updates)
 }
 
 // UpdatePermissionRequest updates permission request fields within a transaction.

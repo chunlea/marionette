@@ -1,157 +1,208 @@
+# GENERATED FILE — DO NOT EDIT.
+#
+# Source of truth: the route table in pkg/server/admin/openapi_routes.go and
+# the Go types in pkg/server/admin/admintypes.
+# Regenerate with:  make openapi
+# Drift is checked by TestAdminOpenAPIDocumentIsUpToDate, which runs in CI.
 openapi: 3.1.0
 info:
   title: Marionette Admin API
-  description: |
-    Administrative API for managing Marionette infrastructure.
-
-    ## Authentication
-
-    HTTP Basic Authentication, with the credentials from
-    `MARIONETTE_UI_USERNAME` and `MARIONETTE_UI_PASSWORD`:
-    ```
-    Authorization: Basic base64(username:password)
-    ```
-
-    > **Note**: this document previously also offered `Authorization: Bearer
-    > mk_...` with admin scopes. The server has never implemented it — the
-    > admin middleware checks basic auth and nothing else — so it is removed
-    > rather than left as a documented way in that does not exist.
-
-    > **Warning**: this document is hand-written and covers 9 of the roughly 30
-    > routes the admin API serves. The public API's document is generated from
-    > the code (see `:8080/openapi.yaml`); this one will be too once the admin
-    > handlers stop serializing database models directly.
-
   version: 1.0.0
-  contact:
-    name: Marionette Team
-  license:
-    name: MIT
+  description: |-
+    The Marionette admin API: mint API keys, register runner tokens,
+    configure agents and providers, define runner profiles, read the audit trail, and manage
+    webhooks.
 
+    This API is the deployment's root of trust. A caller holding the admin credentials can mint
+    a key with any scope, register a runner that will be handed real work, and read every
+    session. Treat the port as an internal one: bind it to a private interface, and do not put
+    it behind the same ingress as the public API.
+
+    Authenticate with HTTP basic auth, using the credentials from `MARIONETTE_UI_USERNAME`
+    and `MARIONETTE_UI_PASSWORD`. The server refuses to start without them unless the
+    operator passes `--dev-insecure-admin`, which serves this API with no authentication
+    at all and is for development only.
+
+    Secrets are readable exactly once. Creating an API key or a runner token returns
+    `raw_token`; creating or rotating a webhook returns `secret`. No other
+    response carries a credential, and none can be read back later — only the prefix, which
+    identifies it.
+
+    List endpoints return `items`, `total_count` and `has_more`. Most
+    page by cursor: pass `next_cursor` as `cursor`. The streams listing pages by
+    offset instead.
 servers:
   - url: http://localhost:8081
-    description: Admin API (development)
-
+    description: Local development
 tags:
   - name: API Keys
-    description: Manage API keys for authentication
+    description: Credentials for the public API.
+  - name: Runner Tokens
+    description: Credentials pool runners present when they join.
   - name: Agent Configs
-    description: Manage agent configurations (Claude, Codex, etc.)
+    description: Per-agent credentials and settings.
   - name: Provider Configs
-    description: Manage provider configurations (Docker, K8s, etc.)
+    description: Where runners come from.
+  - name: Profiles
+    description: Reusable runner shapes.
   - name: Runners
-    description: Manage runner lifecycle (spawn, destroy)
-
+    description: Provisioning and teardown.
+  - name: Sessions
+    description: Operator overrides on session lifecycle.
+  - name: Action Logs
+    description: The audit trail.
+  - name: Webhooks
+    description: Event subscriptions.
+  - name: Webhook Events
+    description: Delivery attempts.
+  - name: Streaming
+    description: Desktop streaming; a frozen subsystem.
+  - name: Service
+    description: Health, status, documentation and the dashboard.
 paths:
-  /health:
+  /admin/api/v1/action-logs:
     get:
-      summary: Health check
-      operationId: healthCheck
-      responses:
-        '200':
-          description: Service is healthy
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: ok
-
-  # API Keys
-  /admin/api/v1/keys:
-    post:
-      tags: [API Keys]
-      summary: Create an API key
-      operationId: createAPIKey
-      security:
-        - basicAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateAPIKeyRequest'
-      responses:
-        '201':
-          description: API key created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIKeyWithSecret'
-
-    get:
-      tags: [API Keys]
-      summary: List API keys
-      operationId: listAPIKeys
+      tags:
+        - Action Logs
+      summary: List audited actions
+      description: Every state-changing call, who made it, and whether it succeeded.
+      operationId: getActionLogs
       security:
         - basicAuth: []
       parameters:
         - name: limit
           in: query
+          description: Maximum number of items to return. Defaults to 50, capped at 100.
           schema:
             type: integer
-            default: 50
+            format: int32
         - name: cursor
           in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: actor_type
+          in: query
+          description: 'Filter by actor kind: user, api_key, system or runner.'
+          schema:
+            type: string
+        - name: actor_id
+          in: query
+          description: Filter by actor.
+          schema:
+            type: string
+        - name: action
+          in: query
+          description: Exact action match, e.g. session.create.
+          schema:
+            type: string
+        - name: action_prefix
+          in: query
+          description: Action prefix match, e.g. permission.
+          schema:
+            type: string
+        - name: resource_type
+          in: query
+          description: Filter by resource kind.
+          schema:
+            type: string
+        - name: resource_id
+          in: query
+          description: Filter by resource.
+          schema:
+            type: string
+        - name: session_id
+          in: query
+          description: Filter by session.
+          schema:
+            type: string
+        - name: task_id
+          in: query
+          description: Filter by task.
+          schema:
+            type: string
+        - name: success
+          in: query
+          description: Only successes, or only failures.
+          schema:
+            type: boolean
+        - name: from
+          in: query
+          description: Only entries at or after this time.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: Only entries at or before this time.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionLogList'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/action-logs/{logID}:
+    get:
+      tags:
+        - Action Logs
+      summary: Get an audited action
+      operationId: getActionLogsByLogID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: logID
+          in: path
+          required: true
           schema:
             type: string
       responses:
-        '200':
-          description: List of API keys
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/APIKeyList'
-
-  /admin/api/v1/keys/{keyId}:
-    get:
-      tags: [API Keys]
-      summary: Get API key details
-      operationId: getAPIKey
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/keyId'
-      responses:
-        '200':
-          description: API key details
+                $ref: '#/components/schemas/ActionLog'
+        "401":
+          description: Basic auth credentials are missing or wrong.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/APIKey'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-    delete:
-      tags: [API Keys]
-      summary: Revoke an API key
-      operationId: revokeAPIKey
-      security:
-        - basicAuth: []
-      parameters:
-        - $ref: '#/components/parameters/keyId'
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                reason:
-                  type: string
-      responses:
-        '204':
-          description: API key revoked
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  # Agent Configs
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /admin/api/v1/agent-configs:
     post:
-      tags: [Agent Configs]
-      summary: Create an agent configuration
-      operationId: createAgentConfig
+      tags:
+        - Agent Configs
+      summary: Create an agent config
+      description: The agent's API key is encrypted at rest and never returned.
+      operationId: postAgentConfigs
       security:
         - basicAuth: []
       requestBody:
@@ -161,64 +212,124 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateAgentConfigRequest'
       responses:
-        '201':
-          description: Agent config created
+        "201":
+          description: Created.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentConfig'
-
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     get:
-      tags: [Agent Configs]
-      summary: List agent configurations
-      operationId: listAgentConfigs
+      tags:
+        - Agent Configs
+      summary: List agent configs
+      operationId: getAgentConfigs
       security:
         - basicAuth: []
       parameters:
-        - name: agent
-          in: query
-          schema:
-            type: string
         - name: limit
           in: query
+          description: Maximum number of items to return. Defaults to 50, capped at 100.
           schema:
             type: integer
-            default: 50
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: labels
+          in: query
+          description: Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend.
+          schema:
+            type: string
+        - name: agent
+          in: query
+          description: Filter by agent type.
+          schema:
+            type: string
       responses:
-        '200':
-          description: List of agent configs
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentConfigList'
-
-  /admin/api/v1/agent-configs/{configId}:
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/agent-configs/{configID}:
     get:
-      tags: [Agent Configs]
-      summary: Get agent configuration
-      operationId: getAgentConfig
+      tags:
+        - Agent Configs
+      summary: Get an agent config
+      operationId: getAgentConfigsByConfigID
       security:
         - basicAuth: []
       parameters:
-        - $ref: '#/components/parameters/configId'
+        - name: configID
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        '200':
-          description: Agent config details
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentConfig'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     put:
-      tags: [Agent Configs]
-      summary: Update an agent configuration
-      operationId: updateAgentConfig
+      tags:
+        - Agent Configs
+      summary: Update an agent config
+      operationId: putAgentConfigsByConfigID
       security:
         - basicAuth: []
       parameters:
-        - $ref: '#/components/parameters/configId'
+        - name: configID
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -226,35 +337,433 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateAgentConfigRequest'
       responses:
-        '200':
-          description: Agent config updated
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentConfig'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
-      tags: [Agent Configs]
-      summary: Delete an agent configuration
-      operationId: deleteAgentConfig
+      tags:
+        - Agent Configs
+      summary: Delete an agent config
+      operationId: deleteAgentConfigsByConfigID
       security:
         - basicAuth: []
       parameters:
-        - $ref: '#/components/parameters/configId'
+        - name: configID
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        '204':
-          description: Agent config deleted
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  # Provider Configs
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/keys:
+    post:
+      tags:
+        - API Keys
+      summary: Create an API key
+      description: The response is the only time the token is readable.
+      operationId: postKeys
+      security:
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPIKeyRequest'
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedAPIKey'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - API Keys
+      summary: List API keys
+      operationId: getKeys
+      security:
+        - basicAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50, capped at 100.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: labels
+          in: query
+          description: Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIKeyList'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/keys/{keyID}:
+    get:
+      tags:
+        - API Keys
+      summary: Get an API key
+      operationId: getKeysByKeyID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: keyID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIKey'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - API Keys
+      summary: Revoke an API key
+      description: Revocation is immediate and permanent; keys are never deleted, so the audit trail survives.
+      operationId: deleteKeysByKeyID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: keyID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeAPIKeyRequest'
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/profiles:
+    post:
+      tags:
+        - Profiles
+      summary: Create a profile
+      description: A profile is the reusable runner shape a session asks for by id.
+      operationId: postProfiles
+      security:
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProfileRequest'
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - Profiles
+      summary: List profiles
+      operationId: getProfiles
+      security:
+        - basicAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50, capped at 100.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: labels
+          in: query
+          description: Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend.
+          schema:
+            type: string
+        - name: provider_config_id
+          in: query
+          description: Filter by provider config.
+          schema:
+            type: string
+        - name: include_builtin
+          in: query
+          description: Include the profiles the server ships.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileList'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/profiles/{profileID}:
+    get:
+      tags:
+        - Profiles
+      summary: Get a profile
+      operationId: getProfilesByProfileID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: profileID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags:
+        - Profiles
+      summary: Update a profile
+      description: Built-in profiles cannot be edited.
+      operationId: putProfilesByProfileID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: profileID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Profiles
+      summary: Delete a profile
+      operationId: deleteProfilesByProfileID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: profileID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /admin/api/v1/provider-configs:
     post:
-      tags: [Provider Configs]
-      summary: Create a provider configuration
-      operationId: createProviderConfig
+      tags:
+        - Provider Configs
+      summary: Create a provider config
+      description: The config block is provider-specific and is stored and returned as given.
+      operationId: postProviderConfigs
       security:
         - basicAuth: []
       requestBody:
@@ -264,64 +773,124 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateProviderConfigRequest'
       responses:
-        '201':
-          description: Provider config created
+        "201":
+          description: Created.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProviderConfig'
-
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     get:
-      tags: [Provider Configs]
-      summary: List provider configurations
-      operationId: listProviderConfigs
+      tags:
+        - Provider Configs
+      summary: List provider configs
+      operationId: getProviderConfigs
       security:
         - basicAuth: []
       parameters:
-        - name: provider
-          in: query
-          schema:
-            type: string
         - name: limit
           in: query
+          description: Maximum number of items to return. Defaults to 50, capped at 100.
           schema:
             type: integer
-            default: 50
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: labels
+          in: query
+          description: Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend.
+          schema:
+            type: string
+        - name: provider
+          in: query
+          description: Filter by provider kind, e.g. docker.
+          schema:
+            type: string
       responses:
-        '200':
-          description: List of provider configs
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProviderConfigList'
-
-  /admin/api/v1/provider-configs/{configId}:
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/provider-configs/{configID}:
     get:
-      tags: [Provider Configs]
-      summary: Get provider configuration
-      operationId: getProviderConfig
+      tags:
+        - Provider Configs
+      summary: Get a provider config
+      operationId: getProviderConfigsByConfigID
       security:
         - basicAuth: []
       parameters:
-        - $ref: '#/components/parameters/configId'
+        - name: configID
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        '200':
-          description: Provider config details
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProviderConfig'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     put:
-      tags: [Provider Configs]
-      summary: Update a provider configuration
-      operationId: updateProviderConfig
+      tags:
+        - Provider Configs
+      summary: Update a provider config
+      operationId: putProviderConfigsByConfigID
       security:
         - basicAuth: []
       parameters:
-        - $ref: '#/components/parameters/configId'
+        - name: configID
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -329,170 +898,1322 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateProviderConfigRequest'
       responses:
-        '200':
-          description: Provider config updated
+        "200":
+          description: Success.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProviderConfig'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
-      tags: [Provider Configs]
-      summary: Delete a provider configuration
-      operationId: deleteProviderConfig
+      tags:
+        - Provider Configs
+      summary: Delete a provider config
+      operationId: deleteProviderConfigsByConfigID
       security:
         - basicAuth: []
       parameters:
-        - $ref: '#/components/parameters/configId'
+        - name: configID
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        '204':
-          description: Provider config deleted
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  # Runners
-  /admin/api/v1/runners/spawn:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/runner-tokens:
     post:
-      tags: [Runners]
-      summary: Spawn a new runner
-      operationId: spawnRunner
+      tags:
+        - Runner Tokens
+      summary: Create a runner token
+      description: The credential a pool runner presents when it joins. The response is the only time it is readable.
+      operationId: postRunnerTokens
       security:
         - basicAuth: []
       requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRunnerTokenRequest'
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedRunnerToken'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - Runner Tokens
+      summary: List runner tokens
+      operationId: getRunnerTokens
+      security:
+        - basicAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50, capped at 100.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: labels
+          in: query
+          description: Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend.
+          schema:
+            type: string
+        - name: pool_name
+          in: query
+          description: Filter by pool.
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by status, comma-separated.
+          schema:
+            type: string
+        - name: include_revoked
+          in: query
+          description: Include revoked tokens.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerTokenList'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/runner-tokens/{tokenID}:
+    get:
+      tags:
+        - Runner Tokens
+      summary: Get a runner token
+      operationId: getRunnerTokensByTokenID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: tokenID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerToken'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Runner Tokens
+      summary: Revoke a runner token
+      operationId: deleteRunnerTokensByTokenID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: tokenID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeRunnerTokenRequest'
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/runner-tokens/{tokenID}/rotate:
+    post:
+      tags:
+        - Runner Tokens
+      summary: Rotate a runner token
+      description: Issues a replacement and gives the runner until rotation_deadline to start using it. The response is the only time the new token is readable.
+      operationId: postRunnerTokensRotate
+      security:
+        - basicAuth: []
+      parameters:
+        - name: tokenID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedRunnerToken'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/runners:
+    get:
+      tags:
+        - Runners
+      summary: List runners
+      description: The operator's view, which unlike the public one names the provider behind each runner.
+      operationId: getRunners
+      security:
+        - basicAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50, capped at 100.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: labels
+          in: query
+          description: Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend.
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by status, comma-separated.
+          schema:
+            type: string
+        - name: pool_name
+          in: query
+          description: Filter by pool.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerList'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/runners/spawn:
+    post:
+      tags:
+        - Runners
+      summary: Spawn a runner
+      description: Provisions a runner through the given provider config. Pool runners join by themselves and are not spawned here.
+      operationId: postRunnersSpawn
+      security:
+        - basicAuth: []
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SpawnRunnerRequest'
       responses:
-        '201':
-          description: Runner spawned
+        "201":
+          description: Created.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Runner'
-
-  /admin/api/v1/runners/{runnerId}:
-    delete:
-      tags: [Runners]
-      summary: Destroy a runner
-      operationId: destroyRunner
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/runners/{runnerID}:
+    get:
+      tags:
+        - Runners
+      summary: Get a runner
+      operationId: getRunnersByRunnerID
       security:
         - basicAuth: []
       parameters:
-        - $ref: '#/components/parameters/runnerId'
+        - name: runnerID
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        '204':
-          description: Runner destroyed
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Runner'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Runners
+      summary: Destroy a runner
+      description: Terminates the runner through its provider and removes it.
+      operationId: deleteRunnersByRunnerID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: runnerID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/sessions/{sessionID}/activate:
+    post:
+      tags:
+        - Sessions
+      summary: Attach a runner to a pending session
+      description: An operator escape hatch; ordinary session lifecycle runs through the public API.
+      operationId: postSessionsActivate
+      security:
+        - basicAuth: []
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivateSessionRequest'
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/sessions/{sessionID}/suspend:
+    post:
+      tags:
+        - Sessions
+      summary: Suspend a session
+      operationId: postSessionsSuspend
+      security:
+        - basicAuth: []
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuspendSessionRequest'
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/signaling:
+    get:
+      tags:
+        - Streaming
+      summary: WebRTC signalling
+      description: |-
+        Part of the frozen streaming subsystem: served only when the streaming handlers are configured, and hidden in the dashboard unless it is built with VITE_ENABLE_STREAMING.
 
+        A browser cannot attach basic auth to a WebSocket handshake, so the dashboard cannot reach this endpoint at all today; unfreezing desktop streaming means giving it a query-token path like the public log stream has.
+      operationId: getSignaling
+      security:
+        - basicAuth: []
+      responses:
+        "101":
+          description: The connection was upgraded to a WebSocket.
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/streams:
+    get:
+      tags:
+        - Streaming
+      summary: List desktop streams
+      description: 'Part of the frozen streaming subsystem: served only when the streaming handlers are configured, and hidden in the dashboard unless it is built with VITE_ENABLE_STREAMING.'
+      operationId: getStreams
+      security:
+        - basicAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          description: Filter by session.
+          schema:
+            type: string
+        - name: runner_id
+          in: query
+          description: Filter by runner.
+          schema:
+            type: string
+        - name: tenant_id
+          in: query
+          description: Filter by tenant.
+          schema:
+            type: string
+        - name: type
+          in: query
+          description: Filter by stream type.
+          schema:
+            type: string
+        - name: state
+          in: query
+          description: Filter by stream state.
+          schema:
+            type: string
+        - name: active_only
+          in: query
+          description: Only streams that are starting or active.
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          description: Maximum number of items to return.
+          schema:
+            type: integer
+            format: int32
+        - name: offset
+          in: query
+          description: Number of items to skip. This listing pages by offset, not by cursor.
+          schema:
+            type: integer
+            format: int32
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamResponseList'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags:
+        - Streaming
+      summary: Start a desktop stream
+      description: 'Part of the frozen streaming subsystem: served only when the streaming handlers are configured, and hidden in the dashboard unless it is built with VITE_ENABLE_STREAMING.'
+      operationId: postStreams
+      security:
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StreamRequest'
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamResponse'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/streams/{streamID}:
+    get:
+      tags:
+        - Streaming
+      summary: Get a desktop stream
+      description: 'Part of the frozen streaming subsystem: served only when the streaming handlers are configured, and hidden in the dashboard unless it is built with VITE_ENABLE_STREAMING.'
+      operationId: getStreamsByStreamID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: streamID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamResponse'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Streaming
+      summary: Stop a desktop stream
+      description: 'Part of the frozen streaming subsystem: served only when the streaming handlers are configured, and hidden in the dashboard unless it is built with VITE_ENABLE_STREAMING.'
+      operationId: deleteStreamsByStreamID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: streamID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/webhook-events:
+    get:
+      tags:
+        - Webhook Events
+      summary: List delivery attempts
+      operationId: getWebhookEvents
+      security:
+        - basicAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50, capped at 100.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: webhook_id
+          in: query
+          description: Filter by webhook.
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by delivery status.
+          schema:
+            type: string
+        - name: event_type
+          in: query
+          description: Filter by event type.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEventList'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/webhook-events/{eventID}:
+    get:
+      tags:
+        - Webhook Events
+      summary: Get a delivery attempt
+      operationId: getWebhookEventsByEventID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: eventID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEvent'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/webhook-events/{eventID}/retry:
+    post:
+      tags:
+        - Webhook Events
+      summary: Retry a failed delivery
+      description: Queues the event again immediately, without waiting for the backoff.
+      operationId: postWebhookEventsRetry
+      security:
+        - basicAuth: []
+      parameters:
+        - name: eventID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/webhooks:
+    post:
+      tags:
+        - Webhooks
+      summary: Create a webhook
+      description: The signing secret in the response is readable only here and on rotation.
+      operationId: postWebhooks
+      security:
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookRequest'
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedWebhook'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - Webhooks
+      summary: List webhooks
+      operationId: getWebhooks
+      security:
+        - basicAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50, capped at 100.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: labels
+          in: query
+          description: Filter by labels, as "key=value" pairs separated by commas, e.g. env=prod,team=backend.
+          schema:
+            type: string
+        - name: is_active
+          in: query
+          description: Only active webhooks.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookList'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/webhooks/{webhookID}:
+    get:
+      tags:
+        - Webhooks
+      summary: Get a webhook
+      operationId: getWebhooksByWebhookID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: webhookID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags:
+        - Webhooks
+      summary: Update a webhook
+      operationId: putWebhooksByWebhookID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: webhookID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWebhookRequest'
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Webhooks
+      summary: Delete a webhook
+      operationId: deleteWebhooksByWebhookID
+      security:
+        - basicAuth: []
+      parameters:
+        - name: webhookID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success, with no response body.
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api/v1/webhooks/{webhookID}/rotate-secret:
+    post:
+      tags:
+        - Webhooks
+      summary: Rotate a webhook's signing secret
+      description: Deliveries are signed with the new secret from the next event onward.
+      operationId: postWebhooksRotateSecret
+      security:
+        - basicAuth: []
+      parameters:
+        - name: webhookID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotatedWebhookSecret'
+        "401":
+          description: Basic auth credentials are missing or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/status:
+    get:
+      tags:
+        - Service
+      summary: Status of every service in the process
+      description: The server, admin, gRPC and metrics listeners, as registered at start-up.
+      operationId: getStatus
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /docs:
+    get:
+      tags:
+        - Service
+      summary: Interactive API documentation
+      operationId: getDocs
+      responses:
+        "200":
+          description: An HTML page rendering this document.
+          content:
+            text/html: {}
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /health:
+    get:
+      tags:
+        - Service
+      summary: Liveness probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /health/live:
+    get:
+      tags:
+        - Service
+      summary: Liveness probe with per-check detail
+      description: Served only when a health service is configured.
+      operationId: getHealthLive
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /health/ready:
+    get:
+      tags:
+        - Service
+      summary: Readiness probe
+      description: Reports the dependencies the server needs before it can serve traffic.
+      operationId: getHealthReady
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Response'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /healthz:
+    get:
+      tags:
+        - Service
+      summary: Liveness probe (Kubernetes spelling)
+      operationId: getHealthz
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /openapi.yaml:
+    get:
+      tags:
+        - Service
+      summary: This document
+      operationId: getOpenapiYaml
+      responses:
+        "200":
+          description: The OpenAPI description of the admin API.
+          content:
+            application/yaml: {}
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /{path}:
+    get:
+      tags:
+        - Service
+      summary: The dashboard
+      description: Everything not matched above serves the embedded single-page app, falling back to index.html so client-side routes deep-link. This origin also forwards /api/v1 to the public API, so the browser has one origin for both.
+      operationId: getDashboard
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The dashboard, or one of its assets.
+          content:
+            text/html: {}
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   securitySchemes:
     basicAuth:
-      type: http
+      description: Credentials from MARIONETTE_UI_USERNAME and MARIONETTE_UI_PASSWORD.
       scheme: basic
-      description: Admin Basic Auth
-
-  parameters:
-    keyId:
-      name: keyId
-      in: path
-      required: true
-      schema:
-        type: string
-        pattern: '^key_[a-zA-Z0-9]+$'
-    configId:
-      name: configId
-      in: path
-      required: true
-      schema:
-        type: string
-    runnerId:
-      name: runnerId
-      in: path
-      required: true
-      schema:
-        type: string
-        pattern: '^run_[a-zA-Z0-9]+$'
-
-  responses:
-    NotFound:
-      description: Resource not found
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
+      type: http
+      unauthorized: Basic auth credentials are missing or wrong.
   schemas:
-    Error:
-      type: object
-      required:
-        - code
-        - message
-      properties:
-        code:
-          type: string
-        message:
-          type: string
-
-    Labels:
-      type: object
-      additionalProperties:
-        type: string
-
-    # API Key schemas
     APIKey:
       type: object
       properties:
         id:
           type: string
-          example: key_0002xK9mNtZ5XyKBV3
         name:
           type: string
         key_prefix:
           type: string
-          example: mk_xxxxxxxx
         scopes:
           type: array
           items:
             type: string
         labels:
-          $ref: '#/components/schemas/Labels'
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
         created_at:
           type: string
           format: date-time
+        created_by:
+          type: string
         last_used_at:
+          type: string
+          format: date-time
+        expires_at:
           type: string
           format: date-time
         revoked_at:
           type: string
           format: date-time
-
-    APIKeyWithSecret:
-      allOf:
-        - $ref: '#/components/schemas/APIKey'
-        - type: object
-          properties:
-            key:
-              type: string
-              description: Full API key (only returned on creation)
-
-    CreateAPIKeyRequest:
-      type: object
-      required:
-        - name
-      properties:
-        name:
+        revoke_reason:
           type: string
-        scopes:
-          type: array
-          items:
-            type: string
-        labels:
-          $ref: '#/components/schemas/Labels'
-
+      required:
+        - id
+        - name
+        - key_prefix
+        - scopes
+        - labels
+        - annotations
+        - created_at
     APIKeyList:
       type: object
       properties:
@@ -500,16 +2221,103 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/APIKey'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
         next_cursor:
           type: string
-
-    # Agent Config schemas
+      required:
+        - items
+        - total_count
+        - has_more
+    Accepted:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    ActionLog:
+      type: object
+      properties:
+        id:
+          type: string
+        actor_type:
+          type: string
+          enum:
+            - user
+            - api_key
+            - system
+            - runner
+        actor_id:
+          type: string
+        actor_name:
+          type: string
+        action:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        session_id:
+          type: string
+        task_id:
+          type: string
+        details:
+          type: object
+          additionalProperties: {}
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        success:
+          type: boolean
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - actor_type
+        - action
+        - resource_type
+        - resource_id
+        - details
+        - success
+        - created_at
+    ActionLogList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionLog'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    ActivateSessionRequest:
+      type: object
+      properties:
+        runner_id:
+          type: string
+      required:
+        - runner_id
     AgentConfig:
       type: object
       properties:
         id:
           type: string
-          example: acfg_0002xK9mNuA6YzLCW4
         name:
           type: string
         agent:
@@ -518,40 +2326,759 @@ components:
           type: string
         base_url:
           type: string
+        extra:
+          type: object
+          additionalProperties: {}
         is_default:
           type: boolean
         labels:
-          $ref: '#/components/schemas/Labels'
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
-
-    CreateAgentConfigRequest:
-      type: object
       required:
+        - id
         - name
         - agent
-        - api_key
+        - extra
+        - is_default
+        - labels
+        - annotations
+        - created_at
+        - updated_at
+    AgentConfigList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentConfig'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    CheckResult:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        latency:
+          type: string
+      required:
+        - status
+    CreateAPIKeyRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+      required:
+        - name
+    CreateAgentConfigRequest:
+      type: object
       properties:
         name:
           type: string
         agent:
           type: string
-          example: claude
         api_key:
           type: string
         model:
           type: string
         base_url:
           type: string
+        extra:
+          type: object
+          additionalProperties: {}
         is_default:
           type: boolean
         labels:
-          $ref: '#/components/schemas/Labels'
-
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - name
+        - agent
+        - api_key
+    CreateProfileRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        provider_config_id:
+          type: string
+        resources:
+          type: object
+          additionalProperties: {}
+        network:
+          type: object
+          additionalProperties: {}
+        init_script:
+          type: string
+        cleanup_script:
+          type: string
+        tunnels:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        selector:
+          type: object
+          additionalProperties: {}
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - name
+    CreateProviderConfigRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        provider:
+          type: string
+        config:
+          type: object
+          additionalProperties: {}
+        suspend_config:
+          type: object
+          additionalProperties: {}
+        is_default:
+          type: boolean
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - name
+        - provider
+    CreateRunnerTokenRequest:
+      type: object
+      properties:
+        pool_name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+      required:
+        - pool_name
+    CreateWebhookRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+        max_retries:
+          type: integer
+          format: int32
+        retry_delay_seconds:
+          type: integer
+          format: int32
+        timeout_seconds:
+          type: integer
+          format: int32
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - name
+        - url
+        - events
+    CreatedAPIKey:
+      type: object
+      properties:
+        key:
+          $ref: '#/components/schemas/APIKey'
+        raw_token:
+          type: string
+      required:
+        - raw_token
+    CreatedRunnerToken:
+      type: object
+      properties:
+        token:
+          $ref: '#/components/schemas/RunnerToken'
+        raw_token:
+          type: string
+      required:
+        - raw_token
+    CreatedWebhook:
+      type: object
+      properties:
+        webhook:
+          $ref: '#/components/schemas/Webhook'
+        secret:
+          type: string
+      required:
+        - secret
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      required:
+        - code
+        - message
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+        version:
+          type: string
+        service:
+          type: string
+      required:
+        - status
+        - version
+        - service
+    Profile:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        provider_config_id:
+          type: string
+        resources:
+          type: object
+          additionalProperties: {}
+        network:
+          type: object
+          additionalProperties: {}
+        init_script:
+          type: string
+        cleanup_script:
+          type: string
+        tunnels:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        selector:
+          type: object
+          additionalProperties: {}
+        is_builtin:
+          type: boolean
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - resources
+        - network
+        - tunnels
+        - selector
+        - is_builtin
+        - labels
+        - annotations
+        - created_at
+        - updated_at
+    ProfileList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Profile'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    ProviderConfig:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+        config:
+          type: object
+          additionalProperties: {}
+        suspend_config:
+          type: object
+          additionalProperties: {}
+        is_default:
+          type: boolean
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - provider
+        - config
+        - suspend_config
+        - is_default
+        - labels
+        - annotations
+        - created_at
+        - updated_at
+    ProviderConfigList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderConfig'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    ResolutionRequest:
+      type: object
+      properties:
+        width:
+          type: integer
+          format: int32
+        height:
+          type: integer
+          format: int32
+      required:
+        - width
+        - height
+    Response:
+      type: object
+      properties:
+        status:
+          type: string
+        checks:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/CheckResult'
+      required:
+        - status
+    RevokeAPIKeyRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+    RevokeRunnerTokenRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+    RotatedWebhookSecret:
+      type: object
+      properties:
+        secret:
+          type: string
+        secret_prefix:
+          type: string
+      required:
+        - secret
+        - secret_prefix
+    Runner:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        hostname:
+          type: string
+        status:
+          type: string
+          enum:
+            - offline
+            - idle
+            - busy
+            - paused
+        tainted:
+          type: boolean
+        taint_reason:
+          type: string
+        sandbox_mode:
+          type: string
+          enum:
+            - runner-is-sandbox
+            - runner-creates-sandbox
+            - none
+        sandbox_types:
+          type: array
+          items:
+            type: string
+        provider_config_id:
+          type: string
+        provider_instance_id:
+          type: string
+        pool_name:
+          type: string
+        profile_id:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        last_seen_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - hostname
+        - status
+        - tainted
+        - sandbox_mode
+        - sandbox_types
+        - capabilities
+        - labels
+        - annotations
+        - created_at
+        - updated_at
+    RunnerList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Runner'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    RunnerToken:
+      type: object
+      properties:
+        id:
+          type: string
+        token_prefix:
+          type: string
+        runner_id:
+          type: string
+        pool_name:
+          type: string
+        status:
+          type: string
+          enum:
+            - active
+            - rotating
+            - revoked
+            - expired
+        rotation_deadline:
+          type: string
+          format: date-time
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+        last_used_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+        revoke_reason:
+          type: string
+      required:
+        - id
+        - token_prefix
+        - pool_name
+        - status
+        - labels
+        - created_at
+    RunnerTokenList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunnerToken'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    ServiceStatus:
+      type: object
+      properties:
+        name:
+          type: string
+        port:
+          type: integer
+          format: int32
+        status:
+          type: string
+          enum:
+            - ok
+            - error
+            - unknown
+        message:
+          type: string
+      required:
+        - name
+        - port
+        - status
+    SpawnRunnerRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        provider_config_id:
+          type: string
+        profile_id:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - provider_config_id
+    Status:
+      type: object
+      properties:
+        services:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceStatus'
+      required:
+        - services
+    StreamRequest:
+      type: object
+      properties:
+        session_id:
+          type: string
+        runner_id:
+          type: string
+        type:
+          type: string
+        resolution:
+          $ref: '#/components/schemas/ResolutionRequest'
+        frame_rate:
+          type: integer
+          format: int32
+        bitrate:
+          type: integer
+          format: int32
+        audio_enabled:
+          type: boolean
+        input_enabled:
+          type: boolean
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - session_id
+        - type
+    StreamResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        runner_id:
+          type: string
+        type:
+          type: string
+        state:
+          type: string
+        signaling_url:
+          type: string
+        resolution:
+          $ref: '#/components/schemas/ResolutionRequest'
+        frame_rate:
+          type: integer
+          format: int32
+        bitrate:
+          type: integer
+          format: int32
+        video_codec:
+          type: string
+        audio_codec:
+          type: string
+        audio_enabled:
+          type: boolean
+        input_enabled:
+          type: boolean
+        provider_name:
+          type: string
+        provider_stream_id:
+          type: string
+        error:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+        started_at:
+          type: string
+        stopped_at:
+          type: string
+      required:
+        - id
+        - session_id
+        - type
+        - state
+        - audio_enabled
+        - input_enabled
+        - provider_name
+        - created_at
+        - updated_at
+    StreamResponseList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StreamResponse'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    SuspendSessionRequest:
+      type: object
+      properties:
+        strategy:
+          type: string
     UpdateAgentConfigRequest:
       type: object
       properties:
@@ -563,67 +3090,50 @@ components:
           type: string
         base_url:
           type: string
+        extra:
+          type: object
+          additionalProperties: {}
         is_default:
           type: boolean
         labels:
-          $ref: '#/components/schemas/Labels'
-
-    AgentConfigList:
+          type: object
+          additionalProperties:
+            type: string
+    UpdateProfileRequest:
       type: object
       properties:
-        items:
+        name:
+          type: string
+        description:
+          type: string
+        provider_config_id:
+          type: string
+        resources:
+          type: object
+          additionalProperties: {}
+        network:
+          type: object
+          additionalProperties: {}
+        init_script:
+          type: string
+        cleanup_script:
+          type: string
+        tunnels:
           type: array
           items:
-            $ref: '#/components/schemas/AgentConfig'
-        next_cursor:
-          type: string
-
-    # Provider Config schemas
-    ProviderConfig:
-      type: object
-      properties:
-        id:
-          type: string
-          example: pcfg_0002xK9mNvB7ZaMDX5
-        name:
-          type: string
-        provider:
-          type: string
-          example: docker
-        config:
+            type: object
+            additionalProperties: {}
+        selector:
           type: object
-        suspend_config:
-          type: object
-        is_default:
-          type: boolean
+          additionalProperties: {}
         labels:
-          $ref: '#/components/schemas/Labels'
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-
-    CreateProviderConfigRequest:
-      type: object
-      required:
-        - name
-        - provider
-      properties:
-        name:
-          type: string
-        provider:
-          type: string
-        config:
           type: object
-        suspend_config:
+          additionalProperties:
+            type: string
+        annotations:
           type: object
-        is_default:
-          type: boolean
-        labels:
-          $ref: '#/components/schemas/Labels'
-
+          additionalProperties:
+            type: string
     UpdateProviderConfigRequest:
       type: object
       properties:
@@ -631,59 +3141,191 @@ components:
           type: string
         config:
           type: object
+          additionalProperties: {}
         suspend_config:
           type: object
+          additionalProperties: {}
         is_default:
           type: boolean
         labels:
-          $ref: '#/components/schemas/Labels'
-
-    ProviderConfigList:
+          type: object
+          additionalProperties:
+            type: string
+    UpdateWebhookRequest:
       type: object
       properties:
-        items:
+        name:
+          type: string
+        url:
+          type: string
+        events:
           type: array
           items:
-            $ref: '#/components/schemas/ProviderConfig'
-        next_cursor:
-          type: string
-
-    # Runner schema
-    Runner:
+            type: string
+        is_active:
+          type: boolean
+        max_retries:
+          type: integer
+          format: int32
+        retry_delay_seconds:
+          type: integer
+          format: int32
+        timeout_seconds:
+          type: integer
+          format: int32
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+    Webhook:
       type: object
       properties:
         id:
           type: string
-          example: run_0002xK9mNrX3VwIZT1
         name:
           type: string
-        hostname:
+        url:
           type: string
+        events:
+          type: array
+          items:
+            type: string
+        secret_prefix:
+          type: string
+        is_active:
+          type: boolean
+        max_retries:
+          type: integer
+          format: int32
+        retry_delay_seconds:
+          type: integer
+          format: int32
+        timeout_seconds:
+          type: integer
+          format: int32
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - url
+        - events
+        - secret_prefix
+        - is_active
+        - max_retries
+        - retry_delay_seconds
+        - timeout_seconds
+        - headers
+        - labels
+        - annotations
+        - created_at
+        - updated_at
+    WebhookEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        webhook_id:
+          type: string
+        event_type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: {}
         status:
           type: string
-          enum: [offline, idle, busy, paused]
-        pool_name:
+          enum:
+            - pending
+            - delivered
+            - failed
+            - exhausted
+            - canceled
+        attempts:
+          type: integer
+          format: int32
+        last_error:
           type: string
-        sandbox_mode:
+        last_status_code:
+          type: integer
+          format: int32
+        next_retry_at:
           type: string
-          enum: [runner-is-sandbox, runner-creates-sandbox, none]
-        labels:
-          $ref: '#/components/schemas/Labels'
-        last_seen_at:
+          format: date-time
+        delivered_at:
           type: string
           format: date-time
         created_at:
           type: string
           format: date-time
-
-    SpawnRunnerRequest:
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - webhook_id
+        - event_type
+        - payload
+        - status
+        - attempts
+        - created_at
+        - updated_at
+    WebhookEventList:
       type: object
       properties:
-        name:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEvent'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
           type: string
-        provider_config_id:
+      required:
+        - items
+        - total_count
+        - has_more
+    WebhookList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Webhook'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
           type: string
-        profile_id:
-          type: string
-        labels:
-          $ref: '#/components/schemas/Labels'
+      required:
+        - items
+        - total_count
+        - has_more

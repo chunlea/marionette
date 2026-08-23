@@ -103,23 +103,28 @@ type Session struct {
 	SuspendStrategy        *string         `json:"suspend_strategy,omitempty"`
 	SuspendSnapshotID      *string         `json:"suspend_snapshot_id,omitempty"`
 	SuspendWorkspaceSynced *bool           `json:"suspend_workspace_synced,omitempty"`
-	PreviousRunnerID       *string         `json:"previous_runner_id,omitempty"`
-	NetworkPolicy          string          `json:"network_policy"` // none, allow_list, proxy, air_gapped
-	AllowedHosts           []string        `json:"allowed_hosts"`
-	LifecycleMode          string          `json:"lifecycle_mode"` // on_demand, always_on, scheduled
-	IdleTimeoutSeconds     *int            `json:"idle_timeout_seconds,omitempty"`
-	MaxLifetimeSeconds     *int            `json:"max_lifetime_seconds,omitempty"`
-	ScheduleCron           *string         `json:"schedule_cron,omitempty"`
-	ScheduleTimezone       *string         `json:"schedule_timezone,omitempty"`
-	NextScheduledAt        *time.Time      `json:"next_scheduled_at,omitempty"`
-	TenantID               *string         `json:"tenant_id,omitempty"`
-	Labels                 json.RawMessage `json:"labels"`
-	Annotations            json.RawMessage `json:"annotations"`
-	LastActivityAt         *time.Time      `json:"last_activity_at,omitempty"`
-	SuspendedAt            *time.Time      `json:"suspended_at,omitempty"`
-	ResumedAt              *time.Time      `json:"resumed_at,omitempty"`
-	CreatedAt              time.Time       `json:"created_at"`
-	UpdatedAt              time.Time       `json:"updated_at"`
+
+	// WorkspaceManifestID is the CAS snapshot the workspace was last synced to.
+	// It is what a resuming runner restores from; empty means never synced.
+	WorkspaceManifestID *string `json:"workspace_manifest_id,omitempty"`
+
+	PreviousRunnerID   *string         `json:"previous_runner_id,omitempty"`
+	NetworkPolicy      string          `json:"network_policy"` // none, allow_list, proxy, air_gapped
+	AllowedHosts       []string        `json:"allowed_hosts"`
+	LifecycleMode      string          `json:"lifecycle_mode"` // on_demand, always_on, scheduled
+	IdleTimeoutSeconds *int            `json:"idle_timeout_seconds,omitempty"`
+	MaxLifetimeSeconds *int            `json:"max_lifetime_seconds,omitempty"`
+	ScheduleCron       *string         `json:"schedule_cron,omitempty"`
+	ScheduleTimezone   *string         `json:"schedule_timezone,omitempty"`
+	NextScheduledAt    *time.Time      `json:"next_scheduled_at,omitempty"`
+	TenantID           *string         `json:"tenant_id,omitempty"`
+	Labels             json.RawMessage `json:"labels"`
+	Annotations        json.RawMessage `json:"annotations"`
+	LastActivityAt     *time.Time      `json:"last_activity_at,omitempty"`
+	SuspendedAt        *time.Time      `json:"suspended_at,omitempty"`
+	ResumedAt          *time.Time      `json:"resumed_at,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 // SessionUpdates contains fields that can be updated on a session.
@@ -135,6 +140,7 @@ type SessionUpdates struct {
 	SuspendStrategy        *string
 	SuspendSnapshotID      *string
 	SuspendWorkspaceSynced *bool
+	WorkspaceManifestID    *string
 	PreviousRunnerID       *string
 	NetworkPolicy          *string
 	AllowedHosts           []string
@@ -163,8 +169,16 @@ type Task struct {
 	TenantID       *string         `json:"tenant_id,omitempty"`
 	Labels         json.RawMessage `json:"labels"`
 	Annotations    json.RawMessage `json:"annotations"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+
+	// Redispatch backoff. Separate from RetryCount, which is the user-facing
+	// budget for agent failures: a dispatch that never reached a runner is not
+	// the agent's fault and must not spend it.
+	NextDispatchAfter    *time.Time `json:"next_dispatch_after,omitempty"`
+	DispatchAttempts     int        `json:"dispatch_attempts"`
+	DispatchParkedReason *string    `json:"dispatch_parked_reason,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // TaskUpdates contains fields that can be updated on a task.
@@ -173,6 +187,19 @@ type TaskUpdates struct {
 	RetryCount  *int
 	Labels      json.RawMessage
 	Annotations json.RawMessage
+
+	// Redispatch backoff state. ClearDispatchBackoff resets all three, which is
+	// what a dispatch that reached a runner does.
+	NextDispatchAfter    *time.Time
+	DispatchAttempts     *int
+	DispatchParkedReason *string
+	ClearDispatchBackoff bool
+
+	// ExpectedStatus makes the update conditional: it applies only if the row
+	// still has this status. It is how a pending -> running transition is made
+	// safe without a lock, so two servers racing to dispatch the same task
+	// cannot both win. A failed precondition is reported as ErrConflict.
+	ExpectedStatus *string
 }
 
 // TaskRun represents an execution attempt of a task.

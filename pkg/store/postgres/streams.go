@@ -21,7 +21,7 @@ const streamColumns = `id, session_id, runner_id, tenant_id, type, state,
 
 // CreateStream creates a new stream.
 func (s *Store) CreateStream(ctx context.Context, stream *store.Stream) error {
-	return createStream(ctx, s.pool, stream)
+	return createStream(ctx, s.db, stream)
 }
 
 // CreateStream creates a new stream within a transaction.
@@ -68,7 +68,7 @@ func createStream(ctx context.Context, q querier, stream *store.Stream) error {
 
 // GetStream retrieves a stream by ID.
 func (s *Store) GetStream(ctx context.Context, streamID string) (*store.Stream, error) {
-	return getStream(ctx, s.pool, streamID)
+	return getStream(ctx, s.db, streamID)
 }
 
 // GetStream retrieves a stream by ID within a transaction.
@@ -85,7 +85,7 @@ func getStream(ctx context.Context, q querier, streamID string) (*store.Stream, 
 // GetStreamBySessionAndType retrieves a stream by session ID and type.
 // If activeOnly is true, only non-terminal streams are returned.
 func (s *Store) GetStreamBySessionAndType(ctx context.Context, sessionID, streamType string, activeOnly bool) (*store.Stream, error) {
-	return getStreamBySessionAndType(ctx, s.pool, sessionID, streamType, activeOnly)
+	return getStreamBySessionAndType(ctx, s.db, sessionID, streamType, activeOnly)
 }
 
 // GetStreamBySessionAndType retrieves a stream by session ID and type within a transaction.
@@ -106,7 +106,7 @@ func getStreamBySessionAndType(ctx context.Context, q querier, sessionID, stream
 
 // ListStreams retrieves streams with optional filtering.
 func (s *Store) ListStreams(ctx context.Context, opts store.ListStreamsOptions) (*store.ListResult[store.Stream], error) {
-	return listStreams(ctx, s.pool, opts)
+	return listStreams(ctx, s.db, opts)
 }
 
 // ListStreams retrieves streams within a transaction.
@@ -211,7 +211,7 @@ func listStreams(ctx context.Context, q querier, opts store.ListStreamsOptions) 
 
 // UpdateStream updates stream fields.
 func (s *Store) UpdateStream(ctx context.Context, streamID string, updates store.StreamUpdates) error {
-	return updateStream(ctx, s.pool, streamID, updates)
+	return updateStream(ctx, s.db, streamID, updates)
 }
 
 // UpdateStream updates stream fields within a transaction.
@@ -314,7 +314,7 @@ func updateStream(ctx context.Context, q querier, streamID string, updates store
 
 // DeleteStream deletes a stream.
 func (s *Store) DeleteStream(ctx context.Context, streamID string) error {
-	return deleteStream(ctx, s.pool, streamID)
+	return deleteStream(ctx, s.db, streamID)
 }
 
 // DeleteStream deletes a stream within a transaction.
@@ -338,7 +338,7 @@ func deleteStream(ctx context.Context, q querier, streamID string) error {
 
 // CleanupExpiredStreams marks expired streams as stopped.
 func (s *Store) CleanupExpiredStreams(ctx context.Context) (int, error) {
-	return cleanupExpiredStreams(ctx, s.pool)
+	return cleanupExpiredStreams(ctx, s.db)
 }
 
 // CleanupExpiredStreams marks expired streams as stopped within a transaction.

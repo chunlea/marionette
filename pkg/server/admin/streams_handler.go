@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/server/admin/admintypes"
 	"github.com/chunlea/marionette/pkg/streaming"
 )
 
@@ -157,9 +158,10 @@ func (h *StreamsHandler) List(w http.ResponseWriter, r *http.Request) {
 		items[i] = streamToResponse(stream)
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"items": items,
-		"total": total,
+	WriteJSON(w, http.StatusOK, &admintypes.ListResponse[StreamResponse]{
+		Items:      items,
+		TotalCount: int64(total),
+		HasMore:    params.Offset+len(items) < total,
 	})
 }
 

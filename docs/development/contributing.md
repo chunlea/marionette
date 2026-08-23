@@ -36,16 +36,32 @@ make test
 
 ### Running Locally
 
+See the [Quick start](../getting-started/quick-start.md) for the full walk. In
+short, three terminals, and the runner is not optional:
+
 ```bash
-# Terminal 1: Start server
-./bin/server --config configs/local.yaml
+# Terminal 1: server. It fails closed without admin credentials.
+MARIONETTE_DATABASE_URL=... \
+MARIONETTE_MASTER_KEY=$(openssl rand -hex 32) \
+MARIONETTE_ENCRYPTION_KEY=$(openssl rand -hex 32) \
+  ./bin/server --config configs/local.yaml --dev-insecure-admin
 
-# Terminal 2: Start agent
-./bin/agent --server localhost:9090 --token dev-token
+# Terminal 2: runner. The token is minted through the admin API.
+MARIONETTE_RUNNER_TOKEN=$(curl -s -X POST \
+  http://localhost:8081/admin/api/v1/runner-tokens \
+  -H 'Content-Type: application/json' -d '{"pool_name":"default"}' \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["raw_token"])') \
+  ./bin/agent --server localhost:9090 --pool default --name dev \
+    --sandbox-mode none --workspace ./data/workspaces --log-format console
 
-# Terminal 3: Use CLI
+# Terminal 3: CLI
+export MARIONETTE_API_URL=http://localhost:8080
+export MARIONETTE_API_KEY=...   # POST /admin/api/v1/keys
 ./bin/mctl sessions list
 ```
+
+The whole path is automated by `./scripts/smoke.sh`, which is the acceptance
+gate. Run it before opening a pull request that touches the execution path.
 
 ### Hot Reload
 

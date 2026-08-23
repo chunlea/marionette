@@ -130,4 +130,10 @@ func setDefaults(v *viper.Viper) {
 
 	// Tunnels (live path: on unless explicitly disabled)
 	v.SetDefault("tunnels.enabled", true)
+
+	// Single-tenant unless a deployment says otherwise.
+	v.SetDefault("multi_tenant", false)
+
+	// Chunk GC deletes blobs; off until workspace sync references them.
+	v.SetDefault("storage.gc.enabled", false)
 }

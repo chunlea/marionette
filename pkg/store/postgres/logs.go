@@ -31,7 +31,7 @@ const actionLogColumns = `id, actor_type, actor_id, actor_name, action, resource
 
 // CreateLog creates a new log entry.
 func (s *Store) CreateLog(ctx context.Context, log *store.Log) error {
-	return createLog(ctx, s.pool, log)
+	return createLog(ctx, s.db, log)
 }
 
 // CreateLog creates a new log entry within a transaction.
@@ -67,12 +67,12 @@ func createLog(ctx context.Context, q querier, log *store.Log) error {
 
 // CreateLogBatch creates multiple log entries efficiently.
 func (s *Store) CreateLogBatch(ctx context.Context, logs []*store.Log) error {
-	return createLogBatch(ctx, s.pool, logs)
+	return createLogBatch(ctx, s.db, logs)
 }
 
 // CreateLogs creates multiple log entries (alias for CreateLogBatch).
 func (s *Store) CreateLogs(ctx context.Context, logs []*store.Log) error {
-	return createLogBatch(ctx, s.pool, logs)
+	return createLogBatch(ctx, s.db, logs)
 }
 
 // CreateLogBatch creates multiple log entries within a transaction.
@@ -129,7 +129,7 @@ func createLogBatch(ctx context.Context, q querier, logs []*store.Log) error {
 
 // GetLog retrieves a log entry by ID.
 func (s *Store) GetLog(ctx context.Context, logID string) (*store.Log, error) {
-	return getLog(ctx, s.pool, logID)
+	return getLog(ctx, s.db, logID)
 }
 
 // GetLog retrieves a log entry by ID within a transaction.
@@ -145,7 +145,7 @@ func getLog(ctx context.Context, q querier, logID string) (*store.Log, error) {
 
 // ListLogs retrieves logs with optional filtering.
 func (s *Store) ListLogs(ctx context.Context, opts store.ListLogsOptions) (*store.ListResult[store.Log], error) {
-	return listLogs(ctx, s.pool, opts)
+	return listLogs(ctx, s.db, opts)
 }
 
 // ListLogs retrieves logs within a transaction.
@@ -254,7 +254,7 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 
 // DeleteLogsByRun deletes all logs for a specific run.
 func (s *Store) DeleteLogsByRun(ctx context.Context, runID string) error {
-	return deleteLogsByRun(ctx, s.pool, runID)
+	return deleteLogsByRun(ctx, s.db, runID)
 }
 
 // DeleteLogsByRun deletes all logs for a run within a transaction.
@@ -304,7 +304,7 @@ func scanLogFromRows(rows pgx.Rows) (*store.Log, error) {
 
 // CreateLogArchive creates a new log archive.
 func (s *Store) CreateLogArchive(ctx context.Context, archive *store.LogArchive) error {
-	return createLogArchive(ctx, s.pool, archive)
+	return createLogArchive(ctx, s.db, archive)
 }
 
 // CreateLogArchive creates a new log archive within a transaction.
@@ -339,7 +339,7 @@ func createLogArchive(ctx context.Context, q querier, archive *store.LogArchive)
 
 // GetLogArchive retrieves a log archive by ID.
 func (s *Store) GetLogArchive(ctx context.Context, archiveID string) (*store.LogArchive, error) {
-	return getLogArchive(ctx, s.pool, archiveID)
+	return getLogArchive(ctx, s.db, archiveID)
 }
 
 // GetLogArchive retrieves a log archive by ID within a transaction.
@@ -355,7 +355,7 @@ func getLogArchive(ctx context.Context, q querier, archiveID string) (*store.Log
 
 // GetLogArchiveBySession retrieves a log archive by session ID.
 func (s *Store) GetLogArchiveBySession(ctx context.Context, sessionID string) (*store.LogArchive, error) {
-	return getLogArchiveBySession(ctx, s.pool, sessionID)
+	return getLogArchiveBySession(ctx, s.db, sessionID)
 }
 
 // GetLogArchiveBySession retrieves a log archive within a transaction.
@@ -371,7 +371,7 @@ func getLogArchiveBySession(ctx context.Context, q querier, sessionID string) (*
 
 // ListLogArchives retrieves log archives with optional filtering.
 func (s *Store) ListLogArchives(ctx context.Context, opts store.ListLogArchivesOptions) (*store.ListResult[store.LogArchive], error) {
-	return listLogArchives(ctx, s.pool, opts)
+	return listLogArchives(ctx, s.db, opts)
 }
 
 // ListLogArchives retrieves log archives within a transaction.
@@ -453,7 +453,7 @@ func listLogArchives(ctx context.Context, q querier, opts store.ListLogArchivesO
 
 // UpdateLogArchive updates log archive fields.
 func (s *Store) UpdateLogArchive(ctx context.Context, archiveID string, updates store.LogArchiveUpdates) error {
-	return updateLogArchive(ctx, s.pool, archiveID, updates)
+	return updateLogArchive(ctx, s.db, archiveID, updates)
 }
 
 // UpdateLogArchive updates log archive fields within a transaction.
@@ -494,7 +494,7 @@ func updateLogArchive(ctx context.Context, q querier, archiveID string, updates 
 
 // DeleteLogArchive deletes a log archive.
 func (s *Store) DeleteLogArchive(ctx context.Context, archiveID string) error {
-	return deleteLogArchive(ctx, s.pool, archiveID)
+	return deleteLogArchive(ctx, s.db, archiveID)
 }
 
 // DeleteLogArchive deletes a log archive within a transaction.
@@ -549,7 +549,7 @@ func scanLogArchiveFromRows(rows pgx.Rows) (*store.LogArchive, error) {
 
 // CreateActionLog creates a new action log entry.
 func (s *Store) CreateActionLog(ctx context.Context, log *store.ActionLog) error {
-	return createActionLog(ctx, s.pool, log)
+	return createActionLog(ctx, s.db, log)
 }
 
 // CreateActionLog creates a new action log entry within a transaction.
@@ -587,7 +587,7 @@ func createActionLog(ctx context.Context, q querier, log *store.ActionLog) error
 
 // GetActionLog retrieves an action log by ID.
 func (s *Store) GetActionLog(ctx context.Context, logID string) (*store.ActionLog, error) {
-	return getActionLog(ctx, s.pool, logID)
+	return getActionLog(ctx, s.db, logID)
 }
 
 // GetActionLog retrieves an action log by ID within a transaction.
@@ -603,7 +603,7 @@ func getActionLog(ctx context.Context, q querier, logID string) (*store.ActionLo
 
 // ListActionLogs retrieves action logs with optional filtering.
 func (s *Store) ListActionLogs(ctx context.Context, opts store.ListActionLogsOptions) (*store.ListResult[store.ActionLog], error) {
-	return listActionLogs(ctx, s.pool, opts)
+	return listActionLogs(ctx, s.db, opts)
 }
 
 // ListActionLogs retrieves action logs within a transaction.

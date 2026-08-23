@@ -1812,3 +1812,6 @@ func (m *mockTaskMgrForRunner) DispatchNext(_ context.Context, _ string) error {
 func (m *mockTaskMgrForRunner) ListRuns(_ context.Context, _ string, _ ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
 	return &store.ListResult[store.TaskRun]{}, nil
 }
+
+// DispatchNextNow satisfies TaskManagerInterface. These fakes dispatch nothing.
+func (m *mockTaskMgrForRunner) DispatchNextNow(_ context.Context, _ string) error { return nil }

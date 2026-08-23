@@ -8,6 +8,7 @@ import (
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/provider"
+	"github.com/chunlea/marionette/pkg/storage/cas"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/webhook"
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,8 @@ func testWireDeps(t *testing.T) WireDeps {
 			ScheduledSessionCheckInterval: time.Hour,
 			ReapInterval:                  time.Hour,
 			PartitionInterval:             time.Hour,
+			ChunkGCInterval:               time.Hour,
+			RedispatchInterval:            time.Hour,
 		},
 	}
 }
@@ -82,10 +85,7 @@ func TestWire_StartsEveryBackgroundJob(t *testing.T) {
 	app, err := Wire(testWireDeps(t))
 	require.NoError(t, err)
 
-	names := make([]string, 0, len(app.jobs))
-	for _, job := range app.jobs {
-		names = append(names, job.name)
-	}
+	names := jobNames(app)
 
 	assert.ElementsMatch(t, []string{
 		"stale-detector",
@@ -95,6 +95,7 @@ func TestWire_StartsEveryBackgroundJob(t *testing.T) {
 		"scheduled-session-activator",
 		"runner-reaper",
 		"log-partition-maintainer",
+		"redispatch-sweeper",
 	}, names)
 
 	require.NoError(t, app.Start(context.Background()))
@@ -210,4 +211,62 @@ func TestWire_SkipsPartitionMaintainerWithoutSupport(t *testing.T) {
 // store.Store but not jobs.LogPartitioner.
 type nonPartitioningStore struct {
 	store.Store
+}
+
+// fakeChunkGC satisfies cas.GarbageCollector without touching any storage.
+type fakeChunkGC struct{}
+
+func (fakeChunkGC) Mark(context.Context, string) (int, error) { return 0, nil }
+
+func (fakeChunkGC) Sweep(context.Context, string) (int, int64, error) { return 0, 0, nil }
+
+func (fakeChunkGC) Resurrect(context.Context, string, string) error { return nil }
+
+func (fakeChunkGC) RunGC(context.Context, string) (*cas.GCResult, error) {
+	return &cas.GCResult{}, nil
+}
+
+// TestWire_ChunkGCIsOptional: the job deletes blobs, so it is built only when
+// an operator asks for it and a collector is actually available.
+func TestWire_ChunkGCIsOptional(t *testing.T) {
+	t.Run("absent without a collector", func(t *testing.T) {
+		app, err := Wire(testWireDeps(t))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = app.Stop(context.Background()) })
+		assert.NotContains(t, jobNames(app), "chunk-gc")
+	})
+
+	t.Run("absent when disabled", func(t *testing.T) {
+		deps := testWireDeps(t)
+		deps.ChunkGC = fakeChunkGC{}
+		deps.Jobs.DisableChunkGC = true
+
+		app, err := Wire(deps)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = app.Stop(context.Background()) })
+		assert.NotContains(t, jobNames(app), "chunk-gc")
+	})
+
+	t.Run("built and drained when enabled", func(t *testing.T) {
+		deps := testWireDeps(t)
+		deps.ChunkGC = fakeChunkGC{}
+
+		app, err := Wire(deps)
+		require.NoError(t, err)
+		assert.Contains(t, jobNames(app), "chunk-gc")
+
+		require.NoError(t, app.Start(context.Background()))
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		require.NoError(t, app.Stop(ctx))
+	})
+}
+
+// jobNames lists the background jobs an App was wired with.
+func jobNames(app *App) []string {
+	names := make([]string, 0, len(app.jobs))
+	for _, job := range app.jobs {
+		names = append(names, job.name)
+	}
+	return names
 }

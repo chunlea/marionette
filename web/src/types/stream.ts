@@ -1,46 +1,33 @@
 // Types for the FROZEN streaming subsystem (decision D1): desktop streaming
 // over WebRTC, and Android device mirroring.
 //
-// These are hand-written and stay hand-written: the desktop stream endpoints
-// live on the admin API, which has no generated spec, and the Android
-// endpoints have no server implementation at all. Nothing here is part of the
-// public contract in ./api, and the UI that uses it is gated behind
-// VITE_ENABLE_STREAMING (see ../lib/features).
+// The desktop stream shapes are derived from the admin OpenAPI document now
+// that the admin API has one. That immediately corrected a drift nobody had
+// noticed: the hand-written Stream declared `status`, the server has always
+// sent `state`, so every check against it read undefined — the viewer never
+// polled while a stream was starting, and useActiveDesktopStream could never
+// find one. The UI is gated behind VITE_ENABLE_STREAMING (see ../lib/features)
+// and this was one more reason it could not have worked if it were not.
+//
+// The Android types below stay hand-written: no server route implements them.
 
-export type StreamStatus = 'pending' | 'starting' | 'active' | 'stopping' | 'stopped' | 'error'
+import type { components } from './admin.gen'
 
-export interface StreamConfig {
-  width?: number
-  height?: number
-  frame_rate?: number
-  bitrate?: number
-  video_codec?: string
-  audio_enabled?: boolean
-  input_enabled?: boolean
-  display?: string
-  hw_accel?: string
-}
+type Schemas = components['schemas']
 
-export interface Stream {
-  id: string
-  session_id: string
-  runner_id?: string
-  status: StreamStatus
-  signaling_url?: string
-  config?: StreamConfig
-  provider?: string
-  started_at?: string
-  stopped_at?: string
-}
+/** A desktop stream, as the admin API describes it. */
+export type Stream = Schemas['StreamResponse']
 
-export interface StartStreamRequest {
-  config?: StreamConfig
-}
+/** The lifecycle state of a stream. The field is `state`, not `status`. */
+export type StreamState = Stream['state']
 
-export interface StreamList {
-  items: Stream[]
-  total_count: number
-}
+export type StreamList = Schemas['StreamResponseList']
+export type StartStreamRequest = Schemas['StreamRequest']
+
+/** The settings half of StreamRequest: what a caller chooses, without the
+ *  session, runner and type the hook fills in. */
+export type StreamSettings = Omit<StartStreamRequest, 'session_id' | 'runner_id' | 'type'>
+export type StreamResolution = Schemas['ResolutionRequest']
 
 // WebRTC Signaling message types
 export type SignalingMessageType = 'offer' | 'answer' | 'candidate' | 'error'

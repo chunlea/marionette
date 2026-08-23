@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/chunlea/marionette/pkg/server/admin/admintypes"
 	"github.com/chunlea/marionette/pkg/store"
 )
 
@@ -17,12 +18,6 @@ type CreateAPIKeyRequest struct {
 	Labels      map[string]string `json:"labels,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
 	ExpiresAt   *time.Time        `json:"expires_at,omitempty"`
-}
-
-// CreateAPIKeyResponse is the response for creating an API key.
-type CreateAPIKeyResponse struct {
-	Key      *store.APIKey `json:"key"`
-	RawToken string        `json:"raw_token"`
 }
 
 func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -48,8 +43,8 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, CreateAPIKeyResponse{
-		Key:      key,
+	WriteJSON(w, http.StatusCreated, admintypes.CreatedAPIKey{
+		Key:      toAPIKeyResponse(key),
 		RawToken: rawToken,
 	})
 }
@@ -73,7 +68,7 @@ func (s *Server) handleListAPIKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toAPIKeyResponse))
 }
 
 func (s *Server) handleGetAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +94,7 @@ func (s *Server) handleGetAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, key)
+	WriteJSON(w, http.StatusOK, toAPIKeyResponse(key))
 }
 
 // RevokeAPIKeyRequest is the request body for revoking an API key.

@@ -42,7 +42,7 @@ func (s *Server) handleCreateProviderConfig(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, config)
+	WriteJSON(w, http.StatusCreated, toProviderConfigResponse(config))
 }
 
 func (s *Server) handleListProviderConfigs(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +65,7 @@ func (s *Server) handleListProviderConfigs(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toProviderConfigResponse))
 }
 
 func (s *Server) handleGetProviderConfig(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +91,7 @@ func (s *Server) handleGetProviderConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, config)
+	WriteJSON(w, http.StatusOK, toProviderConfigResponse(config))
 }
 
 // UpdateProviderConfigRequest is the request body for updating a provider config.
@@ -136,7 +136,7 @@ func (s *Server) handleUpdateProviderConfig(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, config)
+	WriteJSON(w, http.StatusOK, toProviderConfigResponse(config))
 }
 
 func (s *Server) handleDeleteProviderConfig(w http.ResponseWriter, r *http.Request) {

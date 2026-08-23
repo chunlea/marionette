@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/chunlea/marionette/pkg/server/admin/admintypes"
 	"github.com/chunlea/marionette/pkg/store"
 )
 
@@ -31,12 +32,6 @@ type CreateWebhookRequest struct {
 	Annotations       map[string]string `json:"annotations,omitempty"`
 }
 
-// CreateWebhookResponse is the response for creating a webhook.
-type CreateWebhookResponse struct {
-	Webhook *store.Webhook `json:"webhook"`
-	Secret  string         `json:"secret"`
-}
-
 // UpdateWebhookRequest is the request body for updating a webhook.
 type UpdateWebhookRequest struct {
 	Name              *string           `json:"name,omitempty"`
@@ -49,12 +44,6 @@ type UpdateWebhookRequest struct {
 	Headers           map[string]string `json:"headers,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Annotations       map[string]string `json:"annotations,omitempty"`
-}
-
-// RotateSecretResponse is the response for rotating a webhook secret.
-type RotateSecretResponse struct {
-	Secret       string `json:"secret"`
-	SecretPrefix string `json:"secret_prefix"`
 }
 
 func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
@@ -109,8 +98,8 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, CreateWebhookResponse{
-		Webhook: webhook,
+	WriteJSON(w, http.StatusCreated, admintypes.CreatedWebhook{
+		Webhook: toWebhookResponse(webhook),
 		Secret:  secret,
 	})
 }
@@ -138,7 +127,7 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toStoreListResponse(result, toWebhookResponse))
 }
 
 func (s *Server) handleGetWebhook(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +153,7 @@ func (s *Server) handleGetWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, webhook)
+	WriteJSON(w, http.StatusOK, toWebhookResponse(webhook))
 }
 
 func (s *Server) handleUpdateWebhook(w http.ResponseWriter, r *http.Request) {
@@ -220,7 +209,7 @@ func (s *Server) handleUpdateWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, webhook)
+	WriteJSON(w, http.StatusOK, toWebhookResponse(webhook))
 }
 
 func (s *Server) handleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +268,7 @@ func (s *Server) handleRotateWebhookSecret(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, RotateSecretResponse{
+	WriteJSON(w, http.StatusOK, admintypes.RotatedWebhookSecret{
 		Secret:       secret,
 		SecretPrefix: webhook.SecretPrefix,
 	})
@@ -316,7 +305,7 @@ func (s *Server) handleListWebhookEvents(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toStoreListResponse(result, toWebhookEventResponse))
 }
 
 func (s *Server) handleGetWebhookEvent(w http.ResponseWriter, r *http.Request) {
@@ -342,7 +331,7 @@ func (s *Server) handleGetWebhookEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, event)
+	WriteJSON(w, http.StatusOK, toWebhookEventResponse(event))
 }
 
 func (s *Server) handleRetryWebhookEvent(w http.ResponseWriter, r *http.Request) {
@@ -367,5 +356,5 @@ func (s *Server) handleRetryWebhookEvent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "queued"})
+	WriteJSON(w, http.StatusOK, admintypes.Accepted{Status: "queued"})
 }

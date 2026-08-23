@@ -282,11 +282,24 @@ func (m *SessionManager) Create(ctx context.Context, opts CreateSessionOptions) 
 	}
 
 	// Validate workspace exists
-	_, err := m.store.GetWorkspace(ctx, opts.WorkspaceID)
+	workspace, err := m.store.GetWorkspace(ctx, opts.WorkspaceID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, errors.New("workspace not found")
 		}
+		return nil, err
+	}
+
+	tenantID, err := tenantFor(ctx, opts.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	// A session and its workspace must belong to the same tenant. Row level
+	// security stops a query from reading another tenant's workspace, but a
+	// caller that already knows the id would otherwise be able to point a
+	// session at it.
+	if err := requireSameTenant("workspace", workspace.ID, tenantID, workspace.TenantID); err != nil {
 		return nil, err
 	}
 
@@ -338,7 +351,7 @@ func (m *SessionManager) Create(ctx context.Context, opts CreateSessionOptions) 
 		IdleTimeoutSeconds: opts.IdleTimeout,
 		ScheduleCron:       opts.ScheduleCron,
 		ScheduleTimezone:   opts.ScheduleTZ,
-		TenantID:           opts.TenantID,
+		TenantID:           tenantID,
 		Labels:             labels,
 		Annotations:        annotations,
 		CreatedAt:          time.Now(),
@@ -433,6 +446,12 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 
 	if runner.Status != StatusIdle && !isResumeToSameRunner {
 		return ErrRunnerNotIdle
+	}
+
+	// A session must not run on another tenant's runner: the runner mounts the
+	// session's workspace and holds its credentials.
+	if err := requireSameTenant("runner", runner.ID, session.TenantID, runner.TenantID); err != nil {
+		return err
 	}
 
 	// Detach any session still holding this runner. A failure here used to be
@@ -537,7 +556,10 @@ func (m *SessionManager) dispatchPendingTask(ctx context.Context, sessionID stri
 	if m.taskManager == nil {
 		return
 	}
-	if err := m.taskManager.DispatchNext(ctx, sessionID); err != nil {
+	// A session that just gained a runner is an edge trigger: the runner is new
+	// information, so the backlog gets one attempt now rather than waiting out
+	// a timer set when no runner existed.
+	if err := m.taskManager.DispatchNextNow(ctx, sessionID); err != nil {
 		m.logger.Warn("failed to dispatch pending task after activation",
 			zap.String("session_id", sessionID),
 			zap.Error(err),
@@ -2006,8 +2028,10 @@ func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.S
 		return err
 	}
 
-	// Determine workspace path to send to agent
-	// If workspaceManager is configured, use host path; otherwise fall back to workspace name
+	// Determine where the workspace is mounted for this runner. This is a
+	// location, not an identity: a container sees /workspace regardless of
+	// which workspace it holds. The identity travels separately, in
+	// workspace_id and tenant_id below.
 	workspacePath := workspace.Name
 	if m.workspaceManager != nil {
 		if hostPath, err := m.workspaceManager.GetHostPath(ctx, session.WorkspaceID); err == nil && hostPath != "" {
@@ -2089,11 +2113,21 @@ func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.S
 	cmd := &pb.ServerCommand{
 		Payload: &pb.ServerCommand_AttachSession{
 			AttachSession: &pb.AttachSession{
-				SessionId:          session.ID,
-				WorkspacePath:      workspacePath,
-				ContextSnapshot:    session.ContextSnapshot,
-				AgentConfig:        agentConfig,
-				PendingPermissions: pendingPerms,
+				SessionId:     session.ID,
+				WorkspacePath: workspacePath,
+				// Identity, not location. workspace_path is "/workspace" for
+				// every container-mode session, so a runner keying content
+				// addressed storage on it would collide every session's chunks
+				// into one namespace.
+				WorkspaceId: workspace.ID,
+				TenantId:    stringValue(workspace.TenantID),
+				// The snapshot a previous runner left behind. The runner that
+				// made it is long gone, so the server is the only thing that
+				// can hand its id back.
+				WorkspaceManifestId: stringValue(session.WorkspaceManifestID),
+				ContextSnapshot:     session.ContextSnapshot,
+				AgentConfig:         agentConfig,
+				PendingPermissions:  pendingPerms,
 			},
 		},
 	}

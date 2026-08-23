@@ -1307,7 +1307,7 @@
   - [x] All providers implement Suspend/Resume
   - [x] Fallback strategy handling
   - [x] Capability declaration
-- [x] SnapshotProvider interface:
+- [x] ~~SnapshotProvider interface~~ (deleted in the 2026-08 wiring pass: zero implementations, zero call sites):
   - [x] Snapshot creation
   - [x] Snapshot restore
   - [x] Snapshot listing and deletion

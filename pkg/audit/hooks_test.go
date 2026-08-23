@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/chunlea/marionette/pkg/store"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -433,4 +435,57 @@ func TestResourceTypeConstants(t *testing.T) {
 	assert.Equal(t, "agent_config", ResourceTypeAgentConfig)
 	assert.Equal(t, "api_key", ResourceTypeAPIKey)
 	assert.Equal(t, "runner_token", ResourceTypeRunnerToken)
+}
+
+// TestEventBuilder_StampsTenantFromContext: an audit trail that cannot say
+// which tenant an action belonged to is not much of an audit trail, and no call
+// site should have to remember to pass it.
+func TestEventBuilder_StampsTenantFromContext(t *testing.T) {
+	t.Run("takes the request's tenant", func(t *testing.T) {
+		auditStore := NewMemoryStore()
+		logger := NewLogger(auditStore)
+		ctx := store.WithTenant(context.Background(), "tenant_a")
+
+		require.NoError(t, NewEvent("session.created").
+			WithSystemActor().
+			WithResource(ResourceTypeSession, "sess_1").
+			Log(ctx, logger))
+
+		result, err := auditStore.ListActionLogs(ctx, Filter{})
+		require.NoError(t, err)
+		require.Len(t, result.Events, 1)
+		assert.Equal(t, "tenant_a", result.Events[0].TenantID)
+	})
+
+	t.Run("an explicit tenant is not overwritten", func(t *testing.T) {
+		auditStore := NewMemoryStore()
+		logger := NewLogger(auditStore)
+		ctx := store.WithTenant(context.Background(), "tenant_a")
+
+		require.NoError(t, NewEvent("session.created").
+			WithSystemActor().
+			WithTenant("tenant_explicit").
+			WithResource(ResourceTypeSession, "sess_1").
+			Log(ctx, logger))
+
+		result, err := auditStore.ListActionLogs(ctx, Filter{})
+		require.NoError(t, err)
+		require.Len(t, result.Events, 1)
+		assert.Equal(t, "tenant_explicit", result.Events[0].TenantID)
+	})
+
+	t.Run("single-tenant leaves it empty", func(t *testing.T) {
+		auditStore := NewMemoryStore()
+		logger := NewLogger(auditStore)
+
+		require.NoError(t, NewEvent("session.created").
+			WithSystemActor().
+			WithResource(ResourceTypeSession, "sess_1").
+			Log(context.Background(), logger))
+
+		result, err := auditStore.ListActionLogs(context.Background(), Filter{})
+		require.NoError(t, err)
+		require.Len(t, result.Events, 1)
+		assert.Empty(t, result.Events[0].TenantID)
+	})
 }

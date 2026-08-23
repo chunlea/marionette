@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/chunlea/marionette/pkg/config"
 	"github.com/chunlea/marionette/pkg/id"
@@ -154,6 +156,11 @@ func (m *WorkspaceManager) Create(ctx context.Context, opts CreateWorkspaceOptio
 		annotations = []byte("{}")
 	}
 
+	tenantID, err := tenantFor(ctx, opts.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
 	ws := &store.Workspace{
 		ID:          wsID,
 		Name:        name,
@@ -161,7 +168,7 @@ func (m *WorkspaceManager) Create(ctx context.Context, opts CreateWorkspaceOptio
 		StorageType: storageType,
 		Mobility:    mobility,
 		DiskQuotaMB: diskQuotaMB,
-		TenantID:    opts.TenantID,
+		TenantID:    tenantID,
 		Labels:      labels,
 		Annotations: annotations,
 	}
@@ -224,6 +231,61 @@ func (m *WorkspaceManager) Update(ctx context.Context, workspaceID string, updat
 	}
 
 	return m.store.GetWorkspace(ctx, workspaceID)
+}
+
+// RecordSync records that a workspace's contents were captured into
+// content-addressed storage.
+//
+// storage_key, storage_size_bytes and last_synced_at have existed on the
+// workspace since the initial schema and nothing has ever written them, so a
+// resume had no way to find the manifest to restore from. This is the one call
+// the sync flow makes when a manifest commits.
+//
+// Deliberately not on WorkspaceManagerInterface: adding a method there would
+// break every hand-written fake in other lanes for no benefit, and the sync
+// flow holds the concrete manager.
+func (m *WorkspaceManager) RecordSync(ctx context.Context, workspaceID string, manifest *store.Manifest) (*store.Workspace, error) {
+	if manifest == nil {
+		return nil, &store.InvalidInputError{Field: "manifest", Message: "must not be nil"}
+	}
+	if manifest.ID == "" {
+		return nil, &store.InvalidInputError{Field: "manifest.id", Message: "must not be empty"}
+	}
+
+	ws, err := m.Get(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Pointing a workspace at another workspace's manifest would restore the
+	// wrong contents on the next resume, and would do it silently.
+	if manifest.WorkspaceID != ws.ID {
+		return nil, &store.InvalidInputError{
+			Field:   "manifest.workspace_id",
+			Message: fmt.Sprintf("manifest %s belongs to workspace %s, not %s", manifest.ID, manifest.WorkspaceID, ws.ID),
+		}
+	}
+
+	syncedAt := time.Now()
+	totalSize := manifest.TotalSize
+
+	updates := store.WorkspaceUpdates{
+		StorageKey:       &manifest.ID,
+		StorageSizeBytes: &totalSize,
+		LastSyncedAt:     &syncedAt,
+	}
+
+	if err := m.store.UpdateWorkspace(ctx, ws.ID, updates); err != nil {
+		return nil, err
+	}
+
+	m.logger.Info("workspace synced",
+		zap.String("workspace_id", ws.ID),
+		zap.String("manifest_id", manifest.ID),
+		zap.Int64("total_size", manifest.TotalSize),
+	)
+
+	return m.store.GetWorkspace(ctx, ws.ID)
 }
 
 // Delete soft-deletes a workspace.

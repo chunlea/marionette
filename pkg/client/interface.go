@@ -4,6 +4,7 @@ package client
 import (
 	"context"
 
+	"github.com/chunlea/marionette/pkg/server/admin/admintypes"
 	"github.com/chunlea/marionette/pkg/server/api/apitypes"
 )
 
@@ -40,8 +41,42 @@ type ScheduledTask = apitypes.ScheduledTask
 // Tunnel is an alias for apitypes.Tunnel.
 type Tunnel = apitypes.Tunnel
 
-// ListResult is an alias for the API's list envelope.
+// ListResult is an alias for the API's list envelope. The admin API answers
+// with the same envelope, so one type serves both.
 type ListResult[T any] = apitypes.ListResponse[T]
+
+// The admin API's resources. These alias admintypes for the same reason the
+// public ones alias apitypes: the SDK used to name pkg/store here, so it
+// promised callers columns the server withholds — every hash and encrypted
+// blob among them.
+
+// APIKey is an alias for admintypes.APIKey.
+type APIKey = admintypes.APIKey
+
+// RunnerToken is an alias for admintypes.RunnerToken.
+type RunnerToken = admintypes.RunnerToken
+
+// AgentConfig is an alias for admintypes.AgentConfig.
+type AgentConfig = admintypes.AgentConfig
+
+// ProviderConfig is an alias for admintypes.ProviderConfig.
+type ProviderConfig = admintypes.ProviderConfig
+
+// Profile is an alias for admintypes.Profile.
+type Profile = admintypes.Profile
+
+// AdminRunner is the operator's view of a runner, which unlike the public
+// Runner names the provider behind it.
+type AdminRunner = admintypes.Runner
+
+// Webhook is an alias for admintypes.Webhook.
+type Webhook = admintypes.Webhook
+
+// WebhookEvent is an alias for admintypes.WebhookEvent.
+type WebhookEvent = admintypes.WebhookEvent
+
+// ActionLog is an alias for admintypes.ActionLog.
+type ActionLog = admintypes.ActionLog
 
 // Client provides access to the Marionette API.
 type Client interface {

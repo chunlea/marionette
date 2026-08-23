@@ -1,164 +1,69 @@
-// Admin API types — hand-written, and knowingly so.
+// Admin API types — derived from the admin OpenAPI spec.
 //
-// Unlike the public API (see `./api`), the admin API still serializes database
-// models straight to JSON and has no generated OpenAPI document, so there is
-// nothing to derive these from. They are therefore the one remaining place in
-// the frontend where a server-side change can go unnoticed until runtime.
+// These used to be hand-written, because the admin API had no generated
+// document. It has one now (`pnpm generate:api`, checked for drift in CI), so
+// these are only short names for what the server actually sends.
 //
-// When the admin API gets DTOs and a generated spec, delete this file and
-// derive these the same way the public types are derived.
+// Add nothing here the server does not describe.
 
-import type { Labels } from './api'
+import type { components, operations } from './admin.gen'
+
+type Schemas = components['schemas']
 
 // API keys
-export interface APIKey {
-  id: string
-  name: string
-  key_prefix: string
-  scopes: string[]
-  labels: Labels
-  created_at: string
-  last_used_at?: string
-  revoked_at?: string
-}
-
-export interface CreateAPIKeyRequest {
-  name: string
-  scopes?: string[]
-  labels?: Labels
-}
-
+export type APIKey = Schemas['APIKey']
+export type CreateAPIKeyRequest = Schemas['CreateAPIKeyRequest']
 /** The raw token is shown once, at creation, and never again. */
-export interface CreateAPIKeyResponse {
-  key: APIKey
-  raw_token: string
-}
-
-export interface APIKeyList {
-  items: APIKey[]
-  next_cursor?: string
-}
+export type CreateAPIKeyResponse = Schemas['CreatedAPIKey']
+export type APIKeyList = Schemas['APIKeyList']
 
 // Agent configs
-export interface AgentConfig {
-  id: string
-  name: string
-  agent: string
-  model?: string
-  base_url?: string
-  is_default: boolean
-  labels: Labels
-  created_at: string
-  updated_at: string
-}
-
-export interface CreateAgentConfigRequest {
-  name: string
-  agent: string
-  api_key: string
-  model?: string
-  base_url?: string
-  is_default?: boolean
-  labels?: Labels
-}
-
-export interface UpdateAgentConfigRequest {
-  name?: string
-  api_key?: string
-  model?: string
-  base_url?: string
-  is_default?: boolean
-  labels?: Labels
-}
-
-export interface AgentConfigList {
-  items: AgentConfig[]
-  next_cursor?: string
-}
+export type AgentConfig = Schemas['AgentConfig']
+export type CreateAgentConfigRequest = Schemas['CreateAgentConfigRequest']
+export type UpdateAgentConfigRequest = Schemas['UpdateAgentConfigRequest']
+export type AgentConfigList = Schemas['AgentConfigList']
 
 // Provider configs
-export interface ProviderConfig {
-  id: string
-  name: string
-  provider: string
-  config: Record<string, unknown>
-  suspend_config: Record<string, unknown>
-  is_default: boolean
-  labels: Labels
-  created_at: string
-  updated_at: string
-}
+export type ProviderConfig = Schemas['ProviderConfig']
+export type CreateProviderConfigRequest = Schemas['CreateProviderConfigRequest']
+export type UpdateProviderConfigRequest = Schemas['UpdateProviderConfigRequest']
+export type ProviderConfigList = Schemas['ProviderConfigList']
 
-export interface CreateProviderConfigRequest {
-  name: string
-  provider: string
-  config?: Record<string, unknown>
-  suspend_config?: Record<string, unknown>
-  is_default?: boolean
-  labels?: Labels
-}
-
-export interface UpdateProviderConfigRequest {
-  name?: string
-  config?: Record<string, unknown>
-  suspend_config?: Record<string, unknown>
-  is_default?: boolean
-  labels?: Labels
-}
-
-export interface ProviderConfigList {
-  items: ProviderConfig[]
-  next_cursor?: string
-}
+// Profiles
+export type Profile = Schemas['Profile']
+export type CreateProfileRequest = Schemas['CreateProfileRequest']
+export type UpdateProfileRequest = Schemas['UpdateProfileRequest']
+export type ProfileList = Schemas['ProfileList']
 
 // Runner tokens
-export type RunnerTokenStatus = 'active' | 'rotating' | 'revoked' | 'expired'
+export type RunnerToken = Schemas['RunnerToken']
+export type RunnerTokenStatus = RunnerToken['status']
+export type CreateRunnerTokenRequest = Schemas['CreateRunnerTokenRequest']
+export type CreateRunnerTokenResponse = Schemas['CreatedRunnerToken']
+export type RunnerTokenList = Schemas['RunnerTokenList']
+export type RunnerTokensQueryParams = operations['getRunnerTokens']['parameters']['query']
 
-export interface RunnerToken {
-  id: string
-  token_prefix: string
-  runner_id?: string
-  pool_name: string
-  status: RunnerTokenStatus
-  rotation_deadline?: string
-  labels: Labels
-  created_at: string
-  created_by?: string
-  last_used_at?: string
-  expires_at?: string
-  revoked_at?: string
-  revoke_reason?: string
-}
+// Runners, as the operator sees them: unlike the public view, this one names
+// the provider behind each runner.
+export type AdminRunner = Schemas['Runner']
+export type AdminRunnerList = Schemas['RunnerList']
+export type SpawnRunnerRequest = Schemas['SpawnRunnerRequest']
 
-export interface RunnerTokenList {
-  items: RunnerToken[]
-  next_cursor?: string
-  total_count?: number
-}
+// Webhooks
+export type Webhook = Schemas['Webhook']
+export type WebhookList = Schemas['WebhookList']
+export type CreateWebhookRequest = Schemas['CreateWebhookRequest']
+export type CreateWebhookResponse = Schemas['CreatedWebhook']
+export type UpdateWebhookRequest = Schemas['UpdateWebhookRequest']
+export type RotatedWebhookSecret = Schemas['RotatedWebhookSecret']
+export type WebhookEvent = Schemas['WebhookEvent']
+export type WebhookEventList = Schemas['WebhookEventList']
 
-export interface CreateRunnerTokenRequest {
-  pool_name: string
-  labels?: Labels
-  expires_at?: string
-}
+// Audit trail
+export type ActionLog = Schemas['ActionLog']
+export type ActionLogList = Schemas['ActionLogList']
 
-export interface CreateRunnerTokenResponse {
-  token: RunnerToken
-  raw_token: string
-}
-
-export interface RunnerTokensQueryParams {
-  limit?: number
-  cursor?: string
-  pool_name?: string
-  status?: RunnerTokenStatus[]
-  include_revoked?: boolean
-}
-
-// Runners (admin view)
-export interface SpawnRunnerRequest {
-  name?: string
-  provider_config_id?: string
-  profile_id?: string
-  labels?: Labels
-}
+// Service
+export type AdminHealth = Schemas['Health']
+export type ServiceStatus = Schemas['ServiceStatus']
+export type Status = Schemas['Status']

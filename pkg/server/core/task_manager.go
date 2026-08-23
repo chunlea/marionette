@@ -54,6 +54,14 @@ var (
 	ErrPromptRequired           = errors.New("prompt is required")
 	ErrNoRunnerAttached         = errors.New("no runner attached to session")
 	ErrMaxRetriesExceeded       = errors.New("max retries exceeded")
+
+	// ErrDispatchRaceLost means another dispatcher moved the task first.
+	//
+	// It is not a failure: the task is running, which is what the caller
+	// wanted. Triggers that fire opportunistically swallow it; the explicit
+	// execute endpoint surfaces it, because a user asking to run an
+	// already-running task should be told so.
+	ErrDispatchRaceLost = errors.New("task was dispatched by someone else")
 )
 
 // CommandSender defines the interface for sending commands to runners.
@@ -72,6 +80,7 @@ type TaskManagerInterface interface {
 	Execute(ctx context.Context, taskID string) error
 	ReExecute(ctx context.Context, taskID string) error
 	DispatchNext(ctx context.Context, sessionID string) error
+	DispatchNextNow(ctx context.Context, sessionID string) error
 	CreateRun(ctx context.Context, taskID string) (*store.TaskRun, error)
 	ListRuns(ctx context.Context, taskID string, opts ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error)
 	OnTaskAccepted(ctx context.Context, runID string) error
@@ -103,6 +112,9 @@ type TaskManager struct {
 	background *backgroundTasks
 	logger     *zap.Logger
 
+	// redispatchMaxAttempts bounds automatic redispatch before a task parks.
+	redispatchMaxAttempts int
+
 	// dispatchLocks serialises DispatchNext per session.
 	//
 	// Creating a task both activates the session (which schedules a dispatch)
@@ -120,6 +132,14 @@ func (m *TaskManager) dispatchLock(sessionID string) *sync.Mutex {
 
 // TaskManagerOption is a functional option for TaskManager.
 type TaskManagerOption func(*TaskManager)
+
+// WithRedispatchMaxAttempts bounds how many consecutive failed dispatches a
+// task gets before automatic redispatch parks it.
+func WithRedispatchMaxAttempts(n int) TaskManagerOption {
+	return func(m *TaskManager) {
+		m.redispatchMaxAttempts = n
+	}
+}
 
 // WithTaskBackground supplies the shared background worker pool.
 // When unset, the manager creates its own.
@@ -157,6 +177,9 @@ func NewTaskManager(
 	}
 	if m.background == nil {
 		m.background = newBackgroundTasks(context.Background(), 0, logger)
+	}
+	if m.redispatchMaxAttempts <= 0 {
+		m.redispatchMaxAttempts = DefaultRedispatchMaxAttempts
 	}
 	return m
 }
@@ -218,11 +241,13 @@ func (m *TaskManager) Create(ctx context.Context, opts CreateTaskOptions) (*stor
 		annotations = []byte("{}")
 	}
 
-	// Use session's tenant ID if not specified
-	tenantID := opts.TenantID
-	if tenantID == nil {
-		tenantID = session.TenantID
+	// A task belongs to its session's tenant. The request context is checked
+	// against any explicit value first, so a caller cannot create a task in a
+	// tenant it is not acting for.
+	if _, err := tenantFor(ctx, opts.TenantID); err != nil {
+		return nil, err
 	}
+	tenantID := session.TenantID
 
 	// Create task
 	task := &store.Task{
@@ -285,6 +310,20 @@ func (m *TaskManager) Create(ctx context.Context, opts CreateTaskOptions) (*stor
 // flight is left alone: the next one goes out when that finishes. Returns nil
 // when there is nothing to dispatch - an idle session is not an error.
 func (m *TaskManager) DispatchNext(ctx context.Context, sessionID string) error {
+	return m.dispatchNext(ctx, sessionID, false)
+}
+
+// DispatchNextNow is DispatchNext for an edge trigger.
+//
+// A runner genuinely becoming available is new information, so it earns one
+// immediate attempt rather than waiting out a backoff timer set by an unrelated
+// failure. It does not override the parked state: that is the terminal one, and
+// only a human clears it.
+func (m *TaskManager) DispatchNextNow(ctx context.Context, sessionID string) error {
+	return m.dispatchNext(ctx, sessionID, true)
+}
+
+func (m *TaskManager) dispatchNext(ctx context.Context, sessionID string, ignoreBackoff bool) error {
 	// Held across the whole dispatch, including Execute: Execute commits the
 	// task as running before it sends, so a caller that waits here then sees
 	// the task in flight and correctly does nothing.
@@ -321,12 +360,35 @@ func (m *TaskManager) DispatchNext(ctx context.Context, sessionID string) error 
 	if next == nil {
 		return nil
 	}
+	// A parked task waits for a human; a backing-off task waits for its timer.
+	// Edge triggers get one free attempt, which is what ignoreBackoff means -
+	// a runner becoming available is new information.
+	if !eligibleForRedispatch(next, ignoreBackoff, time.Now()) {
+		m.logger.Debug("next pending task is not eligible for dispatch yet",
+			zap.String("session_id", sessionID),
+			zap.String("task_id", next.ID),
+		)
+		return nil
+	}
 
 	m.logger.Info("dispatching pending task",
 		zap.String("session_id", sessionID),
 		zap.String("task_id", next.ID),
 	)
-	return m.Execute(ctx, next.ID)
+
+	if err := m.Execute(ctx, next.ID); err != nil {
+		if errors.Is(err, ErrDispatchRaceLost) {
+			// Somebody else got there first, which is the outcome this call
+			// wanted anyway.
+			m.logger.Debug("another dispatcher won the race",
+				zap.String("session_id", sessionID),
+				zap.String("task_id", next.ID),
+			)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // dispatchScanLimit bounds how many pending tasks are considered when picking
@@ -536,14 +598,31 @@ func (m *TaskManager) dispatch(ctx context.Context, taskID string, opts dispatch
 			UpdatedAt: now,
 		}
 		if err := tx.CreateTaskRun(ctx, run); err != nil {
+			// UNIQUE(task_id, attempt) is the second guard, and the only one on
+			// the retry path: two racing retries compute the same attempt from
+			// the same retry_count, so the loser trips the constraint.
+			if errors.Is(err, store.ErrAlreadyExists) {
+				return ErrDispatchRaceLost
+			}
 			return err
 		}
 
 		updates := store.TaskUpdates{Status: stringPtr(TaskStatusRunning)}
 		if opts.incrementRetry {
 			updates.RetryCount = &retryCount
+		} else {
+			// Compare-and-set on the status. Two dispatchers can both read
+			// "pending" under READ COMMITTED; only one can write past this,
+			// and the loser's whole transaction rolls back. The in-memory
+			// per-session lock is now a contention optimisation rather than
+			// the thing correctness rests on - which matters the moment there
+			// is a second server process.
+			updates.ExpectedStatus = stringPtr(TaskStatusPending)
 		}
 		if err := tx.UpdateTask(ctx, taskID, updates); err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				return ErrDispatchRaceLost
+			}
 			return err
 		}
 
@@ -571,7 +650,15 @@ func (m *TaskManager) dispatch(ctx context.Context, taskID string, opts dispatch
 
 	if sendErr := m.cmdSender.SendCommand(runnerID, cmd); sendErr != nil {
 		m.unwindDispatch(ctx, taskID, run.ID, opts, sendErr)
+		m.recordDispatchFailure(ctx, taskID, sendErr)
 		return nil, sendErr
+	}
+
+	// The dispatch reached a runner, so whatever backoff earlier failures built
+	// up no longer describes anything.
+	if err := m.store.UpdateTask(ctx, taskID, store.TaskUpdates{ClearDispatchBackoff: true}); err != nil {
+		m.logger.Warn("could not clear the dispatch backoff",
+			zap.String("task_id", taskID), zap.Error(err))
 	}
 
 	m.logger.Info("task execution started",
