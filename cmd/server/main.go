@@ -334,56 +334,29 @@ func main() {
 		healthChecker.Register("grpc_connections", health.ConnectionManagerCheck(connManager))
 	}
 
-	// Create admin server options
-	var adminOpts []admin.Option
-	adminOpts = append(adminOpts, admin.WithHealthService(healthChecker))
+	// Create admin server options.
+	//
+	// The services themselves are assembled by buildAdminServices, which
+	// returns one value per admin.WithX option so a test can assert that the
+	// production binary attaches all of them. Wiring by append is how
+	// provider-configs came to answer 501 for the life of the project.
+	adminOpts := buildAdminServices(adminDeps{
+		store:       storeOrNil(dbStore),
+		app:         app,
+		apiKeys:     apiKeySvc,
+		crypto:      initCredentialCrypto(secrets, dbStore, logger),
+		health:      healthChecker,
+		streamMgr:   streamMgr,
+		connManager: connManager,
+		logger:      logger,
+	}).options()
 
 	// Add metrics middleware to admin server (if enabled)
 	if metricsRegistry != nil {
 		adminOpts = append(adminOpts, admin.WithMiddleware(metrics.HTTPMiddleware(metricsRegistry)))
 	}
 
-	if apiKeySvc != nil {
-		// Create adapter for admin API using existing API key service
-		apiKeyAdapter := admin.NewAPIKeyAdapter(apiKeySvc)
-		adminOpts = append(adminOpts, admin.WithAPIKeyService(apiKeyAdapter))
-		logger.Info("API key service wired to Admin API")
-	}
 	if app != nil {
-		adminOpts = append(adminOpts, admin.WithSessionActivator(app.Sessions))
-		logger.Info("Session activator wired to Admin API")
-
-		// Without this the admin runner endpoints answered 501 and no managed
-		// runner could ever be spawned through the API, which is why nothing
-		// recorded runners.provider_instance_id in the first place.
-		adminOpts = append(adminOpts, admin.WithRunnerAdminService(
-			&runnerAdminAdapter{provisioner: app.RunnerProvisioner},
-		))
-		logger.Info("Runner admin service wired to Admin API")
-	}
-	if dbStore != nil {
-		// Create action log service adapter for admin API
-		actionLogAdapter := admin.NewActionLogStoreAdapter(dbStore)
-		adminOpts = append(adminOpts, admin.WithActionLogService(actionLogAdapter))
-		logger.Info("Action log service wired to Admin API")
-
-		// Create runner token service for admin API
-		runnerTokenAdapter := admin.NewRunnerTokenAdapter(auth.NewRunnerTokenService(dbStore, id.RunnerToken))
-		adminOpts = append(adminOpts, admin.WithRunnerTokenAdminService(runnerTokenAdapter))
-		logger.Info("Runner token service wired to Admin API")
-
-		// Create profile service for admin API
-		profileAdapter := admin.NewProfileAdapter(dbStore)
-		adminOpts = append(adminOpts, admin.WithProfileService(profileAdapter))
-		logger.Info("Profile service wired to Admin API")
-	}
-	if app != nil {
-		// The webhook manager and its integration are built by core.Wire so the
-		// managers get them at construction time instead of through setters.
-		webhookAdapter := admin.NewWebhookAdapter(app.Webhooks)
-		adminOpts = append(adminOpts, admin.WithWebhookService(webhookAdapter))
-		logger.Info("Webhook service wired to Admin API")
-
 		// Start webhook delivery job
 		webhookDeliveryJob = jobs.NewWebhookDeliveryJob(app.Webhooks, jobs.WebhookDeliveryJobConfig{
 			Interval:  5 * time.Second,
@@ -407,26 +380,6 @@ func main() {
 			}
 		}
 	}
-	if streamMgr != nil {
-		// Create streams handler for admin API
-		// Pass connManager to enable sending StartDesktopStream commands to agents
-		streamsHandler := admin.NewStreamsHandler(streamMgr, connManager, logger)
-		adminOpts = append(adminOpts, admin.WithStreamsHandler(streamsHandler))
-		logger.Info("Streams handler wired to Admin API")
-
-		// Create signaling handler for WebRTC
-		sfuHandler := streamMgr.GetSignalingHandler()
-		if sfuHandler != nil {
-			signalingHandler := admin.NewSignalingHandler(
-				sfuHandler,
-				admin.DefaultSignalingConfig(),
-				logger,
-			)
-			adminOpts = append(adminOpts, admin.WithSignalingHandler(signalingHandler))
-			logger.Info("Signaling handler wired to Admin API")
-		}
-	}
-
 	// The dashboard is served by the admin server but calls a relative
 	// /api/v1, which lives on the public API port. Forwarding that prefix
 	// gives the browser one origin: no CORS, no build-time URL baking, and
@@ -733,6 +686,35 @@ func runnerServerURL(cfg *config.Config, logger *zap.Logger) string {
 		zap.String("configure", "providers.docker.isolation.server_url"),
 	)
 	return addr
+}
+
+// initCredentialCrypto builds the envelope crypto the admin agent-config
+// routes encrypt API keys with.
+//
+// It returns nil rather than failing startup when there is no key: the rest of
+// the server runs fine without agent configs, and buildAdminServices leaves
+// those routes unwired rather than storing a credential in plaintext.
+//
+// It is a separate Service instance from the ones chunk GC and log archiving
+// build. They share the KEK and the DEK table, so the only cost is a second
+// data-key cache; concurrent creation of the same DEK is already handled in
+// pkg/cryptoutil.
+func initCredentialCrypto(
+	secrets *config.Secrets,
+	dbStore *postgres.Store,
+	logger *zap.Logger,
+) secretEncryptor {
+	if dbStore == nil || secrets == nil || secrets.EncryptionKey == "" {
+		return nil
+	}
+
+	svc, err := cryptoutil.NewService(secrets.EncryptionKey, postgres.NewDEKStore(dbStore), id.DataKey)
+	if err != nil {
+		logger.Error("could not build the credential crypto service; agent config routes stay disabled",
+			zap.Error(err))
+		return nil
+	}
+	return svc
 }
 
 // initChunkGC builds the content-addressed storage garbage collector.
