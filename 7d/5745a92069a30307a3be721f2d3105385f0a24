@@ -1,0 +1,31 @@
+docs/concepts/sessions-tasks.md
+  s_30fb41c4a911b8::t_420246907d9c51 97-98,104-116
+docs/getting-started/installation.md
+  s_30fb41c4a911b8::t_a7ae5ba242e335 20-22,31-38
+docs/roadmap.md
+  s_b1ee0c9aba1316::t_0df5efcf0228de 1310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "7d5745a92069a30307a3be721f2d3105385f0a24",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
