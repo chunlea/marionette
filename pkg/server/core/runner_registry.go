@@ -74,6 +74,14 @@ func (r *RunnerRegistry) Register(ctx context.Context, req *RegisterRequest) (*R
 		zap.Any("runner_id", tokenInfo.RunnerID),
 	)
 
+	// Registration is the first thing a runner does, before it has a stream to
+	// carry a tenant on, so bind it here from the token that authorised it.
+	// Without this the runner row is written with a tenant nobody is acting
+	// for, which multi-tenant mode refuses outright.
+	if tokenInfo.TenantID != nil && *tokenInfo.TenantID != "" {
+		ctx = store.WithTenant(ctx, *tokenInfo.TenantID)
+	}
+
 	// Check if token is already bound to a runner
 	if tokenInfo.RunnerID != nil && *tokenInfo.RunnerID != "" {
 		return r.handleBoundToken(ctx, req, tokenInfo)

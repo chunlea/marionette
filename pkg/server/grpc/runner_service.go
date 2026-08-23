@@ -247,6 +247,16 @@ func (s *RunnerService) StreamLogs(stream grpc.ClientStreamingServer[pb.StreamLo
 	var sessionID string
 	var logsReceived, logsStored, logsDropped int64
 
+	// bindTenant binds the runner's tenant once its identity is known, so the
+	// log rows are written under the same policies everything else is. Logs are
+	// the highest-volume tenant-bearing table; writing them tenantless would
+	// make them the one place isolation did not reach.
+	bindTenant := func(runner *store.Runner) {
+		if runner != nil && runner.TenantID != nil && *runner.TenantID != "" {
+			ctx = store.WithTenant(ctx, *runner.TenantID)
+		}
+	}
+
 	// Batch for efficient inserts
 	batch := make([]*store.Log, 0, DefaultLogBatchSize)
 
@@ -320,6 +330,16 @@ func (s *RunnerService) StreamLogs(stream grpc.ClientStreamingServer[pb.StreamLo
 				zap.String("session_id", sessionID),
 				zap.String("task_id", init.GetTaskId()),
 			)
+			if s.store != nil {
+				if runner, err := s.store.GetRunner(ctx, runnerID); err == nil {
+					bindTenant(runner)
+				} else {
+					s.logger.Warn("could not resolve the runner's tenant for log streaming",
+						zap.String("runner_id", runnerID),
+						zap.Error(err),
+					)
+				}
+			}
 			// TODO: Validate runner is authorized for this session
 			continue
 		}
