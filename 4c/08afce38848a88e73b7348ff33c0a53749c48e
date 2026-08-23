@@ -1,0 +1,21 @@
+pkg/client/admin_runner_token_decode_test.go
+  s_476c758fe5506c::t_512d80d722700d 17-18,26-27
+pkg/client/gen_runner_token_fixtures.go
+  s_476c758fe5506c::t_e167c66193bf8c 1-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "4c08afce38848a88e73b7348ff33c0a53749c48e",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
