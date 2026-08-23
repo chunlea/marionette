@@ -1,0 +1,21 @@
+.gitignore
+  s_922ee36a2ef105::t_71420721463678 3-4
+Makefile
+  s_922ee36a2ef105::t_781954f7fa2a66 4,20-40,42,180,294-325,328-329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "705d812799e70e4a640fd44e2c428ee6cf4e68a9",
+  "prompts": {},
+  "sessions": {
+    "s_922ee36a2ef105": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e4155e7b-3074-4ac3-9061-4d234659107f",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
