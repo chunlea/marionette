@@ -1,0 +1,29 @@
+Makefile
+  s_30fb41c4a911b8::t_802583ba1b1626 2,193-210,214,223,228-232
+pkg/store/postgres/store_test.go
+  s_e995f4552d48c1::t_7cdc563b6e1c4a 6,23-64,68-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "e3c17142635f682f4d588ebc412b981bba8b8f5a",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
