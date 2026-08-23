@@ -2307,37 +2307,16 @@ func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.S
 		}
 	}
 
-	// Get pending permission responses (for resumed sessions)
-	// Check if session was previously suspended (SuspendedAt is set)
-	var pendingPerms []*pb.PendingPermissionResponse
-	if session.SuspendedAt != nil {
-		perms, err := m.store.ListPermissionRequests(ctx, store.ListPermissionRequestsOptions{
-			SessionID: &session.ID,
-			Status:    []string{"approved", "denied"},
-		})
-		if err != nil {
-			m.logger.Warn("failed to get pending permissions",
-				zap.String("session_id", session.ID),
-				zap.Error(err),
-			)
-		} else {
-			for _, p := range perms.Items {
-				// Only include permissions that were responded to while suspended
-				if p.RespondedAt != nil && p.RespondedAt.After(*session.SuspendedAt) {
-					pendingPerms = append(pendingPerms, &pb.PendingPermissionResponse{
-						RequestId:         p.ID,
-						Approved:          p.Status == "approved",
-						Reason:            stringValue(p.ResponseReason),
-						RespondedBy:       stringValue(p.RespondedBy),
-						RespondedAtUnixMs: p.RespondedAt.UnixMilli(),
-						Tool:              p.Tool,
-						Action:            p.Action,
-						TaskId:            p.TaskID,
-					})
-				}
-			}
-		}
-	}
+	// Answers the runner has not seen yet.
+	//
+	// The predicate is delivery, not the suspend timestamp. Keying on
+	// "responded after the session suspended" dropped every response that was
+	// lost while the session was still ACTIVE - a failed send, a full command
+	// queue, a runner on another replica - because those were recorded before
+	// the suspend. The agent then sat on the gate until the permission timeout
+	// suspended the session, and the task re-ran from the beginning. See
+	// migration 015.
+	pendingPerms, undelivered := m.undeliveredPermissions(ctx, session.ID)
 
 	// Build and send the command
 	cmd := &pb.ServerCommand{
@@ -2366,13 +2345,81 @@ func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.S
 		return err
 	}
 
+	// Only now: the attach carried them, so the runner has them. Marking
+	// before the send would lose the answers again if the send failed, which
+	// is the exact bug this replaces.
+	m.markPermissionsDelivered(ctx, undelivered)
+
 	m.logger.Debug("AttachSession command sent",
 		zap.String("session_id", session.ID),
 		zap.String("runner_id", runnerID),
-		zap.Int("pending_permissions", len(pendingPerms)),
+		zap.Int("replayed_permissions", len(pendingPerms)),
 	)
 
 	return nil
+}
+
+// undeliveredPermissions collects the answered permission requests this
+// session's runner has not received, as the wire form plus their ids.
+//
+// A response is replayed at most once: the attach that carries it marks it
+// delivered, so an answer to a task that has long since finished cannot come
+// back on every subsequent attach.
+func (m *SessionManager) undeliveredPermissions(
+	ctx context.Context,
+	sessionID string,
+) ([]*pb.PendingPermissionResponse, []string) {
+	perms, err := m.store.ListPermissionRequests(ctx, store.ListPermissionRequestsOptions{
+		SessionID: &sessionID,
+		Status:    []string{PermissionStatusApproved, PermissionStatusDenied},
+	})
+	if err != nil {
+		// Attaching without the replay is worse than not attaching at all only
+		// if the runner is waiting on one of these, and it cannot be told
+		// either way from here. Log and continue: the attach itself matters
+		// more, and the permission timeout enforcer is still the backstop.
+		m.logger.Warn("could not read undelivered permission responses",
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+		return nil, nil
+	}
+
+	var pending []*pb.PendingPermissionResponse
+	var ids []string
+	for _, p := range perms.Items {
+		if p.RespondedAt == nil || p.DeliveredAt != nil {
+			continue
+		}
+		pending = append(pending, &pb.PendingPermissionResponse{
+			RequestId:         p.ID,
+			Approved:          p.Status == PermissionStatusApproved,
+			Reason:            stringValue(p.ResponseReason),
+			RespondedBy:       stringValue(p.RespondedBy),
+			RespondedAtUnixMs: p.RespondedAt.UnixMilli(),
+			Tool:              p.Tool,
+			Action:            p.Action,
+			TaskId:            p.TaskID,
+		})
+		ids = append(ids, p.ID)
+	}
+	return pending, ids
+}
+
+// markPermissionsDelivered records that the runner now has these answers.
+//
+// Best effort per id: a failure costs one redundant replay on the next attach,
+// which the agent ignores because it keys responses by request id.
+func (m *SessionManager) markPermissionsDelivered(ctx context.Context, permIDs []string) {
+	now := time.Now()
+	for _, permID := range permIDs {
+		if err := m.store.UpdatePermissionRequest(ctx, permID, store.PermissionRequestUpdates{
+			DeliveredAt: &now,
+		}); err != nil {
+			m.logger.Warn("could not record permission delivery; it may be replayed once more",
+				zap.String("perm_id", permID), zap.Error(err))
+		}
+	}
 }
 
 // stringValue returns the string value or empty string if nil.

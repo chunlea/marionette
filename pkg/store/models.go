@@ -335,9 +335,13 @@ type PermissionRequest struct {
 	RespondedBy         *string    `json:"responded_by,omitempty"`
 	ResponseReason      *string    `json:"response_reason,omitempty"`
 	RespondedAt         *time.Time `json:"responded_at,omitempty"`
-	TenantID            *string    `json:"tenant_id,omitempty"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	// DeliveredAt is when the response reached a runner. NULL after a send
+	// that failed, which is what makes the response eligible for replay on the
+	// next attach. See migration 015.
+	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+	TenantID    *string    `json:"tenant_id,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // PermissionRequestUpdates contains fields that can be updated on a permission request.
@@ -346,6 +350,7 @@ type PermissionRequestUpdates struct {
 	RespondedBy    *string
 	ResponseReason *string
 	RespondedAt    *time.Time
+	DeliveredAt    *time.Time
 }
 
 // APIKey represents an API authentication key.

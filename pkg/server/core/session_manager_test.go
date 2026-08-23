@@ -338,6 +338,40 @@ func (s *testSessionStore) SetTask(task *store.Task) {
 	s.tasks[task.ID] = task
 }
 
+// GetPermissionRequest and UpdatePermissionRequest are behavioural here, not
+// stubs: the attach path now records that it delivered a response, and a
+// no-op update would let the "replayed at most once" property pass untested.
+func (s *testSessionStore) GetPermissionRequest(_ context.Context, permID string) (*store.PermissionRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	req, ok := s.permissionRequests[permID]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return req, nil
+}
+
+func (s *testSessionStore) UpdatePermissionRequest(_ context.Context, permID string, updates store.PermissionRequestUpdates) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	req, ok := s.permissionRequests[permID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if updates.Status != nil {
+		req.Status = *updates.Status
+	}
+	if updates.RespondedAt != nil {
+		req.RespondedAt = updates.RespondedAt
+	}
+	if updates.DeliveredAt != nil {
+		req.DeliveredAt = updates.DeliveredAt
+	}
+	return nil
+}
+
 func (s *testSessionStore) SetPermissionRequest(req *store.PermissionRequest) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1351,6 +1385,93 @@ func TestSessionManager_Activate_ResumingWithPendingPermissions(t *testing.T) {
 	assert.True(t, attachCmd.PendingPermissions[0].Approved)
 	assert.Equal(t, "approved for testing", attachCmd.PendingPermissions[0].Reason)
 	assert.Equal(t, "user@example.com", attachCmd.PendingPermissions[0].RespondedBy)
+}
+
+// TestSessionManager_Activate_ReplaysUndeliveredResponse is the regression for
+// the answer that used to vanish.
+//
+// The permission was answered while the session was ACTIVE and the send to the
+// runner failed, so the response was recorded before any suspend. The old
+// filter asked "responded after suspended_at" and this one is not, so it was
+// never replayed: the agent stayed on the gate until the permission timeout
+// suspended the session, and the task then re-ran from the beginning.
+func TestSessionManager_Activate_ReplaysUndeliveredResponse(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+
+	// Answered an hour BEFORE the suspend, which is what makes this the case
+	// the suspend-keyed filter dropped.
+	respondedAt := time.Now().Add(-2 * time.Hour)
+	suspendedAt := time.Now().Add(-1 * time.Hour)
+
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "/workspace/test"})
+	s.SetSession(&store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusResuming,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+		IsBYOK:      true,
+		SuspendedAt: &suspendedAt,
+	})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
+	s.SetPermissionRequest(&store.PermissionRequest{
+		ID:          "perm_lost",
+		SessionID:   "sess_123",
+		Status:      PermissionStatusApproved,
+		RespondedAt: &respondedAt,
+		// DeliveredAt nil: the send failed.
+	})
+
+	require.NoError(t, manager.Activate(context.Background(), "sess_123", "run_123"))
+
+	attachCmd := cmdSender.lastCommand.GetAttachSession()
+	require.NotNil(t, attachCmd)
+	require.Len(t, attachCmd.PendingPermissions, 1,
+		"a response the runner never received must be replayed whenever it was answered")
+	assert.Equal(t, "perm_lost", attachCmd.PendingPermissions[0].RequestId)
+
+	// And it is marked delivered, so it is replayed once rather than on every
+	// attach for the rest of the session's life.
+	stored, err := s.GetPermissionRequest(context.Background(), "perm_lost")
+	require.NoError(t, err)
+	assert.NotNil(t, stored.DeliveredAt, "the attach that carried it must record the delivery")
+}
+
+// TestSessionManager_Activate_SkipsDeliveredResponse: the runner already has
+// this answer. Replaying it forever would be harmless at the agent, which keys
+// by request id, and noise everywhere else.
+func TestSessionManager_Activate_SkipsDeliveredResponse(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s := setupSessionManagerTestWithCmdSender(cmdSender)
+
+	respondedAt := time.Now().Add(-30 * time.Minute)
+	deliveredAt := time.Now().Add(-29 * time.Minute)
+	suspendedAt := time.Now().Add(-1 * time.Hour)
+
+	s.SetWorkspace(&store.Workspace{ID: "ws_123", Name: "/workspace/test"})
+	s.SetSession(&store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusResuming,
+		WorkspaceID: "ws_123",
+		Agent:       "claude",
+		IsBYOK:      true,
+		SuspendedAt: &suspendedAt,
+	})
+	s.SetRunner(&store.Runner{ID: "run_123", Status: StatusIdle})
+	s.SetPermissionRequest(&store.PermissionRequest{
+		ID:          "perm_seen",
+		SessionID:   "sess_123",
+		Status:      PermissionStatusApproved,
+		RespondedAt: &respondedAt,
+		DeliveredAt: &deliveredAt,
+	})
+
+	require.NoError(t, manager.Activate(context.Background(), "sess_123", "run_123"))
+
+	attachCmd := cmdSender.lastCommand.GetAttachSession()
+	require.NotNil(t, attachCmd)
+	assert.Empty(t, attachCmd.PendingPermissions,
+		"an answer the runner already has must not be replayed")
 }
 
 func TestSessionManager_Activate_NoCmdSender(t *testing.T) {

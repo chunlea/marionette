@@ -15,7 +15,7 @@ import (
 // PermissionRequest column list for SELECT queries.
 const permissionRequestColumns = `id, original_request_id, session_id, task_id, run_id, tool, action, context,
 	risk_level, status, suspend_after_seconds, responded_by, response_reason, responded_at,
-	tenant_id, created_at, updated_at`
+	delivered_at, tenant_id, created_at, updated_at`
 
 // CreatePermissionRequest creates a new permission request.
 func (s *Store) CreatePermissionRequest(ctx context.Context, req *store.PermissionRequest) error {
@@ -209,6 +209,11 @@ func updatePermissionRequest(ctx context.Context, q querier, reqID string, updat
 		args = append(args, *updates.RespondedAt)
 		argNum++
 	}
+	if updates.DeliveredAt != nil {
+		setClauses = append(setClauses, fmt.Sprintf("delivered_at = $%d", argNum))
+		args = append(args, *updates.DeliveredAt)
+		argNum++
+	}
 
 	if len(setClauses) == 0 {
 		return nil
@@ -237,6 +242,7 @@ func scanPermissionRequest(row pgx.Row, identifier string) (*store.PermissionReq
 	err := row.Scan(
 		&p.ID, &p.OriginalRequestID, &p.SessionID, &p.TaskID, &p.RunID, &p.Tool, &p.Action, &p.Context,
 		&p.RiskLevel, &p.Status, &p.SuspendAfterSeconds, &p.RespondedBy, &p.ResponseReason, &p.RespondedAt,
+		&p.DeliveredAt,
 		&p.TenantID, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
@@ -253,6 +259,7 @@ func scanPermissionRequestFromRows(rows pgx.Rows) (*store.PermissionRequest, err
 	err := rows.Scan(
 		&p.ID, &p.OriginalRequestID, &p.SessionID, &p.TaskID, &p.RunID, &p.Tool, &p.Action, &p.Context,
 		&p.RiskLevel, &p.Status, &p.SuspendAfterSeconds, &p.RespondedBy, &p.ResponseReason, &p.RespondedAt,
+		&p.DeliveredAt,
 		&p.TenantID, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {

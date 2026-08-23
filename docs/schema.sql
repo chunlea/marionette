@@ -427,6 +427,7 @@ CREATE TABLE public.permission_requests (
     tenant_id text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    delivered_at timestamp with time zone,
     CONSTRAINT valid_permission_status CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'canceled'::text]))),
     CONSTRAINT valid_risk_level CHECK ((risk_level = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
 );
@@ -1266,6 +1267,12 @@ CREATE INDEX idx_permission_requests_task ON public.permission_requests USING bt
 --
 
 CREATE INDEX idx_permission_requests_tenant ON public.permission_requests USING btree (tenant_id);
+
+--
+-- Name: idx_permission_requests_undelivered; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_permission_requests_undelivered ON public.permission_requests USING btree (session_id) WHERE ((responded_at IS NOT NULL) AND (delivered_at IS NULL));
 
 --
 -- Name: idx_profiles_name_unique; Type: INDEX; Schema: public; Owner: -
