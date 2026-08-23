@@ -1599,334 +1599,153 @@ Logs use tiered storage: hot data in PostgreSQL, cold data in object storage.
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 
-  Hot (PostgreSQL)  ───7d───>  Cold (S3)  ───90d───>  Delete
-  - Partitioned by day         - JSONL.zst compressed
-  - Real-time queries          - On-demand retrieval
-  - Streaming to clients
+  Hot (PostgreSQL)  ──────>  Cold (object store)  ──────>  Delete
+  - Partitioned by day       - NDJSON in zstd frames
+  - Real-time queries        - Read through the same endpoints
+  - Streaming to clients     - One object per session
+
+  The two arrows are storage.log_archive.retention_days and
+  storage.log_archive.retention. Both default to off.
 ```
 
-## Log Archiver Job (Memory-Efficient)
+## Log Archiving
 
-The log archiver uses cursor-based pagination and streaming to avoid loading all logs into memory.
+Built in round 3 (`pkg/jobs/log_archiver.go`, `pkg/storage/logarchive`). What
+follows is the implementation, not a sketch of one.
 
-```go
-// pkg/jobs/log_archiver.go
+### Why it exists
 
-type LogArchiver struct {
-    store   store.Store
-    storage storage.StorageProvider
-    crypto  *crypto.Service
-    config  LogArchiverConfig
-}
+`logs` is partitioned by day and nothing ever removed a partition. Round 1 wired
+the partition maintainer with `RetentionDays` pinned at zero, because a daily
+partition is the only copy of the logs in it: retention without a second copy is
+deletion on a timer. Archiving makes the second copy, and the retention check
+asks per partition whether it exists.
 
-type LogArchiverConfig struct {
-    RetentionHot  time.Duration // PostgreSQL: 7 days
-    RetentionCold time.Duration // S3: 90 days
-    BatchSize     int           // Sessions per run
-    LogBatchSize  int           // Logs per query (default: 1000)
-}
+### The order, which is the whole design
 
-func (j *LogArchiver) Run(ctx context.Context) error {
-    // 1. Find sessions to archive (terminated > RetentionHot ago)
-    sessions, _ := j.store.GetSessionsForLogArchive(ctx, j.config.RetentionHot)
-
-    for _, session := range sessions {
-        if err := j.archiveSessionLogs(ctx, session); err != nil {
-            log.Error("failed to archive logs", "session", session.ID, "err", err)
-            continue // Don't fail entire job
-        }
-    }
-
-    // 2. Drop old partitions
-    j.dropOldPartitions(ctx)
-
-    // 3. Clean expired S3 archives
-    j.cleanupExpiredArchives(ctx)
-
-    return nil
-}
-
-// archiveSessionLogs uses streaming to avoid loading all logs into memory
-func (j *LogArchiver) archiveSessionLogs(ctx context.Context, session *store.Session) error {
-    // Count logs first to check if any exist
-    count, err := j.store.CountSessionLogs(ctx, session.ID)
-    if err != nil || count == 0 {
-        return err
-    }
-
-    key := fmt.Sprintf("logs/%s/%s.jsonl.zst", session.TenantID, session.ID)
-
-    // Use io.Pipe for concurrent streaming: DB -> compress -> encrypt -> S3
-    pr, pw := io.Pipe()
-
-    var uploadErr error
-    uploadDone := make(chan struct{})
-
-    // Uploader goroutine
-    go func() {
-        defer close(uploadDone)
-        uploadErr = j.storage.Upload(ctx, key, pr, storage.UploadOptions{
-            ContentType: "application/x-zstd",
-        })
-    }()
-
-    // Producer: paginate through logs, stream to pipe
-    func() {
-        defer pw.Close()
-
-        zw, _ := zstd.NewWriter(pw)
-        defer zw.Close()
-
-        enc := json.NewEncoder(zw)
-
-        // Cursor-based pagination - never load all logs at once
-        var cursor string
-        batchSize := j.config.LogBatchSize
-        if batchSize == 0 {
-            batchSize = 1000
-        }
-
-        for {
-            // Fetch batch of logs using cursor (sequence-based)
-            logs, nextCursor, err := j.store.GetSessionLogsBatch(ctx, session.ID, cursor, batchSize)
-            if err != nil {
-                log.Error("failed to fetch logs", "session", session.ID, "err", err)
-                return
-            }
-
-            if len(logs) == 0 {
-                break
-            }
-
-            // Stream each log (don't accumulate in memory)
-            for _, logEntry := range logs {
-                if err := enc.Encode(logEntry); err != nil {
-                    log.Error("failed to encode log", "err", err)
-                    return
-                }
-            }
-
-            if nextCursor == "" {
-                break
-            }
-            cursor = nextCursor
-        }
-    }()
-
-    // Wait for upload to complete
-    <-uploadDone
-    if uploadErr != nil {
-        return uploadErr
-    }
-
-    // Record archive metadata
-    j.store.CreateLogArchive(ctx, &store.LogArchive{
-        SessionID:  session.ID,
-        TenantID:   session.TenantID,
-        StorageKey: key,
-        LogCount:   count,
-        ExpiresAt:  time.Now().Add(j.config.RetentionCold),
-    })
-
-    // Delete logs from PostgreSQL (in batches to avoid long locks)
-    return j.store.DeleteSessionLogsBatched(ctx, session.ID, 10000)
-}
+```
+write the object  ->  commit the log_archives row  ->  delete the rows
 ```
 
-### Store Interface for Paginated Logs
+A crash anywhere in that sequence leaves rows that are in both places, never
+rows that are in neither.
 
-```go
-// pkg/store/logs.go
+| Crash point | State | How it converges |
+|-------------|-------|------------------|
+| Before the object lands | Rows intact, no archive | Next pass writes the same object again |
+| After the object, before the row | Orphan object, rows intact | Next pass rewrites the same key - it is derived from the count already archived - and commits |
+| After the row, before the delete | Rows duplicated on disk | Retrieval serves each line once; next pass finishes the delete |
 
-// GetSessionLogsBatch returns logs with cursor-based pagination
-// cursor is the last sequence number seen (empty for first page)
-// Returns logs, next cursor, error
-func (s *Store) GetSessionLogsBatch(
-    ctx context.Context,
-    sessionID string,
-    cursor string,
-    limit int,
-) ([]Log, string, error) {
-    query := `
-        SELECT id, task_id, run_id, stream, level, content, sequence,
-               timestamp_unix_ms, metadata
-        FROM logs
-        WHERE session_id = $1
-    `
-    args := []interface{}{sessionID}
+Two details make it exact. The delete stops at the full
+`(created_at, sequence, id)` of the last archived row rather than at its
+timestamp, because log rows share timestamps and a row arriving on the same
+microsecond would otherwise be deleted having never been archived. And the read
+holds a lag window (default 5 minutes) back from the present, so a row written
+by a transaction that opened before the scan cannot land underneath the
+boundary at all.
 
-    if cursor != "" {
-        query += ` AND sequence > $2`
-        args = append(args, cursor)
-    }
+### The object
 
-    query += ` ORDER BY sequence ASC LIMIT $` + strconv.Itoa(len(args)+1)
-    args = append(args, limit+1) // Fetch one extra to detect if more exist
+One object per session, keyed `logs/{tenant}/{session}/{records}.mla`, where
+`{records}` is how many records were already archived before the pass that wrote
+it. Extending an archive therefore writes a new object and leaves the old one
+intact until the row points at the new one; the key is deterministic, so a retry
+overwrites its own abandoned attempt rather than accumulating one per attempt.
 
-    rows, err := s.db.QueryContext(ctx, query, args...)
-    if err != nil {
-        return nil, "", err
-    }
-    defer rows.Close()
+The payload is a sequence of length-prefixed frames:
 
-    var logs []Log
-    for rows.Next() {
-        var log Log
-        if err := rows.Scan(&log.ID, &log.TaskID, &log.RunID, &log.Stream,
-            &log.Level, &log.Content, &log.Sequence, &log.TimestampUnixMs,
-            &log.Metadata); err != nil {
-            return nil, "", err
-        }
-        logs = append(logs, log)
-    }
-
-    // Determine next cursor
-    var nextCursor string
-    if len(logs) > limit {
-        nextCursor = strconv.FormatInt(logs[limit-1].Sequence, 10)
-        logs = logs[:limit] // Remove extra element
-    }
-
-    return logs, nextCursor, nil
-}
-
-// DeleteSessionLogsBatched deletes logs in batches to avoid long locks
-func (s *Store) DeleteSessionLogsBatched(ctx context.Context, sessionID string, batchSize int) error {
-    for {
-        result, err := s.db.ExecContext(ctx, `
-            DELETE FROM logs
-            WHERE id IN (
-                SELECT id FROM logs
-                WHERE session_id = $1
-                LIMIT $2
-            )
-        `, sessionID, batchSize)
-        if err != nil {
-            return err
-        }
-
-        affected, _ := result.RowsAffected()
-        if affected == 0 {
-            break
-        }
-
-        // Small sleep to allow other transactions
-        time.Sleep(10 * time.Millisecond)
-    }
-    return nil
-}
+```
+"MLA1"
+repeat: uvarint payload length, then payload
+payload: zstd(NDJSON of store.Log), then AES-256-GCM if encryption is on
 ```
 
-## Retrieving Archived Logs (Streaming)
+Framed rather than one zstd stream, for three reasons. Writing is
+memory-bounded - one frame at a time, uploaded through a pipe. Reading is too,
+which the retrieval endpoint needs because it pages through archives it did not
+size. And extending an archive copies the existing frames through as opaque
+bytes, without decrypting a history that may be far larger than the addition.
 
-```go
-// GetSessionLogs returns logs, streaming from archive if needed
-// For large archives, use GetSessionLogsStream instead
-func (s *LogService) GetSessionLogs(ctx context.Context, sessionID string) ([]Log, error) {
-    // Try PostgreSQL first (hot data)
-    logs, _ := s.store.GetSessionLogs(ctx, sessionID)
-    if len(logs) > 0 {
-        return logs, nil
-    }
+`format` and `encrypted` live on the `log_archives` row, not in config.
+Encryption is a deployment switch, and an archive written before it was turned
+on has to stay readable after; reading the switch instead of the row is how a
+deployment loses the logs it believes it archived.
 
-    // Check archive (cold data)
-    archive, _ := s.store.GetLogArchive(ctx, sessionID)
-    if archive == nil {
-        return []Log{}, nil
-    }
+### Which sessions
 
-    // Stream from archive with memory limit
-    return s.streamLogsFromArchive(ctx, archive, 0) // 0 = no limit
-}
+Terminated sessions, once they have been terminated for `terminated_after` - a
+grace window so the archiver is never reading a session something is still
+writing to. Optionally also live sessions quiet for `idle_after`; those can
+produce more logs later, which is why an archive can be extended. A session with
+no logs is skipped rather than given an empty archive.
 
-// GetSessionLogsStream returns a channel for streaming logs (memory-efficient)
-func (s *LogService) GetSessionLogsStream(ctx context.Context, sessionID string) (<-chan Log, error) {
-    archive, err := s.store.GetLogArchive(ctx, sessionID)
-    if err != nil {
-        return nil, err
-    }
-    if archive == nil {
-        // Return empty channel
-        ch := make(chan Log)
-        close(ch)
-        return ch, nil
-    }
+### Retention
 
-    ch := make(chan Log, 100) // Buffered for performance
+`DropArchivedLogPartitions` drops a daily partition only when every row left in
+it is covered by a live archive - the row's session has an archive that is not
+soft-deleted and whose `last_log_at` is at or after the row's `created_at`. The
+usual reason a partition is kept is that a session in it is still running, which
+is exactly the case retention must not touch; kept partitions are logged by
+name, because the other reason is archiving falling behind and a silent retain
+looks like a working policy.
 
-    go func() {
-        defer close(ch)
+The check queries the parent table with the day as a range rather than the
+partition directly: daily partitions carry no row level security policy of their
+own and inherit the parent's only when reached through it.
 
-        reader, _, err := s.storage.Download(ctx, archive.StorageKey)
-        if err != nil {
-            return
-        }
-        defer reader.Close()
+The archiver and the coverage check both run cross-tenant, through
+`store.WithSystemAccess` - the same mechanism the reaper and chunk GC use, not a
+superuser connection.
 
-        zr, _ := zstd.NewReader(reader)
-        defer zr.Close()
+### Retrieval
 
-        scanner := bufio.NewScanner(zr)
-        // Increase buffer for large log lines
-        scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+`GET /api/v1/sessions/{id}/logs` and `GET /api/v1/tasks/{id}/logs` both serve
+the archive and the hot rows as one ordered stream, with one opaque cursor
+carrying the caller across the seam (`archive:<offset>` on the archive side, the
+store's own keyset cursor after it). `?archived=true|false` narrows it to one
+side. `total_count` includes archived records; for those it ignores the level
+and stream filters, because counting them would mean decompressing the whole
+object to answer a number.
 
-        for scanner.Scan() {
-            var log Log
-            if err := json.Unmarshal(scanner.Bytes(), &log); err != nil {
-                continue
-            }
+Because the boundary is the exact triple, the rows a crashed archiver left
+behind - already in the object, not yet deleted - never reach the wire twice.
 
-            select {
-            case ch <- log:
-            case <-ctx.Done():
-                return
-            }
-        }
-    }()
+### Expiry
 
-    return ch, nil
-}
-
-// streamLogsFromArchive reads logs with optional limit
-func (s *LogService) streamLogsFromArchive(ctx context.Context, archive *LogArchive, limit int) ([]Log, error) {
-    reader, _, err := s.storage.Download(ctx, archive.StorageKey)
-    if err != nil {
-        return nil, err
-    }
-    defer reader.Close()
-
-    zr, _ := zstd.NewReader(reader)
-    defer zr.Close()
-
-    var logs []Log
-    scanner := bufio.NewScanner(zr)
-    scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 1MB max line
-
-    for scanner.Scan() {
-        var log Log
-        if err := json.Unmarshal(scanner.Bytes(), &log); err != nil {
-            continue
-        }
-        logs = append(logs, log)
-
-        if limit > 0 && len(logs) >= limit {
-            break
-        }
-    }
-
-    return logs, scanner.Err()
-}
-```
+Two phases, and the order is the CAS lesson: the row is soft-deleted first, then
+the object, then the row goes. The reverse leaves a live row pointing at an
+object that is gone, which reads as data loss rather than as an interrupted
+delete. An interrupted sweep leaves a tombstone whose blob may still exist, and
+the next pass finishes it.
 
 ## Configuration
 
 ```yaml
-logs:
-  retention_hot: 168h   # 7 days in PostgreSQL
-  retention_cold: 2160h # 90 days in S3
-  archive_schedule: "0 3 * * *"  # Daily at 3 AM
-  partitions_ahead: 7   # Create 7 days ahead
+storage:
+  encryption:
+    enabled: false        # encrypt archive frames; needs MARIONETTE_ENCRYPTION_KEY
+
+  log_archive:
+    enabled: false        # off by default
+    interval: 1h          # how often a pass runs
+    terminated_after: 15m # grace window after a session terminates
+    idle_after: 0         # also archive live sessions quiet this long (0 = never)
+    retention: 2160h      # 90 days; how long an archive lives (0 = forever)
+    retention_days: 30    # drop log partitions older than this
+    sessions_per_run: 50
+    batch_size: 1000
 ```
+
+Two settings delete the same logs from different places. `retention_days` is how
+long a log stays queryable as a database row; `retention` is how long the
+archive that replaces it lives. An archive shorter than the partitions would
+delete logs the database no longer has either, so the server refuses to start on
+that combination.
+
+With `enabled: false`, `retention_days` does nothing - the wiring forces it to
+zero, and the coverage check would refuse anyway. That is deliberate: both locks
+have to be picked before anything deletes the only copy of a log line.
+
 
 ## Security Layers
 

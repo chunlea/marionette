@@ -42,6 +42,36 @@ storage:
     region: "us-west-2"
     # AWS credentials from environment or IAM role
 
+  # Encrypt archive payloads with the deployment's data keys. Needs
+  # MARIONETTE_ENCRYPTION_KEY, and losing that key loses the archives. What was
+  # written under which setting is recorded per archive, so switching this on
+  # does not make yesterday's objects unreadable.
+  encryption:
+    enabled: false
+
+  # Log archiving: move finished sessions' logs out of PostgreSQL into the
+  # object store above, and age the log partitions out behind them.
+  #
+  # These two retentions delete the same logs from different places, and they
+  # have to be ordered. retention_days is how long a log stays queryable as a
+  # database row; retention is how long the archive that replaces it lives. An
+  # archive shorter than the partitions would delete logs the database no longer
+  # has either, so the server refuses to start on that combination.
+  #
+  # With this off, retention_days does nothing: the partition maintainer keeps
+  # any day no archive covers, which is what stops retention from becoming a
+  # timer that deletes the only copy.
+  log_archive:
+    enabled: true
+    interval: 1h
+    terminated_after: 15m
+    # Live sessions are left alone by default. Set this to also archive sessions
+    # that are still alive but have been quiet - their archive is extended when
+    # they produce more logs.
+    idle_after: 0
+    retention: 2160h      # 90 days (0 keeps archives forever)
+    retention_days: 30    # drop log partitions older than 30 days
+
 # Logging configuration
 logging:
   level: info
