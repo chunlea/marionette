@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useTask, useTaskRuns, usePermissions } from '@/api/hooks'
+import { useTask, usePermissions } from '@/api/hooks'
 import { Card, CardHeader, CardBody } from '@/components/Card'
 import { Badge } from '@/components/Badge'
 import { Button } from '@/components/Button'
@@ -12,7 +12,6 @@ import {
   TableRow,
   TableHead,
   TableCell,
-  TableEmpty,
   TableLoading,
 } from '@/components/Table'
 import { formatRelativeTime } from '@/lib/utils'
@@ -37,7 +36,6 @@ function TaskDetailPage() {
   const navigate = useNavigate()
   const [showLogs, setShowLogs] = useState(false)
   const { data: task, isLoading: taskLoading } = useTask(taskId)
-  const { data: runs, isLoading: runsLoading } = useTaskRuns(taskId)
   const { data: permissions, isLoading: permsLoading } = usePermissions({ task_id: taskId })
 
   if (taskLoading) {
@@ -209,79 +207,6 @@ function TaskDetailPage() {
         </Card>
       )}
 
-      {/* Task Runs */}
-      <Card>
-        <CardHeader
-          action={
-            <span className="text-sm font-normal text-gray-500">
-              {runs?.items?.length || 0} runs
-            </span>
-          }
-        >
-          Execution Runs
-        </CardHeader>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Run ID</TableHead>
-              <TableHead>Attempt</TableHead>
-              <TableHead>Runner</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Exit Code</TableHead>
-              <TableHead>Duration</TableHead>
-              <TableHead>Started</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {runsLoading ? (
-              <TableLoading colSpan={7} />
-            ) : !runs?.items?.length ? (
-              <TableEmpty colSpan={7} message="No runs yet" />
-            ) : (
-              runs.items.map((run) => (
-                <TableRow key={run.id}>
-                  <TableCell>
-                    <code className="text-xs text-gray-600">{run.id}</code>
-                  </TableCell>
-                  <TableCell>#{run.attempt}</TableCell>
-                  <TableCell>
-                    {run.runner_id ? (
-                      <code className="text-xs text-gray-600">{run.runner_id}</code>
-                    ) : (
-                      <span className="text-gray-400">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <RunStatusBadge status={run.status} />
-                  </TableCell>
-                  <TableCell>
-                    {run.exit_code !== undefined && run.exit_code !== null ? (
-                      <code
-                        className={`text-xs ${run.exit_code === 0 ? 'text-green-600' : 'text-red-600'}`}
-                      >
-                        {run.exit_code}
-                      </code>
-                    ) : (
-                      <span className="text-gray-400">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-gray-500">
-                    {run.started_at && run.ended_at
-                      ? formatDuration(run.started_at, run.ended_at)
-                      : run.started_at
-                        ? 'Running...'
-                        : '-'}
-                  </TableCell>
-                  <TableCell className="text-gray-500">
-                    {formatRelativeTime(run.started_at || run.queued_at)}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </Card>
-
       {/* Permission Requests */}
       {permissions?.items && permissions.items.length > 0 && (
         <Card>
@@ -366,23 +291,6 @@ function TaskDetailPage() {
   )
 }
 
-function formatDuration(start: string, end: string): string {
-  const startDate = new Date(start)
-  const endDate = new Date(end)
-  const durationMs = endDate.getTime() - startDate.getTime()
-  const seconds = Math.floor(durationMs / 1000)
-  const minutes = Math.floor(seconds / 60)
-  const hours = Math.floor(minutes / 60)
-
-  if (hours > 0) {
-    return `${hours}h ${minutes % 60}m`
-  } else if (minutes > 0) {
-    return `${minutes}m ${seconds % 60}s`
-  } else {
-    return `${seconds}s`
-  }
-}
-
 function TaskStatusBadge({ status }: { status: string }) {
   switch (status) {
     case 'running':
@@ -420,27 +328,6 @@ function TaskStatusBadge({ status }: { status: string }) {
           Canceled
         </Badge>
       )
-    default:
-      return <Badge>{status}</Badge>
-  }
-}
-
-function RunStatusBadge({ status }: { status: string }) {
-  switch (status) {
-    case 'running':
-      return <Badge variant="info">Running</Badge>
-    case 'pending':
-      return <Badge variant="warning">Pending</Badge>
-    case 'assigned':
-      return <Badge variant="warning">Assigned</Badge>
-    case 'completed':
-      return <Badge variant="success">Completed</Badge>
-    case 'failed':
-      return <Badge variant="danger">Failed</Badge>
-    case 'timeout':
-      return <Badge variant="danger">Timeout</Badge>
-    case 'canceled':
-      return <Badge>Canceled</Badge>
     default:
       return <Badge>{status}</Badge>
   }

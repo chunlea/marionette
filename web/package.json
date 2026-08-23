@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && tsc --noEmit",
+    "build": "vite build && pnpm typecheck",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "generate:api": "openapi-typescript ../pkg/server/api/openapi.yaml -o src/types/api.gen.ts",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
@@ -38,6 +40,7 @@
     "eslint-plugin-react-refresh": "^0.4.16",
     "globals": "^15.14.0",
     "jsdom": "^25.0.1",
+    "openapi-typescript": "^7.13.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "~5.6.3",

@@ -63,7 +63,7 @@ export function DesktopViewer({
     onConnected,
     onDisconnected,
     onError,
-    onTrack: (track, streams) => {
+    onTrack: (_track, streams) => {
       if (videoRef.current && streams.length > 0) {
         videoRef.current.srcObject = streams[0]
       }
@@ -192,7 +192,7 @@ export function DesktopViewer({
       case 'failed':
       case 'closed':
         return (
-          <Badge variant="secondary" className="flex items-center gap-1">
+          <Badge variant="default" className="flex items-center gap-1">
             <WifiOff className="h-3 w-3" />
             Disconnected
           </Badge>

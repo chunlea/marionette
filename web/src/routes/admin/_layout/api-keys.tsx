@@ -9,7 +9,7 @@ import { Card } from '@/components/Card'
 import { Badge } from '@/components/Badge'
 import { formatRelativeTime, copyToClipboard } from '@/lib/utils'
 import { Plus, Copy, Check, Trash2 } from 'lucide-react'
-import type { CreateAPIKeyRequest } from '@/types/api'
+import type { CreateAPIKeyRequest } from '@/types/admin'
 
 // Available scopes organized by resource
 const AVAILABLE_SCOPES = {

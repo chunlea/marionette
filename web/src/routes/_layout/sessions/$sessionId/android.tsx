@@ -11,11 +11,37 @@ import {
 import { AndroidViewer, DeviceSelector } from '@/components/android'
 import { Button } from '@/components/Button'
 import { Card, CardHeader, CardBody } from '@/components/Card'
-import type { AndroidDevice } from '@/types/api'
+import type { AndroidDevice } from '@/types/stream'
+import { streamingEnabled } from '@/lib/features'
 
 export const Route = createFileRoute('/_layout/sessions/$sessionId/android')({
-  component: AndroidPage,
+  component: AndroidRoute,
 })
+
+// Android device mirroring is part of the frozen streaming subsystem
+// (decision D1) and no server route implements it yet, so the page is only
+// reachable when streaming is explicitly enabled.
+function AndroidRoute() {
+  if (!streamingEnabled) {
+    return <StreamingDisabled />
+  }
+  return <AndroidPage />
+}
+
+function StreamingDisabled() {
+  return (
+    <Card>
+      <CardHeader>Android streaming is disabled</CardHeader>
+      <CardBody>
+        <p className="text-sm text-gray-600">
+          Device mirroring is part of the frozen streaming subsystem. Rebuild with
+          <code className="mx-1 rounded bg-gray-100 px-1">VITE_ENABLE_STREAMING=true</code>
+          to enable it.
+        </p>
+      </CardBody>
+    </Card>
+  )
+}
 
 function AndroidPage() {
   const { sessionId } = Route.useParams()
@@ -136,7 +162,7 @@ function AndroidPage() {
                   </Button>
                 ) : (
                   <Button
-                    variant="destructive"
+                    variant="danger"
                     onClick={() => handleStopStream(activeStreams[0].id)}
                     disabled={stopStreamMutation.isPending}
                     className="w-full"

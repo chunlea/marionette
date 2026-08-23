@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react'
-import type { AndroidInputEvent } from '@/types/api'
+import type { AndroidInputEvent } from '@/types/stream'
 
 interface UseAndroidInputOptions {
   deviceWidth: number

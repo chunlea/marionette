@@ -3,7 +3,7 @@ import { useAndroidWebRTC } from '@/hooks/useAndroidWebRTC'
 import { useAndroidInput } from '@/hooks/useAndroidInput'
 import { useSendAndroidInput } from '@/api/hooks/useAndroidStreams'
 import { AndroidControls } from './AndroidControls'
-import type { AndroidInputEvent, AndroidStream } from '@/types/api'
+import type { AndroidInputEvent, AndroidStream } from '@/types/stream'
 
 interface AndroidViewerProps {
   sessionId: string
@@ -116,7 +116,7 @@ export function AndroidViewer({ sessionId, stream, className = '' }: AndroidView
         }}
       >
         <video
-          ref={videoRef}
+          ref={videoRef as React.RefObject<HTMLVideoElement>}
           autoPlay
           playsInline
           muted={false}

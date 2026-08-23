@@ -58,7 +58,7 @@ export function useLogStream({
     const apiKey = getApiKey()
     if (!apiKey) return
 
-    const url = buildWebSocketUrl(`/api/v1/tasks/${taskId}/logs/stream?token=${encodeURIComponent(apiKey)}`)
+    const url = buildWebSocketUrl(`/api/v1/logs/${taskId}/stream?token=${encodeURIComponent(apiKey)}`)
 
     clientRef.current = new WebSocketClient({
       url,

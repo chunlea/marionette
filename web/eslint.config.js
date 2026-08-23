@@ -5,7 +5,9 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['dist'] },
+  // routeTree.gen.ts and api.gen.ts are generated; lint the generators, not
+  // their output.
+  { ignores: ['dist', 'src/routeTree.gen.ts', 'src/types/api.gen.ts'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],

@@ -5,7 +5,7 @@ import type {
   ProviderConfigList,
   CreateProviderConfigRequest,
   UpdateProviderConfigRequest,
-} from '@/types/api'
+} from '@/types/admin'
 
 // Query keys
 export const providerConfigKeys = {

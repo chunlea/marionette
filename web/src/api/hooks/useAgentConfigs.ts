@@ -5,7 +5,7 @@ import type {
   AgentConfigList,
   CreateAgentConfigRequest,
   UpdateAgentConfigRequest,
-} from '@/types/api'
+} from '@/types/admin'
 
 // Query keys
 export const agentConfigKeys = {
