@@ -296,6 +296,13 @@ message AttachSession {
   // across them, so this is part of the CAS key rather than a label.
   // Empty in single-tenant deployments.
   string tenant_id = 7;
+
+  // Manifest to restore the workspace from, as reported by whichever runner
+  // last synced it. Empty when the workspace has never been synced, which is
+  // the signal to start empty rather than guess. The runner that made a
+  // snapshot is the only thing that knew its id and it is gone by now, so the
+  // server hands it back here.
+  string workspace_manifest_id = 8;
 }
 
 // Permission response that was made while session was suspended

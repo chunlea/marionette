@@ -2119,11 +2119,15 @@ func (m *SessionManager) sendAttachSession(ctx context.Context, session *store.S
 				// every container-mode session, so a runner keying content
 				// addressed storage on it would collide every session's chunks
 				// into one namespace.
-				WorkspaceId:        workspace.ID,
-				TenantId:           stringValue(workspace.TenantID),
-				ContextSnapshot:    session.ContextSnapshot,
-				AgentConfig:        agentConfig,
-				PendingPermissions: pendingPerms,
+				WorkspaceId: workspace.ID,
+				TenantId:    stringValue(workspace.TenantID),
+				// The snapshot a previous runner left behind. The runner that
+				// made it is long gone, so the server is the only thing that
+				// can hand its id back.
+				WorkspaceManifestId: stringValue(session.WorkspaceManifestID),
+				ContextSnapshot:     session.ContextSnapshot,
+				AgentConfig:         agentConfig,
+				PendingPermissions:  pendingPerms,
 			},
 		},
 	}

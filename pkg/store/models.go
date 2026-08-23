@@ -103,23 +103,28 @@ type Session struct {
 	SuspendStrategy        *string         `json:"suspend_strategy,omitempty"`
 	SuspendSnapshotID      *string         `json:"suspend_snapshot_id,omitempty"`
 	SuspendWorkspaceSynced *bool           `json:"suspend_workspace_synced,omitempty"`
-	PreviousRunnerID       *string         `json:"previous_runner_id,omitempty"`
-	NetworkPolicy          string          `json:"network_policy"` // none, allow_list, proxy, air_gapped
-	AllowedHosts           []string        `json:"allowed_hosts"`
-	LifecycleMode          string          `json:"lifecycle_mode"` // on_demand, always_on, scheduled
-	IdleTimeoutSeconds     *int            `json:"idle_timeout_seconds,omitempty"`
-	MaxLifetimeSeconds     *int            `json:"max_lifetime_seconds,omitempty"`
-	ScheduleCron           *string         `json:"schedule_cron,omitempty"`
-	ScheduleTimezone       *string         `json:"schedule_timezone,omitempty"`
-	NextScheduledAt        *time.Time      `json:"next_scheduled_at,omitempty"`
-	TenantID               *string         `json:"tenant_id,omitempty"`
-	Labels                 json.RawMessage `json:"labels"`
-	Annotations            json.RawMessage `json:"annotations"`
-	LastActivityAt         *time.Time      `json:"last_activity_at,omitempty"`
-	SuspendedAt            *time.Time      `json:"suspended_at,omitempty"`
-	ResumedAt              *time.Time      `json:"resumed_at,omitempty"`
-	CreatedAt              time.Time       `json:"created_at"`
-	UpdatedAt              time.Time       `json:"updated_at"`
+
+	// WorkspaceManifestID is the CAS snapshot the workspace was last synced to.
+	// It is what a resuming runner restores from; empty means never synced.
+	WorkspaceManifestID *string `json:"workspace_manifest_id,omitempty"`
+
+	PreviousRunnerID   *string         `json:"previous_runner_id,omitempty"`
+	NetworkPolicy      string          `json:"network_policy"` // none, allow_list, proxy, air_gapped
+	AllowedHosts       []string        `json:"allowed_hosts"`
+	LifecycleMode      string          `json:"lifecycle_mode"` // on_demand, always_on, scheduled
+	IdleTimeoutSeconds *int            `json:"idle_timeout_seconds,omitempty"`
+	MaxLifetimeSeconds *int            `json:"max_lifetime_seconds,omitempty"`
+	ScheduleCron       *string         `json:"schedule_cron,omitempty"`
+	ScheduleTimezone   *string         `json:"schedule_timezone,omitempty"`
+	NextScheduledAt    *time.Time      `json:"next_scheduled_at,omitempty"`
+	TenantID           *string         `json:"tenant_id,omitempty"`
+	Labels             json.RawMessage `json:"labels"`
+	Annotations        json.RawMessage `json:"annotations"`
+	LastActivityAt     *time.Time      `json:"last_activity_at,omitempty"`
+	SuspendedAt        *time.Time      `json:"suspended_at,omitempty"`
+	ResumedAt          *time.Time      `json:"resumed_at,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 // SessionUpdates contains fields that can be updated on a session.
@@ -135,6 +140,7 @@ type SessionUpdates struct {
 	SuspendStrategy        *string
 	SuspendSnapshotID      *string
 	SuspendWorkspaceSynced *bool
+	WorkspaceManifestID    *string
 	PreviousRunnerID       *string
 	NetworkPolicy          *string
 	AllowedHosts           []string

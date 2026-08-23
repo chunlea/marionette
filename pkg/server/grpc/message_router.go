@@ -384,14 +384,47 @@ func (r *MessageRouter) handleSessionAttached(_ context.Context, runnerID string
 	return nil
 }
 
-// handleSessionSuspended processes a session suspended confirmation.
-// G3: Will update session status and trigger suspend strategy.
-func (r *MessageRouter) handleSessionSuspended(_ context.Context, runnerID string, msg *pb.SessionSuspended) error {
-	r.logger.Debug("session suspended (stub)",
+// handleSessionSuspended records what a runner managed to preserve on its way
+// out.
+//
+// The manifest id is the part that matters: the runner that synced a workspace
+// into content-addressed storage is the only thing that knew where the snapshot
+// landed, and it is being destroyed. Without keeping the id here, workspace sync
+// would be write-only - the bytes are stored and nothing can ever find them
+// again.
+func (r *MessageRouter) handleSessionSuspended(ctx context.Context, runnerID string, msg *pb.SessionSuspended) error {
+	r.logger.Info("session suspended by runner",
 		zap.String("runner_id", runnerID),
 		zap.String("session_id", msg.GetSessionId()),
+		zap.String("strategy", msg.GetStrategy()),
+		zap.Bool("workspace_synced", msg.GetWorkspaceSynced()),
+		zap.String("manifest_id", msg.GetManifestId()),
+		zap.Bool("success", msg.GetSuccess()),
 	)
-	// G3: Implement session suspended handling
+
+	if r.store == nil {
+		return nil
+	}
+
+	manifestID := msg.GetManifestId()
+	if !msg.GetWorkspaceSynced() || manifestID == "" {
+		// Nothing new to remember. The previous manifest, if any, stays: it is
+		// still the newest snapshot that exists.
+		return nil
+	}
+
+	synced := true
+	if err := r.store.UpdateSession(ctx, msg.GetSessionId(), store.SessionUpdates{
+		WorkspaceManifestID:    &manifestID,
+		SuspendWorkspaceSynced: &synced,
+	}); err != nil {
+		r.logger.Error("failed to record the synced workspace manifest",
+			zap.String("session_id", msg.GetSessionId()),
+			zap.String("manifest_id", manifestID),
+			zap.Error(err),
+		)
+		return err
+	}
 	return nil
 }
 

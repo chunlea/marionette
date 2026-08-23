@@ -102,8 +102,17 @@ func (h *DefaultCommandHandler) SetWorkspaceSyncer(syncer *WorkspaceSyncer) {
 // workspace_path is the literal string "/workspace" for every container-mode
 // session, so it cannot key anything. This is the single input the sync path
 // is missing; see the NEEDS in the lane report for the proto fields.
-func workspaceIdentityFromAttach(_ *pb.AttachSession) (WorkspaceIdentity, string) {
-	return WorkspaceIdentity{}, ""
+func workspaceIdentityFromAttach(cmd *pb.AttachSession) (WorkspaceIdentity, string) {
+	if cmd == nil {
+		return WorkspaceIdentity{}, ""
+	}
+	// workspace_path is deliberately not consulted: the server sends
+	// "/workspace" for every container-mode session, so a CAS key built from it
+	// would collide every Docker session's snapshots into one history.
+	return WorkspaceIdentity{
+		WorkspaceID: cmd.GetWorkspaceId(),
+		TenantID:    cmd.GetTenantId(),
+	}, cmd.GetWorkspaceManifestId()
 }
 
 // HandleExecuteTask handles task execution.
@@ -349,6 +358,7 @@ func (h *DefaultCommandHandler) HandleDetachSession(ctx context.Context, cmd *pb
 	// Handle suspend configuration
 	var strategy string
 	var workspaceSynced bool
+	var manifestID string
 
 	if cmd.Suspend != nil {
 		strategy = cmd.Suspend.Strategy
@@ -361,6 +371,9 @@ func (h *DefaultCommandHandler) HandleDetachSession(ctx context.Context, cmd *pb
 		if cmd.Suspend.SyncWorkspace {
 			var reason string
 			workspaceSynced, reason = h.syncWorkspace(ctx, session)
+			if workspaceSynced {
+				manifestID = session.WorkspaceManifestID
+			}
 			if !workspaceSynced {
 				// A workspace that could not be saved must not read as saved,
 				// but it also must not fail the suspend: the runner is going
@@ -382,10 +395,15 @@ func (h *DefaultCommandHandler) HandleDetachSession(ctx context.Context, cmd *pb
 	return &pb.RunnerMessage{
 		Payload: &pb.RunnerMessage_SessionSuspended{
 			SessionSuspended: &pb.SessionSuspended{
-				SessionId:         cmd.SessionId,
-				Strategy:          strategy,
-				ContextSaved:      cmd.SaveContext, // Simplified: assume context is saved
-				WorkspaceSynced:   workspaceSynced,
+				SessionId:       cmd.SessionId,
+				Strategy:        strategy,
+				ContextSaved:    cmd.SaveContext, // Simplified: assume context is saved
+				WorkspaceSynced: workspaceSynced,
+				// The manifest the sync produced, so the server can hand it
+				// back on the next attach. Without it a synced workspace could
+				// never be restored: the runner that made the snapshot is the
+				// only thing that knew its id, and it is going away.
+				ManifestId:        manifestID,
 				Success:           true,
 				SuspendedAtUnixMs: time.Now().UnixMilli(),
 			},

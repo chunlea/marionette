@@ -16,7 +16,7 @@ import (
 // Session column list for SELECT queries.
 const sessionColumns = `id, name, status, runner_id, workspace_id, profile_id, agent, is_byok,
 	agent_config_id, agent_config_metadata, context_snapshot, agent_version,
-	suspend_strategy, suspend_snapshot_id, suspend_workspace_synced, previous_runner_id,
+	suspend_strategy, suspend_snapshot_id, suspend_workspace_synced, workspace_manifest_id, previous_runner_id,
 	network_policy, allowed_hosts, lifecycle_mode, idle_timeout_seconds, max_lifetime_seconds,
 	schedule_cron, schedule_timezone, next_scheduled_at, tenant_id, labels, annotations,
 	last_activity_at, suspended_at, resumed_at, created_at, updated_at`
@@ -40,13 +40,13 @@ func createSession(ctx context.Context, q querier, session *store.Session) error
 		INSERT INTO sessions (
 			id, name, status, runner_id, workspace_id, profile_id, agent, is_byok,
 			agent_config_id, agent_config_metadata, context_snapshot, agent_version,
-			suspend_strategy, suspend_snapshot_id, suspend_workspace_synced, previous_runner_id,
+			suspend_strategy, suspend_snapshot_id, suspend_workspace_synced, workspace_manifest_id, previous_runner_id,
 			network_policy, allowed_hosts, lifecycle_mode, idle_timeout_seconds, max_lifetime_seconds,
 			schedule_cron, schedule_timezone, next_scheduled_at, tenant_id, labels, annotations,
 			last_activity_at, suspended_at, resumed_at, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW()
+			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, NOW(), NOW()
 		)
 		RETURNING created_at, updated_at`
 
@@ -54,7 +54,8 @@ func createSession(ctx context.Context, q querier, session *store.Session) error
 		session.ID, session.Name, session.Status, session.RunnerID, session.WorkspaceID,
 		session.ProfileID, session.Agent, session.IsBYOK, session.AgentConfigID, session.AgentConfigMetadata,
 		session.ContextSnapshot, session.AgentVersion, session.SuspendStrategy,
-		session.SuspendSnapshotID, session.SuspendWorkspaceSynced, session.PreviousRunnerID,
+		session.SuspendSnapshotID, session.SuspendWorkspaceSynced, session.WorkspaceManifestID,
+		session.PreviousRunnerID,
 		session.NetworkPolicy, session.AllowedHosts, session.LifecycleMode,
 		session.IdleTimeoutSeconds, session.MaxLifetimeSeconds, session.ScheduleCron,
 		session.ScheduleTimezone, session.NextScheduledAt, session.TenantID,
@@ -272,6 +273,11 @@ func updateSession(ctx context.Context, q querier, sessionID string, updates sto
 		args = append(args, *updates.SuspendWorkspaceSynced)
 		argNum++
 	}
+	if updates.WorkspaceManifestID != nil {
+		setClauses = append(setClauses, fmt.Sprintf("workspace_manifest_id = $%d", argNum))
+		args = append(args, *updates.WorkspaceManifestID)
+		argNum++
+	}
 	if updates.PreviousRunnerID != nil {
 		setClauses = append(setClauses, fmt.Sprintf("previous_runner_id = $%d", argNum))
 		args = append(args, *updates.PreviousRunnerID)
@@ -395,7 +401,7 @@ func scanSession(row pgx.Row, identifier string) (*store.Session, error) {
 	err := row.Scan(
 		&s.ID, &s.Name, &s.Status, &s.RunnerID, &s.WorkspaceID, &s.ProfileID, &s.Agent, &s.IsBYOK,
 		&s.AgentConfigID, &s.AgentConfigMetadata, &s.ContextSnapshot, &s.AgentVersion,
-		&s.SuspendStrategy, &s.SuspendSnapshotID, &s.SuspendWorkspaceSynced, &s.PreviousRunnerID,
+		&s.SuspendStrategy, &s.SuspendSnapshotID, &s.SuspendWorkspaceSynced, &s.WorkspaceManifestID, &s.PreviousRunnerID,
 		&s.NetworkPolicy, &s.AllowedHosts, &s.LifecycleMode, &s.IdleTimeoutSeconds, &s.MaxLifetimeSeconds,
 		&s.ScheduleCron, &s.ScheduleTimezone, &s.NextScheduledAt, &s.TenantID, &s.Labels, &s.Annotations,
 		&s.LastActivityAt, &s.SuspendedAt, &s.ResumedAt, &s.CreatedAt, &s.UpdatedAt,
@@ -415,7 +421,7 @@ func scanSessionFromRows(rows pgx.Rows) (*store.Session, error) {
 	err := rows.Scan(
 		&s.ID, &s.Name, &s.Status, &s.RunnerID, &s.WorkspaceID, &s.ProfileID, &s.Agent, &s.IsBYOK,
 		&s.AgentConfigID, &s.AgentConfigMetadata, &s.ContextSnapshot, &s.AgentVersion,
-		&s.SuspendStrategy, &s.SuspendSnapshotID, &s.SuspendWorkspaceSynced, &s.PreviousRunnerID,
+		&s.SuspendStrategy, &s.SuspendSnapshotID, &s.SuspendWorkspaceSynced, &s.WorkspaceManifestID, &s.PreviousRunnerID,
 		&s.NetworkPolicy, &s.AllowedHosts, &s.LifecycleMode, &s.IdleTimeoutSeconds, &s.MaxLifetimeSeconds,
 		&s.ScheduleCron, &s.ScheduleTimezone, &s.NextScheduledAt, &s.TenantID, &s.Labels, &s.Annotations,
 		&s.LastActivityAt, &s.SuspendedAt, &s.ResumedAt, &s.CreatedAt, &s.UpdatedAt,

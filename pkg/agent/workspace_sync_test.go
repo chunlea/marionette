@@ -472,3 +472,108 @@ func attachForSync(t *testing.T, handler *DefaultCommandHandler, sessionID strin
 	session.WorkspaceManifestID = manifestID
 	handler.restoreWorkspace(context.Background(), session)
 }
+
+// =============================================================================
+// Workspace identity comes from the wire, not from the mount path
+// =============================================================================
+
+// TestWorkspaceIdentityFromAttach is the fix for a CAS key collision. The
+// server sends "/workspace" as workspace_path for every container-mode session,
+// so a key built from the path would put every session in the deployment into
+// one snapshot history.
+func TestWorkspaceIdentityFromAttach(t *testing.T) {
+	t.Run("reads identity from the wire", func(t *testing.T) {
+		id, manifestID := workspaceIdentityFromAttach(&pb.AttachSession{
+			SessionId:           "sess_1",
+			WorkspacePath:       "/workspace",
+			WorkspaceId:         "ws_abc",
+			TenantId:            "tenant_a",
+			WorkspaceManifestId: "mfst_1",
+		})
+
+		assert.Equal(t, "ws_abc", id.WorkspaceID)
+		assert.Equal(t, "tenant_a", id.TenantID)
+		assert.Equal(t, "mfst_1", manifestID)
+		assert.True(t, id.Known())
+	})
+
+	t.Run("a single-tenant deployment has no tenant", func(t *testing.T) {
+		id, _ := workspaceIdentityFromAttach(&pb.AttachSession{
+			WorkspacePath: "/workspace",
+			WorkspaceId:   "ws_abc",
+		})
+		assert.Equal(t, "ws_abc", id.WorkspaceID)
+		assert.Empty(t, id.TenantID)
+		assert.True(t, id.Known(), "no tenant is still a usable key")
+	})
+
+	// An older server that does not send the field leaves the runner without a
+	// safe key, and the syncer refuses rather than inventing one.
+	t.Run("no workspace id is not a usable key", func(t *testing.T) {
+		id, manifestID := workspaceIdentityFromAttach(&pb.AttachSession{
+			WorkspacePath: "/workspace",
+		})
+		assert.False(t, id.Known())
+		assert.Empty(t, manifestID)
+	})
+
+	t.Run("nil command", func(t *testing.T) {
+		id, manifestID := workspaceIdentityFromAttach(nil)
+		assert.False(t, id.Known())
+		assert.Empty(t, manifestID)
+	})
+}
+
+// TestWorkspaceSyncer_MountPathDoesNotCollideSessions is the round-trip test
+// extended to the case that motivated the proto change: two sessions on
+// different workspaces, both mounted at the same "/workspace", must not see
+// each other's snapshots.
+func TestWorkspaceSyncer_MountPathDoesNotCollideSessions(t *testing.T) {
+	syncer := newTestSyncer(t)
+	ctx := context.Background()
+
+	// Two runners, each holding a different workspace, both told the mount
+	// point is "/workspace" - which is exactly what the server sends.
+	const sharedMountPath = "/workspace"
+
+	firstID, firstManifest := workspaceIdentityFromAttach(&pb.AttachSession{
+		SessionId: "sess_1", WorkspacePath: sharedMountPath, WorkspaceId: "ws_one",
+	})
+	secondID, _ := workspaceIdentityFromAttach(&pb.AttachSession{
+		SessionId: "sess_2", WorkspacePath: sharedMountPath, WorkspaceId: "ws_two",
+	})
+	require.Empty(t, firstManifest, "a workspace that was never synced has nothing to restore")
+	require.NotEqual(t, firstID, secondID,
+		"identical mount paths must still produce different CAS keys")
+
+	firstSource := t.TempDir()
+	writeTree(t, firstSource, map[string][]byte{"a.txt": []byte("workspace one")})
+	firstResult, err := syncer.Sync(ctx, firstID, firstSource)
+	require.NoError(t, err)
+	require.True(t, firstResult.Synced, "reason: %s", firstResult.Reason)
+
+	secondSource := t.TempDir()
+	writeTree(t, secondSource, map[string][]byte{"b.txt": []byte("workspace two")})
+	secondResult, err := syncer.Sync(ctx, secondID, secondSource)
+	require.NoError(t, err)
+	require.True(t, secondResult.Synced, "reason: %s", secondResult.Reason)
+
+	// Each workspace restores its own content, not the other's.
+	firstTarget := filepath.Join(t.TempDir(), "first")
+	require.NoError(t, syncer.Restore(ctx, firstID, firstResult.ManifestID, firstTarget))
+	assert.Equal(t,
+		map[string][]byte{filepath.FromSlash("a.txt"): []byte("workspace one")},
+		readTree(t, firstTarget))
+
+	secondTarget := filepath.Join(t.TempDir(), "second")
+	require.NoError(t, syncer.Restore(ctx, secondID, secondResult.ManifestID, secondTarget))
+	assert.Equal(t,
+		map[string][]byte{filepath.FromSlash("b.txt"): []byte("workspace two")},
+		readTree(t, secondTarget))
+
+	// And one workspace's manifest is not resolvable under the other's key.
+	crossTarget := filepath.Join(t.TempDir(), "cross")
+	err = syncer.Restore(ctx, secondID, firstResult.ManifestID, crossTarget)
+	require.Error(t, err,
+		"a manifest from another workspace must not restore under this key")
+}
