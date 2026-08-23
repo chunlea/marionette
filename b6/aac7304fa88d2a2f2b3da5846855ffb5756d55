@@ -1,0 +1,21 @@
+go.mod
+  s_30fb41c4a911b8::t_bf603a02443af7 143,148,155,168-169
+go.sum
+  s_30fb41c4a911b8::t_d7f4708c98d8e9 322-323
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "b6aac7304fa88d2a2f2b3da5846855ffb5756d55",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
