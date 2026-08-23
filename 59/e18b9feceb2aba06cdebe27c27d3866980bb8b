@@ -1,0 +1,19 @@
+pkg/jobs/log_archiver.go
+  s_1e03d1f9444213::t_fb65b02296844e 337
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "59e18b9feceb2aba06cdebe27c27d3866980bb8b",
+  "prompts": {},
+  "sessions": {
+    "s_1e03d1f9444213": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f08e1d14-b06b-4619-aa64-c85c623e5795",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
