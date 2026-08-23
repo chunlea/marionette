@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -131,17 +132,45 @@ func NewSync(config Config, chunkStore ChunkStore, manifestStore ManifestStore) 
 // it, content-defined chunking streams the tree instead. CDCMode overrides the
 // choice.
 func (s *Sync) Sync(ctx context.Context, workspaceID, tenantID, srcDir string) (string, error) {
-	manifestID, _, err := s.sync(ctx, workspaceID, tenantID, srcDir, "", nil)
+	manifestID, _, err := s.sync(ctx, workspaceID, tenantID, srcDir, syncOptions{})
 	return manifestID, err
 }
 
-// sync is the one implementation behind Sync and SyncIncremental.
+// SyncFrom is Sync with the workspace's previous snapshot to reuse.
 //
-// parentManifestID may be empty. diff may be nil, and is nil on the path a
-// runner actually takes: a diff is a list of every path that changed, so
-// collecting one costs memory proportional to the workspace, which is exactly
-// what CDC mode exists to avoid.
-func (s *Sync) sync(ctx context.Context, workspaceID, tenantID, srcDir, parentManifestID string, diff *DiffResult) (string, bool, error) {
+// A file whose size, mode and modification time match the parent carries its
+// chunk list over without being read, so the second sync of a workspace costs
+// the files that changed. This is the call a suspend makes: a runner knows
+// which snapshot it last wrote, and re-reading a whole workspace to discover
+// that none of it moved is the cost the parent exists to avoid.
+//
+// A parent that cannot be opened is not an error. It means this store has never
+// seen that snapshot - a different runner wrote it, or it has been collected -
+// and the only safe reading of that is that there is nothing to reuse.
+func (s *Sync) SyncFrom(ctx context.Context, workspaceID, tenantID, srcDir, parentManifestID string) (string, error) {
+	manifestID, _, err := s.sync(ctx, workspaceID, tenantID, srcDir, syncOptions{
+		parentManifestID: parentManifestID,
+		parentOptional:   true,
+	})
+	return manifestID, err
+}
+
+// syncOptions carries what varies between the three entry points.
+type syncOptions struct {
+	// parentManifestID is the snapshot to reuse. Empty means a full sync.
+	parentManifestID string
+
+	// parentOptional treats a parent that cannot be opened as no parent.
+	parentOptional bool
+
+	// diff, when set, is filled in with what changed. It names every path, so
+	// it costs memory proportional to the workspace - which is why the path a
+	// runner actually takes leaves it nil.
+	diff *DiffResult
+}
+
+// sync is the one implementation behind Sync, SyncFrom and SyncIncremental.
+func (s *Sync) sync(ctx context.Context, workspaceID, tenantID, srcDir string, opts syncOptions) (string, bool, error) {
 	// The size pass is a second walk, so it is skipped when the mode is
 	// already decided. CDC recomputes the total from the walk it does anyway.
 	var totalSize int64
@@ -159,7 +188,7 @@ func (s *Sync) sync(ctx context.Context, workspaceID, tenantID, srcDir, parentMa
 		TenantID:    tenantID,
 		CreatedAt:   time.Now(),
 		TotalSize:   totalSize,
-		ParentID:    stringPtr(parentManifestID),
+		ParentID:    stringPtr(opts.parentManifestID),
 	}
 
 	if !s.config.useCDC(totalSize) {
@@ -172,15 +201,18 @@ func (s *Sync) sync(ctx context.Context, workspaceID, tenantID, srcDir, parentMa
 		return manifest.ID, false, nil
 	}
 
-	parent, err := s.openParent(ctx, workspaceID, tenantID, parentManifestID)
+	parent, err := s.openParent(ctx, workspaceID, tenantID, opts.parentManifestID)
 	if err != nil {
-		return "", true, err
+		if !opts.parentOptional || !errors.Is(err, ErrManifestNotFound) {
+			return "", true, err
+		}
+		parent = nil
 	}
 	if parent != nil {
 		defer func() { _ = parent.Close() }()
 	}
 
-	if err := s.syncCDC(ctx, manifest, srcDir, parent, diff); err != nil {
+	if err := s.syncCDC(ctx, manifest, srcDir, parent, opts.diff); err != nil {
 		return "", true, err
 	}
 	return manifest.ID, true, nil
@@ -196,6 +228,9 @@ func (s *Sync) openParent(ctx context.Context, workspaceID, tenantID, manifestID
 
 	cursor, err := s.manifestStore.OpenManifest(ctx, tenantID, workspaceID, manifestID)
 	if err != nil {
+		if errors.Is(err, ErrManifestNotFound) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("failed to load previous manifest: %w", err)
 	}
 	if cursor.Header().SingleChunk {
@@ -501,7 +536,10 @@ func (s *Sync) SyncIncremental(ctx context.Context, workspaceID, tenantID, srcDi
 		Unchanged: make([]string, 0),
 	}
 
-	manifestID, usedCDC, err := s.sync(ctx, workspaceID, tenantID, srcDir, previousManifestID, diff)
+	manifestID, usedCDC, err := s.sync(ctx, workspaceID, tenantID, srcDir, syncOptions{
+		parentManifestID: previousManifestID,
+		diff:             diff,
+	})
 	if err != nil {
 		return "", nil, err
 	}

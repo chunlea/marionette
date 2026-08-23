@@ -55,6 +55,11 @@ type Syncer interface {
 	// Returns the created manifest ID.
 	Sync(ctx context.Context, workspaceID, tenantID, srcDir string) (string, error)
 
+	// SyncFrom is Sync with the workspace's previous snapshot to reuse, so
+	// unchanged files are not read again. A parent that cannot be opened is
+	// treated as no parent rather than as a failure.
+	SyncFrom(ctx context.Context, workspaceID, tenantID, srcDir, parentManifestID string) (string, error)
+
 	// SyncIncremental performs incremental sync based on a previous manifest.
 	// Only uploads chunks that have changed since the previous manifest.
 	// Returns the created manifest ID and a diff summary.

@@ -97,9 +97,16 @@ func (s *WorkspaceSyncer) Available() bool {
 
 // Sync stores the workspace at dir and returns what actually happened.
 //
+// previousManifestID is the snapshot this workspace was last stored as, or
+// empty. When it is supplied, files whose size, mode and modification time have
+// not moved carry their chunk lists over from it instead of being read again -
+// which is the difference between a suspend that re-reads a whole workspace
+// every time and one that reads what changed. A snapshot this runner's store
+// does not hold is ignored, not fatal.
+//
 // The error is returned for logging and tests; callers on the suspend path
 // must use the SyncResult and let the suspend succeed regardless.
-func (s *WorkspaceSyncer) Sync(ctx context.Context, id WorkspaceIdentity, dir string) (SyncResult, error) {
+func (s *WorkspaceSyncer) Sync(ctx context.Context, id WorkspaceIdentity, dir, previousManifestID string) (SyncResult, error) {
 	if !s.Available() {
 		return SyncResult{Reason: ErrSyncUnavailable.Error()}, ErrSyncUnavailable
 	}
@@ -112,7 +119,8 @@ func (s *WorkspaceSyncer) Sync(ctx context.Context, id WorkspaceIdentity, dir st
 		return SyncResult{Reason: reason}, fmt.Errorf("stat workspace: %w", err)
 	}
 
-	manifestID, err := s.newSyncer(id.WorkspaceID).Sync(ctx, id.WorkspaceID, id.TenantID, dir)
+	manifestID, err := s.newSyncer(id.WorkspaceID).
+		SyncFrom(ctx, id.WorkspaceID, id.TenantID, dir, previousManifestID)
 	if err != nil {
 		return SyncResult{Reason: fmt.Sprintf("sync failed: %v", err)}, err
 	}
@@ -120,6 +128,7 @@ func (s *WorkspaceSyncer) Sync(ctx context.Context, id WorkspaceIdentity, dir st
 	s.logger.Info("workspace synced",
 		zap.String("workspace_id", id.WorkspaceID),
 		zap.String("manifest_id", manifestID),
+		zap.String("parent_manifest_id", previousManifestID),
 		zap.String("dir", dir),
 	)
 
