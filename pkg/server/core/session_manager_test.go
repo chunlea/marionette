@@ -2470,3 +2470,44 @@ func TestSessionManager_Suspend_RefusesDestroyWithoutWorkspaceManager(t *testing
 	require.NoError(t, manager.Suspend(context.Background(), "sess_123", "terminate"))
 	assert.Empty(t, prov.destroyed)
 }
+
+// TestSessionManager_Activate_DoesNotReleaseRunnerBeingHandedOver guards a trap
+// created by making suspend actually release infrastructure: Activate detaches
+// whichever session still holds the runner, and if that detach released the
+// runner to the provider it would pause, release or destroy the very instance
+// the new session is about to attach to.
+func TestSessionManager_Activate_DoesNotReleaseRunnerBeingHandedOver(t *testing.T) {
+	prov := &fakeProvider{name: "docker-default", kind: provider.ProviderTypeManaged}
+	manager, s := setupSuspendReleaseTest(prov)
+
+	// sess_123 (from the fixture) currently holds run_123. sess_456 is resuming
+	// and is about to take it over.
+	runner, err := s.GetRunner(context.Background(), "run_123")
+	require.NoError(t, err)
+	runner.Status = StatusIdle
+	s.SetRunner(runner)
+
+	previous := "run_123"
+	s.SetSession(&store.Session{
+		ID:               "sess_456",
+		Status:           SessionStatusResuming,
+		PreviousRunnerID: &previous,
+		WorkspaceID:      "ws_123",
+	})
+
+	require.NoError(t, manager.Activate(context.Background(), "sess_456", "run_123"))
+
+	assert.Empty(t, prov.destroyed,
+		"the runner being handed to another session must not be destroyed")
+
+	// The old session is suspended, the new one owns the runner.
+	old, err := s.GetSession(context.Background(), "sess_123")
+	require.NoError(t, err)
+	assert.Equal(t, SessionStatusSuspended, old.Status)
+
+	next, err := s.GetSession(context.Background(), "sess_456")
+	require.NoError(t, err)
+	assert.Equal(t, SessionStatusActive, next.Status)
+	require.NotNil(t, next.RunnerID)
+	assert.Equal(t, "run_123", *next.RunnerID)
+}

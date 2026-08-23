@@ -592,6 +592,14 @@ type SuspendOptions struct {
 
 	// SnapshotID is the ID of any snapshot created during suspend.
 	SnapshotID string
+
+	// KeepRunner suspends the session without releasing its runner to the
+	// provider.
+	//
+	// Set this when the runner is being handed to another session rather than
+	// given up: releasing it there would pause, release or destroy the very
+	// instance the next session is about to attach to.
+	KeepRunner bool
 }
 
 // Suspend transitions a session from active to suspended.
@@ -718,7 +726,14 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 	// only ever meant a row in the database: no provider was resolved, no
 	// Suspend was called, and every container, pod and E2B sandbox kept running
 	// (and billing) for the whole life of the "suspended" session.
-	m.releaseRunner(ctx, sessionID, previousRunnerID, opts)
+	if opts.KeepRunner {
+		m.logger.Debug("keeping runner: it is being handed to another session",
+			zap.String("session_id", sessionID),
+			zap.Stringp("runner_id", previousRunnerID),
+		)
+	} else {
+		m.releaseRunner(ctx, sessionID, previousRunnerID, opts)
+	}
 
 	// Log audit event
 	if m.auditLog != nil {
@@ -1901,8 +1916,13 @@ func (m *SessionManager) detachSessionsFromRunner(ctx context.Context, runnerID,
 			zap.String("new_session_id", exceptSessionID),
 		)
 
-		// Suspend the old session (this will clear runner_id and set status to suspended)
-		if err := m.Suspend(ctx, session.ID, "release_to_pool"); err != nil {
+		// KeepRunner: the runner is being handed to the session being
+		// activated, not given up. Releasing it to the provider here would
+		// pause, release or destroy the instance we are about to attach.
+		if err := m.SuspendWithOptions(ctx, session.ID, SuspendOptions{
+			Strategy:   "release_to_pool",
+			KeepRunner: true,
+		}); err != nil {
 			m.logger.Warn("failed to suspend old session during runner reattachment",
 				zap.String("session_id", session.ID),
 				zap.String("runner_id", runnerID),
