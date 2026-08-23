@@ -165,8 +165,8 @@ func TestCASSync_SyncSingleChunk(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024, // 100 MB
-		MaxConcurrency:       4,
+		CDCThreshold:   100 * 1024 * 1024, // 100 MB
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -199,8 +199,8 @@ func TestCASSync_SyncRestore_SingleChunk(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024, // 100 MB
-		MaxConcurrency:       4,
+		CDCThreshold:   100 * 1024 * 1024, // 100 MB
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -236,8 +236,8 @@ func TestCASSync_SyncRestore_CDC(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100, // 100 bytes - force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   100, // 100 bytes - force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -283,8 +283,8 @@ func TestCASSync_SyncRestore_LargeFile(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 1024, // 1 KB - force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   1024, // 1 KB - force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -323,8 +323,8 @@ func TestCASSync_ValidateManifest(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024,
-		MaxConcurrency:       4,
+		CDCThreshold:   100 * 1024 * 1024,
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -355,8 +355,8 @@ func TestCASSync_ValidateManifest_MissingChunks(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024,
-		MaxConcurrency:       4,
+		CDCThreshold:   100 * 1024 * 1024,
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -397,8 +397,8 @@ func TestCASSync_EmptyDirectory(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024,
-		MaxConcurrency:       4,
+		CDCThreshold:   100 * 1024 * 1024,
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -431,8 +431,8 @@ func TestCASSync_FilePermissions(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100, // Force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   100, // Force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -468,8 +468,8 @@ func TestCASSync_ChunkDedup(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100, // Force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   100, // Force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -614,8 +614,8 @@ func TestSync_BinaryFiles(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100, // Force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   100, // Force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -652,8 +652,8 @@ func TestSync_NestedEmptyDirs(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024, // Force single chunk mode
-		MaxConcurrency:       4,
+		CDCThreshold:   100 * 1024 * 1024, // Force single chunk mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -686,8 +686,8 @@ func TestSync_SyncIncremental_NoChanges(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   10, // Very low threshold to force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -720,8 +720,8 @@ func TestSync_SyncIncremental_AddedFiles(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   10, // Very low threshold to force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -762,8 +762,8 @@ func TestSync_SyncIncremental_ModifiedFiles(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   10, // Very low threshold to force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -798,8 +798,8 @@ func TestSync_SyncIncremental_DeletedFiles(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   10, // Very low threshold to force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -843,8 +843,8 @@ func TestSync_SyncIncremental_SingleChunkFallback(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 100 * 1024 * 1024, // Large threshold for single chunk
-		MaxConcurrency:       4,
+		CDCThreshold:   100 * 1024 * 1024, // Large threshold for single chunk
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -875,8 +875,8 @@ func TestSync_SyncIncremental_NoPreviousManifest(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   10, // Very low threshold to force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -901,8 +901,8 @@ func TestSync_SyncIncremental_ParentID(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   10, // Very low threshold to force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -938,8 +938,8 @@ func TestSync_Diff(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   10, // Very low threshold to force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -980,8 +980,8 @@ func TestSync_SyncIncremental_ChunkDedup(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   10, // Very low threshold to force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)
@@ -1023,8 +1023,8 @@ func TestSync_SyncIncremental_RestoreFromIncremental(t *testing.T) {
 	manifestStore := NewBlobManifestStore(memStorage, encryptor)
 
 	config := Config{
-		SingleChunkThreshold: 10, // Very low threshold to force CDC mode
-		MaxConcurrency:       4,
+		CDCThreshold:   10, // Very low threshold to force CDC mode
+		MaxConcurrency: 4,
 	}.WithDefaults()
 
 	sync := NewSync(config, chunkStore, manifestStore)

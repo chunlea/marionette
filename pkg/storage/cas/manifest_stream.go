@@ -236,8 +236,6 @@ type ManifestEntries struct {
 	ctx    context.Context
 	store  *BlobManifestStore
 	tenant string
-
-	err error
 }
 
 // OpenManifest opens a manifest for streaming reads.

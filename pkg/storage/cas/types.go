@@ -40,7 +40,7 @@ type Manifest struct {
 	TotalSize int64
 
 	// SingleChunk indicates if the workspace is stored as a single tar.zst chunk.
-	// Used for workspaces smaller than SingleChunkThreshold.
+	// Used for workspaces smaller than CDCThreshold.
 	SingleChunk bool
 
 	// ChunkHash is the hash of the single chunk (if SingleChunk is true).
