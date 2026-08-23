@@ -1,0 +1,69 @@
+// Marionette gRPC Protocol
+// Server <-> Server communication (cross-replica command routing)
+
+syntax = "proto3";
+
+package marionette.v1;
+
+import "v1/runner.proto";
+
+option go_package = "github.com/chunlea/marionette/gen/proto/v1;protov1";
+
+// InternalRouterService carries a command to the replica that holds the
+// runner's control stream.
+//
+// WHY IT EXISTS
+//
+// A runner's stream terminates in exactly one server process, and the map that
+// resolves runner -> stream lives in that process's memory. Any other replica
+// asked to send that runner a command has nowhere to write it. The database
+// records who holds the stream (migration 014); this service is the one hop
+// that gets the command there.
+//
+// The hop preserves the semantics of a local send exactly: synchronous,
+// at-most-once, and the outcome is returned rather than swallowed. It is never
+// retried. That matters because ExecuteTask is not safe to deliver twice - the
+// agent has no idempotency key, so a duplicate runs the prompt again.
+//
+// AUTHENTICATION:
+// Served on the same listener as RunnerService, so it MUST be authenticated as
+// a peer replica and not as a runner:
+//   - "x-marionette-peer": credential derived from the shared master key.
+// A runner never holds that credential. Without a configured master key the
+// method refuses to serve, which a single-process deployment never notices
+// because it never hops.
+service InternalRouterService {
+  // DeliverCommand asks this replica to write a command to a runner whose
+  // stream it holds. It is an error, not a silent no-op, if it does not.
+  rpc DeliverCommand(DeliverCommandRequest) returns (DeliverCommandResponse);
+}
+
+message DeliverCommandRequest {
+  // The runner the command is for. The receiving replica resolves it against
+  // its own connection map and nothing else: the sender already consulted the
+  // registry, and a second lookup here would only add a way to disagree.
+  string runner_id = 1;
+  ServerCommand command = 2;
+  // Who asked, for logs and metrics. Not used for authorisation.
+  string origin_replica_id = 3;
+}
+
+// DeliveryStatus mirrors the outcomes of a local send so the calling replica
+// can map the result straight back onto the errors its callers already handle.
+enum DeliveryStatus {
+  DELIVERY_STATUS_UNSPECIFIED = 0;
+  // Queued to the runner's stream.
+  DELIVERY_STATUS_DELIVERED = 1;
+  // This replica does not hold the runner. The registry was stale.
+  DELIVERY_STATUS_NOT_CONNECTED = 2;
+  // The runner's command queue is full: backpressure, not absence.
+  DELIVERY_STATUS_QUEUE_FULL = 3;
+  // The connection is being torn down.
+  DELIVERY_STATUS_DISCONNECTED = 4;
+}
+
+message DeliverCommandResponse {
+  DeliveryStatus status = 1;
+  // Human-readable detail for logs. Never parsed.
+  string message = 2;
+}
