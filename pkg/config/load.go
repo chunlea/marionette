@@ -133,4 +133,7 @@ func setDefaults(v *viper.Viper) {
 
 	// Single-tenant unless a deployment says otherwise.
 	v.SetDefault("multi_tenant", false)
+
+	// Chunk GC deletes blobs; off until workspace sync references them.
+	v.SetDefault("storage.gc.enabled", false)
 }

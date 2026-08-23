@@ -3,6 +3,8 @@
 // Sensitive values (database URL, encryption keys) must come from environment variables only.
 package config
 
+import "time"
+
 // Config is the root configuration structure for the Marionette server.
 type Config struct {
 	Server        ServerConfig        `mapstructure:"server"`
@@ -171,6 +173,18 @@ type StorageConfig struct {
 	Local     *LocalStorageConfig    `mapstructure:"local"`
 	S3        *S3StorageConfig       `mapstructure:"s3"`
 	Workspace WorkspaceStorageConfig `mapstructure:"workspace"`
+	GC        StorageGCConfig        `mapstructure:"gc"`
+}
+
+// StorageGCConfig gates content-addressed storage garbage collection.
+type StorageGCConfig struct {
+	// Enabled turns chunk garbage collection on. Default false: GC deletes
+	// blobs, and until workspace sync is producing manifests there is nothing
+	// referencing chunks, so a sweep would collect everything it found.
+	Enabled bool `mapstructure:"enabled"`
+
+	// Interval is how often to sweep. Zero uses the job's own default.
+	Interval time.Duration `mapstructure:"interval"`
 }
 
 // WorkspaceStorageConfig holds workspace storage settings.

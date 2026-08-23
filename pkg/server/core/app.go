@@ -11,6 +11,7 @@ import (
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
 	"github.com/chunlea/marionette/pkg/jobs"
+	"github.com/chunlea/marionette/pkg/storage/cas"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/webhook"
 	"go.uber.org/zap"
@@ -57,6 +58,9 @@ type JobsConfig struct {
 	PartitionDaysAhead         int
 	DisablePartitionMaintainer bool
 
+	ChunkGCInterval time.Duration
+	DisableChunkGC  bool
+
 	// LogRetentionDays drops log partitions older than this many days.
 	//
 	// It MUST stay zero (the default, meaning "never drop") until log archiving
@@ -89,6 +93,14 @@ type WireDeps struct {
 	WorkspaceConfig config.WorkspaceStorageConfig
 	// WebhookConfig configures webhook delivery.
 	WebhookConfig webhook.Config
+	// ChunkGC collects unreferenced content-addressed chunks. Optional: when
+	// nil, or when JobsConfig.DisableChunkGC is set, the job is not built.
+	ChunkGC cas.GarbageCollector
+
+	// ChunkTenants enumerates the tenants that hold chunks, which chunk GC
+	// needs in order to sweep more than one of them.
+	ChunkTenants jobs.TenantLister
+
 	// Jobs tunes the background jobs.
 	Jobs JobsConfig
 }
@@ -333,6 +345,26 @@ func (a *App) buildJobs(deps WireDeps) {
 		} else {
 			a.Logger.Warn("store does not maintain log partitions; log inserts will fail once the existing partitions run out")
 		}
+	}
+
+	// Chunk garbage collection deletes blobs, so it only runs when an operator
+	// asks for it: until workspace sync is writing manifests there is nothing
+	// referencing chunks, and a sweep would collect everything it found.
+	if !cfg.DisableChunkGC && deps.ChunkGC != nil {
+		gcJob := jobs.NewChunkGCJob(deps.ChunkGC, jobs.ChunkGCJobConfig{
+			Tenants:  deps.ChunkTenants,
+			Interval: cfg.ChunkGCInterval,
+			Logger:   newSlogLogger(a.Logger.Named("chunk-gc")),
+		})
+		a.jobs = append(a.jobs, backgroundJob{
+			name:  "chunk-gc",
+			start: gcJob.Start,
+			stop: func(ctx context.Context) {
+				if err := gcJob.Stop(ctx); err != nil {
+					a.Logger.Warn("chunk gc did not stop cleanly", zap.Error(err))
+				}
+			},
+		})
 	}
 
 	if !cfg.DisableReaper {

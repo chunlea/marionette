@@ -17,6 +17,7 @@ import (
 	"github.com/chunlea/marionette/pkg/audit"
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
+	"github.com/chunlea/marionette/pkg/cryptoutil"
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/jobs"
 	"github.com/chunlea/marionette/pkg/observability/health"
@@ -30,6 +31,8 @@ import (
 	"github.com/chunlea/marionette/pkg/server/api"
 	"github.com/chunlea/marionette/pkg/server/core"
 	grpcserver "github.com/chunlea/marionette/pkg/server/grpc"
+	"github.com/chunlea/marionette/pkg/storage"
+	"github.com/chunlea/marionette/pkg/storage/cas"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/store/postgres"
 	"github.com/chunlea/marionette/pkg/streaming"
@@ -121,8 +124,12 @@ func main() {
 
 		runnerTokenSvc := auth.NewRunnerTokenService(dbStore, id.RunnerToken)
 
+		chunkGC, chunkTenants := initChunkGC(cfg, secrets, dbStore, logger)
+
 		app, err = core.Wire(core.WireDeps{
 			Store:              dbStore,
+			ChunkGC:            chunkGC,
+			ChunkTenants:       chunkTenants,
 			ConnManager:        connManager,
 			CmdSender:          connManager,
 			RunnerTokenService: runnerTokenSvc,
@@ -131,6 +138,10 @@ func main() {
 			Logger:             logger,
 			WorkspaceConfig:    cfg.Storage.Workspace,
 			WebhookConfig:      webhookConfig(),
+			Jobs: core.JobsConfig{
+				DisableChunkGC:  !cfg.Storage.GC.Enabled,
+				ChunkGCInterval: cfg.Storage.GC.Interval,
+			},
 		})
 		if err != nil {
 			logger.Fatal("failed to wire core services", zap.Error(err))
@@ -651,6 +662,65 @@ func localAPIAddr(cfg config.EndpointConfig) string {
 		host = "127.0.0.1"
 	}
 	return fmt.Sprintf("http://%s", net.JoinHostPort(host, strconv.Itoa(cfg.Port)))
+}
+
+// initChunkGC builds the content-addressed storage garbage collector.
+//
+// It returns nils when GC is switched off or cannot be built, which leaves the
+// job unbuilt rather than failing startup: a server that cannot collect chunks
+// is degraded, not broken, and refusing to boot over it would take the whole
+// deployment down for a background sweep.
+func initChunkGC(
+	cfg *config.Config,
+	secrets *config.Secrets,
+	dbStore *postgres.Store,
+	logger *zap.Logger,
+) (cas.GarbageCollector, jobs.TenantLister) {
+	if !cfg.Storage.GC.Enabled {
+		return nil, nil
+	}
+
+	if secrets.EncryptionKey == "" {
+		logger.Error("chunk gc is enabled but MARIONETTE_ENCRYPTION_KEY is not set; gc disabled")
+		return nil, nil
+	}
+
+	// Chunks are encrypted per tenant, so the collector needs the same crypto
+	// service the writers use in order to read what it is deleting.
+	cryptoSvc, err := cryptoutil.NewService(secrets.EncryptionKey, postgres.NewDEKStore(dbStore), id.DataKey)
+	if err != nil {
+		logger.Error("chunk gc is enabled but the crypto service could not be built; gc disabled",
+			zap.Error(err))
+		return nil, nil
+	}
+
+	blobs, err := chunkBlobProvider(cfg)
+	if err != nil {
+		logger.Error("chunk gc is enabled but the blob store could not be built; gc disabled",
+			zap.Error(err))
+		return nil, nil
+	}
+
+	chunkStore := cas.NewBlobChunkStore(blobs, cas.NewTenantEncryptor(cryptoSvc))
+	logger.Info("chunk gc enabled",
+		zap.String("storage_provider", cfg.Storage.Provider),
+		zap.Duration("interval", cfg.Storage.GC.Interval),
+	)
+	return cas.NewGC(dbStore, chunkStore, cas.GCConfig{}), dbStore
+}
+
+// chunkBlobProvider resolves the object store chunks live in.
+func chunkBlobProvider(cfg *config.Config) (storage.StorageProvider, error) {
+	switch cfg.Storage.Provider {
+	case "local", "":
+		if cfg.Storage.Local == nil || cfg.Storage.Local.Path == "" {
+			return nil, fmt.Errorf("storage.local.path is required for the local provider")
+		}
+		return cas.NewLocalProvider(cfg.Storage.Local.Path)
+	default:
+		// S3 needs a client this binary does not construct yet.
+		return nil, fmt.Errorf("storage provider %q is not wired for chunk gc", cfg.Storage.Provider)
+	}
 }
 
 // webhookConfig returns the webhook delivery configuration.
