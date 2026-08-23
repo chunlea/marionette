@@ -33,7 +33,7 @@ const scheduledTaskColumns = `id, session_id, name, description, cron_expression
 
 // CreateTask creates a new task.
 func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
-	return createTask(ctx, s.pool, task)
+	return createTask(ctx, s.db, task)
 }
 
 // CreateTask creates a new task within a transaction.
@@ -68,7 +68,7 @@ func createTask(ctx context.Context, q querier, task *store.Task) error {
 
 // GetTask retrieves a task by ID.
 func (s *Store) GetTask(ctx context.Context, taskID string) (*store.Task, error) {
-	return getTask(ctx, s.pool, taskID)
+	return getTask(ctx, s.db, taskID)
 }
 
 // GetTask retrieves a task by ID within a transaction.
@@ -84,7 +84,7 @@ func getTask(ctx context.Context, q querier, taskID string) (*store.Task, error)
 
 // ListTasks retrieves tasks with optional filtering.
 func (s *Store) ListTasks(ctx context.Context, opts store.ListTasksOptions) (*store.ListResult[store.Task], error) {
-	return listTasks(ctx, s.pool, opts)
+	return listTasks(ctx, s.db, opts)
 }
 
 // ListTasks retrieves tasks within a transaction.
@@ -173,7 +173,7 @@ func listTasks(ctx context.Context, q querier, opts store.ListTasksOptions) (*st
 
 // UpdateTask updates task fields.
 func (s *Store) UpdateTask(ctx context.Context, taskID string, updates store.TaskUpdates) error {
-	return updateTask(ctx, s.pool, taskID, updates)
+	return updateTask(ctx, s.db, taskID, updates)
 }
 
 // UpdateTask updates task fields within a transaction.
@@ -231,7 +231,7 @@ func updateTask(ctx context.Context, q querier, taskID string, updates store.Tas
 
 // DeleteTask deletes a task.
 func (s *Store) DeleteTask(ctx context.Context, taskID string) error {
-	return deleteTask(ctx, s.pool, taskID)
+	return deleteTask(ctx, s.db, taskID)
 }
 
 // DeleteTask deletes a task within a transaction.
@@ -286,7 +286,7 @@ func scanTaskFromRows(rows pgx.Rows) (*store.Task, error) {
 
 // CreateTaskRun creates a new task run.
 func (s *Store) CreateTaskRun(ctx context.Context, run *store.TaskRun) error {
-	return createTaskRun(ctx, s.pool, run)
+	return createTaskRun(ctx, s.db, run)
 }
 
 // CreateTaskRun creates a new task run within a transaction.
@@ -322,7 +322,7 @@ func createTaskRun(ctx context.Context, q querier, run *store.TaskRun) error {
 
 // GetTaskRun retrieves a task run by ID.
 func (s *Store) GetTaskRun(ctx context.Context, runID string) (*store.TaskRun, error) {
-	return getTaskRun(ctx, s.pool, runID)
+	return getTaskRun(ctx, s.db, runID)
 }
 
 // GetTaskRun retrieves a task run by ID within a transaction.
@@ -338,7 +338,7 @@ func getTaskRun(ctx context.Context, q querier, runID string) (*store.TaskRun, e
 
 // GetTaskRunByTaskAndAttempt retrieves a task run by task ID and attempt number.
 func (s *Store) GetTaskRunByTaskAndAttempt(ctx context.Context, taskID string, attempt int) (*store.TaskRun, error) {
-	return getTaskRunByTaskAndAttempt(ctx, s.pool, taskID, attempt)
+	return getTaskRunByTaskAndAttempt(ctx, s.db, taskID, attempt)
 }
 
 // GetTaskRunByTaskAndAttempt retrieves a task run within a transaction.
@@ -354,7 +354,7 @@ func getTaskRunByTaskAndAttempt(ctx context.Context, q querier, taskID string, a
 
 // ListTaskRuns retrieves task runs with optional filtering.
 func (s *Store) ListTaskRuns(ctx context.Context, opts store.ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
-	return listTaskRuns(ctx, s.pool, opts)
+	return listTaskRuns(ctx, s.db, opts)
 }
 
 // ListTaskRuns retrieves task runs within a transaction.
@@ -448,7 +448,7 @@ func listTaskRuns(ctx context.Context, q querier, opts store.ListTaskRunsOptions
 
 // UpdateTaskRun updates task run fields.
 func (s *Store) UpdateTaskRun(ctx context.Context, runID string, updates store.TaskRunUpdates) error {
-	return updateTaskRun(ctx, s.pool, runID, updates)
+	return updateTaskRun(ctx, s.db, runID, updates)
 }
 
 // UpdateTaskRun updates task run fields within a transaction.
@@ -564,7 +564,7 @@ func scanTaskRunFromRows(rows pgx.Rows) (*store.TaskRun, error) {
 
 // CreateScheduledTask creates a new scheduled task.
 func (s *Store) CreateScheduledTask(ctx context.Context, task *store.ScheduledTask) error {
-	return createScheduledTask(ctx, s.pool, task)
+	return createScheduledTask(ctx, s.db, task)
 }
 
 // CreateScheduledTask creates a new scheduled task within a transaction.
@@ -603,7 +603,7 @@ func createScheduledTask(ctx context.Context, q querier, task *store.ScheduledTa
 
 // GetScheduledTask retrieves a scheduled task by ID.
 func (s *Store) GetScheduledTask(ctx context.Context, taskID string) (*store.ScheduledTask, error) {
-	return getScheduledTask(ctx, s.pool, taskID)
+	return getScheduledTask(ctx, s.db, taskID)
 }
 
 // GetScheduledTask retrieves a scheduled task by ID within a transaction.
@@ -619,7 +619,7 @@ func getScheduledTask(ctx context.Context, q querier, taskID string) (*store.Sch
 
 // ListScheduledTasks retrieves scheduled tasks with optional filtering.
 func (s *Store) ListScheduledTasks(ctx context.Context, opts store.ListScheduledTasksOptions) (*store.ListResult[store.ScheduledTask], error) {
-	return listScheduledTasks(ctx, s.pool, opts)
+	return listScheduledTasks(ctx, s.db, opts)
 }
 
 // ListScheduledTasks retrieves scheduled tasks within a transaction.
@@ -708,7 +708,7 @@ func listScheduledTasks(ctx context.Context, q querier, opts store.ListScheduled
 
 // UpdateScheduledTask updates scheduled task fields.
 func (s *Store) UpdateScheduledTask(ctx context.Context, taskID string, updates store.ScheduledTaskUpdates) error {
-	return updateScheduledTask(ctx, s.pool, taskID, updates)
+	return updateScheduledTask(ctx, s.db, taskID, updates)
 }
 
 // UpdateScheduledTask updates scheduled task fields within a transaction.
@@ -836,7 +836,7 @@ func updateScheduledTask(ctx context.Context, q querier, taskID string, updates 
 
 // DeleteScheduledTask deletes a scheduled task.
 func (s *Store) DeleteScheduledTask(ctx context.Context, taskID string) error {
-	return deleteScheduledTask(ctx, s.pool, taskID)
+	return deleteScheduledTask(ctx, s.db, taskID)
 }
 
 // DeleteScheduledTask deletes a scheduled task within a transaction.
@@ -861,7 +861,7 @@ func deleteScheduledTask(ctx context.Context, q querier, taskID string) error {
 // GetDueScheduledTasks retrieves scheduled tasks that are due to run.
 // It selects tasks where status='active' and next_run_at <= now.
 func (s *Store) GetDueScheduledTasks(ctx context.Context, now time.Time, limit int) ([]*store.ScheduledTask, error) {
-	return getDueScheduledTasks(ctx, s.pool, now, limit)
+	return getDueScheduledTasks(ctx, s.db, now, limit)
 }
 
 // GetDueScheduledTasks retrieves due scheduled tasks within a transaction.

@@ -31,7 +31,7 @@ const webhookEventClaimLease = 5 * time.Minute
 // Webhook operations
 
 func (s *Store) CreateWebhook(ctx context.Context, webhook *store.Webhook) error {
-	return createWebhook(ctx, s.pool, webhook)
+	return createWebhook(ctx, s.db, webhook)
 }
 
 func (t *Tx) CreateWebhook(ctx context.Context, webhook *store.Webhook) error {
@@ -68,7 +68,7 @@ func createWebhook(ctx context.Context, q querier, webhook *store.Webhook) error
 }
 
 func (s *Store) GetWebhook(ctx context.Context, webhookID string) (*store.Webhook, error) {
-	return getWebhook(ctx, s.pool, webhookID)
+	return getWebhook(ctx, s.db, webhookID)
 }
 
 func (t *Tx) GetWebhook(ctx context.Context, webhookID string) (*store.Webhook, error) {
@@ -82,7 +82,7 @@ func getWebhook(ctx context.Context, q querier, webhookID string) (*store.Webhoo
 }
 
 func (s *Store) GetWebhookByName(ctx context.Context, name string, tenantID *string) (*store.Webhook, error) {
-	return getWebhookByName(ctx, s.pool, name, tenantID)
+	return getWebhookByName(ctx, s.db, name, tenantID)
 }
 
 func (t *Tx) GetWebhookByName(ctx context.Context, name string, tenantID *string) (*store.Webhook, error) {
@@ -106,7 +106,7 @@ func webhookOffset(offset int, cursor string) int {
 }
 
 func (s *Store) ListWebhooks(ctx context.Context, opts store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
-	return listWebhooks(ctx, s.pool, opts)
+	return listWebhooks(ctx, s.db, opts)
 }
 
 func (t *Tx) ListWebhooks(ctx context.Context, opts store.ListWebhooksOptions) (*store.ListResult[store.Webhook], error) {
@@ -207,7 +207,7 @@ func listWebhooks(ctx context.Context, q querier, opts store.ListWebhooksOptions
 }
 
 func (s *Store) UpdateWebhook(ctx context.Context, webhookID string, updates store.WebhookUpdates) error {
-	return updateWebhook(ctx, s.pool, webhookID, updates)
+	return updateWebhook(ctx, s.db, webhookID, updates)
 }
 
 func (t *Tx) UpdateWebhook(ctx context.Context, webhookID string, updates store.WebhookUpdates) error {
@@ -307,7 +307,7 @@ func updateWebhook(ctx context.Context, q querier, webhookID string, updates sto
 }
 
 func (s *Store) DeleteWebhook(ctx context.Context, webhookID string) error {
-	return deleteWebhook(ctx, s.pool, webhookID)
+	return deleteWebhook(ctx, s.db, webhookID)
 }
 
 func (t *Tx) DeleteWebhook(ctx context.Context, webhookID string) error {
@@ -327,7 +327,7 @@ func deleteWebhook(ctx context.Context, q querier, webhookID string) error {
 }
 
 func (s *Store) GetActiveWebhooksForEvent(ctx context.Context, eventType string, tenantID *string) ([]*store.Webhook, error) {
-	return getActiveWebhooksForEvent(ctx, s.pool, eventType, tenantID)
+	return getActiveWebhooksForEvent(ctx, s.db, eventType, tenantID)
 }
 
 func (t *Tx) GetActiveWebhooksForEvent(ctx context.Context, eventType string, tenantID *string) ([]*store.Webhook, error) {
@@ -366,7 +366,7 @@ func getActiveWebhooksForEvent(ctx context.Context, q querier, _ string, tenantI
 // WebhookEvent operations
 
 func (s *Store) CreateWebhookEvent(ctx context.Context, event *store.WebhookEvent) error {
-	return createWebhookEvent(ctx, s.pool, event)
+	return createWebhookEvent(ctx, s.db, event)
 }
 
 func (t *Tx) CreateWebhookEvent(ctx context.Context, event *store.WebhookEvent) error {
@@ -401,7 +401,7 @@ func createWebhookEvent(ctx context.Context, q querier, event *store.WebhookEven
 }
 
 func (s *Store) GetWebhookEvent(ctx context.Context, eventID string) (*store.WebhookEvent, error) {
-	return getWebhookEvent(ctx, s.pool, eventID)
+	return getWebhookEvent(ctx, s.db, eventID)
 }
 
 func (t *Tx) GetWebhookEvent(ctx context.Context, eventID string) (*store.WebhookEvent, error) {
@@ -415,7 +415,7 @@ func getWebhookEvent(ctx context.Context, q querier, eventID string) (*store.Web
 }
 
 func (s *Store) ListWebhookEvents(ctx context.Context, opts store.ListWebhookEventsOptions) (*store.ListResult[store.WebhookEvent], error) {
-	return listWebhookEvents(ctx, s.pool, opts)
+	return listWebhookEvents(ctx, s.db, opts)
 }
 
 func (t *Tx) ListWebhookEvents(ctx context.Context, opts store.ListWebhookEventsOptions) (*store.ListResult[store.WebhookEvent], error) {
@@ -519,7 +519,7 @@ func listWebhookEvents(ctx context.Context, q querier, opts store.ListWebhookEve
 }
 
 func (s *Store) UpdateWebhookEvent(ctx context.Context, eventID string, updates store.WebhookEventUpdates) error {
-	return updateWebhookEvent(ctx, s.pool, eventID, updates)
+	return updateWebhookEvent(ctx, s.db, eventID, updates)
 }
 
 func (t *Tx) UpdateWebhookEvent(ctx context.Context, eventID string, updates store.WebhookEventUpdates) error {
@@ -584,7 +584,7 @@ func updateWebhookEvent(ctx context.Context, q querier, eventID string, updates 
 }
 
 func (s *Store) GetPendingWebhookEvents(ctx context.Context, limit int) ([]*store.WebhookEvent, error) {
-	return getPendingWebhookEvents(ctx, s.pool, limit)
+	return getPendingWebhookEvents(ctx, s.db, limit)
 }
 
 func (t *Tx) GetPendingWebhookEvents(ctx context.Context, limit int) ([]*store.WebhookEvent, error) {
@@ -645,7 +645,7 @@ func getPendingWebhookEvents(ctx context.Context, q querier, limit int) ([]*stor
 }
 
 func (s *Store) CancelWebhookEventsByWebhook(ctx context.Context, webhookID string) error {
-	return cancelWebhookEventsByWebhook(ctx, s.pool, webhookID)
+	return cancelWebhookEventsByWebhook(ctx, s.db, webhookID)
 }
 
 func (t *Tx) CancelWebhookEventsByWebhook(ctx context.Context, webhookID string) error {

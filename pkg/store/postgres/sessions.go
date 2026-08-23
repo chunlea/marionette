@@ -23,7 +23,7 @@ const sessionColumns = `id, name, status, runner_id, workspace_id, profile_id, a
 
 // CreateSession creates a new session.
 func (s *Store) CreateSession(ctx context.Context, session *store.Session) error {
-	return createSession(ctx, s.pool, session)
+	return createSession(ctx, s.db, session)
 }
 
 // CreateSession creates a new session within a transaction.
@@ -70,7 +70,7 @@ func createSession(ctx context.Context, q querier, session *store.Session) error
 
 // GetSession retrieves a session by ID.
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*store.Session, error) {
-	return getSession(ctx, s.pool, sessionID)
+	return getSession(ctx, s.db, sessionID)
 }
 
 // GetSession retrieves a session by ID within a transaction.
@@ -86,7 +86,7 @@ func getSession(ctx context.Context, q querier, sessionID string) (*store.Sessio
 
 // ListSessions retrieves sessions with optional filtering.
 func (s *Store) ListSessions(ctx context.Context, opts store.ListSessionsOptions) (*store.ListResult[store.Session], error) {
-	return listSessions(ctx, s.pool, opts)
+	return listSessions(ctx, s.db, opts)
 }
 
 // ListSessions retrieves sessions within a transaction.
@@ -194,7 +194,7 @@ func listSessions(ctx context.Context, q querier, opts store.ListSessionsOptions
 
 // UpdateSession updates session fields.
 func (s *Store) UpdateSession(ctx context.Context, sessionID string, updates store.SessionUpdates) error {
-	return updateSession(ctx, s.pool, sessionID, updates)
+	return updateSession(ctx, s.db, sessionID, updates)
 }
 
 // UpdateSession updates session fields within a transaction.
@@ -367,7 +367,7 @@ func updateSession(ctx context.Context, q querier, sessionID string, updates sto
 
 // DeleteSession deletes a session.
 func (s *Store) DeleteSession(ctx context.Context, sessionID string) error {
-	return deleteSession(ctx, s.pool, sessionID)
+	return deleteSession(ctx, s.db, sessionID)
 }
 
 // DeleteSession deletes a session within a transaction.
@@ -429,7 +429,7 @@ func scanSessionFromRows(rows pgx.Rows) (*store.Session, error) {
 // GetDueScheduledSessions retrieves sessions with lifecycle_mode='scheduled'
 // that are suspended and have next_scheduled_at <= now.
 func (s *Store) GetDueScheduledSessions(ctx context.Context, now time.Time, limit int) ([]*store.Session, error) {
-	return getDueScheduledSessions(ctx, s.pool, now, limit)
+	return getDueScheduledSessions(ctx, s.db, now, limit)
 }
 
 // GetDueScheduledSessions retrieves due scheduled sessions within a transaction.

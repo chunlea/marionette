@@ -20,6 +20,13 @@ import (
 
 var testStore *pgstore.Store
 
+// testDSN is the connection string the container was reached on.
+//
+// The tenancy tests need a second store on the same database connected as an
+// unprivileged role, because the harness role is a superuser and superusers
+// ignore row level security.
+var testDSN string
+
 // dockerHealth reports whether a Docker daemon is reachable.
 //
 // testcontainers panics rather than returning an error when it cannot find a
@@ -101,6 +108,8 @@ func TestMain(m *testing.M) {
 
 	// Create logger
 	logger, _ := zap.NewDevelopment()
+
+	testDSN = connStr
 
 	// Create store
 	testStore, err = pgstore.New(ctx, pgstore.Config{URL: connStr}, logger)

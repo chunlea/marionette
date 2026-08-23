@@ -32,7 +32,7 @@ const runnerTokenColumns = `id, token_hash, token_prefix, hash_version, runner_i
 
 // CreateAPIKey creates a new API key.
 func (s *Store) CreateAPIKey(ctx context.Context, key *store.APIKey) error {
-	return createAPIKey(ctx, s.pool, key)
+	return createAPIKey(ctx, s.db, key)
 }
 
 // CreateAPIKey creates a new API key within a transaction.
@@ -69,7 +69,7 @@ func createAPIKey(ctx context.Context, q querier, key *store.APIKey) error {
 
 // GetAPIKey retrieves an API key by ID.
 func (s *Store) GetAPIKey(ctx context.Context, keyID string) (*store.APIKey, error) {
-	return getAPIKey(ctx, s.pool, keyID)
+	return getAPIKey(ctx, s.db, keyID)
 }
 
 // GetAPIKey retrieves an API key by ID within a transaction.
@@ -85,7 +85,7 @@ func getAPIKey(ctx context.Context, q querier, keyID string) (*store.APIKey, err
 
 // GetAPIKeyByHash retrieves an API key by its hash.
 func (s *Store) GetAPIKeyByHash(ctx context.Context, hash string) (*store.APIKey, error) {
-	return getAPIKeyByHash(ctx, s.pool, hash)
+	return getAPIKeyByHash(ctx, s.db, hash)
 }
 
 // GetAPIKeyByHash retrieves an API key by its hash within a transaction.
@@ -101,7 +101,7 @@ func getAPIKeyByHash(ctx context.Context, q querier, hash string) (*store.APIKey
 
 // ListAPIKeys retrieves API keys with optional filtering.
 func (s *Store) ListAPIKeys(ctx context.Context, opts store.ListAPIKeysOptions) (*store.ListResult[store.APIKey], error) {
-	return listAPIKeys(ctx, s.pool, opts)
+	return listAPIKeys(ctx, s.db, opts)
 }
 
 // ListAPIKeys retrieves API keys within a transaction.
@@ -184,7 +184,7 @@ func listAPIKeys(ctx context.Context, q querier, opts store.ListAPIKeysOptions) 
 
 // UpdateAPIKey updates API key fields.
 func (s *Store) UpdateAPIKey(ctx context.Context, keyID string, updates store.APIKeyUpdates) error {
-	return updateAPIKey(ctx, s.pool, keyID, updates)
+	return updateAPIKey(ctx, s.db, keyID, updates)
 }
 
 // UpdateAPIKey updates API key fields within a transaction.
@@ -255,7 +255,7 @@ func updateAPIKey(ctx context.Context, q querier, keyID string, updates store.AP
 
 // DeleteAPIKey deletes an API key.
 func (s *Store) DeleteAPIKey(ctx context.Context, keyID string) error {
-	return deleteAPIKey(ctx, s.pool, keyID)
+	return deleteAPIKey(ctx, s.db, keyID)
 }
 
 // DeleteAPIKey deletes an API key within a transaction.
@@ -312,7 +312,7 @@ func scanAPIKeyFromRows(rows pgx.Rows) (*store.APIKey, error) {
 
 // CreateRunnerToken creates a new runner token.
 func (s *Store) CreateRunnerToken(ctx context.Context, token *store.RunnerToken) error {
-	return createRunnerToken(ctx, s.pool, token)
+	return createRunnerToken(ctx, s.db, token)
 }
 
 // CreateRunnerToken creates a new runner token within a transaction.
@@ -349,7 +349,7 @@ func createRunnerToken(ctx context.Context, q querier, token *store.RunnerToken)
 
 // GetRunnerToken retrieves a runner token by ID.
 func (s *Store) GetRunnerToken(ctx context.Context, tokenID string) (*store.RunnerToken, error) {
-	return getRunnerToken(ctx, s.pool, tokenID)
+	return getRunnerToken(ctx, s.db, tokenID)
 }
 
 // GetRunnerToken retrieves a runner token by ID within a transaction.
@@ -365,7 +365,7 @@ func getRunnerToken(ctx context.Context, q querier, tokenID string) (*store.Runn
 
 // GetRunnerTokenByHash retrieves a runner token by its hash.
 func (s *Store) GetRunnerTokenByHash(ctx context.Context, hash string) (*store.RunnerToken, error) {
-	return getRunnerTokenByHash(ctx, s.pool, hash)
+	return getRunnerTokenByHash(ctx, s.db, hash)
 }
 
 // GetRunnerTokenByHash retrieves a runner token by its hash within a transaction.
@@ -381,7 +381,7 @@ func getRunnerTokenByHash(ctx context.Context, q querier, hash string) (*store.R
 
 // ListRunnerTokens retrieves runner tokens with optional filtering.
 func (s *Store) ListRunnerTokens(ctx context.Context, opts store.ListRunnerTokensOptions) (*store.ListResult[store.RunnerToken], error) {
-	return listRunnerTokens(ctx, s.pool, opts)
+	return listRunnerTokens(ctx, s.db, opts)
 }
 
 // ListRunnerTokens retrieves runner tokens within a transaction.
@@ -478,7 +478,7 @@ func listRunnerTokens(ctx context.Context, q querier, opts store.ListRunnerToken
 
 // UpdateRunnerToken updates runner token fields.
 func (s *Store) UpdateRunnerToken(ctx context.Context, tokenID string, updates store.RunnerTokenUpdates) error {
-	return updateRunnerToken(ctx, s.pool, tokenID, updates)
+	return updateRunnerToken(ctx, s.db, tokenID, updates)
 }
 
 // UpdateRunnerToken updates runner token fields within a transaction.
@@ -564,7 +564,7 @@ func updateRunnerToken(ctx context.Context, q querier, tokenID string, updates s
 
 // DeleteRunnerToken deletes a runner token.
 func (s *Store) DeleteRunnerToken(ctx context.Context, tokenID string) error {
-	return deleteRunnerToken(ctx, s.pool, tokenID)
+	return deleteRunnerToken(ctx, s.db, tokenID)
 }
 
 // DeleteRunnerToken deletes a runner token within a transaction.

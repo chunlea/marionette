@@ -32,7 +32,7 @@ const dataKeyColumns = `id, resource_type, resource_id, dek_encrypted, algorithm
 
 // CreateSnapshot creates a new snapshot.
 func (s *Store) CreateSnapshot(ctx context.Context, snapshot *store.Snapshot) error {
-	return createSnapshot(ctx, s.pool, snapshot)
+	return createSnapshot(ctx, s.db, snapshot)
 }
 
 // CreateSnapshot creates a new snapshot within a transaction.
@@ -68,7 +68,7 @@ func createSnapshot(ctx context.Context, q querier, snapshot *store.Snapshot) er
 
 // GetSnapshot retrieves a snapshot by ID.
 func (s *Store) GetSnapshot(ctx context.Context, snapshotID string) (*store.Snapshot, error) {
-	return getSnapshot(ctx, s.pool, snapshotID)
+	return getSnapshot(ctx, s.db, snapshotID)
 }
 
 // GetSnapshot retrieves a snapshot by ID within a transaction.
@@ -84,7 +84,7 @@ func getSnapshot(ctx context.Context, q querier, snapshotID string) (*store.Snap
 
 // GetSnapshotByRunnerAndName retrieves a snapshot by runner ID and name.
 func (s *Store) GetSnapshotByRunnerAndName(ctx context.Context, runnerID, name string) (*store.Snapshot, error) {
-	return getSnapshotByRunnerAndName(ctx, s.pool, runnerID, name)
+	return getSnapshotByRunnerAndName(ctx, s.db, runnerID, name)
 }
 
 // GetSnapshotByRunnerAndName retrieves a snapshot within a transaction.
@@ -100,7 +100,7 @@ func getSnapshotByRunnerAndName(ctx context.Context, q querier, runnerID, name s
 
 // ListSnapshots retrieves snapshots with optional filtering.
 func (s *Store) ListSnapshots(ctx context.Context, opts store.ListSnapshotsOptions) (*store.ListResult[store.Snapshot], error) {
-	return listSnapshots(ctx, s.pool, opts)
+	return listSnapshots(ctx, s.db, opts)
 }
 
 // ListSnapshots retrieves snapshots within a transaction.
@@ -184,7 +184,7 @@ func listSnapshots(ctx context.Context, q querier, opts store.ListSnapshotsOptio
 
 // UpdateSnapshot updates snapshot fields.
 func (s *Store) UpdateSnapshot(ctx context.Context, snapshotID string, updates store.SnapshotUpdates) error {
-	return updateSnapshot(ctx, s.pool, snapshotID, updates)
+	return updateSnapshot(ctx, s.db, snapshotID, updates)
 }
 
 // UpdateSnapshot updates snapshot fields within a transaction.
@@ -250,7 +250,7 @@ func updateSnapshot(ctx context.Context, q querier, snapshotID string, updates s
 
 // DeleteSnapshot deletes a snapshot.
 func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
-	return deleteSnapshot(ctx, s.pool, snapshotID)
+	return deleteSnapshot(ctx, s.db, snapshotID)
 }
 
 // DeleteSnapshot deletes a snapshot within a transaction.
@@ -305,7 +305,7 @@ func scanSnapshotFromRows(rows pgx.Rows) (*store.Snapshot, error) {
 
 // CreateTunnel creates a new tunnel.
 func (s *Store) CreateTunnel(ctx context.Context, tunnel *store.Tunnel) error {
-	return createTunnel(ctx, s.pool, tunnel)
+	return createTunnel(ctx, s.db, tunnel)
 }
 
 // CreateTunnel creates a new tunnel within a transaction.
@@ -341,7 +341,7 @@ func createTunnel(ctx context.Context, q querier, tunnel *store.Tunnel) error {
 
 // GetTunnel retrieves a tunnel by ID.
 func (s *Store) GetTunnel(ctx context.Context, tunnelID string) (*store.Tunnel, error) {
-	return getTunnel(ctx, s.pool, tunnelID)
+	return getTunnel(ctx, s.db, tunnelID)
 }
 
 // GetTunnel retrieves a tunnel by ID within a transaction.
@@ -357,7 +357,7 @@ func getTunnel(ctx context.Context, q querier, tunnelID string) (*store.Tunnel, 
 
 // GetTunnelByTokenHash retrieves a tunnel by token hash.
 func (s *Store) GetTunnelByTokenHash(ctx context.Context, hash string) (*store.Tunnel, error) {
-	return getTunnelByTokenHash(ctx, s.pool, hash)
+	return getTunnelByTokenHash(ctx, s.db, hash)
 }
 
 // GetTunnelByTokenHash retrieves a tunnel within a transaction.
@@ -373,7 +373,7 @@ func getTunnelByTokenHash(ctx context.Context, q querier, hash string) (*store.T
 
 // ListTunnels retrieves tunnels with optional filtering.
 func (s *Store) ListTunnels(ctx context.Context, opts store.ListTunnelsOptions) (*store.ListResult[store.Tunnel], error) {
-	return listTunnels(ctx, s.pool, opts)
+	return listTunnels(ctx, s.db, opts)
 }
 
 // ListTunnels retrieves tunnels within a transaction.
@@ -475,7 +475,7 @@ func listTunnels(ctx context.Context, q querier, opts store.ListTunnelsOptions) 
 
 // UpdateTunnel updates tunnel fields.
 func (s *Store) UpdateTunnel(ctx context.Context, tunnelID string, updates store.TunnelUpdates) error {
-	return updateTunnel(ctx, s.pool, tunnelID, updates)
+	return updateTunnel(ctx, s.db, tunnelID, updates)
 }
 
 // UpdateTunnel updates tunnel fields within a transaction.
@@ -528,7 +528,7 @@ func updateTunnel(ctx context.Context, q querier, tunnelID string, updates store
 
 // DeleteTunnel deletes a tunnel.
 func (s *Store) DeleteTunnel(ctx context.Context, tunnelID string) error {
-	return deleteTunnel(ctx, s.pool, tunnelID)
+	return deleteTunnel(ctx, s.db, tunnelID)
 }
 
 // DeleteTunnel deletes a tunnel within a transaction.
@@ -591,7 +591,7 @@ func (s *Store) CloseSessionTunnels(ctx context.Context, sessionID string) (int6
 		SET closed_at = NOW(), updated_at = NOW()
 		WHERE session_id = $1 AND closed_at IS NULL`
 
-	result, err := s.pool.Exec(ctx, query, sessionID)
+	result, err := s.db.Exec(ctx, query, sessionID)
 	if err != nil {
 		return 0, fmt.Errorf("closing session tunnels: %w", err)
 	}
@@ -604,7 +604,7 @@ func (s *Store) CloseSessionTunnels(ctx context.Context, sessionID string) (int6
 func (s *Store) DeleteExpiredTunnels(ctx context.Context) (int64, error) {
 	query := `DELETE FROM tunnels WHERE expires_at < NOW()`
 
-	result, err := s.pool.Exec(ctx, query)
+	result, err := s.db.Exec(ctx, query)
 	if err != nil {
 		return 0, fmt.Errorf("deleting expired tunnels: %w", err)
 	}
@@ -620,7 +620,7 @@ func (s *Store) GetTunnelsByRunner(ctx context.Context, runnerID string) ([]*sto
 		ORDER BY created_at ASC`,
 		tunnelColumns)
 
-	rows, err := s.pool.Query(ctx, query, runnerID)
+	rows, err := s.db.Query(ctx, query, runnerID)
 	if err != nil {
 		return nil, fmt.Errorf("querying tunnels by runner: %w", err)
 	}
@@ -648,7 +648,7 @@ func (s *Store) GetActiveTunnelCount(ctx context.Context) (int64, error) {
 	query := `SELECT COUNT(*) FROM tunnels WHERE closed_at IS NULL AND expires_at > NOW()`
 
 	var count int64
-	if err := s.pool.QueryRow(ctx, query).Scan(&count); err != nil {
+	if err := s.db.QueryRow(ctx, query).Scan(&count); err != nil {
 		return 0, fmt.Errorf("counting active tunnels: %w", err)
 	}
 
@@ -661,7 +661,7 @@ func (s *Store) GetActiveTunnelCount(ctx context.Context) (int64, error) {
 
 // CreateDataKey creates a new data key.
 func (s *Store) CreateDataKey(ctx context.Context, key *store.DataKey) error {
-	return createDataKey(ctx, s.pool, key)
+	return createDataKey(ctx, s.db, key)
 }
 
 // CreateDataKey creates a new data key within a transaction.
@@ -696,7 +696,7 @@ func createDataKey(ctx context.Context, q querier, key *store.DataKey) error {
 
 // GetDataKey retrieves a data key by ID.
 func (s *Store) GetDataKey(ctx context.Context, keyID string) (*store.DataKey, error) {
-	return getDataKey(ctx, s.pool, keyID)
+	return getDataKey(ctx, s.db, keyID)
 }
 
 // GetDataKey retrieves a data key by ID within a transaction.
@@ -712,7 +712,7 @@ func getDataKey(ctx context.Context, q querier, keyID string) (*store.DataKey, e
 
 // GetDataKeyByResource retrieves a data key by resource type and ID.
 func (s *Store) GetDataKeyByResource(ctx context.Context, resourceType, resourceID string) (*store.DataKey, error) {
-	return getDataKeyByResource(ctx, s.pool, resourceType, resourceID)
+	return getDataKeyByResource(ctx, s.db, resourceType, resourceID)
 }
 
 // GetDataKeyByResource retrieves a data key within a transaction.
@@ -728,7 +728,7 @@ func getDataKeyByResource(ctx context.Context, q querier, resourceType, resource
 
 // UpdateDataKey updates data key fields.
 func (s *Store) UpdateDataKey(ctx context.Context, keyID string, updates store.DataKeyUpdates) error {
-	return updateDataKey(ctx, s.pool, keyID, updates)
+	return updateDataKey(ctx, s.db, keyID, updates)
 }
 
 // UpdateDataKey updates data key fields within a transaction.
@@ -776,7 +776,7 @@ func updateDataKey(ctx context.Context, q querier, keyID string, updates store.D
 
 // DeleteDataKey deletes a data key.
 func (s *Store) DeleteDataKey(ctx context.Context, keyID string) error {
-	return deleteDataKey(ctx, s.pool, keyID)
+	return deleteDataKey(ctx, s.db, keyID)
 }
 
 // DeleteDataKey deletes a data key within a transaction.
