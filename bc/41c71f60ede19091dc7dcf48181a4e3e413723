@@ -1,0 +1,21 @@
+pkg/store/postgres/store.go
+  s_30fb41c4a911b8::t_bbf12885815942 78-80
+pkg/store/postgres/tx.go
+  s_30fb41c4a911b8::t_cb17d66efeaaae 20-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "bc41c71f60ede19091dc7dcf48181a4e3e413723",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
