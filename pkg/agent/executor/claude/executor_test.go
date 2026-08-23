@@ -818,7 +818,9 @@ sleep 100
 	}
 	handler := newTestOutputHandler()
 
+	started := time.Now()
 	result, err := e.Execute(ctx, task, nil, handler)
+	elapsed := time.Since(started)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -826,6 +828,13 @@ sleep 100
 	// When timeout kills the process, it may exit with -1 (signal)
 	// or the error might be "timeout" depending on timing
 	assert.NotEmpty(t, result.Error)
+
+	// The timeout must actually stop the work. The mock sleeps for 100s; if
+	// only the shell were signalled, its `sleep` child would survive holding
+	// our pipes and Execute would return once the sleep finished rather than
+	// once the deadline passed.
+	assert.Less(t, elapsed, 10*time.Second,
+		"timeout must kill the process tree, not just the top-level process")
 }
 
 func TestExecutor_Execute_NonZeroExit(t *testing.T) {

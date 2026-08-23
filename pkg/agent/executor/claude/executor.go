@@ -16,6 +16,10 @@ import (
 	"github.com/chunlea/marionette/pkg/agent/executor"
 )
 
+// processWaitDelay bounds how long Wait blocks after the process is killed
+// while a surviving grandchild still holds stdout or stderr open.
+const processWaitDelay = 5 * time.Second
+
 var (
 	// ErrNotRunning is returned when trying to operate on a non-running executor.
 	ErrNotRunning = errors.New("executor not running")
@@ -175,6 +179,14 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 
 	// Create command
 	cmd := exec.CommandContext(ctx, e.binaryPath, args...)
+
+	// Kill the whole process tree on cancel or timeout, not just the CLI: its
+	// tool subprocesses would otherwise keep running and keep our pipes open,
+	// so Wait would block long past the deadline we just enforced.
+	configureProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessTree(cmd.Process) }
+	// Backstop for a grandchild that survives the kill still holding a pipe.
+	cmd.WaitDelay = processWaitDelay
 
 	// Set working directory
 	workDir := task.WorkingDir
@@ -553,9 +565,9 @@ func (e *Executor) Kill() error {
 		e.cancelFunc()
 	}
 
-	// Then kill process
+	// Then kill the process tree
 	if e.cmd.Process != nil {
-		return e.cmd.Process.Kill()
+		return killProcessTree(e.cmd.Process)
 	}
 
 	return nil
@@ -646,7 +658,7 @@ func (e *Executor) killProcess() {
 		cancel()
 	}
 	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+		_ = killProcessTree(cmd.Process)
 	}
 }
 
