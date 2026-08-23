@@ -699,6 +699,12 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 		)
 	}
 
+	// Release the underlying infrastructure. Until this landed, "suspended"
+	// only ever meant a row in the database: no provider was resolved, no
+	// Suspend was called, and every container, pod and E2B sandbox kept running
+	// (and billing) for the whole life of the "suspended" session.
+	m.releaseRunner(ctx, sessionID, previousRunnerID, opts)
+
 	// Log audit event
 	if m.auditLog != nil {
 		details := map[string]any{
@@ -726,6 +732,194 @@ func (m *SessionManager) SuspendWithOptions(ctx context.Context, sessionID strin
 	}
 
 	return nil
+}
+
+// providerSuspendTimeout bounds a single provider suspend call. Suspend runs on
+// the caller's path, so a wedged provider must not hold the request open.
+const providerSuspendTimeout = 60 * time.Second
+
+// releaseRunner releases the infrastructure behind a suspended session.
+//
+// The strategy recorded on the session drives the call:
+//
+//	pool provider            -> ReleaseToPool
+//	SuspendableProvider      -> Suspend (provider picks the actual strategy)
+//	PausableProvider + pause  -> Pause
+//	any other managed provider -> Destroy
+//
+// The last line is the documented fallback: a provider that cannot suspend has
+// only two honest options, stop paying or keep paying, and "suspended" must
+// mean the former. External providers are left alone - we do not own them.
+//
+// Failures are logged and not propagated: the session is already suspended in
+// the database, and an orphaned runner is picked up by the Reaper.
+func (m *SessionManager) releaseRunner(ctx context.Context, sessionID string, runnerID *string, opts SuspendOptions) {
+	if runnerID == nil || *runnerID == "" {
+		return
+	}
+	if m.providerRegistry == nil {
+		m.logger.Debug("no provider registry configured, leaving runner running",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", *runnerID),
+		)
+		return
+	}
+
+	prov, err := m.providerForRunner(ctx, *runnerID)
+	if err != nil {
+		m.logger.Warn("could not resolve provider to release runner",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", *runnerID),
+			zap.Error(err),
+		)
+		return
+	}
+	if prov == nil {
+		// External or manually registered runner: not ours to release.
+		return
+	}
+
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerSuspendTimeout)
+	defer cancel()
+
+	strategy := provider.SuspendStrategy(opts.Strategy)
+	actual, err := m.applySuspendStrategy(releaseCtx, prov, *runnerID, strategy, opts)
+	if err != nil {
+		m.logger.Error("failed to release runner on suspend",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", *runnerID),
+			zap.String("provider", prov.Name()),
+			zap.String("strategy", string(strategy)),
+			zap.Error(err),
+		)
+		return
+	}
+
+	m.logger.Info("runner released on suspend",
+		zap.String("session_id", sessionID),
+		zap.String("runner_id", *runnerID),
+		zap.String("provider", prov.Name()),
+		zap.String("requested_strategy", string(strategy)),
+		zap.String("actual_strategy", string(actual.Strategy)),
+	)
+
+	m.recordSuspendResult(releaseCtx, sessionID, *runnerID, actual)
+}
+
+// applySuspendStrategy performs the provider-side release and reports the
+// strategy that was actually used.
+func (m *SessionManager) applySuspendStrategy(
+	ctx context.Context,
+	prov provider.Provider,
+	runnerID string,
+	strategy provider.SuspendStrategy,
+	opts SuspendOptions,
+) (*provider.SuspendResult, error) {
+	now := time.Now()
+
+	if prov.Type() == provider.ProviderTypeExternal {
+		return &provider.SuspendResult{Strategy: strategy, SuspendedAt: now}, nil
+	}
+
+	if pool, ok := prov.(provider.PoolAcquirer); ok {
+		if err := pool.ReleaseToPool(ctx, runnerID, false, ""); err != nil {
+			return nil, err
+		}
+		return &provider.SuspendResult{
+			Strategy:    provider.SuspendStrategyReleaseToPool,
+			SuspendedAt: now,
+		}, nil
+	}
+
+	if susp, ok := prov.(provider.SuspendableProvider); ok {
+		return susp.Suspend(ctx, runnerID, provider.SuspendOptions{
+			Strategy:      strategy,
+			SaveSnapshot:  opts.SnapshotID != "" || strategy == provider.SuspendStrategySnapshot,
+			SyncWorkspace: opts.WorkspaceSynced,
+			Timeout:       providerSuspendTimeout,
+		})
+	}
+
+	if pausable, ok := prov.(provider.PausableProvider); ok && strategy == provider.SuspendStrategyPause {
+		if err := pausable.Pause(ctx, runnerID); err != nil {
+			return nil, err
+		}
+		return &provider.SuspendResult{
+			Strategy:    provider.SuspendStrategyPause,
+			SuspendedAt: now,
+		}, nil
+	}
+
+	// Documented fallback: the provider cannot suspend, so terminate rather
+	// than leave the instance running and billing against a session nobody is
+	// using.
+	if err := prov.Destroy(ctx, runnerID); err != nil {
+		return nil, err
+	}
+	return &provider.SuspendResult{
+		Strategy:    provider.SuspendStrategyTerminate,
+		SuspendedAt: now,
+	}, nil
+}
+
+// recordSuspendResult writes back what the provider actually did, so a resume
+// knows whether it is unpausing, restoring a snapshot or spawning fresh.
+func (m *SessionManager) recordSuspendResult(
+	ctx context.Context,
+	sessionID, runnerID string,
+	result *provider.SuspendResult,
+) {
+	strategy := string(result.Strategy)
+	updates := store.SessionUpdates{SuspendStrategy: &strategy}
+	if result.SnapshotID != "" {
+		updates.SuspendSnapshotID = &result.SnapshotID
+	}
+	if result.WorkspaceSynced {
+		synced := true
+		updates.SuspendWorkspaceSynced = &synced
+	}
+
+	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
+		m.logger.Warn("failed to record the suspend strategy the provider used",
+			zap.String("session_id", sessionID),
+			zap.String("strategy", strategy),
+			zap.Error(err),
+		)
+	}
+
+	// Keep the runner row honest about what happened to the instance.
+	runnerStatus := StatusOffline
+	if result.Strategy == provider.SuspendStrategyPause {
+		runnerStatus = StatusPaused
+	}
+	if err := m.store.UpdateRunner(ctx, runnerID, store.RunnerUpdates{
+		Status: stringPtr(runnerStatus),
+	}); err != nil {
+		m.logger.Warn("failed to update runner status after release",
+			zap.String("runner_id", runnerID),
+			zap.String("status", runnerStatus),
+			zap.Error(err),
+		)
+	}
+}
+
+// providerForRunner resolves the provider that owns a runner.
+// Returns (nil, nil) for runners with no provider config: those are external
+// or manually registered and are not ours to manage.
+func (m *SessionManager) providerForRunner(ctx context.Context, runnerID string) (provider.Provider, error) {
+	runner, err := m.store.GetRunner(ctx, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	if runner.ProviderConfigID == nil || *runner.ProviderConfigID == "" {
+		return nil, nil
+	}
+
+	provConfig, err := m.store.GetProviderConfig(ctx, *runner.ProviderConfigID)
+	if err != nil {
+		return nil, err
+	}
+	return m.providerRegistry.Get(ctx, provConfig.Name)
 }
 
 // ResumeResult contains information about a resumed session.
@@ -1212,22 +1406,47 @@ func (m *SessionManager) Terminate(ctx context.Context, sessionID string) error 
 		}
 	}
 
-	// Optionally cleanup workspace host directory
-	// Note: The workspace database record is NOT deleted here - only the host directory
-	// This is controlled by the WorkspaceManager's CleanupOnTerminate configuration
+	// Optionally cleanup workspace host directory.
+	// Note: the workspace database record is NOT deleted here - only the host
+	// directory, and only when no other session still uses the workspace.
+	// CleanupHostDirectory is an unconditional os.RemoveAll, so terminating one
+	// of N sessions sharing a workspace used to delete the other N-1's files.
 	if m.workspaceManager != nil {
-		// Cleanup is handled by WorkspaceManager based on its configuration
-		// We just log if cleanup fails, don't fail the termination
-		if err := m.workspaceManager.CleanupHostDirectory(ctx, session.WorkspaceID); err != nil {
-			m.logger.Warn("failed to cleanup workspace host directory on termination",
-				zap.String("session_id", sessionID),
-				zap.String("workspace_id", session.WorkspaceID),
-				zap.Error(err),
-			)
-		}
+		m.cleanupWorkspaceIfUnused(ctx, sessionID, session.WorkspaceID)
 	}
 
 	return nil
+}
+
+// cleanupWorkspaceIfUnused removes a session's workspace directory from the
+// host, but only once nothing else is using it. A failed IsInUse check is
+// treated as "in use": losing a workspace is unrecoverable, leaking a directory
+// is not.
+func (m *SessionManager) cleanupWorkspaceIfUnused(ctx context.Context, sessionID, workspaceID string) {
+	inUse, err := m.workspaceManager.IsInUse(ctx, workspaceID)
+	if err != nil {
+		m.logger.Warn("could not determine whether workspace is still in use; keeping it",
+			zap.String("session_id", sessionID),
+			zap.String("workspace_id", workspaceID),
+			zap.Error(err),
+		)
+		return
+	}
+	if inUse {
+		m.logger.Info("workspace still in use by another session, skipping cleanup",
+			zap.String("session_id", sessionID),
+			zap.String("workspace_id", workspaceID),
+		)
+		return
+	}
+
+	if err := m.workspaceManager.CleanupHostDirectory(ctx, workspaceID); err != nil {
+		m.logger.Warn("failed to cleanup workspace host directory on termination",
+			zap.String("session_id", sessionID),
+			zap.String("workspace_id", workspaceID),
+			zap.Error(err),
+		)
+	}
 }
 
 // AttachRunner attaches a runner to a session.

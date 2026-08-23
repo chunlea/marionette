@@ -30,6 +30,7 @@ func testWireDeps(t *testing.T) WireDeps {
 			TaskTimeoutCheckInterval:      time.Hour,
 			ScheduledTaskCheckInterval:    time.Hour,
 			ScheduledSessionCheckInterval: time.Hour,
+			ReapInterval:                  time.Hour,
 		},
 	}
 }
@@ -52,6 +53,7 @@ func TestWire_BuildsEveryManager(t *testing.T) {
 	require.NotNil(t, app.Webhooks)
 	require.NotNil(t, app.LogSubscribers)
 	require.NotNil(t, app.Events)
+	require.NotNil(t, app.Reaper)
 
 	// The specific regression: without a task manager, handleInFlightTasks
 	// silently no-ops and a dead runner's tasks stay "running" forever.
@@ -89,6 +91,7 @@ func TestWire_StartsEveryBackgroundJob(t *testing.T) {
 		"permission-timeout-enforcer",
 		"scheduled-task-executor",
 		"scheduled-session-activator",
+		"runner-reaper",
 	}, names)
 
 	require.NoError(t, app.Start(context.Background()))

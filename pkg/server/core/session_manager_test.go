@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
+	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1446,6 +1447,8 @@ type mockWorkspaceManagerForSession struct {
 	cleanupHostDirCalled bool
 	cleanupHostDirErr    error
 	ensureHostDirErr     error
+	inUse                bool
+	inUseErr             error
 }
 
 func (m *mockWorkspaceManagerForSession) Create(_ context.Context, _ CreateWorkspaceOptions) (*store.Workspace, error) {
@@ -1486,7 +1489,7 @@ func (m *mockWorkspaceManagerForSession) CleanupHostDirectory(_ context.Context,
 }
 
 func (m *mockWorkspaceManagerForSession) IsInUse(_ context.Context, _ string) (bool, error) {
-	return false, nil
+	return m.inUse, m.inUseErr
 }
 
 func TestSessionManager_SetWorkspaceManager(t *testing.T) {
@@ -2170,4 +2173,205 @@ func TestSessionManager_Suspend_NoDetachWhenPersistenceFails(t *testing.T) {
 	err := manager.Suspend(context.Background(), "sess_123", "terminate")
 	require.Error(t, err)
 	assert.Nil(t, sender.lastCommand, "no DetachSession may be sent when the suspend did not persist")
+}
+
+// =============================================================================
+// Provider release and workspace safety tests
+// =============================================================================
+
+// providerAwareSessionStore lets the suspend path resolve a provider for a
+// runner, which the plain session test store cannot do.
+type providerAwareSessionStore struct {
+	*testSessionStore
+	providerConfig *store.ProviderConfig
+}
+
+func newProviderAwareSessionStore() *providerAwareSessionStore {
+	return &providerAwareSessionStore{
+		testSessionStore: newTestSessionStore(),
+		providerConfig: &store.ProviderConfig{
+			ID:       "pcfg_1",
+			Name:     "docker-default",
+			Provider: "docker",
+		},
+	}
+}
+
+func (s *providerAwareSessionStore) GetProviderConfig(_ context.Context, _ string) (*store.ProviderConfig, error) {
+	if s.providerConfig == nil {
+		return nil, store.ErrNotFound
+	}
+	return s.providerConfig, nil
+}
+
+func (s *providerAwareSessionStore) BeginTx(_ context.Context) (store.Tx, error) {
+	return &storeTx{Store: s}, nil
+}
+
+// suspendableFakeProvider is a provider that implements SuspendableProvider.
+type suspendableFakeProvider struct {
+	fakeProvider
+	suspended []string
+	result    *provider.SuspendResult
+	err       error
+}
+
+func (p *suspendableFakeProvider) Suspend(_ context.Context, runnerID string, _ provider.SuspendOptions) (*provider.SuspendResult, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
+	p.suspended = append(p.suspended, runnerID)
+	return p.result, nil
+}
+
+func (p *suspendableFakeProvider) Resume(context.Context, string, provider.ResumeOptions) (*provider.RunnerInstance, error) {
+	return nil, errors.New("not implemented")
+}
+
+func setupSuspendReleaseTest(prov provider.Provider) (*SessionManager, *providerAwareSessionStore) {
+	s := newProviderAwareSessionStore()
+	manager := NewSessionManagerWithConfig(SessionManagerConfig{
+		Store:            s,
+		ConnManager:      &mockConnManagerForSession{},
+		CmdSender:        &mockCommandSenderForSession{},
+		ProviderRegistry: &fakeProviderRegistry{prov: prov},
+		Logger:           zap.NewNop(),
+	})
+
+	runnerID := "run_123"
+	cfgID := "pcfg_1"
+	s.SetRunner(&store.Runner{
+		ID:               runnerID,
+		Name:             "runner-1",
+		Status:           StatusBusy,
+		ProviderConfigID: &cfgID,
+	})
+	s.SetSession(&store.Session{
+		ID:       "sess_123",
+		Status:   SessionStatusActive,
+		RunnerID: &runnerID,
+	})
+	return manager, s
+}
+
+// TestSessionManager_Suspend_SuspendsThroughProvider covers the gap that made
+// "suspended" mean nothing but a database row: SuspendWithOptions never
+// resolved a provider, so every container and sandbox kept running and billing.
+func TestSessionManager_Suspend_SuspendsThroughProvider(t *testing.T) {
+	prov := &suspendableFakeProvider{
+		fakeProvider: fakeProvider{name: "docker-default", kind: provider.ProviderTypeManaged},
+		result: &provider.SuspendResult{
+			Strategy:   provider.SuspendStrategyPause,
+			SnapshotID: "snap_1",
+		},
+	}
+	manager, s := setupSuspendReleaseTest(prov)
+
+	require.NoError(t, manager.Suspend(context.Background(), "sess_123", "pause"))
+
+	assert.Equal(t, []string{"run_123"}, prov.suspended)
+
+	sess, err := s.GetSession(context.Background(), "sess_123")
+	require.NoError(t, err)
+	require.NotNil(t, sess.SuspendStrategy)
+	assert.Equal(t, string(provider.SuspendStrategyPause), *sess.SuspendStrategy,
+		"the strategy the provider actually used must be recorded for resume")
+
+	runner, err := s.GetRunner(context.Background(), "run_123")
+	require.NoError(t, err)
+	assert.Equal(t, StatusPaused, runner.Status)
+}
+
+// TestSessionManager_Suspend_FallsBackToDestroy documents the fallback for
+// providers that cannot suspend: terminate rather than keep paying.
+func TestSessionManager_Suspend_FallsBackToDestroy(t *testing.T) {
+	prov := &fakeProvider{name: "docker-default", kind: provider.ProviderTypeManaged}
+	manager, s := setupSuspendReleaseTest(prov)
+
+	require.NoError(t, manager.Suspend(context.Background(), "sess_123", "terminate_preserve_storage"))
+
+	assert.Equal(t, []string{"run_123"}, prov.destroyed)
+
+	sess, err := s.GetSession(context.Background(), "sess_123")
+	require.NoError(t, err)
+	require.NotNil(t, sess.SuspendStrategy)
+	assert.Equal(t, string(provider.SuspendStrategyTerminate), *sess.SuspendStrategy)
+
+	runner, err := s.GetRunner(context.Background(), "run_123")
+	require.NoError(t, err)
+	assert.Equal(t, StatusOffline, runner.Status)
+}
+
+// TestSessionManager_Suspend_ProviderFailureDoesNotFailSuspend: the session is
+// already suspended in the database, and an orphaned runner is the reaper's
+// problem, not the caller's.
+func TestSessionManager_Suspend_ProviderFailureDoesNotFailSuspend(t *testing.T) {
+	prov := &fakeProvider{
+		name:       "docker-default",
+		kind:       provider.ProviderTypeManaged,
+		destroyErr: errors.New("docker daemon unreachable"),
+	}
+	manager, s := setupSuspendReleaseTest(prov)
+
+	require.NoError(t, manager.Suspend(context.Background(), "sess_123", "terminate"))
+
+	sess, err := s.GetSession(context.Background(), "sess_123")
+	require.NoError(t, err)
+	assert.Equal(t, SessionStatusSuspended, sess.Status)
+}
+
+// TestSessionManager_Terminate_KeepsSharedWorkspace is the data-loss guard:
+// CleanupHostDirectory is an unconditional os.RemoveAll, so terminating one of
+// N sessions sharing a workspace used to delete the other N-1's files.
+func TestSessionManager_Terminate_KeepsSharedWorkspace(t *testing.T) {
+	manager, s := setupSessionManagerTest()
+	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123", inUse: true}
+	manager.workspaceManager = mockWM
+
+	s.SetSession(&store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusActive,
+		WorkspaceID: "ws_123",
+	})
+
+	require.NoError(t, manager.Terminate(context.Background(), "sess_123"))
+	assert.False(t, mockWM.cleanupHostDirCalled,
+		"a workspace another session still uses must never be deleted")
+}
+
+// TestSessionManager_Terminate_KeepsWorkspaceOnUnknownUsage: an IsInUse failure
+// means we do not know, and deleting a workspace is not reversible.
+func TestSessionManager_Terminate_KeepsWorkspaceOnUnknownUsage(t *testing.T) {
+	manager, s := setupSessionManagerTest()
+	mockWM := &mockWorkspaceManagerForSession{
+		hostPath: "/var/workspaces/ws_123",
+		inUseErr: errors.New("database unavailable"),
+	}
+	manager.workspaceManager = mockWM
+
+	s.SetSession(&store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusActive,
+		WorkspaceID: "ws_123",
+	})
+
+	require.NoError(t, manager.Terminate(context.Background(), "sess_123"))
+	assert.False(t, mockWM.cleanupHostDirCalled)
+}
+
+// TestSessionManager_Terminate_CleansUnusedWorkspace keeps the happy path
+// honest: nothing else uses it, so the directory does get removed.
+func TestSessionManager_Terminate_CleansUnusedWorkspace(t *testing.T) {
+	manager, s := setupSessionManagerTest()
+	mockWM := &mockWorkspaceManagerForSession{hostPath: "/var/workspaces/ws_123", inUse: false}
+	manager.workspaceManager = mockWM
+
+	s.SetSession(&store.Session{
+		ID:          "sess_123",
+		Status:      SessionStatusActive,
+		WorkspaceID: "ws_123",
+	})
+
+	require.NoError(t, manager.Terminate(context.Background(), "sess_123"))
+	assert.True(t, mockWM.cleanupHostDirCalled)
 }

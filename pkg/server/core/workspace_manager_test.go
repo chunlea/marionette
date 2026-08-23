@@ -114,12 +114,27 @@ func (m *workspaceTestStore) ListSessions(_ context.Context, opts store.ListSess
 		if opts.WorkspaceID != nil && sess.WorkspaceID != *opts.WorkspaceID {
 			continue
 		}
+		// Honour the status filter the way the real store does. Ignoring it
+		// here let IsInUse look correct against a fake that returned rows the
+		// query would never have produced.
+		if len(opts.Status) > 0 && !matchesAnyStatus(opts.Status, sess.Status) {
+			continue
+		}
 		items = append(items, sess)
 	}
 	return &store.ListResult[store.Session]{
 		Items:      items,
 		TotalCount: int64(len(items)),
 	}, nil
+}
+
+func matchesAnyStatus(statuses []string, status string) bool {
+	for _, s := range statuses {
+		if s == status {
+			return true
+		}
+	}
+	return false
 }
 
 // AddSession adds a session to the test store.

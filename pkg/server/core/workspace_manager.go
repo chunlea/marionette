@@ -336,25 +336,27 @@ func (m *WorkspaceManager) CleanupHostDirectory(ctx context.Context, workspaceID
 
 // IsInUse checks if a workspace is currently being used by any active session.
 func (m *WorkspaceManager) IsInUse(ctx context.Context, workspaceID string) (bool, error) {
-	// Query for sessions using this workspace that are not terminated
+	// Filter to live sessions in the query rather than after it. Fetching one
+	// row and then discarding it for being terminated reported "not in use"
+	// whenever the terminated session happened to come back first - and callers
+	// act on that by deleting the directory.
 	result, err := m.store.ListSessions(ctx, store.ListSessionsOptions{
 		BaseListOptions: store.BaseListOptions{
 			Limit: 1,
 		},
 		WorkspaceID: &workspaceID,
+		Status: []string{
+			SessionStatusPending,
+			SessionStatusActive,
+			SessionStatusSuspended,
+			SessionStatusResuming,
+		},
 	})
 	if err != nil {
 		return false, err
 	}
 
-	// Check if any non-terminated session is using this workspace
-	for _, session := range result.Items {
-		if session.Status != SessionStatusTerminated {
-			return true, nil
-		}
-	}
-
-	return false, nil
+	return len(result.Items) > 0, nil
 }
 
 // GetBaseDir returns the configured base directory for workspaces.

@@ -43,6 +43,10 @@ type JobsConfig struct {
 
 	ScheduledSessionCheckInterval time.Duration
 	DisableScheduledSessions      bool
+
+	ReapInterval  time.Duration
+	ReapMinAge    time.Duration
+	DisableReaper bool
 }
 
 // WireDeps are the external dependencies App needs. They are struct fields
@@ -89,6 +93,7 @@ type App struct {
 	Webhooks       *WebhookManager
 	LogSubscribers *LogSubscriberManager
 	Events         *EventBus
+	Reaper         *Reaper
 
 	// Background jobs, started by Start and drained by Stop.
 	jobs []backgroundJob
@@ -274,6 +279,23 @@ func (a *App) buildJobs(deps WireDeps) {
 			name:  "scheduled-task-executor",
 			start: func(ctx context.Context) error { ste.Start(ctx); return nil },
 			stop:  ste.Stop,
+		})
+	}
+
+	if !cfg.DisableReaper {
+		var opts []ReaperOption
+		if cfg.ReapInterval > 0 {
+			opts = append(opts, WithReapInterval(cfg.ReapInterval))
+		}
+		if cfg.ReapMinAge > 0 {
+			opts = append(opts, WithReapMinAge(cfg.ReapMinAge))
+		}
+		a.Reaper = NewReaper(a.Store, deps.ProviderRegistry, deps.AuditLog, a.Logger.Named("reaper"), opts...)
+		reaper := a.Reaper
+		a.jobs = append(a.jobs, backgroundJob{
+			name:  "runner-reaper",
+			start: func(ctx context.Context) error { reaper.Start(ctx); return nil },
+			stop:  reaper.Stop,
 		})
 	}
 
