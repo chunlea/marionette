@@ -70,14 +70,7 @@ func (a *SessionAdapter) GetLogs(
 		return nil, err
 	}
 
-	return a.logs.Read(ctx, logQuery{
-		SessionID: sessionID,
-		Limit:     opts.Limit,
-		Cursor:    opts.Cursor,
-		Level:     opts.Level,
-		Stream:    opts.Stream,
-		Archived:  opts.Archived,
-	})
+	return a.logs.ReadSession(ctx, sessionID, opts)
 }
 
 // Create creates a new session with the given options.

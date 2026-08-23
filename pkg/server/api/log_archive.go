@@ -100,6 +100,25 @@ type logQuery struct {
 	Archived  ArchivedFilter
 }
 
+// ReadSession returns one page of a session's logs, archive and hot rows alike.
+//
+// It is the exported entry point; the task path narrows the same read to one
+// task, which it can only do once it knows which session the task belongs to.
+func (r *ArchivedLogReader) ReadSession(
+	ctx context.Context,
+	sessionID string,
+	opts GetLogsOptions,
+) (*store.ListResult[store.Log], error) {
+	return r.Read(ctx, logQuery{
+		SessionID: sessionID,
+		Limit:     opts.Limit,
+		Cursor:    opts.Cursor,
+		Level:     opts.Level,
+		Stream:    opts.Stream,
+		Archived:  opts.Archived,
+	})
+}
+
 // Read returns one page of a session's logs.
 func (r *ArchivedLogReader) Read(ctx context.Context, q logQuery) (*store.ListResult[store.Log], error) {
 	if q.Limit <= 0 {
