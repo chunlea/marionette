@@ -56,6 +56,10 @@ type HostResolution struct {
 	// IPs are the resolved IP addresses for all hosts
 	IPs []net.IP
 
+	// CIDRs holds the network block when the pattern was one. A block needs no
+	// resolution and never changes, so it is not part of the refresh diff.
+	CIDRs []*net.IPNet
+
 	// ResolvedAt is when this specific host was resolved
 	ResolvedAt time.Time
 
@@ -108,6 +112,50 @@ func (r *ResolvedPolicy) AllIPsFiltered() []net.IP {
 	return dedupeIPs(FilterBlockedIPs(r.AllIPs()))
 }
 
+// AllowedCIDRs returns the allow-list network blocks that do not overlap a
+// blocked range.
+//
+// A block that straddles one of the blocked ranges is dropped whole rather
+// than trimmed: "allow 169.254.0.0/16" must not become a way to reach the
+// cloud metadata endpoint, and silently narrowing an operator's block would
+// hide that their policy said something they did not mean.
+func (r *ResolvedPolicy) AllowedCIDRs() []*net.IPNet {
+	var out []*net.IPNet
+	for _, hr := range r.AllowedIPs {
+		for _, cidr := range hr.CIDRs {
+			if cidrOverlapsBlocked(cidr) {
+				continue
+			}
+			out = append(out, cidr)
+		}
+	}
+	return out
+}
+
+// RejectedCIDRs returns allow-list blocks dropped for overlapping a blocked
+// range, so callers can report them instead of silently ignoring them.
+func (r *ResolvedPolicy) RejectedCIDRs() []*net.IPNet {
+	var out []*net.IPNet
+	for _, hr := range r.AllowedIPs {
+		for _, cidr := range hr.CIDRs {
+			if cidrOverlapsBlocked(cidr) {
+				out = append(out, cidr)
+			}
+		}
+	}
+	return out
+}
+
+// cidrOverlapsBlocked reports whether a block intersects any blocked range.
+func cidrOverlapsBlocked(cidr *net.IPNet) bool {
+	for _, blocked := range ParsedBlockedCIDRs {
+		if blocked.Contains(cidr.IP) || cidr.Contains(blocked.IP) {
+			return true
+		}
+	}
+	return false
+}
+
 // ControlPlaneIPs returns every pinned control-plane address.
 func (r *ResolvedPolicy) ControlPlaneIPs() []net.IP {
 	var result []net.IP
@@ -135,7 +183,7 @@ func (r *ResolvedPolicy) ProxyIPs() []net.IP {
 func (r *ResolvedPolicy) UnenforceableHostPatterns() []string {
 	var out []string
 	for _, hr := range r.AllowedIPs {
-		if len(hr.IPs) == 0 && hr.Error == nil && isWildcardPattern(hr.Pattern) {
+		if len(hr.IPs) == 0 && len(hr.CIDRs) == 0 && hr.Error == nil && isWildcardPattern(hr.Pattern) {
 			out = append(out, hr.Pattern)
 		}
 	}

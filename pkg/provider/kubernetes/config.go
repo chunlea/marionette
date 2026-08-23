@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chunlea/marionette/pkg/network"
 	"github.com/chunlea/marionette/pkg/provider"
 )
 
@@ -38,6 +39,9 @@ const (
 
 	// DefaultRestartPolicy is the default pod restart policy.
 	DefaultRestartPolicy = "Never"
+
+	// DefaultDNSNamespace is where cluster DNS runs on a stock cluster.
+	DefaultDNSNamespace = "kube-system"
 )
 
 // Config holds Kubernetes provider settings parsed from provider_configs.config JSON.
@@ -92,6 +96,35 @@ type Config struct {
 
 	// Context is the kubeconfig context to use.
 	Context string `json:"context,omitempty"`
+
+	// Isolation holds network-isolation settings for restricted runners.
+	Isolation IsolationConfig `json:"isolation,omitempty"`
+}
+
+// IsolationConfig holds operator-controlled network isolation settings.
+//
+// Everything here is operator input, never session input: a session picks a
+// policy level, it does not get to choose its own proxy.
+type IsolationConfig struct {
+	// ServerURL is the control-plane address opened for every restricted
+	// runner.
+	//
+	// SpawnOptions.ServerURL is authoritative when the caller sets it; this is
+	// the operator fallback for deployments where it does not.
+	ServerURL string `json:"server_url,omitempty"`
+
+	// ProxyURL is the egress proxy used by proxy-level sessions.
+	ProxyURL string `json:"proxy_url,omitempty"`
+
+	// ProxyNoProxy lists extra hosts that bypass the proxy.
+	ProxyNoProxy []string `json:"proxy_no_proxy,omitempty"`
+
+	// ProxyCACert is the in-pod path to the proxy's CA bundle.
+	ProxyCACert string `json:"proxy_ca_cert,omitempty"`
+
+	// DNSNamespace is the namespace running cluster DNS. Restricted pods are
+	// allowed to reach port 53 there and nowhere else.
+	DNSNamespace string `json:"dns_namespace,omitempty"`
 }
 
 // ResourceConfig holds default resource limits and requests.
@@ -181,6 +214,20 @@ func (c *Config) applyDefaults() {
 func (c *Config) validate() error {
 	if c.Image == "" {
 		return &provider.ErrInvalidConfig{Field: "image", Reason: "required"}
+	}
+
+	// A malformed proxy or server address must fail at configuration time, not
+	// when the first restricted session tries to spawn.
+	if c.Isolation.ProxyURL != "" {
+		if _, err := network.ParseProxyConfig(c.Isolation.ProxyURL, c.Isolation.ProxyNoProxy, c.Isolation.ProxyCACert); err != nil {
+			return &provider.ErrInvalidConfig{Field: "isolation.proxy_url", Reason: err.Error()}
+		}
+	}
+
+	if c.Isolation.ServerURL != "" {
+		if _, err := network.ParseEndpoint(c.Isolation.ServerURL, network.DefaultControlPlanePort); err != nil {
+			return &provider.ErrInvalidConfig{Field: "isolation.server_url", Reason: err.Error()}
+		}
 	}
 
 	// Validate namespace format (DNS label)

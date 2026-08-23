@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -197,6 +198,14 @@ func (r *DNSResolver) ResolveEndpoint(ctx context.Context, ep Endpoint) Endpoint
 	return EndpointResolution{Endpoint: ep, IPs: ips, ResolvedAt: now, Error: err}
 }
 
+// cidrSlice wraps a parsed network, tolerating a nil from a parse failure.
+func cidrSlice(cidr *net.IPNet) []*net.IPNet {
+	if cidr == nil {
+		return nil
+	}
+	return []*net.IPNet{cidr}
+}
+
 // parseIPList converts resolver addresses to net.IP, dropping unparseable ones.
 func parseIPList(addrs []string) []net.IP {
 	out := make([]net.IP, 0, len(addrs))
@@ -216,6 +225,18 @@ func parseIPList(addrs []string) []net.IP {
 // resolvePattern resolves a single host pattern to IP addresses.
 func (r *DNSResolver) resolvePattern(ctx context.Context, pattern string) HostResolution {
 	now := time.Now()
+
+	// A network block is already an address range: nothing to look up, and
+	// nothing that can rotate underneath us.
+	if strings.Contains(pattern, "/") {
+		_, cidr, err := net.ParseCIDR(pattern)
+		return HostResolution{
+			Pattern:    pattern,
+			CIDRs:      cidrSlice(cidr),
+			ResolvedAt: now,
+			Error:      err,
+		}
+	}
 
 	// Wildcards cannot be directly resolved
 	if isWildcardPattern(pattern) {

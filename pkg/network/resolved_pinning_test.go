@@ -267,3 +267,77 @@ func TestParseIPList(t *testing.T) {
 	got := parseIPList([]string{"10.0.0.53", "10.0.0.54:53", "not-an-ip", "", "2001:db8::53"})
 	assert.Equal(t, []string{"10.0.0.53", "10.0.0.54", "2001:db8::53"}, ipStrings(got))
 }
+
+func TestResolvedPolicy_CIDRPatterns(t *testing.T) {
+	mock := NewMockResolver()
+	mock.SetResult("github.com", parseIPsForTest(t, []string{"140.82.121.4"}))
+	resolver := NewDNSResolver(WithResolver(mock))
+
+	policy, err := ParsePolicy("allow_list", []string{
+		"203.0.113.0/24",
+		"2001:db8::/32",
+		"github.com",
+	})
+	require.NoError(t, err)
+
+	resolved, err := resolver.ResolvePolicy(context.Background(), policy)
+	require.NoError(t, err)
+
+	var blocks []string
+	for _, c := range resolved.AllowedCIDRs() {
+		blocks = append(blocks, c.String())
+	}
+	assert.Equal(t, []string{"203.0.113.0/24", "2001:db8::/32"}, blocks)
+
+	// A block is not a lookup: nothing was resolved for it.
+	assert.Equal(t, []string{"140.82.121.4"}, ipStrings(resolved.AllIPsFiltered()))
+	assert.Empty(t, resolved.UnenforceableHostPatterns())
+	assert.False(t, resolved.HasErrors())
+	assert.Empty(t, mock.GetCalls()[1:], "only the hostname should have been looked up")
+}
+
+func TestResolvedPolicy_CIDRsOverlappingBlockedRangesAreDropped(t *testing.T) {
+	resolver := NewDNSResolver(WithResolver(NewMockResolver()))
+
+	policy, err := ParsePolicy("allow_list", []string{
+		"169.254.0.0/16", // contains the cloud metadata endpoint
+		"10.0.0.0/8",     // a blocked private range verbatim
+		"192.168.1.0/24", // inside a blocked private range
+		"203.0.113.0/24", // fine
+	})
+	require.NoError(t, err)
+
+	resolved, err := resolver.ResolvePolicy(context.Background(), policy)
+	require.NoError(t, err)
+
+	var allowed []string
+	for _, c := range resolved.AllowedCIDRs() {
+		allowed = append(allowed, c.String())
+	}
+	assert.Equal(t, []string{"203.0.113.0/24"}, allowed)
+
+	// The dropped blocks are reported rather than silently ignored: an
+	// operator who wrote 169.254.0.0/16 needs to know it did not take effect.
+	var rejected []string
+	for _, c := range resolved.RejectedCIDRs() {
+		rejected = append(rejected, c.String())
+	}
+	assert.Equal(t, []string{"169.254.0.0/16", "10.0.0.0/8", "192.168.1.0/24"}, rejected)
+}
+
+func TestResolvedPolicy_IPLiteralPatternNeedsNoCIDR(t *testing.T) {
+	mock := NewMockResolver()
+	mock.SetResult("10.0.0.1", parseIPsForTest(t, []string{"10.0.0.1"}))
+	mock.SetResult("203.0.113.5", parseIPsForTest(t, []string{"203.0.113.5"}))
+	resolver := NewDNSResolver(WithResolver(mock))
+
+	policy, err := ParsePolicy("allow_list", []string{"10.0.0.1", "203.0.113.5"})
+	require.NoError(t, err)
+
+	resolved, err := resolver.ResolvePolicy(context.Background(), policy)
+	require.NoError(t, err)
+
+	// 10.0.0.1 is inside a blocked private range and is filtered out.
+	assert.Equal(t, []string{"203.0.113.5"}, ipStrings(resolved.AllIPsFiltered()))
+	assert.Empty(t, resolved.AllowedCIDRs())
+}

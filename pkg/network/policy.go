@@ -3,6 +3,7 @@ package network
 
 import (
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -229,9 +230,31 @@ func validatePolicyLevel(level PolicyLevel) error {
 }
 
 // validateHostPattern checks if a host pattern is valid.
+//
+// An entry is a hostname (optionally with a leading or embedded wildcard), an
+// IP literal, or a CIDR block.
 func validateHostPattern(pattern string) error {
 	if pattern == "" {
 		return fmt.Errorf("empty pattern")
+	}
+
+	// A network block, e.g. 10.20.0.0/16 or 2001:db8::/32.
+	if strings.Contains(pattern, "/") {
+		if _, _, err := net.ParseCIDR(pattern); err != nil {
+			return fmt.Errorf("not a valid CIDR: %w", err)
+		}
+		return nil
+	}
+
+	// An IP literal, including IPv6 which is full of colons.
+	if net.ParseIP(pattern) != nil {
+		return nil
+	}
+
+	// A trailing port used to be accepted and then silently ignored, which
+	// quietly widened the rule to every allowed port. Say so instead.
+	if strings.Contains(pattern, ":") {
+		return fmt.Errorf("a port is not allowed here; set allowed_ports on the policy instead")
 	}
 
 	// Check for invalid characters

@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	mnet "github.com/chunlea/marionette/pkg/network"
 	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/store"
 )
@@ -44,6 +45,11 @@ type Provider struct {
 	// namespaceOnce ensures namespace check is only done once.
 	namespaceOnce sync.Once
 	namespaceErr  error
+
+	// resolver pins the hostnames in a network policy to addresses.
+	// NetworkPolicy has no notion of a hostname, so this is what makes
+	// allow_list expressible at all.
+	resolver *mnet.DNSResolver
 }
 
 // Compile-time interface checks.
@@ -74,6 +80,7 @@ func New(cfg *store.ProviderConfig) (*Provider, error) {
 		config:        k8sCfg,
 		suspendConfig: suspendCfg,
 		client:        client,
+		resolver:      mnet.NewDNSResolver(),
 	}, nil
 }
 
@@ -88,6 +95,7 @@ func NewWithClient(name string, cfg *Config, suspendCfg *provider.SuspendConfig,
 		config:        cfg,
 		suspendConfig: suspendCfg,
 		client:        client,
+		resolver:      mnet.NewDNSResolver(),
 	}
 }
 
@@ -132,10 +140,32 @@ func (p *Provider) Spawn(ctx context.Context, opts provider.SpawnOptions) (*prov
 		return nil, &provider.ErrSpawnFailed{Reason: "PVC creation failed", Cause: err}
 	}
 
+	// The NetworkPolicy is created before the pod, not after it.
+	//
+	// It selects on the runner-id label, so it is already in the API server
+	// when the pod carrying that label appears and the CNI has it to program
+	// from the start. Creating it afterwards, which is what this used to do,
+	// meant the pod ran unrestricted for the whole of waitForPodReady: up to
+	// two minutes of unfiltered egress, and no isolation whatsoever for a
+	// short-lived task.
+	policy, err := p.prepareNetworkPolicy(opts)
+	if err != nil {
+		return nil, &provider.ErrSpawnFailed{Reason: "invalid network policy", Cause: err}
+	}
+
+	var resolved *mnet.ResolvedPolicy
+	if policy.IsRestricted() {
+		resolved, err = p.createNetworkPolicy(ctx, opts.RunnerID, opts, policy)
+		if err != nil {
+			return nil, &provider.ErrSpawnFailed{Reason: "network policy creation failed", Cause: err}
+		}
+	}
+
 	// Build and create pod
-	pod := p.buildPod(podName, pvcName, opts)
+	pod := p.buildPod(podName, pvcName, opts, resolved)
 	createdPod, err := p.client.CreatePod(ctx, p.config.Namespace, pod)
 	if err != nil {
+		p.deleteNetworkPolicy(ctx, opts.RunnerID)
 		return nil, &provider.ErrSpawnFailed{Reason: "pod creation failed", Cause: err}
 	}
 
@@ -143,16 +173,8 @@ func (p *Provider) Spawn(ctx context.Context, opts provider.SpawnOptions) (*prov
 	if err := p.waitForPodReady(ctx, createdPod.Name, 2*time.Minute); err != nil {
 		// Cleanup on failure
 		_ = p.client.DeletePod(ctx, p.config.Namespace, createdPod.Name, metav1.DeleteOptions{})
+		p.deleteNetworkPolicy(ctx, opts.RunnerID)
 		return nil, &provider.ErrSpawnFailed{Reason: "pod startup failed", Cause: err}
-	}
-
-	// Create NetworkPolicy if needed
-	if opts.NetworkPolicy != "" && opts.NetworkPolicy != "none" {
-		if err := p.createNetworkPolicy(ctx, opts.RunnerID, opts); err != nil {
-			// Cleanup on failure
-			_ = p.client.DeletePod(ctx, p.config.Namespace, createdPod.Name, metav1.DeleteOptions{})
-			return nil, &provider.ErrSpawnFailed{Reason: "network policy creation failed", Cause: err}
-		}
 	}
 
 	return &provider.RunnerInstance{
@@ -188,9 +210,7 @@ func (p *Provider) destroyPod(ctx context.Context, runnerID string, deletePVC bo
 		return err
 	}
 
-	// Delete NetworkPolicy if exists
-	npName := p.networkPolicyName(runnerID)
-	_ = p.client.DeleteNetworkPolicy(ctx, p.config.Namespace, npName, metav1.DeleteOptions{})
+	p.deleteNetworkPolicy(ctx, runnerID)
 
 	// Delete pod with grace period
 	gracePeriod := defaultTerminationGracePeriodSeconds
@@ -265,6 +285,11 @@ func (p *Provider) podName(name, runnerID string) string {
 
 func (p *Provider) pvcName(runnerID string) string {
 	return fmt.Sprintf("marionette-ws-%s", sanitizeName(runnerID))
+}
+
+// deleteNetworkPolicy removes a runner's NetworkPolicy, ignoring a missing one.
+func (p *Provider) deleteNetworkPolicy(ctx context.Context, runnerID string) {
+	_ = p.client.DeleteNetworkPolicy(ctx, p.config.Namespace, p.networkPolicyName(runnerID), metav1.DeleteOptions{})
 }
 
 func (p *Provider) networkPolicyName(runnerID string) string {
@@ -353,7 +378,7 @@ func (p *Provider) buildPVC(name string, opts provider.SpawnOptions) *corev1.Per
 	return pvc
 }
 
-func (p *Provider) buildPod(name, pvcName string, opts provider.SpawnOptions) *corev1.Pod {
+func (p *Provider) buildPod(name, pvcName string, opts provider.SpawnOptions, resolved *mnet.ResolvedPolicy) *corev1.Pod {
 	labels := map[string]string{
 		p.labelKey(labelManagedBy): "marionette",
 		p.labelKey(labelRunnerID):  opts.RunnerID,
@@ -370,8 +395,11 @@ func (p *Provider) buildPod(name, pvcName string, opts provider.SpawnOptions) *c
 	maps.Copy(annotations, p.config.Annotations)
 	maps.Copy(annotations, opts.Annotations)
 
-	// Build environment variables
-	env := p.buildEnv(opts)
+	// Build environment variables. Proxy mode is enforced by the
+	// NetworkPolicy, but the tools have to be told where the proxy is or every
+	// one of them just fails; the session environment comes last so an
+	// operator override still wins.
+	env := append(proxyEnvVars(resolved), p.buildEnv(opts)...)
 
 	// Build resources
 	resources := p.buildResources(opts)
@@ -411,7 +439,10 @@ func (p *Provider) buildPod(name, pvcName string, opts provider.SpawnOptions) *c
 			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
-			Containers:                    []corev1.Container{container},
+			Containers: []corev1.Container{container},
+			// Air-gapped pods have no DNS, so the server's address is pinned
+			// into the pod's hosts file instead.
+			HostAliases:                   controlPlaneHostAliases(resolved),
 			RestartPolicy:                 corev1.RestartPolicy(p.config.RestartPolicy),
 			TerminationGracePeriodSeconds: &terminationGracePeriod,
 			Volumes: []corev1.Volume{
@@ -665,5 +696,6 @@ func NewFromJSON(name string, configJSON, suspendConfigJSON json.RawMessage) (*P
 		config:        cfg,
 		suspendConfig: suspendCfg,
 		client:        client,
+		resolver:      mnet.NewDNSResolver(),
 	}, nil
 }

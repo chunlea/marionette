@@ -144,12 +144,36 @@ func (m *Manager) BuildRuleSets(key string, policy *network.ResolvedPolicy) (mai
 	return main, dyn
 }
 
-// dynamicRules renders the allow-list addresses for the dynamic chain.
+// dynamicRules renders the allow-list destinations for the dynamic chain.
 func (m *Manager) dynamicRules(dynChain string, policy *network.ResolvedPolicy) []Rule {
 	if policy.Level() != network.PolicyAllowList {
 		return nil
 	}
-	return allowRules(dynChain, policy.AllIPsFiltered(), policy.AllowedPorts)
+
+	rules := allowRules(dynChain, policy.AllIPsFiltered(), policy.AllowedPorts)
+
+	// Network blocks are static: nothing resolves them, so the refresher never
+	// touches them and they are simply rewritten on every install.
+	return append(rules, allowCIDRRules(dynChain, policy.AllowedCIDRs(), policy.AllowedPorts)...)
+}
+
+// allowCIDRRules renders one accept rule per network block and port.
+func allowCIDRRules(chain string, cidrs []*net.IPNet, ports []int) []Rule {
+	rules := make([]Rule, 0, len(cidrs)*len(ports))
+	for _, cidr := range cidrs {
+		for _, port := range ports {
+			rules = append(rules, Rule{
+				Chain:    chain,
+				Action:   ActionAccept,
+				Protocol: ProtocolTCP,
+				DestCIDR: cidr,
+				DestPort: port,
+				Comment:  fmt.Sprintf("Allow %s:%d", cidr.String(), port),
+				IsIPv6:   cidr.IP.To4() == nil,
+			})
+		}
+	}
+	return rules
 }
 
 // allowRules renders one accept rule per address and port.

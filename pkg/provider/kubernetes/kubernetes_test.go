@@ -35,7 +35,16 @@ func newTestProvider(client *MockKubeClient) *Provider {
 	suspendCfg := &provider.SuspendConfig{}
 	suspendCfg.ApplyDefaults(defaultSuspendConfig())
 
-	return NewWithClient("test-k8s", cfg, suspendCfg, client)
+	p := NewWithClient("test-k8s", cfg, suspendCfg, client)
+	// Resolving an allow list is part of building a policy now, and a unit
+	// test must not depend on the machine having working DNS.
+	p.resolver = stubbedResolver(map[string][]string{
+		"github.com":          {"140.82.121.4"},
+		"api.example.com":     {"93.184.216.34"},
+		"marionette.internal": {"10.5.0.7"},
+		"proxy.internal":      {"203.0.113.9"},
+	})
+	return p
 }
 
 func TestProviderMetadata(t *testing.T) {
@@ -466,7 +475,7 @@ func TestBuildPod(t *testing.T) {
 		TenantID:    "tenant_123",
 	}
 
-	pod := p.buildPod("test-pod", "test-pvc", opts)
+	pod := p.buildPod("test-pod", "test-pvc", opts, nil)
 
 	// Verify metadata
 	assert.Equal(t, "test-pod", pod.Name)
@@ -696,6 +705,8 @@ func TestNetworkPolicyModes(t *testing.T) {
 		client := NewMockKubeClient()
 		client.AddNamespace("test-ns")
 		p := newTestProvider(client)
+		// Proxy level without a proxy used to silently behave like allow_list.
+		p.config.Isolation.ProxyURL = "http://proxy.internal:3128"
 
 		go func() {
 			time.Sleep(100 * time.Millisecond)
@@ -786,11 +797,10 @@ func TestAllowListFormats(t *testing.T) {
 			Name:          "run-mixed",
 			NetworkPolicy: "allow_list",
 			AllowedHosts: []string{
-				"192.168.1.0/24",      // CIDR
-				"10.0.0.1",            // Single IP
-				"github.com",          // Domain
-				"2001:db8::/32",       // IPv6 CIDR
-				"api.example.com:443", // Domain with port (port ignored)
+				"203.0.113.0/24", // CIDR
+				"10.0.0.1",       // Single IP, inside a blocked private range
+				"github.com",     // Domain
+				"2001:db8::/32",  // IPv6 CIDR
 			},
 		}
 
@@ -800,8 +810,36 @@ func TestAllowListFormats(t *testing.T) {
 
 		np := client.GetStoredNetworkPolicy("test-ns", "marionette-np-run-mixed")
 		require.NotNil(t, np)
-		// Verify egress rules exist
-		assert.NotEmpty(t, np.Spec.Egress)
+
+		var blocks []string
+		for _, rule := range np.Spec.Egress {
+			for _, peer := range rule.To {
+				if peer.IPBlock != nil {
+					blocks = append(blocks, peer.IPBlock.CIDR)
+				}
+			}
+		}
+		assert.Contains(t, blocks, "203.0.113.0/24")
+		assert.Contains(t, blocks, "2001:db8::/32")
+		assert.Contains(t, blocks, "140.82.121.4/32", "the domain is resolved and pinned")
+		assert.NotContains(t, blocks, "10.0.0.1/32", "a blocked private address is never opened")
+	})
+
+	t.Run("a port in an allowed host is rejected", func(t *testing.T) {
+		client := NewMockKubeClient()
+		client.AddNamespace("test-ns")
+		p := newTestProvider(client)
+
+		// This used to be accepted and the port silently dropped, which
+		// widened the rule to every allowed port.
+		_, err := p.Spawn(ctx, provider.SpawnOptions{
+			RunnerID:      "run_port",
+			Name:          "run-port",
+			NetworkPolicy: "allow_list",
+			AllowedHosts:  []string{"api.example.com:443"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "a port is not allowed here")
 	})
 }
 
@@ -980,7 +1018,7 @@ func TestBuildEnvVariations(t *testing.T) {
 			},
 		}
 
-		pod := p.buildPod("test-pod", "test-pvc", opts)
+		pod := p.buildPod("test-pod", "test-pvc", opts, nil)
 		envMap := make(map[string]string)
 		for _, e := range pod.Spec.Containers[0].Env {
 			envMap[e.Name] = e.Value
@@ -1294,7 +1332,7 @@ func TestBuildTolerations(t *testing.T) {
 		Name:     "run-tol",
 	}
 
-	pod := p.buildPod("test-pod", "test-pvc", opts)
+	pod := p.buildPod("test-pod", "test-pvc", opts, nil)
 	assert.Len(t, pod.Spec.Tolerations, 2)
 
 	// Verify first toleration
@@ -1334,12 +1372,17 @@ func TestNetworkPolicyCreationError(t *testing.T) {
 	client.CreateNetworkPolicyErr = fmt.Errorf("simulated network policy error")
 	p := newTestProvider(client)
 
+	p.resolver = stubbedResolver(map[string][]string{"github.com": {"140.82.121.4"}})
+
 	opts := provider.SpawnOptions{
 		RunnerID:      "run_test",
 		NetworkPolicy: "allow_list",
 		AllowedHosts:  []string{"github.com"},
 	}
-	err := p.createNetworkPolicy(ctx, "run_test", opts)
+	policy, err := p.prepareNetworkPolicy(opts)
+	require.NoError(t, err)
+
+	_, err = p.createNetworkPolicy(ctx, "run_test", opts, policy)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "simulated network policy error")
 }
@@ -1510,54 +1553,6 @@ func TestParseSuspendConfigErrors(t *testing.T) {
 		cfg, err := provider.ParseSuspendConfig([]byte(`{}`), defaultSuspendConfig())
 		require.NoError(t, err)
 		assert.Equal(t, provider.SuspendStrategyTerminatePreserveStorage, cfg.Strategy)
-	})
-}
-
-func TestBuildNetworkPolicyModes(t *testing.T) {
-	client := NewMockKubeClient()
-	p := newTestProvider(client)
-
-	t.Run("proxy mode", func(t *testing.T) {
-		opts := provider.SpawnOptions{
-			RunnerID:      "run_proxy",
-			NetworkPolicy: "proxy",
-		}
-		np, err := p.buildNetworkPolicy("run_proxy", opts)
-		require.NoError(t, err)
-		require.NotNil(t, np)
-		// Proxy mode should have specific egress rules
-		assert.NotNil(t, np.Spec.Egress)
-	})
-
-	t.Run("air_gapped mode", func(t *testing.T) {
-		opts := provider.SpawnOptions{
-			RunnerID:      "run_airgap",
-			NetworkPolicy: "air_gapped",
-		}
-		np, err := p.buildNetworkPolicy("run_airgap", opts)
-		require.NoError(t, err)
-		require.NotNil(t, np)
-		// Air gapped should have only DNS egress
-		assert.Len(t, np.Spec.Egress, 1)
-	})
-
-	t.Run("none needs no policy", func(t *testing.T) {
-		np, err := p.buildNetworkPolicy("run_none", provider.SpawnOptions{
-			RunnerID:      "run_none",
-			NetworkPolicy: "none",
-		})
-		require.NoError(t, err)
-		assert.Nil(t, np, "policy \"none\" means no NetworkPolicy is created")
-	})
-
-	t.Run("unknown policy is an error", func(t *testing.T) {
-		// This used to return a nil policy that went straight to the API.
-		np, err := p.buildNetworkPolicy("run_bogus", provider.SpawnOptions{
-			RunnerID:      "run_bogus",
-			NetworkPolicy: "not_a_real_policy",
-		})
-		require.Error(t, err)
-		assert.Nil(t, np)
 	})
 }
 

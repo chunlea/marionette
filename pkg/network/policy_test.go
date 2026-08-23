@@ -303,7 +303,10 @@ func TestValidateHostPattern(t *testing.T) {
 		{"-foo.com", "cannot start or end with hyphen"},
 		{"foo-.com", "cannot start or end with hyphen"},
 		{"foo@bar.com", "invalid character"},
-		{"foo/bar.com", "invalid character"},
+		// A slash now means "CIDR", so this fails as a malformed one.
+		{"foo/bar.com", "not a valid CIDR"},
+		{"10.0.0.0/64", "not a valid CIDR"},
+		{"github.com:443", "a port is not allowed here"},
 		// Label exceeds 63 characters (DNS spec limit)
 		{"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmn.com", "exceeds 63 characters"},
 	}
