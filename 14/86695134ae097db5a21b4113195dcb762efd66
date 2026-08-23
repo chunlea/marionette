@@ -1,0 +1,73 @@
+pkg/provider/e2b/provider.go
+  s_922ee36a2ef105::t_a80daf9b0a5977 27-35,151-152,185,282-287,307-312,330-346,351
+pkg/provider/docker/isolation_integration_test.go
+  s_922ee36a2ef105::t_933ee59cf25d87 275,331,362
+pkg/provider/e2b/provider_test.go
+  s_922ee36a2ef105::t_ecdcb10e15859a 216,233,459,474
+pkg/provider/e2b/suspend.go
+  s_922ee36a2ef105::t_7804632a30cb28 37,40-41,50-74,76-77,79,81-95,98,101,107-108,112-115
+pkg/provider/docker/suspend.go
+  s_922ee36a2ef105::t_0adb7913e811bf 60,73,107-108,112-113,130-133
+pkg/provider/registry_test.go
+  s_922ee36a2ef105::t_41826d05fdc323 27-29
+pkg/provider/kubernetes/suspend.go
+  s_922ee36a2ef105::t_67c413c6024f3d 120,125
+pkg/provider/suspend.go
+  s_922ee36a2ef105::t_2c30a39bfdc1b2 101-105,168,178,190,196
+pkg/provider/docker/docker_integration_test.go
+  s_922ee36a2ef105::t_48f2640c6ed8a5 86,131,205,218,259,315,368,428
+pkg/provider/suspend_test.go
+  s_922ee36a2ef105::t_52aa4a07d23225 86
+pkg/provider/docker/docker.go
+  s_922ee36a2ef105::t_5946416760e529 286-287,323,361-366,380-385,620-630
+pkg/provider/e2b/client.go
+  s_922ee36a2ef105::t_a73f8fdd126f71 63-66,68,317-324,330-334
+pkg/server/core/reaper_test.go
+  s_922ee36a2ef105::t_1c6822fe95edc6 117-120,129,134
+pkg/provider/e2b/suspend_test.go
+  s_922ee36a2ef105::t_dbbb6309e29b5a 494-498,512-540,546
+pkg/provider/pool/pool_test.go
+  s_922ee36a2ef105::t_bf1a69d7fffb53 219,239
+pkg/provider/kubernetes/kubernetes.go
+  s_922ee36a2ef105::t_3ccd9667d3fa95 202-207
+pkg/provider/pool/pool.go
+  s_922ee36a2ef105::t_73a06a466e82d1 135-137
+pkg/provider/kubernetes/integration_test.go
+  s_922ee36a2ef105::t_3f1561763c26da 132
+pkg/provider/docker/docker_test.go
+  s_922ee36a2ef105::t_e035b92aa8029f 318,334,785,812,836,1263
+pkg/provider/docker/spawn_ordering_test.go
+  s_922ee36a2ef105::t_4e3680953fa88d 496
+pkg/provider/kubernetes/kubernetes_test.go
+  s_922ee36a2ef105::t_bd8f83f1cdc9d5 233,246,959
+pkg/provider/provider.go
+  s_922ee36a2ef105::t_97d8333fa7fb4e 88-92,177-181,212-217,228-234
+pkg/server/core/reaper.go
+  s_d7da100278f3de::t_2cafa651faeff6 285-287
+pkg/server/core/session_manager.go
+  s_922ee36a2ef105::t_1305bb29a1fe6d 192,257-263,922,940-941,969,991-995,999-1002,1038-1040,1140-1175,1178,1181,1186,1188-1189,1313-1316,1318-1319,1416-1428,1431-1439,1442-1453,1503,1514,1522-1529,1533
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "1486695134ae097db5a21b4113195dcb762efd66",
+  "prompts": {},
+  "sessions": {
+    "s_922ee36a2ef105": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e4155e7b-3074-4ac3-9061-4d234659107f",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_d7da100278f3de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d25f03f-fcd3-47a0-8cec-a7ffad651de1",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
