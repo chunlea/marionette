@@ -30,17 +30,25 @@ help:
 	@echo "Targets:"
 	@sed -n 's/^## //p' $(MAKEFILE_LIST) | column -t -s ':'
 
+# Toolchain versions. Keep in sync with .github/workflows/ci.yml so a local
+# build and a CI build generate the same code. PROTOC_GEN_GO_VERSION tracks
+# google.golang.org/protobuf in go.mod; bump them together.
+BUF_VERSION=v1.72.0
+PROTOC_GEN_GO_VERSION=v1.36.11
+PROTOC_GEN_GO_GRPC_VERSION=v1.6.2
+GOLANGCI_LINT_VERSION=v2.13.1
+
 ## deps: Install dependencies and development tools
 deps:
 	$(GOMOD) download
 	$(GOMOD) tidy
 	@echo "Installing development tools..."
 	go install github.com/air-verse/air@latest
-	go install github.com/bufbuild/buf/cmd/buf@latest
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install golang.org/x/tools/gopls@latest
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
 	@echo "Done installing tools"
 
 ## build: Build all binaries
