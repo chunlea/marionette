@@ -107,13 +107,9 @@ func listWorkspaces(ctx context.Context, q querier, opts store.ListWorkspacesOpt
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := workspaceSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	// Count query
@@ -126,9 +122,9 @@ func listWorkspaces(ctx context.Context, q querier, opts store.ListWorkspacesOpt
 	// Data query - fetch one extra to determine HasMore
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM workspaces %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		workspaceColumns, whereClause, orderBy, orderDir, argNum)
+		workspaceColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)

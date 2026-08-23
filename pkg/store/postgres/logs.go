@@ -195,13 +195,9 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "sequence"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := logSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM logs %s", whereClause)
@@ -212,9 +208,9 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM logs %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		logColumns, whereClause, orderBy, orderDir, argNum)
+		logColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
@@ -390,13 +386,9 @@ func listLogArchives(ctx context.Context, q querier, opts store.ListLogArchivesO
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "archived_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "DESC"
-	if !opts.OrderDesc {
-		orderDir = "ASC"
+	orderBy, err := logArchiveSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM log_archives %s", whereClause)
@@ -407,9 +399,9 @@ func listLogArchives(ctx context.Context, q querier, opts store.ListLogArchivesO
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM log_archives %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		logArchiveColumns, whereClause, orderBy, orderDir, argNum)
+		logArchiveColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
@@ -685,13 +677,9 @@ func listActionLogs(ctx context.Context, q querier, opts store.ListActionLogsOpt
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "DESC"
-	if !opts.OrderDesc {
-		orderDir = "ASC"
+	orderBy, err := actionLogSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM action_logs %s", whereClause)
@@ -702,9 +690,9 @@ func listActionLogs(ctx context.Context, q querier, opts store.ListActionLogsOpt
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM action_logs %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		actionLogColumns, whereClause, orderBy, orderDir, argNum)
+		actionLogColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)

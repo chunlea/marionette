@@ -139,13 +139,9 @@ func listAgentConfigs(ctx context.Context, q querier, opts store.ListAgentConfig
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := agentConfigSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM agent_configs %s", whereClause)
@@ -156,9 +152,9 @@ func listAgentConfigs(ctx context.Context, q querier, opts store.ListAgentConfig
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM agent_configs %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		agentConfigColumns, whereClause, orderBy, orderDir, argNum)
+		agentConfigColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
@@ -436,13 +432,9 @@ func listProviderConfigs(ctx context.Context, q querier, opts store.ListProvider
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := providerConfigSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM provider_configs %s", whereClause)
@@ -453,9 +445,9 @@ func listProviderConfigs(ctx context.Context, q querier, opts store.ListProvider
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM provider_configs %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		providerConfigColumns, whereClause, orderBy, orderDir, argNum)
+		providerConfigColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
@@ -713,13 +705,9 @@ func listProfiles(ctx context.Context, q querier, opts store.ListProfilesOptions
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := profileSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM profiles %s", whereClause)
@@ -730,9 +718,9 @@ func listProfiles(ctx context.Context, q querier, opts store.ListProfilesOptions
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM profiles %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		profileColumns, whereClause, orderBy, orderDir, argNum)
+		profileColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)

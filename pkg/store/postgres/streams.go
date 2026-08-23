@@ -150,13 +150,9 @@ func listStreams(ctx context.Context, q querier, opts store.ListStreamsOptions) 
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := streamSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	// Count query
@@ -169,9 +165,9 @@ func listStreams(ctx context.Context, q querier, opts store.ListStreamsOptions) 
 	// Data query - fetch one extra to determine HasMore
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM streams %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		streamColumns, whereClause, orderBy, orderDir, argNum)
+		streamColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)

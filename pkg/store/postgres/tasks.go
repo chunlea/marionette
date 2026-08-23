@@ -114,13 +114,9 @@ func listTasks(ctx context.Context, q querier, opts store.ListTasksOptions) (*st
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := taskSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM tasks %s", whereClause)
@@ -131,9 +127,9 @@ func listTasks(ctx context.Context, q querier, opts store.ListTasksOptions) (*st
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM tasks %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		taskColumns, whereClause, orderBy, orderDir, argNum)
+		taskColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
@@ -385,13 +381,9 @@ func listTaskRuns(ctx context.Context, q querier, opts store.ListTaskRunsOptions
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "queued_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := taskRunSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM task_runs %s", whereClause)
@@ -402,9 +394,9 @@ func listTaskRuns(ctx context.Context, q querier, opts store.ListTaskRunsOptions
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM task_runs %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		taskRunColumns, whereClause, orderBy, orderDir, argNum)
+		taskRunColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
@@ -641,13 +633,9 @@ func listScheduledTasks(ctx context.Context, q querier, opts store.ListScheduled
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := scheduledTaskSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM scheduled_tasks %s", whereClause)
@@ -658,9 +646,9 @@ func listScheduledTasks(ctx context.Context, q querier, opts store.ListScheduled
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM scheduled_tasks %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		scheduledTaskColumns, whereClause, orderBy, orderDir, argNum)
+		scheduledTaskColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)

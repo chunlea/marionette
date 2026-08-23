@@ -125,13 +125,9 @@ func listAPIKeys(ctx context.Context, q querier, opts store.ListAPIKeysOptions) 
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := apiKeySortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM api_keys %s", whereClause)
@@ -142,9 +138,9 @@ func listAPIKeys(ctx context.Context, q querier, opts store.ListAPIKeysOptions) 
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM api_keys %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		apiKeyColumns, whereClause, orderBy, orderDir, argNum)
+		apiKeyColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
@@ -415,13 +411,9 @@ func listRunnerTokens(ctx context.Context, q querier, opts store.ListRunnerToken
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := runnerTokenSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM runner_tokens %s", whereClause)
@@ -432,9 +424,9 @@ func listRunnerTokens(ctx context.Context, q querier, opts store.ListRunnerToken
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM runner_tokens %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		runnerTokenColumns, whereClause, orderBy, orderDir, argNum)
+		runnerTokenColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)

@@ -125,13 +125,9 @@ func listSnapshots(ctx context.Context, q querier, opts store.ListSnapshotsOptio
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "DESC"
-	if !opts.OrderDesc {
-		orderDir = "ASC"
+	orderBy, err := snapshotSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM snapshots %s", whereClause)
@@ -142,9 +138,9 @@ func listSnapshots(ctx context.Context, q querier, opts store.ListSnapshotsOptio
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM snapshots %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		snapshotColumns, whereClause, orderBy, orderDir, argNum)
+		snapshotColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
@@ -412,13 +408,9 @@ func listTunnels(ctx context.Context, q querier, opts store.ListTunnelsOptions) 
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := tunnelSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM tunnels %s", whereClause)
@@ -429,9 +421,9 @@ func listTunnels(ctx context.Context, q querier, opts store.ListTunnelsOptions) 
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM tunnels %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		tunnelColumns, whereClause, orderBy, orderDir, argNum)
+		tunnelColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)

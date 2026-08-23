@@ -117,13 +117,9 @@ func listPermissionRequests(ctx context.Context, q querier, opts store.ListPermi
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := permissionSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM permission_requests %s", whereClause)
@@ -134,9 +130,9 @@ func listPermissionRequests(ctx context.Context, q querier, opts store.ListPermi
 
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM permission_requests %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		permissionRequestColumns, whereClause, orderBy, orderDir, argNum)
+		permissionRequestColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)

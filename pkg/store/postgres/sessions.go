@@ -133,13 +133,9 @@ func listSessions(ctx context.Context, q querier, opts store.ListSessionsOptions
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := sessionSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	// Count query
@@ -152,9 +148,9 @@ func listSessions(ctx context.Context, q querier, opts store.ListSessionsOptions
 	// Data query - fetch one extra to determine HasMore
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM sessions %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		sessionColumns, whereClause, orderBy, orderDir, argNum)
+		sessionColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)

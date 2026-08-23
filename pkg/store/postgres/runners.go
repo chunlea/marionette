@@ -131,13 +131,9 @@ func listRunners(ctx context.Context, q querier, opts store.ListRunnersOptions) 
 	}
 
 	limit := defaultLimit(opts.Limit)
-	orderBy := "created_at"
-	if opts.OrderBy != "" {
-		orderBy = opts.OrderBy
-	}
-	orderDir := "ASC"
-	if opts.OrderDesc {
-		orderDir = "DESC"
+	orderBy, err := runnerSortColumns.orderClause(opts.OrderBy, opts.OrderDesc)
+	if err != nil {
+		return nil, err
 	}
 
 	// Count query
@@ -150,9 +146,9 @@ func listRunners(ctx context.Context, q querier, opts store.ListRunnersOptions) 
 	// Data query - fetch one extra to determine HasMore
 	dataQuery := fmt.Sprintf(`
 		SELECT %s FROM runners %s
-		ORDER BY %s %s
+		ORDER BY %s
 		LIMIT $%d`,
-		runnerColumns, whereClause, orderBy, orderDir, argNum)
+		runnerColumns, whereClause, orderBy, argNum)
 	dataArgs := append(args, limit+1) //nolint:gocritic // intentionally creating new slice
 
 	rows, err := q.Query(ctx, dataQuery, dataArgs...)
