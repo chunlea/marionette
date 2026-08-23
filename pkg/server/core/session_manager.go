@@ -556,7 +556,10 @@ func (m *SessionManager) dispatchPendingTask(ctx context.Context, sessionID stri
 	if m.taskManager == nil {
 		return
 	}
-	if err := m.taskManager.DispatchNext(ctx, sessionID); err != nil {
+	// A session that just gained a runner is an edge trigger: the runner is new
+	// information, so the backlog gets one attempt now rather than waiting out
+	// a timer set when no runner existed.
+	if err := m.taskManager.DispatchNextNow(ctx, sessionID); err != nil {
 		m.logger.Warn("failed to dispatch pending task after activation",
 			zap.String("session_id", sessionID),
 			zap.Error(err),

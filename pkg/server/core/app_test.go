@@ -35,6 +35,7 @@ func testWireDeps(t *testing.T) WireDeps {
 			ReapInterval:                  time.Hour,
 			PartitionInterval:             time.Hour,
 			ChunkGCInterval:               time.Hour,
+			RedispatchInterval:            time.Hour,
 		},
 	}
 }
@@ -94,6 +95,7 @@ func TestWire_StartsEveryBackgroundJob(t *testing.T) {
 		"scheduled-session-activator",
 		"runner-reaper",
 		"log-partition-maintainer",
+		"redispatch-sweeper",
 	}, names)
 
 	require.NoError(t, app.Start(context.Background()))

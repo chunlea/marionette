@@ -15,7 +15,9 @@ import (
 
 // Task column list for SELECT queries.
 const taskColumns = `id, session_id, prompt, status, max_retries, retry_count,
-	timeout_seconds, tenant_id, labels, annotations, created_at, updated_at`
+	timeout_seconds, tenant_id, labels, annotations,
+	next_dispatch_after, dispatch_attempts, dispatch_parked_reason,
+	created_at, updated_at`
 
 // TaskRun column list for SELECT queries.
 const taskRunColumns = `id, task_id, attempt, runner_id, status, error, exit_code,
@@ -206,6 +208,28 @@ func updateTask(ctx context.Context, q querier, taskID string, updates store.Tas
 		args = append(args, updates.Annotations)
 		argNum++
 	}
+	if updates.ClearDispatchBackoff {
+		// A dispatch that reached a runner wipes the whole backoff record: the
+		// attempt counter, the timer and any parked reason.
+		setClauses = append(setClauses,
+			"next_dispatch_after = NULL", "dispatch_attempts = 0", "dispatch_parked_reason = NULL")
+	} else {
+		if updates.NextDispatchAfter != nil {
+			setClauses = append(setClauses, fmt.Sprintf("next_dispatch_after = $%d", argNum))
+			args = append(args, *updates.NextDispatchAfter)
+			argNum++
+		}
+		if updates.DispatchAttempts != nil {
+			setClauses = append(setClauses, fmt.Sprintf("dispatch_attempts = $%d", argNum))
+			args = append(args, *updates.DispatchAttempts)
+			argNum++
+		}
+		if updates.DispatchParkedReason != nil {
+			setClauses = append(setClauses, fmt.Sprintf("dispatch_parked_reason = $%d", argNum))
+			args = append(args, *updates.DispatchParkedReason)
+			argNum++
+		}
+	}
 
 	if len(setClauses) == 0 {
 		return nil
@@ -274,7 +298,9 @@ func scanTask(row pgx.Row, identifier string) (*store.Task, error) {
 	var t store.Task
 	err := row.Scan(
 		&t.ID, &t.SessionID, &t.Prompt, &t.Status, &t.MaxRetries, &t.RetryCount,
-		&t.TimeoutSeconds, &t.TenantID, &t.Labels, &t.Annotations, &t.CreatedAt, &t.UpdatedAt,
+		&t.TimeoutSeconds, &t.TenantID, &t.Labels, &t.Annotations,
+		&t.NextDispatchAfter, &t.DispatchAttempts, &t.DispatchParkedReason,
+		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -289,7 +315,9 @@ func scanTaskFromRows(rows pgx.Rows) (*store.Task, error) {
 	var t store.Task
 	err := rows.Scan(
 		&t.ID, &t.SessionID, &t.Prompt, &t.Status, &t.MaxRetries, &t.RetryCount,
-		&t.TimeoutSeconds, &t.TenantID, &t.Labels, &t.Annotations, &t.CreatedAt, &t.UpdatedAt,
+		&t.TimeoutSeconds, &t.TenantID, &t.Labels, &t.Annotations,
+		&t.NextDispatchAfter, &t.DispatchAttempts, &t.DispatchParkedReason,
+		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err

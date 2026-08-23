@@ -163,8 +163,16 @@ type Task struct {
 	TenantID       *string         `json:"tenant_id,omitempty"`
 	Labels         json.RawMessage `json:"labels"`
 	Annotations    json.RawMessage `json:"annotations"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+
+	// Redispatch backoff. Separate from RetryCount, which is the user-facing
+	// budget for agent failures: a dispatch that never reached a runner is not
+	// the agent's fault and must not spend it.
+	NextDispatchAfter    *time.Time `json:"next_dispatch_after,omitempty"`
+	DispatchAttempts     int        `json:"dispatch_attempts"`
+	DispatchParkedReason *string    `json:"dispatch_parked_reason,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // TaskUpdates contains fields that can be updated on a task.
@@ -173,6 +181,13 @@ type TaskUpdates struct {
 	RetryCount  *int
 	Labels      json.RawMessage
 	Annotations json.RawMessage
+
+	// Redispatch backoff state. ClearDispatchBackoff resets all three, which is
+	// what a dispatch that reached a runner does.
+	NextDispatchAfter    *time.Time
+	DispatchAttempts     *int
+	DispatchParkedReason *string
+	ClearDispatchBackoff bool
 
 	// ExpectedStatus makes the update conditional: it applies only if the row
 	// still has this status. It is how a pending -> running transition is made

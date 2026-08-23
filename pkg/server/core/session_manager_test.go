@@ -1917,6 +1917,7 @@ type mockTaskManagerForSession struct {
 	executedTasks   []string
 	reExecutedTasks []string
 	dispatched      []string
+	dispatchedNow   []string
 	executeErr      error
 	reExecuteErr    error
 	dispatchErr     error
@@ -2823,6 +2824,11 @@ func TestSessionManager_Activate_DispatchesPendingBacklog(t *testing.T) {
 		return len(mockTM.dispatchedSessions()) == 1
 	}, 5*time.Second, 20*time.Millisecond, "activation must dispatch the session backlog")
 	assert.Equal(t, []string{"sess_123"}, mockTM.dispatchedSessions())
+
+	// Gaining a runner is new information, so the backlog gets an immediate
+	// attempt rather than waiting out a backoff set when there was no runner.
+	assert.Equal(t, []string{"sess_123"}, mockTM.dispatchedNowSessions(),
+		"activation is an edge trigger and must bypass the backoff timer")
 }
 
 func TestSessionManager_Activate_DispatchesBacklogAfterResume(t *testing.T) {
@@ -2919,4 +2925,20 @@ func TestSessionManager_AttachSession_TenantIsEmptyForSingleTenant(t *testing.T)
 	assert.Empty(t, attach.GetTenantId())
 	assert.Equal(t, "/var/ws/ws_1", attach.GetWorkspacePath(),
 		"a native runner gets the real host path")
+}
+
+// DispatchNextNow records edge-triggered dispatches alongside the ordinary ones.
+func (m *mockTaskManagerForSession) DispatchNextNow(_ context.Context, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dispatchedNow = append(m.dispatchedNow, sessionID)
+	m.dispatched = append(m.dispatched, sessionID)
+	return m.dispatchErr
+}
+
+// dispatchedNowSessions returns a copy of the edge-triggered dispatch calls.
+func (m *mockTaskManagerForSession) dispatchedNowSessions() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.dispatchedNow...)
 }

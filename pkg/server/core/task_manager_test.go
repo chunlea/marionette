@@ -158,6 +158,23 @@ func (s *testTaskStore) UpdateTask(_ context.Context, id string, updates store.T
 	if updates.RetryCount != nil {
 		task.RetryCount = *updates.RetryCount
 	}
+	// Redispatch backoff, applied the way the real store applies it: the clear
+	// wins over the individual fields.
+	if updates.ClearDispatchBackoff {
+		task.NextDispatchAfter = nil
+		task.DispatchAttempts = 0
+		task.DispatchParkedReason = nil
+	} else {
+		if updates.NextDispatchAfter != nil {
+			task.NextDispatchAfter = updates.NextDispatchAfter
+		}
+		if updates.DispatchAttempts != nil {
+			task.DispatchAttempts = *updates.DispatchAttempts
+		}
+		if updates.DispatchParkedReason != nil {
+			task.DispatchParkedReason = updates.DispatchParkedReason
+		}
+	}
 	task.UpdatedAt = time.Now()
 	return nil
 }

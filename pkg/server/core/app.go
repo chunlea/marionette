@@ -61,6 +61,9 @@ type JobsConfig struct {
 	ChunkGCInterval time.Duration
 	DisableChunkGC  bool
 
+	RedispatchInterval time.Duration
+	DisableRedispatch  bool
+
 	// LogRetentionDays drops log partitions older than this many days.
 	//
 	// It MUST stay zero (the default, meaning "never drop") until log archiving
@@ -364,6 +367,23 @@ func (a *App) buildJobs(deps WireDeps) {
 					a.Logger.Warn("chunk gc did not stop cleanly", zap.Error(err))
 				}
 			},
+		})
+	}
+
+	// The backstop trigger for automatic redispatch. Every other trigger is an
+	// edge, and edges get missed - a restart loses in-memory state, a runner
+	// frees up in a way nothing watches. A task nothing ever retries is the bug
+	// this exists to close.
+	if !cfg.DisableRedispatch {
+		var opts []RedispatchSweeperOption
+		if cfg.RedispatchInterval > 0 {
+			opts = append(opts, WithRedispatchInterval(cfg.RedispatchInterval))
+		}
+		sweeper := NewRedispatchSweeper(a.Store, a.Tasks, a.Logger.Named("redispatch"), opts...)
+		a.jobs = append(a.jobs, backgroundJob{
+			name:  "redispatch-sweeper",
+			start: func(ctx context.Context) error { sweeper.Start(ctx); return nil },
+			stop:  func(context.Context) { sweeper.Stop() },
 		})
 	}
 
