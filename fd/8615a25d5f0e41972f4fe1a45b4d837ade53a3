@@ -1,0 +1,57 @@
+docs/schema.sql
+  s_345440c29221e7::t_b9f2d1c5e92a70 535-536,577-588,1007-1013,1342-1347,1402-1407,1769-1775
+migrations/014_replica_routing.down.sql
+  s_407eac4b802d80::t_37880d73276fec 1-13
+migrations/014_replica_routing.up.sql
+  s_407eac4b802d80::t_192fae0fce1200 1-73
+pkg/store/postgres/replicas.go
+  s_b2fb362fa9128c::t_cc8ef7dcb918d8 1-192
+pkg/store/postgres/replicas_test.go
+  s_345440c29221e7::t_998559b1979c63 1-175
+pkg/store/storemock/storemock.go
+  s_407eac4b802d80::t_6e9d1613f10806 60-73,552-566,651-664,1138-1152,1408-1421,1601-1615,1809-1822,1837-1850
+pkg/store/models.go
+  s_06dcb102eb172c::t_c348c9aab4490b 31-56
+pkg/store/store.go
+  s_06dcb102eb172c::t_1a108ebb44b4ae 39-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "fd8615a25d5f0e41972f4fe1a45b4d837ade53a3",
+  "prompts": {},
+  "sessions": {
+    "s_06dcb102eb172c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c713da8a-6e2a-4726-8e2b-41c65f36ac07",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_345440c29221e7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a030c2-2a53-79e2-baff-22144bbb43c0",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_407eac4b802d80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef840d6e-7942-40f8-90b2-80141044f398",
+        "model": "claude-opus-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b2fb362fa9128c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90747e52-2fa2-46d4-953b-527cf3ed633b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
