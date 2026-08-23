@@ -17,7 +17,6 @@ import { Button } from '@/components/Button'
 import { Badge } from '@/components/Badge'
 import { useWebRTCStream } from '@/hooks/useWebRTCStream'
 import { InputForwarder } from '@/lib/input-forwarder'
-import type { ConnectionState } from '@/types/stream'
 
 export interface DesktopViewerProps {
   streamId: string
@@ -342,40 +341,4 @@ export function DesktopViewer({
       )}
     </div>
   )
-}
-
-// Export connection state utilities
-export function getConnectionStateColor(state: ConnectionState): string {
-  switch (state) {
-    case 'connected':
-      return 'text-green-500'
-    case 'connecting':
-      return 'text-yellow-500'
-    case 'disconnected':
-    case 'closed':
-      return 'text-gray-500'
-    case 'failed':
-      return 'text-red-500'
-    default:
-      return 'text-gray-500'
-  }
-}
-
-export function getConnectionStateLabel(state: ConnectionState): string {
-  switch (state) {
-    case 'new':
-      return 'Initializing'
-    case 'connecting':
-      return 'Connecting'
-    case 'connected':
-      return 'Connected'
-    case 'disconnected':
-      return 'Disconnected'
-    case 'failed':
-      return 'Failed'
-    case 'closed':
-      return 'Closed'
-    default:
-      return 'Unknown'
-  }
 }
