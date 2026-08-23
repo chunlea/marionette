@@ -109,15 +109,10 @@ func TestTunnelRouter_HandleTunnelData(t *testing.T) {
 	tr := NewTunnelRouter(WithTRLogger(logger))
 
 	// Create a mock connection manually
-	responseCh := make(chan *pb.TunnelData, 10)
+	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
+	responseCh := conn.responseCh
 	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = &tunnelConnection{
-		tunnelID:     "tun_test",
-		connectionID: "conn_test",
-		runnerID:     "run_test",
-		responseCh:   responseCh,
-		createdAt:    time.Now(),
-	}
+	tr.connections["conn_test"] = conn
 	tr.connectionsMu.Unlock()
 
 	// Handle incoming data
@@ -158,15 +153,10 @@ func TestTunnelRouter_HandleTunnelData_WrongRunner(t *testing.T) {
 	tr := NewTunnelRouter(WithTRLogger(logger))
 
 	// Create connection
-	responseCh := make(chan *pb.TunnelData, 10)
+	conn := newTunnelConnection("tun_test", "conn_test", "run_correct")
+	responseCh := conn.responseCh
 	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = &tunnelConnection{
-		tunnelID:     "tun_test",
-		connectionID: "conn_test",
-		runnerID:     "run_correct",
-		responseCh:   responseCh,
-		createdAt:    time.Now(),
-	}
+	tr.connections["conn_test"] = conn
 	tr.connectionsMu.Unlock()
 
 	// Handle data from wrong runner (should be ignored)
@@ -191,15 +181,9 @@ func TestTunnelRouter_HandleTunnelData_EOF(t *testing.T) {
 	tr := NewTunnelRouter(WithTRLogger(logger))
 
 	// Create connection
-	responseCh := make(chan *pb.TunnelData, 10)
+	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
 	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = &tunnelConnection{
-		tunnelID:     "tun_test",
-		connectionID: "conn_test",
-		runnerID:     "run_test",
-		responseCh:   responseCh,
-		createdAt:    time.Now(),
-	}
+	tr.connections["conn_test"] = conn
 	tr.connectionsMu.Unlock()
 
 	// Handle EOF
@@ -222,15 +206,10 @@ func TestTunnelRouter_CloseConnection(t *testing.T) {
 	tr := NewTunnelRouter(WithTRLogger(logger))
 
 	// Create connection
-	responseCh := make(chan *pb.TunnelData, 10)
+	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
+	responseCh := conn.responseCh
 	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = &tunnelConnection{
-		tunnelID:     "tun_test",
-		connectionID: "conn_test",
-		runnerID:     "run_test",
-		responseCh:   responseCh,
-		createdAt:    time.Now(),
-	}
+	tr.connections["conn_test"] = conn
 	tr.connectionsMu.Unlock()
 
 	// Close connection
@@ -257,15 +236,9 @@ func TestTunnelRouter_HandleCloseTunnel(t *testing.T) {
 
 	// Create tunnel registration and connections
 	tr.RegisterTunnel("tun_test", "run_test")
-	responseCh := make(chan *pb.TunnelData, 10)
+	conn := newTunnelConnection("tun_test", "conn_1", "run_test")
 	tr.connectionsMu.Lock()
-	tr.connections["conn_1"] = &tunnelConnection{
-		tunnelID:     "tun_test",
-		connectionID: "conn_1",
-		runnerID:     "run_test",
-		responseCh:   responseCh,
-		createdAt:    time.Now(),
-	}
+	tr.connections["conn_1"] = conn
 	tr.connectionsMu.Unlock()
 
 	// Handle close
@@ -283,38 +256,52 @@ func TestTunnelRouter_HandleCloseTunnel(t *testing.T) {
 	assert.False(t, exists)
 }
 
-func TestTunnelRouter_CleanupStaleConnections(t *testing.T) {
+func TestTunnelRouter_CleanupIdleConnections(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	tr := NewTunnelRouter(WithTRLogger(logger))
 
-	// Create old and new connections
+	idle := newTunnelConnection("tun_test", "conn_idle", "")
+	idle.lastActivity.Store(time.Now().Add(-2 * time.Hour).UnixNano())
+
+	active := newTunnelConnection("tun_test", "conn_active", "")
+
 	tr.connectionsMu.Lock()
-	tr.connections["conn_old"] = &tunnelConnection{
-		tunnelID:     "tun_test",
-		connectionID: "conn_old",
-		responseCh:   make(chan *pb.TunnelData, 10),
-		createdAt:    time.Now().Add(-2 * time.Hour),
-	}
-	tr.connections["conn_new"] = &tunnelConnection{
-		tunnelID:     "tun_test",
-		connectionID: "conn_new",
-		responseCh:   make(chan *pb.TunnelData, 10),
-		createdAt:    time.Now(),
-	}
+	tr.connections["conn_idle"] = idle
+	tr.connections["conn_active"] = active
 	tr.connectionsMu.Unlock()
 
-	// Cleanup connections older than 1 hour
-	cleaned := tr.CleanupStaleConnections(time.Hour)
+	cleaned := tr.CleanupIdleConnections(time.Hour)
 	assert.Equal(t, 1, cleaned)
 
-	// Verify old connection removed, new one remains
 	tr.connectionsMu.RLock()
-	_, oldExists := tr.connections["conn_old"]
-	_, newExists := tr.connections["conn_new"]
+	_, idleExists := tr.connections["conn_idle"]
+	_, activeExists := tr.connections["conn_active"]
 	tr.connectionsMu.RUnlock()
 
-	assert.False(t, oldExists)
-	assert.True(t, newExists)
+	assert.False(t, idleExists)
+	assert.True(t, activeExists)
+}
+
+// TestTunnelRouter_CleanupIdleConnections_SparesOldButActive is the regression
+// test for the age-based sweep, which killed healthy long-lived WebSockets.
+func TestTunnelRouter_CleanupIdleConnections_SparesOldButActive(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tr := NewTunnelRouter(WithTRLogger(logger))
+
+	// Created hours ago but carrying traffic right now.
+	conn := newTunnelConnection("tun_test", "conn_ws", "run_test")
+	conn.createdAt = time.Now().Add(-6 * time.Hour)
+
+	tr.connectionsMu.Lock()
+	tr.connections["conn_ws"] = conn
+	tr.connectionsMu.Unlock()
+
+	assert.Equal(t, 0, tr.CleanupIdleConnections(time.Hour))
+
+	tr.connectionsMu.RLock()
+	_, exists := tr.connections["conn_ws"]
+	tr.connectionsMu.RUnlock()
+	assert.True(t, exists, "an actively used connection must survive the sweep")
 }
 
 func TestNewTunnelRouter_WithOptions(t *testing.T) {
@@ -449,16 +436,13 @@ func TestTunnelRouter_HandleTunnelData_ContextCancelled(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	tr := NewTunnelRouter(WithTRLogger(logger))
 
-	// Create connection with full channel (buffer size 0)
-	responseCh := make(chan *pb.TunnelData) // unbuffered
-	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = &tunnelConnection{
-		tunnelID:     "tun_test",
-		connectionID: "conn_test",
-		runnerID:     "run_test",
-		responseCh:   responseCh,
-		createdAt:    time.Now(),
+	// Fill the response channel so the send has to block.
+	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
+	for i := 0; i < cap(conn.responseCh); i++ {
+		conn.responseCh <- &pb.TunnelData{}
 	}
+	tr.connectionsMu.Lock()
+	tr.connections["conn_test"] = conn
 	tr.connectionsMu.Unlock()
 
 	// Use cancelled context
@@ -477,33 +461,82 @@ func TestTunnelRouter_HandleTunnelData_ContextCancelled(t *testing.T) {
 	assert.Equal(t, context.Canceled, err)
 }
 
-func TestTunnelRouter_HandleTunnelData_ChannelFull(t *testing.T) {
+// TestTunnelRouter_HandleTunnelData_StalledConsumer is the regression test for
+// the old `default:` branch, which silently dropped bytes mid-body whenever a
+// consumer fell behind. A stalled consumer must now fail loudly instead.
+func TestTunnelRouter_HandleTunnelData_StalledConsumer(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	tr := NewTunnelRouter(WithTRLogger(logger))
+	tr := NewTunnelRouter(
+		WithTRLogger(logger),
+		WithTRSendTimeout(50*time.Millisecond),
+	)
 
-	// Create connection with full channel
-	responseCh := make(chan *pb.TunnelData, 1)
-	responseCh <- &pb.TunnelData{} // fill the channel
+	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
+	for i := 0; i < cap(conn.responseCh); i++ {
+		conn.responseCh <- &pb.TunnelData{}
+	}
 
 	tr.connectionsMu.Lock()
-	tr.connections["conn_test"] = &tunnelConnection{
-		tunnelID:     "tun_test",
-		connectionID: "conn_test",
-		runnerID:     "run_test",
-		responseCh:   responseCh,
-		createdAt:    time.Now(),
-	}
+	tr.connections["conn_test"] = conn
 	tr.connectionsMu.Unlock()
 
-	// Handle data when channel is full (should drop and not block)
 	err := tr.HandleTunnelData(context.Background(), "run_test", &pb.TunnelData{
 		TunnelId:     "tun_test",
 		ConnectionId: "conn_test",
-		Data:         []byte("dropped"),
+		Data:         []byte("must not be dropped silently"),
 	})
 
-	// Should not error, just log warning and drop
-	require.NoError(t, err)
+	require.ErrorIs(t, err, errSendTimeout)
+
+	// The connection is torn down rather than left leaking bytes.
+	tr.connectionsMu.RLock()
+	_, exists := tr.connections["conn_test"]
+	tr.connectionsMu.RUnlock()
+	assert.False(t, exists, "a stalled connection must be closed, not kept")
+}
+
+// TestTunnelRouter_HandleTunnelData_BlocksUntilDrained proves the send waits
+// for back-pressure to clear instead of discarding the frame.
+func TestTunnelRouter_HandleTunnelData_BlocksUntilDrained(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tr := NewTunnelRouter(
+		WithTRLogger(logger),
+		WithTRSendTimeout(5*time.Second),
+	)
+
+	conn := newTunnelConnection("tun_test", "conn_test", "run_test")
+	for i := 0; i < cap(conn.responseCh); i++ {
+		conn.responseCh <- &pb.TunnelData{}
+	}
+
+	tr.connectionsMu.Lock()
+	tr.connections["conn_test"] = conn
+	tr.connectionsMu.Unlock()
+
+	payload := []byte("late but intact")
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- tr.HandleTunnelData(context.Background(), "run_test", &pb.TunnelData{
+			TunnelId:     "tun_test",
+			ConnectionId: "conn_test",
+			Data:         payload,
+		})
+	}()
+
+	// Drain one slot so the blocked send can complete.
+	time.Sleep(20 * time.Millisecond)
+	<-conn.responseCh
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("send did not complete after the consumer drained a slot")
+	}
+
+	// Every buffered frame plus the late one is still queued: nothing dropped.
+	assert.Equal(t, cap(conn.responseCh), len(conn.responseCh))
 }
 
 func TestTunnelRouter_CloseConnection_NotExists(t *testing.T) {
@@ -532,4 +565,135 @@ func TestTunnelRouter_HandleCloseTunnel_WithTunnelManager(t *testing.T) {
 	// The error from tm.Close is returned (tunnel doesn't exist in tm)
 	// This is expected behavior
 	assert.Error(t, err)
+}
+
+// TestTunnelRouter_CloseRace_NoSendOnClosedChannel is the regression test for
+// the close race: HandleTunnelData read the connection under RLock, released
+// it, and then sent, while CloseConnection closed responseCh outside the lock.
+// Before the fix this panicked with "send on closed channel" under -race.
+func TestTunnelRouter_CloseRace_NoSendOnClosedChannel(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	for iteration := 0; iteration < 200; iteration++ {
+		tr := NewTunnelRouter(
+			WithTRLogger(logger),
+			WithTRSendTimeout(time.Second),
+		)
+
+		const connID = "conn_race"
+		conn := newTunnelConnection("tun_race", connID, "run_race")
+		tr.connectionsMu.Lock()
+		tr.connections[connID] = conn
+		tr.connectionsMu.Unlock()
+
+		var wg sync.WaitGroup
+
+		// Senders racing against the closer.
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = tr.HandleTunnelData(context.Background(), "run_race", &pb.TunnelData{
+					TunnelId:     "tun_race",
+					ConnectionId: connID,
+					Data:         []byte("frame"),
+				})
+			}()
+		}
+
+		// Concurrent closers, exercising every teardown path.
+		wg.Add(3)
+		go func() { defer wg.Done(); tr.CloseConnection(connID) }()
+		go func() { defer wg.Done(); tr.CloseConnection(connID) }()
+		go func() { defer wg.Done(); tr.CleanupIdleConnections(0) }()
+
+		// A consumer, so sends can also succeed rather than only time out.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range conn.responseCh { //nolint:revive // drain until closed
+			}
+		}()
+
+		wg.Wait()
+	}
+}
+
+// TestTunnelRouter_HandleCloseTunnel_Race covers the same shape via the
+// tunnel-wide teardown path.
+func TestTunnelRouter_HandleCloseTunnel_Race(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	for iteration := 0; iteration < 200; iteration++ {
+		tr := NewTunnelRouter(
+			WithTRLogger(logger),
+			WithTRSendTimeout(time.Second),
+		)
+
+		const connID = "conn_race"
+		conn := newTunnelConnection("tun_race", connID, "run_race")
+		tr.connectionsMu.Lock()
+		tr.connections[connID] = conn
+		tr.connectionsMu.Unlock()
+
+		var wg sync.WaitGroup
+
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = tr.HandleTunnelData(context.Background(), "run_race", &pb.TunnelData{
+					TunnelId:     "tun_race",
+					ConnectionId: connID,
+					Data:         []byte("frame"),
+				})
+			}()
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = tr.HandleCloseTunnel(context.Background(), "run_race", "tun_race", "race")
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range conn.responseCh { //nolint:revive // drain until closed
+			}
+		}()
+
+		wg.Wait()
+	}
+}
+
+// TestTunnelRouter_EOFAndClose_DoubleCloseSafe verifies the EOF path and an
+// explicit close can both fire without a double-close panic.
+func TestTunnelRouter_EOFAndClose_DoubleCloseSafe(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tr := NewTunnelRouter(WithTRLogger(logger))
+
+	const connID = "conn_eof"
+	conn := newTunnelConnection("tun_eof", connID, "run_eof")
+	tr.connectionsMu.Lock()
+	tr.connections[connID] = conn
+	tr.connectionsMu.Unlock()
+
+	require.NoError(t, tr.HandleTunnelData(context.Background(), "run_eof", &pb.TunnelData{
+		TunnelId:     "tun_eof",
+		ConnectionId: connID,
+		Eof:          true,
+	}))
+
+	// Second close must be a no-op, not a panic.
+	tr.CloseConnection(connID)
+	conn.close()
+
+	// The consumer still observes the EOF frame, then the close.
+	frame, ok := <-conn.responseCh
+	require.True(t, ok)
+	assert.True(t, frame.GetEof())
+
+	_, ok = <-conn.responseCh
+	assert.False(t, ok, "channel must be closed after teardown")
 }

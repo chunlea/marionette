@@ -4,11 +4,37 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
 	"github.com/chunlea/marionette/pkg/tunnel"
 	"go.uber.org/zap"
+)
+
+const (
+	// defaultTunnelSendTimeout bounds how long a frame from a runner may wait
+	// for the HTTP handler to drain responseCh before the connection is torn
+	// down. Sends block rather than drop: a dropped frame silently truncates
+	// the HTTP body or WebSocket frame the consumer is reassembling.
+	//
+	// Because the runner control stream dispatches messages sequentially, a
+	// stalled consumer blocks that runner's other messages for up to this
+	// long. That is intentional back-pressure, but it is why the timeout
+	// exists and why the connection is dropped once it expires.
+	defaultTunnelSendTimeout = 30 * time.Second
+
+	// tunnelResponseBuffer is the per-connection response channel buffer.
+	tunnelResponseBuffer = 10
+)
+
+var (
+	// errConnectionClosed means the consumer went away before the frame could
+	// be delivered.
+	errConnectionClosed = errors.New("tunnel connection closed")
+
+	// errSendTimeout means the consumer did not drain the channel in time.
+	errSendTimeout = errors.New("tunnel consumer stalled")
 )
 
 // TunnelRouter routes TunnelData between HTTP handlers and runners.
@@ -27,6 +53,9 @@ type TunnelRouter struct {
 	// Key: tunnelID, Value: runnerID
 	tunnelRunners   map[string]string
 	tunnelRunnersMu sync.RWMutex
+
+	// sendTimeout bounds a blocked send to a stalled consumer.
+	sendTimeout time.Duration
 }
 
 // tunnelConnection represents an active tunnel connection waiting for response.
@@ -36,6 +65,93 @@ type tunnelConnection struct {
 	runnerID     string
 	responseCh   chan *pb.TunnelData
 	createdAt    time.Time
+
+	// done is closed before responseCh so a sender can never observe an open
+	// connection and then write to a channel that has since been closed.
+	done      chan struct{}
+	closeOnce sync.Once
+
+	// sendMu serializes senders. close acquires it after closing done, so it
+	// waits for any in-flight send to unwind before closing responseCh.
+	sendMu sync.Mutex
+
+	// lastActivity holds the Unix-nano timestamp of the most recent frame in
+	// either direction. Accessed atomically so idle sweeps never block a
+	// sender.
+	lastActivity atomic.Int64
+}
+
+// newTunnelConnection builds a connection with its close/activity bookkeeping
+// initialised. tunnelConnection must not be constructed as a bare literal:
+// close panics on a nil done channel.
+func newTunnelConnection(tunnelID, connectionID, runnerID string) *tunnelConnection {
+	c := &tunnelConnection{
+		tunnelID:     tunnelID,
+		connectionID: connectionID,
+		runnerID:     runnerID,
+		responseCh:   make(chan *pb.TunnelData, tunnelResponseBuffer),
+		createdAt:    time.Now(),
+		done:         make(chan struct{}),
+	}
+	c.touch()
+	return c
+}
+
+// touch records activity on the connection for idle-based cleanup.
+func (c *tunnelConnection) touch() {
+	c.lastActivity.Store(time.Now().UnixNano())
+}
+
+// idleSince reports when the connection last carried a frame.
+func (c *tunnelConnection) idleSince() time.Time {
+	return time.Unix(0, c.lastActivity.Load())
+}
+
+// close tears the connection down. It is safe to call concurrently and more
+// than once. Callers must not hold connectionsMu: close waits for an in-flight
+// send to unwind.
+func (c *tunnelConnection) close() {
+	c.closeOnce.Do(func() {
+		// Wake any blocked sender first; no sender proceeds past done.
+		close(c.done)
+		// Wait for an in-flight send to release sendMu before closing the
+		// channel it may still be writing to.
+		c.sendMu.Lock()
+		defer c.sendMu.Unlock()
+		close(c.responseCh)
+	})
+}
+
+// send delivers a frame to the consumer, blocking until the consumer drains
+// the channel, the connection closes, ctx is cancelled, or timeout expires.
+//
+// There is deliberately no default case: this is a data path, and a
+// non-blocking send truncates whatever the consumer is reassembling.
+func (c *tunnelConnection) send(ctx context.Context, data *pb.TunnelData, timeout time.Duration) error {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+
+	// close may have fired while we waited for sendMu.
+	select {
+	case <-c.done:
+		return errConnectionClosed
+	default:
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case c.responseCh <- data:
+		c.touch()
+		return nil
+	case <-c.done:
+		return errConnectionClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return errSendTimeout
+	}
 }
 
 // TunnelRouterOption is a functional option for TunnelRouter.
@@ -62,15 +178,27 @@ func WithTRTunnelManager(tm *tunnel.TunnelManager) TunnelRouterOption {
 	}
 }
 
+// WithTRSendTimeout sets how long a frame may wait for a stalled consumer
+// before the connection is torn down.
+func WithTRSendTimeout(d time.Duration) TunnelRouterOption {
+	return func(r *TunnelRouter) {
+		r.sendTimeout = d
+	}
+}
+
 // NewTunnelRouter creates a new TunnelRouter.
 func NewTunnelRouter(opts ...TunnelRouterOption) *TunnelRouter {
 	r := &TunnelRouter{
 		logger:        zap.NewNop(),
 		connections:   make(map[string]*tunnelConnection),
 		tunnelRunners: make(map[string]string),
+		sendTimeout:   defaultTunnelSendTimeout,
 	}
 	for _, opt := range opts {
 		opt(r)
+	}
+	if r.sendTimeout <= 0 {
+		r.sendTimeout = defaultTunnelSendTimeout
 	}
 	return r
 }
@@ -157,15 +285,7 @@ func (r *TunnelRouter) SendRequest(ctx context.Context, tunnelID, connectionID s
 		return nil, errors.New("connection manager not configured")
 	}
 
-	// Create response channel
-	responseCh := make(chan *pb.TunnelData, 10)
-	conn := &tunnelConnection{
-		tunnelID:     tunnelID,
-		connectionID: connectionID,
-		runnerID:     runnerID,
-		responseCh:   responseCh,
-		createdAt:    time.Now(),
-	}
+	conn := newTunnelConnection(tunnelID, connectionID, runnerID)
 
 	// Register connection
 	r.connectionsMu.Lock()
@@ -189,7 +309,7 @@ func (r *TunnelRouter) SendRequest(ctx context.Context, tunnelID, connectionID s
 		r.connectionsMu.Lock()
 		delete(r.connections, connectionID)
 		r.connectionsMu.Unlock()
-		close(responseCh)
+		conn.close()
 		return nil, err
 	}
 
@@ -200,10 +320,11 @@ func (r *TunnelRouter) SendRequest(ctx context.Context, tunnelID, connectionID s
 		zap.Int("data_len", len(data)),
 	)
 
-	return responseCh, nil
+	return conn.responseCh, nil
 }
 
 // CloseConnection closes a tunnel connection and cleans up resources.
+// Safe to call concurrently and more than once for the same connection.
 func (r *TunnelRouter) CloseConnection(connectionID string) {
 	r.connectionsMu.Lock()
 	conn, ok := r.connections[connectionID]
@@ -212,13 +333,18 @@ func (r *TunnelRouter) CloseConnection(connectionID string) {
 	}
 	r.connectionsMu.Unlock()
 
-	if ok && conn.responseCh != nil {
-		close(conn.responseCh)
-		r.logger.Debug("closed tunnel connection",
-			zap.String("connection_id", connectionID),
-			zap.String("tunnel_id", conn.tunnelID),
-		)
+	if !ok {
+		return
 	}
+
+	// Closed outside connectionsMu: close waits for an in-flight send, and
+	// holding the map lock through that would stall all routing.
+	conn.close()
+
+	r.logger.Debug("closed tunnel connection",
+		zap.String("connection_id", connectionID),
+		zap.String("tunnel_id", conn.tunnelID),
+	)
 }
 
 // SendEOF sends an EOF signal to a runner for a connection.
@@ -272,6 +398,15 @@ func (r *TunnelRouter) SendData(ctx context.Context, tunnelID, connectionID stri
 		return err
 	}
 
+	// Traffic in this direction also keeps the connection alive for idle
+	// sweeps: a WebSocket may be mostly client-to-runner.
+	r.connectionsMu.RLock()
+	conn, ok := r.connections[connectionID]
+	r.connectionsMu.RUnlock()
+	if ok {
+		conn.touch()
+	}
+
 	r.logger.Debug("sent data to tunnel",
 		zap.String("tunnel_id", tunnelID),
 		zap.String("connection_id", connectionID),
@@ -311,26 +446,43 @@ func (r *TunnelRouter) HandleTunnelData(ctx context.Context, runnerID string, da
 		return nil
 	}
 
-	// Send to response channel (non-blocking with timeout)
-	select {
-	case conn.responseCh <- data:
-		r.logger.Debug("routed tunnel data to handler",
-			zap.String("connection_id", connectionID),
-			zap.String("tunnel_id", data.GetTunnelId()),
-			zap.Int("data_len", len(data.GetData())),
-			zap.Bool("eof", data.GetEof()),
-		)
-	case <-ctx.Done():
-		r.logger.Warn("context cancelled while routing data",
-			zap.String("connection_id", connectionID),
-		)
-		return ctx.Err()
-	default:
-		r.logger.Warn("response channel full, dropping data",
-			zap.String("connection_id", connectionID),
-			zap.String("tunnel_id", data.GetTunnelId()),
-		)
+	// Blocking send with a deadline. Dropping the frame here would corrupt the
+	// HTTP body or WebSocket frame the consumer is reassembling.
+	if err := conn.send(ctx, data, r.sendTimeout); err != nil {
+		switch {
+		case errors.Is(err, errConnectionClosed):
+			// Consumer went away; nothing left to deliver to.
+			r.logger.Debug("dropping data for closed connection",
+				zap.String("connection_id", connectionID),
+				zap.String("tunnel_id", data.GetTunnelId()),
+			)
+			return nil
+
+		case errors.Is(err, errSendTimeout):
+			// Tear the connection down rather than block this runner's
+			// control stream indefinitely.
+			r.logger.Warn("tunnel consumer stalled, closing connection",
+				zap.String("connection_id", connectionID),
+				zap.String("tunnel_id", data.GetTunnelId()),
+				zap.Duration("timeout", r.sendTimeout),
+			)
+			r.CloseConnection(connectionID)
+			return err
+
+		default:
+			r.logger.Warn("context cancelled while routing data",
+				zap.String("connection_id", connectionID),
+			)
+			return err
+		}
 	}
+
+	r.logger.Debug("routed tunnel data to handler",
+		zap.String("connection_id", connectionID),
+		zap.String("tunnel_id", data.GetTunnelId()),
+		zap.Int("data_len", len(data.GetData())),
+		zap.Bool("eof", data.GetEof()),
+	)
 
 	// If EOF, close the connection
 	if data.GetEof() {
@@ -348,17 +500,21 @@ func (r *TunnelRouter) HandleCloseTunnel(ctx context.Context, runnerID string, t
 		zap.String("reason", reason),
 	)
 
-	// Close all connections for this tunnel
+	// Detach all connections for this tunnel under the lock, then close them
+	// outside it: close waits for in-flight sends.
 	r.connectionsMu.Lock()
+	closing := make([]*tunnelConnection, 0, len(r.connections))
 	for connID, conn := range r.connections {
 		if conn.tunnelID == tunnelID {
-			if conn.responseCh != nil {
-				close(conn.responseCh)
-			}
+			closing = append(closing, conn)
 			delete(r.connections, connID)
 		}
 	}
 	r.connectionsMu.Unlock()
+
+	for _, conn := range closing {
+		conn.close()
+	}
 
 	// Unregister the tunnel
 	r.UnregisterTunnel(tunnelID)
@@ -371,29 +527,33 @@ func (r *TunnelRouter) HandleCloseTunnel(ctx context.Context, runnerID string, t
 	return nil
 }
 
-// CleanupStaleConnections removes connections older than the given duration.
-// Should be called periodically to prevent memory leaks.
-func (r *TunnelRouter) CleanupStaleConnections(maxAge time.Duration) int {
+// CleanupIdleConnections closes connections that have carried no data for
+// longer than idleFor and returns how many were closed.
+//
+// Idle time is measured from the last frame, not from creation: an age-based
+// sweep kills healthy long-lived WebSocket connections, which is what the
+// previous CleanupStaleConnections did.
+func (r *TunnelRouter) CleanupIdleConnections(idleFor time.Duration) int {
+	cutoff := time.Now().Add(-idleFor)
+
 	r.connectionsMu.Lock()
-	defer r.connectionsMu.Unlock()
-
-	cutoff := time.Now().Add(-maxAge)
-	cleaned := 0
-
+	closing := make([]*tunnelConnection, 0)
 	for connID, conn := range r.connections {
-		if conn.createdAt.Before(cutoff) {
-			if conn.responseCh != nil {
-				close(conn.responseCh)
-			}
+		if conn.idleSince().Before(cutoff) {
+			closing = append(closing, conn)
 			delete(r.connections, connID)
-			cleaned++
-			r.logger.Debug("cleaned up stale connection",
-				zap.String("connection_id", connID),
-				zap.String("tunnel_id", conn.tunnelID),
-				zap.Duration("age", time.Since(conn.createdAt)),
-			)
 		}
 	}
+	r.connectionsMu.Unlock()
 
-	return cleaned
+	for _, conn := range closing {
+		conn.close()
+		r.logger.Debug("cleaned up idle tunnel connection",
+			zap.String("connection_id", conn.connectionID),
+			zap.String("tunnel_id", conn.tunnelID),
+			zap.Duration("idle", time.Since(conn.idleSince())),
+		)
+	}
+
+	return len(closing)
 }
