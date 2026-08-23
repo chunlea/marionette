@@ -1,0 +1,55 @@
+pkg/storage/cas/sync.go
+  s_829cd3b6a7eda7::t_ea6bcc9efd73fb 11,130-132,134-153,162,165,167,169-170,172-180,183-194,197-206,240-251,329,333,335,339,343,381,384-398,461-466,468-472,491-495,497-501,504,506,509-513,516
+pkg/storage/cas/cdc.go
+  s_6ce8a3a3b8d9e6::t_bd35b2432d453b 1-706
+pkg/storage/cas/config.go
+  s_6ce8a3a3b8d9e6::t_92d40f1bc2bf53 25-38,44-64,82-88,102-109,122-134
+pkg/storage/cas/fifo_other_test.go
+  s_6ce8a3a3b8d9e6::t_7bbcf0be7be524 1-10
+pkg/storage/cas/fifo_unix_test.go
+  s_6ce8a3a3b8d9e6::t_a06a80007df3aa 1-11
+pkg/storage/cas/types.go
+  s_2681c55641541f::t_a8c114bde90536 43
+pkg/storage/cas/cdc_test.go
+  s_6ce8a3a3b8d9e6::t_e87d804fa62277 1-530
+pkg/storage/cas/config_test.go
+  s_6ce8a3a3b8d9e6::t_4e18514b734c35 16,25-26,30,51
+pkg/storage/cas/encrypt.go
+  s_6ce8a3a3b8d9e6::t_f9de649cb6569a 12-33,75,77,136,138
+pkg/storage/cas/errors_internal_test.go
+  s_6ce8a3a3b8d9e6::t_f6ee75de7a8481 255-256,304-305,339-340,397-398,435-436,550-551,596-597,625-626,639-641,653-654,694-695,762-763,824-825,863-864,920-921
+pkg/storage/cas/sync_test.go
+  s_6ce8a3a3b8d9e6::t_7f827103b9321f 168-169,202-203,239-240,286-287,326-327,358-359,400-401,434-435,471-472,617-618,655-656,689-690,723-724,765-766,801-802,846-847,878-879,904-905,941-942,983-984,1026-1027
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "0f73c3eeee94668d95091e628ed2ef8a100471d1",
+  "prompts": {},
+  "sessions": {
+    "s_2681c55641541f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957a3a1-8aa9-4481-b571-119f14c7519e",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_6ce8a3a3b8d9e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f1a55cc-dd39-4229-91f5-7498430c8926",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_829cd3b6a7eda7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d342e86d-a42f-469e-846f-fd4f6252c53c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
