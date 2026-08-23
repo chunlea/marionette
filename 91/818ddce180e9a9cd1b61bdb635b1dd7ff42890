@@ -1,0 +1,27 @@
+pkg/server/api/middleware.go
+  s_c8578aa5dbeab3::t_0e61f195f836ee 32-43,45-47,49-62,65-91
+pkg/server/api/upstream_proxy.go
+  s_c8578aa5dbeab3::t_a34430812fde01 1-95
+pkg/server/api/upstream_proxy_test.go
+  s_c8578aa5dbeab3::t_a2c1d05ba12980 1-163
+pkg/server/api/middleware_test.go
+  s_c8578aa5dbeab3::t_b8486ea6ec2ef0 1-95
+pkg/server/api/tunnel_proxy_test.go
+  s_c8578aa5dbeab3::t_c2a689a096cef5 1506-1513
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "91818ddce180e9a9cd1b61bdb635b1dd7ff42890",
+  "prompts": {},
+  "sessions": {
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
