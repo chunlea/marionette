@@ -1,0 +1,19 @@
+pkg/server/api/upstream_proxy_test.go
+  s_c8578aa5dbeab3::t_fab4223d263001 118-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "6bba148979c83a5d2fc3529dfe00f1da844b4f72",
+  "prompts": {},
+  "sessions": {
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
