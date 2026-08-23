@@ -1,0 +1,19 @@
+pkg/server/api/mock_stream_service_test.go
+  s_c8578aa5dbeab3::t_48cfb856ff9ead 1-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "e40a9bc1481715b54e716782b10b9c727895fa22",
+  "prompts": {},
+  "sessions": {
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
