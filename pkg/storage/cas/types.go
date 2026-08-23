@@ -49,6 +49,15 @@ type Manifest struct {
 	// ChunkCount is the total number of unique chunks (for CDC mode).
 	ChunkCount int
 
+	// Ordered reports that Files are in directory-walk order. See
+	// ManifestHeader.Ordered.
+	Ordered bool
+
+	// FileCount is the number of entries in the manifest. For a manifest
+	// loaded in streaming mode Files is empty and this is the only record of
+	// how many there were.
+	FileCount int
+
 	// Files contains the file entries (for CDC mode).
 	Files []ManifestFile
 }
@@ -65,7 +74,41 @@ type ManifestHeader struct {
 	ChunkCount  int       `json:"chunk_count"`
 	SingleChunk bool      `json:"single_chunk,omitempty"`
 	ChunkHash   string    `json:"chunk_hash,omitempty"`
+
+	// Ordered reports that the file entries appear in directory-walk order.
+	//
+	// An ordered manifest can be compared against a fresh walk by streaming
+	// both and merging, which is what lets an incremental sync of a
+	// million-file workspace hold nothing but the two entries it is looking
+	// at. Manifests written before this flag existed, and those assembled out
+	// of order by the old incremental path, leave it false and are indexed in
+	// memory instead.
+	Ordered bool `json:"ordered,omitempty"`
+
+	// FileCount is the number of entries that follow the header. Zero means
+	// unknown, which is what manifests written before this field say.
+	FileCount int `json:"file_count,omitempty"`
 }
+
+// Entry kinds recorded in a manifest.
+//
+// The empty string means a regular file so that manifests written before
+// directories and symlinks were recorded still read correctly: every entry they
+// contain was a regular file.
+const (
+	// EntryFile is a regular file. Also the zero value.
+	EntryFile = ""
+
+	// EntryDir is a directory. Recorded so an empty directory survives a
+	// round trip - a workspace whose build output directory disappears on
+	// restore is not the workspace that was saved.
+	EntryDir = "d"
+
+	// EntrySymlink is a symbolic link. The target is stored verbatim and is
+	// never followed: following it would inline the target's bytes under the
+	// link's name and silently turn one file into two.
+	EntrySymlink = "l"
+)
 
 // ManifestFile represents a file entry in a manifest.
 // Each file is stored as a separate line in the JSONL manifest.
@@ -84,7 +127,22 @@ type ManifestFile struct {
 
 	// Chunks contains the ordered list of chunk hashes that make up this file.
 	Chunks []string `json:"chunks"`
+
+	// Type is the entry kind: EntryFile (default), EntryDir or EntrySymlink.
+	Type string `json:"type,omitempty"`
+
+	// Link is the symlink target, for EntrySymlink entries.
+	Link string `json:"link,omitempty"`
 }
+
+// IsDir reports whether the entry is a directory.
+func (f ManifestFile) IsDir() bool { return f.Type == EntryDir }
+
+// IsSymlink reports whether the entry is a symbolic link.
+func (f ManifestFile) IsSymlink() bool { return f.Type == EntrySymlink }
+
+// IsRegular reports whether the entry is a regular file.
+func (f ManifestFile) IsRegular() bool { return f.Type == EntryFile }
 
 // CollectChunkHashes returns all unique chunk hashes in the manifest.
 func (m *Manifest) CollectChunkHashes() []string {
@@ -115,6 +173,8 @@ func (m *Manifest) ToHeader() ManifestHeader {
 		TotalSize:   m.TotalSize,
 		ChunkCount:  m.ChunkCount,
 		SingleChunk: m.SingleChunk,
+		Ordered:     m.Ordered,
+		FileCount:   m.FileCount,
 	}
 	if m.ParentID != nil {
 		header.ParentID = *m.ParentID
@@ -135,6 +195,8 @@ func FromHeader(h ManifestHeader) *Manifest {
 		TotalSize:   h.TotalSize,
 		ChunkCount:  h.ChunkCount,
 		SingleChunk: h.SingleChunk,
+		Ordered:     h.Ordered,
+		FileCount:   h.FileCount,
 	}
 	if h.ParentID != "" {
 		m.ParentID = &h.ParentID
