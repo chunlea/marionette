@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Valid log levels
@@ -127,7 +128,7 @@ func (c *StorageConfig) Validate() error {
 		}
 	}
 
-	return nil
+	return c.LogArchive.Validate()
 }
 
 // Validate checks the TLS configuration.
@@ -160,5 +161,41 @@ func validatePort(port int, name string) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("%s port must be between 1 and 65535, got %d", name, port)
 	}
+	return nil
+}
+
+// Validate checks the log archiving configuration.
+//
+// The one rule worth enforcing is the ordering of the two retentions. Partition
+// retention ages logs out of the database; archive retention deletes the copy
+// that made that safe. Configured the wrong way round they do not conflict -
+// they simply delete the logs, first from one place and then from the other.
+func (c *StorageLogArchiveConfig) Validate() error {
+	if !c.Enabled {
+		// Retention is gated on archiving at the job level too, so a stale
+		// retention_days in a config file with archiving off is harmless.
+		return nil
+	}
+
+	if c.Interval < 0 {
+		return errors.New("storage.log_archive.interval must not be negative")
+	}
+	if c.RetentionDays < 0 {
+		return errors.New("storage.log_archive.retention_days must not be negative")
+	}
+	if c.Retention < 0 {
+		return errors.New("storage.log_archive.retention must not be negative")
+	}
+
+	if c.RetentionDays > 0 && c.Retention > 0 {
+		partitionRetention := time.Duration(c.RetentionDays) * 24 * time.Hour
+		if c.Retention <= partitionRetention {
+			return fmt.Errorf(
+				"storage.log_archive.retention (%s) must outlast retention_days (%d days): "+
+					"the archive is the copy that makes dropping partitions safe",
+				c.Retention, c.RetentionDays)
+		}
+	}
+
 	return nil
 }

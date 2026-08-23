@@ -123,6 +123,7 @@ func main() {
 	var grpcOpts []grpcserver.ServerOption
 	var grpcCfg grpcserver.Config
 	var webhookDeliveryJob *jobs.WebhookDeliveryJob
+	var logArchive logArchiving
 
 	if dbStore != nil {
 		// Create API key service (needed for both public and admin APIs)
@@ -139,6 +140,7 @@ func main() {
 		runnerTokenSvc := auth.NewRunnerTokenService(dbStore, id.RunnerToken)
 
 		chunkGC, chunkTenants := initChunkGC(cfg, secrets, dbStore, logger)
+		logArchive = initLogArchiving(cfg, secrets, dbStore, logger)
 
 		app, err = core.Wire(core.WireDeps{
 			Store:              dbStore,
@@ -157,6 +159,10 @@ func main() {
 			Jobs: core.JobsConfig{
 				DisableChunkGC:  !cfg.Storage.GC.Enabled,
 				ChunkGCInterval: cfg.Storage.GC.Interval,
+				// Zero unless the archiver is actually running. The drop is
+				// archive-gated as well, so this is the second of two locks on
+				// deleting the only copy of the logs.
+				LogRetentionDays: logArchive.RetentionDays,
 			},
 		})
 		if err != nil {
@@ -164,8 +170,10 @@ func main() {
 		}
 
 		// Create adapters and add to API options
-		sessionAdapter := api.NewSessionAdapter(app.Sessions, app.Workspaces)
-		taskAdapter := api.NewTaskAdapter(app.Tasks, dbStore)
+		sessionAdapter := api.NewSessionAdapter(app.Sessions, app.Workspaces,
+			api.WithSessionLogReader(logArchive.Reader))
+		taskAdapter := api.NewTaskAdapter(app.Tasks, dbStore,
+			api.WithTaskLogArchive(logArchive.Reader))
 		permAdapter := api.NewPermissionAdapter(app.Permissions)
 		workspaceAdapter := api.NewWorkspaceAdapter(app.Workspaces)
 		scheduledTaskAdapter := api.NewScheduledTaskAdapter(app.ScheduledTasks)
@@ -379,6 +387,16 @@ func main() {
 		} else {
 			logger.Info("Webhook delivery job started")
 		}
+
+		// The archiver runs on the App context, which carries system access:
+		// it archives every tenant's sessions and has no request to take a
+		// tenant from.
+		if logArchive.Archiver != nil {
+			if err := logArchive.Archiver.Start(app.Context()); err != nil {
+				logger.Error("failed to start log archiver", zap.Error(err))
+				logArchive.Archiver = nil
+			}
+		}
 	}
 	if streamMgr != nil {
 		// Create streams handler for admin API
@@ -545,6 +563,12 @@ func main() {
 	if webhookDeliveryJob != nil {
 		if err := webhookDeliveryJob.Stop(ctx); err != nil {
 			logger.Error("webhook delivery job stop error", zap.Error(err))
+		}
+	}
+
+	if logArchive.Archiver != nil {
+		if err := logArchive.Archiver.Stop(ctx); err != nil {
+			logger.Error("log archiver stop error", zap.Error(err))
 		}
 	}
 

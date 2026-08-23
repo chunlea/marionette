@@ -169,11 +169,62 @@ type KubernetesTolerationConfig struct {
 
 // StorageConfig holds storage backend configuration.
 type StorageConfig struct {
-	Provider  string                 `mapstructure:"provider"`
-	Local     *LocalStorageConfig    `mapstructure:"local"`
-	S3        *S3StorageConfig       `mapstructure:"s3"`
-	Workspace WorkspaceStorageConfig `mapstructure:"workspace"`
-	GC        StorageGCConfig        `mapstructure:"gc"`
+	Provider   string                  `mapstructure:"provider"`
+	Local      *LocalStorageConfig     `mapstructure:"local"`
+	S3         *S3StorageConfig        `mapstructure:"s3"`
+	Workspace  WorkspaceStorageConfig  `mapstructure:"workspace"`
+	GC         StorageGCConfig         `mapstructure:"gc"`
+	Encryption StorageEncryptionConfig `mapstructure:"encryption"`
+	LogArchive StorageLogArchiveConfig `mapstructure:"log_archive"`
+}
+
+// StorageEncryptionConfig gates encryption of objects at rest.
+type StorageEncryptionConfig struct {
+	// Enabled encrypts archive payloads with the deployment's data keys.
+	//
+	// Default false, because it needs MARIONETTE_ENCRYPTION_KEY and an
+	// operator who understands that losing that key loses the archives. What
+	// was written under which setting is recorded per archive, so switching it
+	// on does not make yesterday's objects unreadable.
+	Enabled bool `mapstructure:"enabled"`
+}
+
+// StorageLogArchiveConfig controls moving logs out of PostgreSQL.
+//
+// It is off by default. Turning it on is what makes log retention possible at
+// all: the partition maintainer refuses to drop a day no archive covers, so
+// without archiving, retention drops nothing however it is configured.
+type StorageLogArchiveConfig struct {
+	// Enabled runs the archiver.
+	Enabled bool `mapstructure:"enabled"`
+
+	// Interval is how often a pass runs.
+	Interval time.Duration `mapstructure:"interval"`
+
+	// TerminatedAfter is the grace window after a session terminates. It exists
+	// so the archiver never reads a session something is still writing to.
+	TerminatedAfter time.Duration `mapstructure:"terminated_after"`
+
+	// IdleAfter also archives live sessions that have been quiet this long.
+	// Zero leaves them alone, which is the conservative setting.
+	IdleAfter time.Duration `mapstructure:"idle_after"`
+
+	// Retention is how long an archive lives. Zero keeps archives forever.
+	//
+	// Keep it comfortably longer than RetentionDays: the partitions are the hot
+	// copy and the archive is the cold one, and an archive that expires first
+	// would delete logs the database no longer has either.
+	Retention time.Duration `mapstructure:"retention"`
+
+	// RetentionDays drops daily log partitions older than this. Zero disables
+	// dropping. It only ever drops partitions the archives cover.
+	RetentionDays int `mapstructure:"retention_days"`
+
+	// SessionsPerRun bounds one pass. Zero uses the job's default.
+	SessionsPerRun int `mapstructure:"sessions_per_run"`
+
+	// BatchSize is how many log rows are read at a time. Zero uses the default.
+	BatchSize int `mapstructure:"batch_size"`
 }
 
 // StorageGCConfig gates content-addressed storage garbage collection.
