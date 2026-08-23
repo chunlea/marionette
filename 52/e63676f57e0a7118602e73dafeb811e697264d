@@ -1,0 +1,31 @@
+pkg/config/config.go
+  s_2681c55641541f::t_f889822f058f65 93-178,219-221
+pkg/config/isolation_test.go
+  s_2681c55641541f::t_e2fb1cd6d24722 1-137
+pkg/config/validate.go
+  s_ecb7c44fe1ae09::t_ab22feffd00d5e 6,8-9,56-69,177-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "52e63676f57e0a7118602e73dafeb811e697264d",
+  "prompts": {},
+  "sessions": {
+    "s_2681c55641541f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957a3a1-8aa9-4481-b571-119f14c7519e",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_ecb7c44fe1ae09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "52064dcb-78a6-4657-81a0-b7202cd11674",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
