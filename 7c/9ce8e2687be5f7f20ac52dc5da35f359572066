@@ -1,0 +1,19 @@
+api/proto/v1/internal.proto
+  s_06dcb102eb172c::t_9f7ff9fcb7bd0a 1-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "7c9ce8e2687be5f7f20ac52dc5da35f359572066",
+  "prompts": {},
+  "sessions": {
+    "s_06dcb102eb172c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c713da8a-6e2a-4726-8e2b-41c65f36ac07",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
