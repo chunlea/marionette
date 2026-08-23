@@ -90,6 +90,92 @@ type DockerProviderConfig struct {
 
 	// Resources holds default resource limits for containers.
 	Resources DockerResourcesConfig `mapstructure:"resources"`
+
+	// Isolation holds network-isolation settings for restricted runners.
+	Isolation NetworkIsolationConfig `mapstructure:"isolation"`
+}
+
+// NetworkIsolationConfig holds operator-controlled network isolation settings.
+//
+// A session chooses a policy level (none, allow_list, proxy, air_gapped); it
+// never chooses its own proxy, resolvers or control-plane address. Those come
+// from here so a compromised session cannot widen its own policy.
+//
+// The same shape is understood by both the Docker and Kubernetes providers.
+type NetworkIsolationConfig struct {
+	// ServerURL is the control-plane address pinned open for every restricted
+	// runner. A restricted runner that cannot reach the server is not
+	// isolated, it is broken.
+	//
+	// This is the fallback for deployments where the spawn options carry no
+	// server address.
+	ServerURL string `mapstructure:"server_url"`
+
+	// ProxyURL is the egress proxy for proxy-level sessions,
+	// e.g. "http://proxy.internal:3128". Proxy level fails without it.
+	ProxyURL string `mapstructure:"proxy_url"`
+
+	// ProxyNoProxy lists extra hosts that bypass the proxy.
+	ProxyNoProxy []string `mapstructure:"proxy_no_proxy"`
+
+	// ProxyCACert is the in-container path to the proxy's CA bundle, for a
+	// proxy that terminates TLS. The runner image must provide the file.
+	ProxyCACert string `mapstructure:"proxy_ca_cert"`
+
+	// DNSServers are the resolver addresses restricted runners may reach.
+	// Docker only.
+	//
+	// Leaving this empty means allow_list and proxy sessions may send DNS
+	// anywhere, because nothing in a sandbox works without name resolution.
+	// Pinning resolvers here is what closes DNS as an exfiltration channel.
+	DNSServers []string `mapstructure:"dns_servers"`
+
+	// DNSNamespace is the namespace running cluster DNS. Kubernetes only.
+	DNSNamespace string `mapstructure:"dns_namespace"`
+
+	// RefreshInterval overrides how often pinned allow-list addresses are
+	// re-resolved, e.g. "2m". Clamped to [30s, 15m]. Docker only.
+	RefreshInterval string `mapstructure:"refresh_interval"`
+}
+
+// ProviderJSON renders the isolation settings in the shape a provider's
+// config JSON expects, or nil when nothing is configured.
+//
+// Providers are constructed from a store.ProviderConfig whose Config is raw
+// JSON, so a settings block declared here only reaches them once it is
+// serialised into that.
+func (c *NetworkIsolationConfig) ProviderJSON() map[string]interface{} {
+	if c == nil {
+		return nil
+	}
+
+	out := map[string]interface{}{}
+	if c.ServerURL != "" {
+		out["server_url"] = c.ServerURL
+	}
+	if c.ProxyURL != "" {
+		out["proxy_url"] = c.ProxyURL
+	}
+	if len(c.ProxyNoProxy) > 0 {
+		out["proxy_no_proxy"] = c.ProxyNoProxy
+	}
+	if c.ProxyCACert != "" {
+		out["proxy_ca_cert"] = c.ProxyCACert
+	}
+	if len(c.DNSServers) > 0 {
+		out["dns_servers"] = c.DNSServers
+	}
+	if c.DNSNamespace != "" {
+		out["dns_namespace"] = c.DNSNamespace
+	}
+	if c.RefreshInterval != "" {
+		out["refresh_interval"] = c.RefreshInterval
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // DockerResourcesConfig holds Docker container resource limits.
@@ -130,6 +216,9 @@ type KubernetesProviderConfig struct {
 
 	// Tolerations for pod scheduling.
 	Tolerations []KubernetesTolerationConfig `mapstructure:"tolerations"`
+
+	// Isolation holds network-isolation settings for restricted runners.
+	Isolation NetworkIsolationConfig `mapstructure:"isolation"`
 }
 
 // KubernetesResourcesConfig holds Kubernetes pod resource limits.

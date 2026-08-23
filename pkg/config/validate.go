@@ -3,7 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"time"
+
+	"github.com/chunlea/marionette/pkg/network"
 )
 
 // Valid log levels
@@ -48,6 +51,20 @@ func (c *Config) Validate() error {
 	// Validate TLS config
 	if err := c.TLS.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("tls: %w", err))
+	}
+
+	// Validate provider network isolation. A malformed proxy or server address
+	// must fail at startup, not when the first restricted session spawns and
+	// finds it has nowhere to send anything.
+	if c.Providers.Docker != nil {
+		if err := c.Providers.Docker.Isolation.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("providers.docker.isolation: %w", err))
+		}
+	}
+	if c.Providers.Kubernetes != nil {
+		if err := c.Providers.Kubernetes.Isolation.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("providers.kubernetes.isolation: %w", err))
+		}
 	}
 
 	if len(errs) > 0 {
@@ -157,6 +174,43 @@ func (c *TLSConfig) Validate() error {
 }
 
 // validatePort checks that a port number is valid.
+// Validate checks the network isolation settings.
+func (c *NetworkIsolationConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+
+	if c.ServerURL != "" {
+		if _, err := network.ParseEndpoint(c.ServerURL, network.DefaultControlPlanePort); err != nil {
+			return fmt.Errorf("server_url: %w", err)
+		}
+	}
+
+	if c.ProxyURL != "" {
+		if _, err := network.ParseProxyConfig(c.ProxyURL, c.ProxyNoProxy, c.ProxyCACert); err != nil {
+			return fmt.Errorf("proxy_url: %w", err)
+		}
+	}
+
+	for _, addr := range c.DNSServers {
+		if net.ParseIP(addr) == nil {
+			return fmt.Errorf("dns_servers: %q is not an IP address", addr)
+		}
+	}
+
+	if c.RefreshInterval != "" {
+		d, err := time.ParseDuration(c.RefreshInterval)
+		if err != nil {
+			return fmt.Errorf("refresh_interval: %w", err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("refresh_interval must be positive, got %q", c.RefreshInterval)
+		}
+	}
+
+	return nil
+}
+
 func validatePort(port int, name string) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("%s port must be between 1 and 65535, got %d", name, port)
