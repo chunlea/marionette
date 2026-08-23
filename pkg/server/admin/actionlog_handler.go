@@ -70,7 +70,7 @@ func (s *Server) handleListActionLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toActionLogResponse))
 }
 
 // handleGetActionLog handles GET /admin/api/v1/action-logs/{logID}.
@@ -97,5 +97,5 @@ func (s *Server) handleGetActionLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, log)
+	WriteJSON(w, http.StatusOK, toActionLogResponse(log))
 }

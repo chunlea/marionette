@@ -145,6 +145,11 @@ func (r *SchemaRegistry) schemaForType(t reflect.Type) *Schema {
 		return &Schema{Type: "object", AdditionalProperties: r.schemaForType(t.Elem())}
 	case reflect.Struct:
 		return r.registerStruct(t)
+	case reflect.Interface:
+		// `any` is how a free-form JSON value reaches the wire — a provider's
+		// config block, an action log's details. An empty schema is OpenAPI's
+		// way of saying "any value", which is the honest description.
+		return &Schema{}
 	default:
 		panic(fmt.Sprintf("openapi: unsupported kind %s for type %s", t.Kind(), t))
 	}

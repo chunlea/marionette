@@ -46,7 +46,7 @@ func (s *Server) handleSpawnRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, runner)
+	WriteJSON(w, http.StatusCreated, toRunnerResponse(runner))
 }
 
 func (s *Server) handleListRunners(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +76,7 @@ func (s *Server) handleListRunners(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toRunnerResponse))
 }
 
 func (s *Server) handleGetRunner(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +102,7 @@ func (s *Server) handleGetRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, runner)
+	WriteJSON(w, http.StatusOK, toRunnerResponse(runner))
 }
 
 func (s *Server) handleDestroyRunner(w http.ResponseWriter, r *http.Request) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/chunlea/marionette/pkg/server/admin/admintypes"
 	"github.com/chunlea/marionette/pkg/store"
 )
 
@@ -17,12 +18,6 @@ type CreateRunnerTokenRequest struct {
 	PoolName  string            `json:"pool_name"`
 	Labels    map[string]string `json:"labels,omitempty"`
 	ExpiresAt *time.Time        `json:"expires_at,omitempty"`
-}
-
-// CreateRunnerTokenResponse is the response for creating a runner token.
-type CreateRunnerTokenResponse struct {
-	Token    *store.RunnerToken `json:"token"`
-	RawToken string             `json:"raw_token"`
 }
 
 func (s *Server) handleCreateRunnerToken(w http.ResponseWriter, r *http.Request) {
@@ -58,8 +53,8 @@ func (s *Server) handleCreateRunnerToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, CreateRunnerTokenResponse{
-		Token:    token,
+	WriteJSON(w, http.StatusCreated, admintypes.CreatedRunnerToken{
+		Token:    toRunnerTokenResponse(token),
 		RawToken: rawToken,
 	})
 }
@@ -95,7 +90,7 @@ func (s *Server) handleListRunnerTokens(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toRunnerTokenResponse))
 }
 
 func (s *Server) handleGetRunnerToken(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +116,7 @@ func (s *Server) handleGetRunnerToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, token)
+	WriteJSON(w, http.StatusOK, toRunnerTokenResponse(token))
 }
 
 // RevokeRunnerTokenRequest is the request body for revoking a runner token.
@@ -159,12 +154,6 @@ func (s *Server) handleRevokeRunnerToken(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RotateRunnerTokenResponse is the response for rotating a runner token.
-type RotateRunnerTokenResponse struct {
-	Token    *store.RunnerToken `json:"token"`
-	RawToken string             `json:"raw_token"`
-}
-
 func (s *Server) handleRotateRunnerToken(w http.ResponseWriter, r *http.Request) {
 	if s.runnerTokens == nil {
 		WriteError(w, http.StatusNotImplemented, "not_implemented", "runner token service not configured")
@@ -192,8 +181,8 @@ func (s *Server) handleRotateRunnerToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, RotateRunnerTokenResponse{
-		Token:    token,
+	WriteJSON(w, http.StatusOK, admintypes.CreatedRunnerToken{
+		Token:    toRunnerTokenResponse(token),
 		RawToken: rawToken,
 	})
 }

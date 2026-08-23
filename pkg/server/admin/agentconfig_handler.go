@@ -44,7 +44,7 @@ func (s *Server) handleCreateAgentConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, config)
+	WriteJSON(w, http.StatusCreated, toAgentConfigResponse(config))
 }
 
 func (s *Server) handleListAgentConfigs(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +67,7 @@ func (s *Server) handleListAgentConfigs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toAgentConfigResponse))
 }
 
 func (s *Server) handleGetAgentConfig(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +93,7 @@ func (s *Server) handleGetAgentConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, config)
+	WriteJSON(w, http.StatusOK, toAgentConfigResponse(config))
 }
 
 // UpdateAgentConfigRequest is the request body for updating an agent config.
@@ -140,7 +140,7 @@ func (s *Server) handleUpdateAgentConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, config)
+	WriteJSON(w, http.StatusOK, toAgentConfigResponse(config))
 }
 
 func (s *Server) handleDeleteAgentConfig(w http.ResponseWriter, r *http.Request) {

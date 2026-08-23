@@ -47,7 +47,7 @@ func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, profile)
+	WriteJSON(w, http.StatusCreated, toProfileResponse(profile))
 }
 
 func (s *Server) handleListProfiles(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +71,7 @@ func (s *Server) handleListProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toProfileResponse))
 }
 
 func (s *Server) handleGetProfile(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +97,7 @@ func (s *Server) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, profile)
+	WriteJSON(w, http.StatusOK, toProfileResponse(profile))
 }
 
 // UpdateProfileRequest is the request body for updating a profile.
@@ -148,7 +148,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, profile)
+	WriteJSON(w, http.StatusOK, toProfileResponse(profile))
 }
 
 func (s *Server) handleDeleteProfile(w http.ResponseWriter, r *http.Request) {
