@@ -2,9 +2,12 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -203,6 +206,64 @@ func TestOneActiveSessionPerRunner(t *testing.T) {
 			require.NoError(t, testStore.CreateSession(ctx, s))
 			t.Cleanup(func() { _ = testStore.DeleteSession(context.Background(), s.ID) })
 		}
+	})
+
+	// core.Activate attaches a runner with UPDATE, not INSERT. If that path did
+	// not go through handlePgError the conflict would surface as a raw pgx
+	// error and degrade to a 500 instead of a 409.
+	t.Run("rejects attaching a busy runner via update", func(t *testing.T) {
+		runner := newRunner("update")
+
+		holder := newSession(&runner.ID, "active")
+		require.NoError(t, testStore.CreateSession(ctx, holder))
+		t.Cleanup(func() { _ = testStore.DeleteSession(context.Background(), holder.ID) })
+
+		// A pending session with no runner, as core.Activate would find it.
+		pending := newSession(nil, "pending")
+		require.NoError(t, testStore.CreateSession(ctx, pending))
+		t.Cleanup(func() { _ = testStore.DeleteSession(context.Background(), pending.ID) })
+
+		active := "active"
+		err := testStore.UpdateSession(ctx, pending.ID, store.SessionUpdates{
+			Status:   &active,
+			RunnerID: &runner.ID,
+		})
+		require.Error(t, err, "the runner already hosts an active session")
+		assert.ErrorIs(t, err, store.ErrAlreadyExists,
+			"the unique violation must be translated, not surfaced raw")
+
+		var raw *pgconn.PgError
+		assert.False(t, errors.As(err, &raw), "a raw pgx error reached the caller")
+
+		// The error must name what actually conflicts.
+		var exists *store.AlreadyExistsError
+		require.ErrorAs(t, err, &exists)
+		assert.Equal(t, "runner_id", exists.Field)
+
+		// The losing session must be untouched.
+		got, err := testStore.GetSession(ctx, pending.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "pending", got.Status)
+		assert.Nil(t, got.RunnerID)
+	})
+
+	// Same conflict reached the other way: an already-attached session being
+	// promoted to active while another session holds the runner.
+	t.Run("rejects promoting a second session on the same runner", func(t *testing.T) {
+		runner := newRunner("promote")
+
+		holder := newSession(&runner.ID, "active")
+		require.NoError(t, testStore.CreateSession(ctx, holder))
+		t.Cleanup(func() { _ = testStore.DeleteSession(context.Background(), holder.ID) })
+
+		suspended := newSession(&runner.ID, "suspended")
+		require.NoError(t, testStore.CreateSession(ctx, suspended))
+		t.Cleanup(func() { _ = testStore.DeleteSession(context.Background(), suspended.ID) })
+
+		active := "active"
+		err := testStore.UpdateSession(ctx, suspended.ID, store.SessionUpdates{Status: &active})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, store.ErrAlreadyExists)
 	})
 
 	t.Run("frees the slot when the session leaves active", func(t *testing.T) {

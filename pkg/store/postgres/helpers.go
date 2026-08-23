@@ -62,7 +62,20 @@ func handlePgError(err error, resource, identifier string) error {
 
 // extractFieldFromConstraint extracts the field name from a constraint name.
 // Handles patterns like: idx_{table}_{field}_unique, {table}_{field}_key
+// constraintFields names the conflicting field for constraints whose name does
+// not decompose into a column. The heuristic below reads the second-to-last
+// underscore segment, which is right for "idx_<table>_<column>_unique" but not
+// for a partial index named after the rule it enforces.
+var constraintFields = map[string]string{
+	// One active session per runner (migration 007).
+	"idx_sessions_active_runner": "runner_id",
+}
+
 func extractFieldFromConstraint(constraint string) string {
+	if field, ok := constraintFields[constraint]; ok {
+		return field
+	}
+
 	parts := strings.Split(constraint, "_")
 	if len(parts) >= 3 {
 		// Try to get the second-to-last part (field name)
