@@ -155,38 +155,33 @@ type PausableProvider interface {
     Resume(ctx context.Context, runnerID string) error
 }
 
-// SnapshotProvider extends Provider with snapshot/restore
-type SnapshotProvider interface {
+// SuspendableProvider extends Provider with suspend/resume using the
+// configured strategy. This is the interface session suspend/resume uses.
+type SuspendableProvider interface {
     Provider
-    
-    // Snapshot creates a point-in-time snapshot
-    Snapshot(ctx context.Context, runnerID string, name string) (*Snapshot, error)
-    
-    // Restore creates a new runner from a snapshot
-    Restore(ctx context.Context, snapshotID string, opts SpawnOptions) (*RunnerInstance, error)
-    
-    // ListSnapshots lists available snapshots for a runner
-    ListSnapshots(ctx context.Context, runnerID string) ([]*Snapshot, error)
-    
-    // DeleteSnapshot removes a snapshot
-    DeleteSnapshot(ctx context.Context, snapshotID string) error
+
+    // Suspend suspends the runner using the configured or requested strategy.
+    // Returns the strategy that was actually used, which may be a fallback.
+    Suspend(ctx context.Context, runnerID string, opts SuspendOptions) (*SuspendResult, error)
+
+    // Resume restores a suspended runner.
+    // terminate_preserve_storage spawns a new runner against the same storage;
+    // release_to_pool acquires one from the pool and restores the workspace.
+    Resume(ctx context.Context, sessionID string, opts ResumeOptions) (*RunnerInstance, error)
 }
 
-// PoolProvider handles runners that connect to a pool
-type PoolProvider interface {
+// PoolAcquirer is implemented by pool providers. Where a managed provider
+// spawns a runner, a pool provider takes an idle one out of a pool of
+// pre-registered machines and gives it back afterwards.
+type PoolAcquirer interface {
     Provider
-    
-    // ValidateToken checks if a token is valid for this pool
-    ValidateToken(ctx context.Context, token string) (bool, error)
-    
-    // RunInitScript executes init script when runner claims a task
-    RunInitScript(ctx context.Context, runnerID string, task *Task) error
-    
-    // RunCleanupScript executes cleanup after task completes
-    RunCleanupScript(ctx context.Context, runnerID string, task *Task) error
-    
-    // HealthCheck runs periodic health check on pool runner
-    HealthCheck(ctx context.Context, runnerID string) (*HealthStatus, error)
+
+    // AcquireFromPool takes an idle runner out of the pool.
+    AcquireFromPool(ctx context.Context, opts PoolAcquireOptions) (RunnerInfo, error)
+
+    // ReleaseToPool returns a runner to the pool. A tainted runner is one
+    // left in an unknown state, and is not handed out again until cleaned.
+    ReleaseToPool(ctx context.Context, runnerID string, tainted bool, taintReason string) error
 }
 
 type SpawnOptions struct {
@@ -248,7 +243,7 @@ const (
 )
 
 // ConnectionStatus represents agent connection state (tracked in DB)
-// See runners.status in schema.sql
+// See runners.status in the migrations under migrations/
 type ConnectionStatus string
 
 const (

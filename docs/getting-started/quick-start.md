@@ -1,209 +1,230 @@
 # Quick Start
 
-Get your first AI coding agent running in under 5 minutes.
+Get a real agent running a real task, end to end.
+
+This is the same walk `scripts/smoke.sh` automates. That script is run against
+every change, so if something here stops working, the script is the thing to
+trust.
 
 ## Prerequisites
 
-- Marionette installed ([Installation Guide](installation.md))
-- An Anthropic API key (for Claude Code) or OpenAI API key (for Codex)
+- Marionette built ([Installation Guide](installation.md)) — `make build`
+- Docker, for PostgreSQL
+- The `claude` CLI logged in on this host (`claude auth`). A host login is
+  enough; you do not need an `ANTHROPIC_API_KEY` unless you want BYOK.
+- Ports 8080, 8081, 9090 and a PostgreSQL port free
 
-## Step 1: Start the Server
+!!! info "Three terminals"
+    The server, the runner, and you. The runner is not optional: a session with
+    no runner attached stays `pending` forever, which is the most common reason
+    a first attempt appears to hang.
 
-=== "Docker Compose"
+## Step 1: Database
 
-    ```bash
-    docker compose up -d
-    ```
-
-=== "Local Binary"
-
-    ```bash
-    ./bin/server --config configs/local.yaml
-    ```
-
-Verify the server is running:
+The schema lives in `migrations/`. `docs/schema.sql` is generated from it for
+reading — never provision a database from that file.
 
 ```bash
-curl http://localhost:8081/health/ready
-# {"status":"ok","checks":{"database":{"status":"ok"}}}
+docker run -d --name marionette-pg \
+  -e POSTGRES_USER=marionette -e POSTGRES_PASSWORD=marionette \
+  -e POSTGRES_DB=marionette -p 5432:5432 postgres:16-alpine
+
+export MARIONETTE_DATABASE_URL='postgres://marionette:marionette@localhost:5432/marionette?sslmode=disable'
+make migrate
 ```
 
-## Step 2: Create a Session
+## Step 2: Terminal 1 — the server
 
-A session is a long-lived work context that binds an AI agent to a workspace.
-
-=== "CLI"
-
-    ```bash
-    # Set your API key
-    export ANTHROPIC_API_KEY=sk-ant-xxx
-
-    # Create a session with Claude Code
-    ./bin/mctl sessions create \
-      --agent claude \
-      --api-key $ANTHROPIC_API_KEY \
-      --name "my-first-session"
-    ```
-
-=== "API"
-
-    ```bash
-    curl -X POST http://localhost:8080/api/v1/sessions \
-      -H "Authorization: Bearer $MARIONETTE_API_KEY" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "agent": "claude",
-        "api_key": "sk-ant-xxx",
-        "name": "my-first-session"
-      }'
-    ```
-
-You'll receive a session ID like `sess_0002xK9mNpV1StGXR8`.
+The admin API mints API keys, registers runners and can read every session, so
+it **fails closed**: the server refuses to start without credentials for it.
 
 ```bash
-export SESSION_ID=sess_0002xK9mNpV1StGXR8
+export MARIONETTE_DATABASE_URL='postgres://marionette:marionette@localhost:5432/marionette?sslmode=disable'
+export MARIONETTE_MASTER_KEY=$(openssl rand -hex 32)
+export MARIONETTE_ENCRYPTION_KEY=$(openssl rand -hex 32)
+export MARIONETTE_UI_USERNAME=admin
+export MARIONETTE_UI_PASSWORD=choose-something-better
+
+./bin/server --config configs/local.yaml
 ```
 
-## Step 3: Submit a Task
+!!! warning "--dev-insecure-admin"
+    Passing `--dev-insecure-admin` serves the admin API with no authentication
+    at all. It exists for local development. Anything reachable from a network
+    must use the credentials instead.
 
-Now let's give the agent some work to do:
-
-=== "CLI"
-
-    ```bash
-    ./bin/mctl tasks create \
-      --session $SESSION_ID \
-      --prompt "Create a simple Python Flask API with a /hello endpoint"
-    ```
-
-=== "API"
-
-    ```bash
-    curl -X POST http://localhost:8080/api/v1/sessions/$SESSION_ID/tasks \
-      -H "Authorization: Bearer $MARIONETTE_API_KEY" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "prompt": "Create a simple Python Flask API with a /hello endpoint"
-      }'
-    ```
-
-## Step 4: Watch the Logs
-
-Follow the agent's progress in real-time:
-
-=== "CLI"
-
-    ```bash
-    ./bin/mctl tasks logs --follow $TASK_ID
-    ```
-
-=== "API (SSE)"
-
-    ```bash
-    curl -N http://localhost:8080/api/v1/tasks/$TASK_ID/logs?follow=true \
-      -H "Authorization: Bearer $MARIONETTE_API_KEY"
-    ```
-
-You'll see the agent:
-
-1. Analyzing the request
-2. Creating files in the workspace
-3. Writing code
-4. Testing the implementation
-
-## Step 5: Handle Permission Requests
-
-When the agent needs to perform sensitive operations (like running shell commands), it will request permission:
+Check both ports, including that admin really is closed:
 
 ```bash
-# List pending permissions
-./bin/mctl permissions list --session $SESSION_ID
-
-# Approve a permission request
-./bin/mctl permissions approve $PERMISSION_ID
-
-# Or deny it
-./bin/mctl permissions deny $PERMISSION_ID --reason "Not authorized"
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/health           # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8081/admin/api/v1/keys # 401
 ```
 
-## Step 6: Continue the Conversation
+## Step 3: Credentials
 
-Submit follow-up tasks to build on the agent's work:
+Two different tokens, and they are not interchangeable:
+
+| Token | Used by | Minted at |
+|-------|---------|-----------|
+| API key | `mctl` and the public API | `POST /admin/api/v1/keys` |
+| Runner token | `bin/agent` | `POST /admin/api/v1/runner-tokens` |
+
+Both are shown exactly once.
 
 ```bash
-./bin/mctl tasks create \
-  --session $SESSION_ID \
-  --prompt "Add a /goodbye endpoint that returns 'Goodbye, World!'"
+ADMIN='-u admin:choose-something-better'
+
+export MARIONETTE_API_KEY=$(curl -s $ADMIN -X POST http://localhost:8081/admin/api/v1/keys \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"local","scopes":["*"]}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["raw_token"])')
+
+export MARIONETTE_RUNNER_TOKEN=$(curl -s $ADMIN -X POST http://localhost:8081/admin/api/v1/runner-tokens \
+  -H 'Content-Type: application/json' \
+  -d '{"pool_name":"default"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["raw_token"])')
 ```
 
-The agent remembers the context and continues from where it left off.
+!!! note
+    `mctl admin runner-tokens create` exists but currently prints empty fields,
+    which is why this uses `curl`.
 
-## Step 7: Manage the Session
+## Step 4: Terminal 2 — the runner
 
 ```bash
-# Suspend the session (free up resources)
-./bin/mctl sessions suspend $SESSION_ID
+export MARIONETTE_RUNNER_TOKEN=...   # from step 3
 
-# Resume later
-./bin/mctl sessions resume $SESSION_ID
-
-# Terminate when done
-./bin/mctl sessions terminate $SESSION_ID
+./bin/agent \
+  --server localhost:9090 \
+  --pool default \
+  --name local-runner \
+  --sandbox-mode none \
+  --workspace ./data/workspaces \
+  --log-format console
 ```
 
-## What's Next?
+`--sandbox-mode none` runs the agent directly on this host. That is right for a
+local walk and wrong for anything else — see
+[Providers](../concepts/providers.md) for the sandbox modes.
 
-<div class="grid cards" markdown>
+Confirm it joined. There is no `mctl runners` command yet:
 
--   [:octicons-gear-24: __Configuration__](configuration.md)
+```bash
+curl -s -H "Authorization: Bearer $MARIONETTE_API_KEY" http://localhost:8080/api/v1/runners
+```
 
-    Configure providers, storage, and observability
+## Step 5: Terminal 3 — a session and a task
 
--   [:octicons-book-24: __Architecture__](../concepts/architecture.md)
+`mctl` reads `MARIONETTE_API_URL` and `MARIONETTE_API_KEY`.
 
-    Understand how Marionette works
+```bash
+export MARIONETTE_API_URL=http://localhost:8080
+export MARIONETTE_API_KEY=...   # from step 3
 
--   [:octicons-terminal-24: __CLI Reference__](../guides/cli-reference.md)
+SESSION=$(./bin/mctl sessions create --agent claude --name my-first-session -o json \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
 
-    Complete CLI documentation
+TASK=$(./bin/mctl tasks create --session $SESSION \
+  --prompt 'Run this exact bash command and then stop: echo marionette-alive' \
+  -o json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+```
 
--   [:octicons-code-24: __API Reference__](../guides/api-reference.md)
+To bring your own key instead of using the host login, pass
+`--agent-api-key $ANTHROPIC_API_KEY` to `sessions create`. In BYOK mode the key
+is held in memory and never stored.
 
-    REST API documentation
+## Step 6: Approve the tool call
 
-</div>
+This is the part that surprises people. Marionette gates tool calls **before**
+they run, using Claude Code's `PreToolUse` hook. The task will sit and wait
+until someone answers — that is the feature working, not a hang.
+
+```bash
+PERM=$(curl -s -H "Authorization: Bearer $MARIONETTE_API_KEY" \
+  "$MARIONETTE_API_URL/api/v1/permissions?status=pending" \
+  | python3 -c 'import json,sys;i=json.load(sys.stdin)["items"];print(i[0]["id"] if i else "")')
+
+curl -s -X POST -H "Authorization: Bearer $MARIONETTE_API_KEY" \
+  -H 'Content-Type: application/json' -d '{"reason":"looks fine"}' \
+  "$MARIONETTE_API_URL/api/v1/permissions/$PERM/approve"
+```
+
+Deny it instead with `.../deny`, and the agent is told it was refused rather
+than the command being run and disowned afterwards.
+
+## Step 7: Read the result
+
+```bash
+./bin/mctl tasks get $TASK
+./bin/mctl tasks logs $TASK
+./bin/mctl tasks logs $TASK --follow     # stream a running task
+```
+
+## Step 8: Continue the conversation
+
+Tasks in the same session share the agent's conversation. The second task knows
+what the first one did:
+
+```bash
+./bin/mctl tasks create --session $SESSION --prompt 'What command did you just run?'
+```
+
+## Step 9: Suspend, resume, terminate
+
+A suspended session keeps its workspace and its agent conversation, and gives
+its runner back. Resuming picks the conversation up where it stopped.
+
+```bash
+./bin/mctl sessions suspend $SESSION
+./bin/mctl sessions get $SESSION       # suspended
+
+./bin/mctl sessions resume $SESSION
+./bin/mctl sessions get $SESSION       # active
+
+./bin/mctl sessions terminate $SESSION
+```
 
 ## Troubleshooting
 
-### Session stuck in "pending"
+### The session stays `pending`
 
-The session is waiting for a runner. Check if runners are available:
-
-```bash
-./bin/mctl runners list
-```
-
-If no runners are available, start one:
+`pending` means no runner has been attached. Check that a runner registered and
+is `idle`:
 
 ```bash
-./bin/agent --server localhost:9090 --token dev-token
+curl -s -H "Authorization: Bearer $MARIONETTE_API_KEY" http://localhost:8080/api/v1/runners
 ```
 
-### Permission request timeout
+If the list is empty, terminal 2 is not connected — check its log for a
+registration error, usually a wrong or already-used `MARIONETTE_RUNNER_TOKEN`.
 
-By default, permission requests wait 30 minutes for approval. If no response is received, the session is suspended (not failed). Resume and respond:
+### The task never finishes
+
+Most often it is waiting on a permission request nobody answered. List them:
 
 ```bash
-./bin/mctl sessions resume $SESSION_ID
-./bin/mctl permissions approve $PERMISSION_ID
+curl -s -H "Authorization: Bearer $MARIONETTE_API_KEY" \
+  "$MARIONETTE_API_URL/api/v1/permissions?status=pending"
 ```
 
-### Connection refused
+An unanswered request suspends the session after `suspend_after_seconds`
+(30 minutes by default). The request stays pending across the suspend, and the
+task re-runs after you answer and resume.
 
-Ensure the server is running and check the ports:
+### The server refuses to start
 
-```bash
-# Check if server is listening
-lsof -i :8080
-lsof -i :9090
-```
+If it exits complaining about admin credentials, set `MARIONETTE_UI_USERNAME`
+and `MARIONETTE_UI_PASSWORD`, or pass `--dev-insecure-admin` for local work.
+This is deliberate: an admin API that is open by default is worse than one that
+will not boot.
+
+### `connection refused` from `mctl`
+
+`mctl` talks to the public API on 8080, not the admin API on 8081. Check
+`MARIONETTE_API_URL`.
+
+## What's next
+
+- [Configuration](configuration.md) — config files, environment variables, flags
+- [Architecture](../concepts/architecture.md) — how the pieces fit together
+- [Sessions & tasks](../concepts/sessions-tasks.md) — lifecycles and states
+- [Security](../guides/security.md) — auth, permission policy, tenant isolation
+- [CLI reference](../guides/cli-reference.md) — every `mctl` command
