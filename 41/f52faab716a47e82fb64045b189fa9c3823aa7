@@ -1,0 +1,21 @@
+pkg/store/postgres/store.go
+  s_c8578aa5dbeab3::t_4b1eb82ba649da 143-145,164-231,233-243,245-249
+pkg/store/postgres/tenant_test.go
+  s_c8578aa5dbeab3::t_8e7cb7117fa619 13,373,377-400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "41f52faab716a47e82fb64045b189fa9c3823aa7",
+  "prompts": {},
+  "sessions": {
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

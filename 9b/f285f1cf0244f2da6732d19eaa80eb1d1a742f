@@ -1,0 +1,65 @@
+pkg/server/admin/admintypes/admintypes.go
+  s_30fb41c4a911b8::t_ea132d47d797a0 266-279
+pkg/server/admin/openapi_build.go
+  s_c8578aa5dbeab3::t_07cda948df346e 1-70
+pkg/server/admin/openapi_generate.go
+  s_b1ee0c9aba1316::t_31bd4b47d38bc7 1-34
+pkg/server/admin/openapi_routes.go
+  s_c8578aa5dbeab3::t_bb4c56e0ff0297 1-433
+pkg/server/admin/openapi_test.go
+  s_b1ee0c9aba1316::t_e7249b0a7ac2dd 1-187
+pkg/server/admin/server.go
+  s_30fb41c4a911b8::t_d7686b02be3104 14-15,392,409,425,441
+pkg/server/admin/streams_handler.go
+  s_b1ee0c9aba1316::t_cc6638536a6001 13,161-164
+pkg/server/admin/streams_handler_test.go
+  s_476c758fe5506c::t_07e0da16917079 126-129
+pkg/server/grpc/tunnel_router.go
+  s_476c758fe5506c::t_19a2e8523bb1fe 16-19,21-22,27-35,45-48,93-100,106-107,116-117,148-216,381,414-426,550-553,563-567,570
+pkg/server/grpc/tunnel_router_test.go
+  s_30fb41c4a911b8::t_14f9e14f1e412b 114,156,181,191-193,203,230,256-257,281,419-422,427,435,437,439-444,449-450,463,465,471,473-477,479-512,529,600,648,689,697-700,712-880
+Makefile
+  s_c8578aa5dbeab3::t_93bea20d73aa7d 132,135,137,140
+pkg/server/admin/openapi.yaml
+  s_c8578aa5dbeab3::t_673d4c14bb9e15 1-6,10-14,16-19,21-24,26-29,31-33,36,39-41,43,45-47,49-61,63,65-69,75,78,81-111,114-140,142-143,147-160,162-165,169-173,175-176,180-198,201-205,215-216,221-232,234-237,241-247,249,252,254,256-261,263-264,269-281,283-286,290-294,296-297,302-319,321-324,328-332,340-341,346-363,365-368,372-376,378-398,400-404,412,414-415,419-431,433-436,440-446,448,451,453,455,457-458,462-475,477-480,484-488,490-491,495-519,523-527,533,535-538,542-555,557-561,565,569,571-572,576-593,597-599,601-2380,2383-2387,2389-2772,2779-2808,2810,2815-2822,2825,2828,2832,2834-2844,2850-2855,2858-2862,2867,2869,2871,2873,2875-2882,2884-2886,2890-2892,2895-2928,2930-2943,2946-2949,2953,2955,2957-2975,2977,2979-2989,2991-3000,3003,3005,3007,3009,3011-3027,3029-3059,3065-3070,3073-3077,3080,3082-3084,3087,3089-3093,3095,3099-3102,3107,3109-3111,3113-3114,3116-3128,3130-3136,3144,3147,3151-3154,3157-3161,3164-3188,3195-3252,3254-3258,3261-3270,3272-3275,3277-3278,3284-3296,3299-3308,3310-3326,3328-3331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "9bf285f1cf0244f2da6732d19eaa80eb1d1a742f",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

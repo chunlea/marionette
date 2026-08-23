@@ -1,0 +1,47 @@
+migrations/009_task_redispatch.down.sql
+  s_e995f4552d48c1::t_31183cfe4c9637 1-11
+migrations/009_task_redispatch.up.sql
+  s_e995f4552d48c1::t_704eee1d475d15 1-35
+pkg/server/core/app.go
+  s_e995f4552d48c1::t_5b12b18dd327dd 64-66,373-389
+pkg/server/core/app_test.go
+  s_e995f4552d48c1::t_f83fa861e6f2ec 38,98
+pkg/server/core/redispatch.go
+  s_e995f4552d48c1::t_ad89f62f3828a7 1-279
+pkg/server/core/redispatch_test.go
+  s_e995f4552d48c1::t_b3f10f44c72c84 1-208
+pkg/server/core/runner_manager_test.go
+  s_e995f4552d48c1::t_5864b38a229a99 1815-1817
+pkg/server/core/scheduled_task_service_test.go
+  s_e995f4552d48c1::t_3f9710129ca8a0 885-887
+pkg/server/core/session_manager.go
+  s_e995f4552d48c1::t_843f40bb3a85b7 559-562
+pkg/server/core/session_manager_test.go
+  s_e995f4552d48c1::t_253cfd28cdf6b3 1920,2827-2831,2929-2944
+pkg/server/core/task_manager.go
+  s_e995f4552d48c1::t_c48e5e9d33e731 83,115-117,136-143,181-183,313-326,363-372,653,657-663
+pkg/server/core/task_manager_test.go
+  s_e995f4552d48c1::t_0c29a7fc4480f9 161-177
+pkg/server/grpc/message_router_test.go
+  s_e995f4552d48c1::t_fbb999b409d5be 1744-1746
+pkg/store/models.go
+  s_e995f4552d48c1::t_38050355047313 166-175,185-191
+pkg/store/postgres/tasks.go
+  s_e995f4552d48c1::t_48ea4ef7b6cb78 18-20,211-232,301-303,318-320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "be9a28aaf33df4155e22592a5677554198070114",
+  "prompts": {},
+  "sessions": {
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

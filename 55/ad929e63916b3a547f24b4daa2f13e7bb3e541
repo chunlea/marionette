@@ -1,0 +1,29 @@
+pkg/server/api/tenant_test.go
+  s_476c758fe5506c::t_f2c4085d3fc0be 1-110
+pkg/server/core/tenant_test.go
+  s_30fb41c4a911b8::t_1060f61fb40e15 1-173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "55ad929e63916b3a547f24b4daa2f13e7bb3e541",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

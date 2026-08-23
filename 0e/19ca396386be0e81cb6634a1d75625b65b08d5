@@ -1,0 +1,27 @@
+pkg/server/core/task_manager.go
+  s_e995f4552d48c1::t_9da45b1f35cf34 57-64,339-352,562-567,574-581,584-586
+pkg/store/models.go
+  s_e995f4552d48c1::t_330c993f3d9743 176-181
+pkg/store/postgres/tasks.go
+  s_e995f4552d48c1::t_adb761c74726ce 219-227,235-242
+pkg/server/core/task_manager_test.go
+  s_e995f4552d48c1::t_195028f535e1d8 150-154,175-181,2004-2070
+pkg/store/postgres/tasks_test.go
+  s_e995f4552d48c1::t_1c149679b8c0a1 563-640
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "0e19ca396386be0e81cb6634a1d75625b65b08d5",
+  "prompts": {},
+  "sessions": {
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

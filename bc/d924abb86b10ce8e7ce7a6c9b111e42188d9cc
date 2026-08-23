@@ -1,0 +1,51 @@
+api/proto/v1/runner.proto
+  s_829cd3b6a7eda7::t_fda1cfd750ed95 299-305
+migrations/010_session_workspace_manifest.down.sql
+  s_e995f4552d48c1::t_f9e11051872d98 1-5
+migrations/010_session_workspace_manifest.up.sql
+  s_e995f4552d48c1::t_12e495d8155409 1-14
+pkg/agent/command_handler.go
+  s_e995f4552d48c1::t_34f2708b9cf423 105-115,361,374-376,398-406
+pkg/agent/workspace_sync_test.go
+  s_e995f4552d48c1::t_847486cf7617b7 475-579
+pkg/server/core/session_manager.go
+  s_4e03746a1c3c16::t_2eb52c26a80889 2122-2130
+pkg/server/grpc/message_router.go
+  s_4e03746a1c3c16::t_f376d718a8450b 387-396,399-402,404-427
+pkg/store/models.go
+  s_e995f4552d48c1::t_f132f25e129a0b 106-127,143
+pkg/store/postgres/sessions.go
+  s_e995f4552d48c1::t_b2019fa582beca 19,43,49,57-58,276-280,404,424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "bcd924abb86b10ce8e7ce7a6c9b111e42188d9cc",
+  "prompts": {},
+  "sessions": {
+    "s_4e03746a1c3c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60714d52-8636-4fc2-adaa-7b5018a4a131",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_829cd3b6a7eda7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d342e86d-a42f-469e-846f-fd4f6252c53c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

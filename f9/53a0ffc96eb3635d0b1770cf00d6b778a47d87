@@ -1,0 +1,37 @@
+cmd/server/main.go
+  s_4e03746a1c3c16::t_284f84f75e9836 20,34-35,127-128,131-132,141-144,667-725
+pkg/config/config.go
+  s_e995f4552d48c1::t_53fe80b308fbc6 6-7,176-187
+pkg/config/load.go
+  s_e995f4552d48c1::t_1a5574e864450e 136-138
+pkg/server/core/app.go
+  s_4e03746a1c3c16::t_9449f28ebce9a0 14,61-63,96-103,350-369
+pkg/server/core/app_test.go
+  s_e995f4552d48c1::t_9b06d6f466efdb 11,37,87,213-270
+pkg/server/core/slogbridge.go
+  s_4e03746a1c3c16::t_459ed4e02096d9 1-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "f953a0ffc96eb3635d0b1770cf00d6b778a47d87",
+  "prompts": {},
+  "sessions": {
+    "s_4e03746a1c3c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60714d52-8636-4fc2-adaa-7b5018a4a131",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

@@ -1,0 +1,65 @@
+pkg/store/postgres/auth.go
+  s_30fb41c4a911b8::t_8ca0c1f2d017d3 35,72,88,104,187,258,315,352,368,384,481,567
+pkg/store/postgres/configs.go
+  s_30fb41c4a911b8::t_c9a1e9d9127827 33,69,85,101,117,201,279,334,370,386,402,418,502,570,625,664,680,696,783,876
+pkg/store/postgres/logs.go
+  s_30fb41c4a911b8::t_99c0821fa79eb5 34,70,75,132,148,257,307,342,358,374,456,497,552,590,606
+pkg/store/postgres/permissions.go
+  s_30fb41c4a911b8::t_452305a95a246c 22,59,75,179
+pkg/store/postgres/runners.go
+  s_30fb41c4a911b8::t_b7c44a5893b3f6 23,65,81,97,195,308
+pkg/store/postgres/sessions.go
+  s_30fb41c4a911b8::t_4d296b27957469 26,73,89,197,370,432
+pkg/store/postgres/storage.go
+  s_30fb41c4a911b8::t_07aba83c225b6d 35,71,87,103,187,253,308,344,360,376,478,531,594,607,623,651,664,699,715,731,779
+pkg/store/postgres/store.go
+  s_e995f4552d48c1::t_d6390d3bedda09 5,42-50,74-82,114-126,138-150,156,160-163,167-183,201-210
+pkg/store/postgres/store_test.go
+  s_e995f4552d48c1::t_ffa2a9a9b48b9d 23-29,112-113
+pkg/store/postgres/streams.go
+  s_30fb41c4a911b8::t_8410b761940864 24,71,88,109,214,317,341
+pkg/store/postgres/tasks.go
+  s_30fb41c4a911b8::t_356e487256e836 36,71,87,176,234,289,325,341,357,451,567,606,622,711,839,864
+pkg/store/postgres/tenant.go
+  s_b1ee0c9aba1316::t_e523f06a306841 1-159
+pkg/store/postgres/tenant_test.go
+  s_30fb41c4a911b8::t_f074aa47ebe9fe 1-455
+pkg/store/postgres/webhooks.go
+  s_30fb41c4a911b8::t_0e86b86d1e1e30 34,71,85,109,210,310,330,369,404,418,522,587,648
+pkg/store/postgres/workspaces.go
+  s_30fb41c4a911b8::t_8b80bc4cbd494c 23,64,80,171,274
+pkg/store/tenant.go
+  s_e995f4552d48c1::t_4d8f260e60b7e1 1-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "559fa9595f1e6048e9626d5de07be033b01ff2fe",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+pkg/server/core/runner_registry.go
+  s_e995f4552d48c1::t_6fb8acb403af87 77-84
+pkg/server/grpc/runner_service.go
+  s_e995f4552d48c1::t_047bec1bf093e2 250-259,333-342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "786f8bb52cc25a0c6844af86b963cbbd32b3c61f",
+  "prompts": {},
+  "sessions": {
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

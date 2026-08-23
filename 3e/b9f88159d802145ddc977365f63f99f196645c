@@ -1,0 +1,45 @@
+pkg/store/postgres/dekstore_test.go
+  s_829cd3b6a7eda7::t_e21f82c5b42270 1-235
+pkg/cryptoutil/dek_race_test.go
+  s_e995f4552d48c1::t_5afafb4f018b96 1-277
+pkg/cryptoutil/dekcache.go
+  s_30fb41c4a911b8::t_4ef55a85d7abff 1-78
+pkg/cryptoutil/envelope.go
+  s_30fb41c4a911b8::t_40d5d677886e65 10,13-14,58-71,91-94,191-193,214-234,238-241,243-247,257-260,262-265,267-270,272-283,286-295,298,302-303,325-357,410-411,413
+pkg/cryptoutil/errors.go
+  s_30fb41c4a911b8::t_9a2e5bd6783e54 14-19,21-26
+pkg/store/postgres/dekstore.go
+  s_30fb41c4a911b8::t_e870a691bb3588 1-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "3eb9f88159d802145ddc977365f63f99f196645c",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_829cd3b6a7eda7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d342e86d-a42f-469e-846f-fd4f6252c53c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

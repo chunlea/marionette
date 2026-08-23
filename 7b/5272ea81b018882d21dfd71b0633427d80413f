@@ -1,0 +1,23 @@
+cmd/mctl/admin_profiles.go
+  s_c8578aa5dbeab3::t_f9e6b209bad9bb 276-281,291-294,300-313
+cmd/mctl/root.go
+  s_c8578aa5dbeab3::t_402d0901096643 85-90
+cmd/mctl/admin_profiles_test.go
+  s_c8578aa5dbeab3::t_197b636d550816 1-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "7b5272ea81b018882d21dfd71b0633427d80413f",
+  "prompts": {},
+  "sessions": {
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}

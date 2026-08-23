@@ -1,0 +1,47 @@
+cmd/server/main.go
+  s_e995f4552d48c1::t_eceb78b4569c79 83,287-289
+pkg/config/config.go
+  s_30fb41c4a911b8::t_1981da697d3e7c 17-28
+pkg/config/load.go
+  s_30fb41c4a911b8::t_79e519b8ceb202 133-135
+pkg/server/api/middleware.go
+  s_30fb41c4a911b8::t_d2802bf4fd0ccf 132-153
+pkg/server/api/server.go
+  s_30fb41c4a911b8::t_7358e550c6f90a 25-28,59-63,164-165
+pkg/server/core/session_manager.go
+  s_30fb41c4a911b8::t_710c687f397d57 285,293-305,354,451-456
+pkg/server/core/task_manager.go
+  s_e995f4552d48c1::t_82f5fedac079b1 221-225,227
+pkg/server/core/tenant.go
+  s_e995f4552d48c1::t_56351d3e2afe8c 1-63
+pkg/server/core/workspace_manager.go
+  s_e995f4552d48c1::t_0b20ec8558172c 157-161,169
+pkg/server/grpc/control_channel.go
+  s_e995f4552d48c1::t_7a6a3fb5fe2a10 9,31-33,203-209,212,217,223,228,234-238
+pkg/server/grpc/control_channel_test.go
+  s_e995f4552d48c1::t_fbd1643b9ba1f9 136,198,214,242,267,283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "aca51a2b8dc8349f41a51d5b9bcd1dacb1f69b4b",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
