@@ -1449,14 +1449,18 @@ type mockWorkspaceManagerForSession struct {
 	ensureHostDirErr     error
 	inUse                bool
 	inUseErr             error
+	workspace            *store.Workspace
 }
 
 func (m *mockWorkspaceManagerForSession) Create(_ context.Context, _ CreateWorkspaceOptions) (*store.Workspace, error) {
 	return nil, nil
 }
 
-func (m *mockWorkspaceManagerForSession) Get(_ context.Context, _ string) (*store.Workspace, error) {
-	return nil, nil
+func (m *mockWorkspaceManagerForSession) Get(_ context.Context, id string) (*store.Workspace, error) {
+	if m.workspace != nil {
+		return m.workspace, nil
+	}
+	return &store.Workspace{ID: id, Persist: true, Mobility: WorkspaceMobilityLocal}, nil
 }
 
 func (m *mockWorkspaceManagerForSession) List(_ context.Context, _ ListWorkspacesOptions) (*store.ListResult[store.Workspace], error) {
@@ -2231,9 +2235,15 @@ func (p *suspendableFakeProvider) Resume(context.Context, string, provider.Resum
 func setupSuspendReleaseTest(prov provider.Provider) (*SessionManager, *providerAwareSessionStore) {
 	s := newProviderAwareSessionStore()
 	manager := NewSessionManagerWithConfig(SessionManagerConfig{
-		Store:            s,
-		ConnManager:      &mockConnManagerForSession{},
-		CmdSender:        &mockCommandSenderForSession{},
+		Store:       s,
+		ConnManager: &mockConnManagerForSession{},
+		CmdSender:   &mockCommandSenderForSession{},
+		// The default fixture is the ordinary Docker shape: the workspace is
+		// mounted from the host, so it survives the runner being destroyed.
+		WorkspaceManager: &mockWorkspaceManagerForSession{
+			hostPath:  "/var/marionette/workspaces/ws_123",
+			workspace: &store.Workspace{ID: "ws_123", Persist: true, Mobility: WorkspaceMobilityLocal},
+		},
 		ProviderRegistry: &fakeProviderRegistry{prov: prov},
 		Logger:           zap.NewNop(),
 	})
@@ -2247,9 +2257,10 @@ func setupSuspendReleaseTest(prov provider.Provider) (*SessionManager, *provider
 		ProviderConfigID: &cfgID,
 	})
 	s.SetSession(&store.Session{
-		ID:       "sess_123",
-		Status:   SessionStatusActive,
-		RunnerID: &runnerID,
+		ID:          "sess_123",
+		Status:      SessionStatusActive,
+		RunnerID:    &runnerID,
+		WorkspaceID: "ws_123",
 	})
 	return manager, s
 }
@@ -2374,4 +2385,88 @@ func TestSessionManager_Terminate_CleansUnusedWorkspace(t *testing.T) {
 
 	require.NoError(t, manager.Terminate(context.Background(), "sess_123"))
 	assert.True(t, mockWM.cleanupHostDirCalled)
+}
+
+// TestSessionManager_Suspend_RefusesDestroyWhenWorkspaceIsRunnerLocal is the
+// data-loss guard on the Destroy fallback. Sessions outlive runners by design,
+// so destroying one is only acceptable while the workspace lives elsewhere.
+func TestSessionManager_Suspend_RefusesDestroyWhenWorkspaceIsRunnerLocal(t *testing.T) {
+	prov := &fakeProvider{name: "docker-default", kind: provider.ProviderTypeManaged}
+	manager, s := setupSuspendReleaseTest(prov)
+	manager.workspaceManager = &mockWorkspaceManagerForSession{
+		// Persisted, no host mount, local mobility: the files exist only
+		// inside the runner.
+		hostPath:  "",
+		workspace: &store.Workspace{ID: "ws_123", Persist: true, Mobility: WorkspaceMobilityLocal},
+	}
+	sess, err := s.GetSession(context.Background(), "sess_123")
+	require.NoError(t, err)
+	sess.WorkspaceID = "ws_123"
+	s.SetSession(sess)
+
+	require.NoError(t, manager.Suspend(context.Background(), "sess_123", "terminate"))
+
+	assert.Empty(t, prov.destroyed,
+		"a runner holding the only copy of the workspace must not be destroyed")
+
+	// The session is still suspended: the database is authoritative and the
+	// leaked runner is the reaper's and the operator's problem, not data loss.
+	updated, err := s.GetSession(context.Background(), "sess_123")
+	require.NoError(t, err)
+	assert.Equal(t, SessionStatusSuspended, updated.Status)
+}
+
+func TestSessionManager_Suspend_DestroysWhenWorkspaceIsExternal(t *testing.T) {
+	tests := []struct {
+		name      string
+		workspace *store.Workspace
+		hostPath  string
+	}{
+		{
+			name:      "host mounted",
+			workspace: &store.Workspace{ID: "ws_123", Persist: true, Mobility: WorkspaceMobilityLocal},
+			hostPath:  "/var/marionette/workspaces/ws_123",
+		},
+		{
+			name:      "shared storage",
+			workspace: &store.Workspace{ID: "ws_123", Persist: true, Mobility: WorkspaceMobilityShared},
+		},
+		{
+			name:      "object synced",
+			workspace: &store.Workspace{ID: "ws_123", Persist: true, Mobility: WorkspaceMobilityObjectSync},
+		},
+		{
+			name:      "explicitly ephemeral",
+			workspace: &store.Workspace{ID: "ws_123", Persist: false, Mobility: WorkspaceMobilityLocal},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prov := &fakeProvider{name: "docker-default", kind: provider.ProviderTypeManaged}
+			manager, s := setupSuspendReleaseTest(prov)
+			manager.workspaceManager = &mockWorkspaceManagerForSession{
+				hostPath:  tt.hostPath,
+				workspace: tt.workspace,
+			}
+			sess, err := s.GetSession(context.Background(), "sess_123")
+			require.NoError(t, err)
+			sess.WorkspaceID = "ws_123"
+			s.SetSession(sess)
+
+			require.NoError(t, manager.Suspend(context.Background(), "sess_123", "terminate"))
+			assert.Equal(t, []string{"run_123"}, prov.destroyed)
+		})
+	}
+}
+
+// TestSessionManager_Suspend_RefusesDestroyWithoutWorkspaceManager: if we
+// cannot establish where the workspace lives, the answer is no.
+func TestSessionManager_Suspend_RefusesDestroyWithoutWorkspaceManager(t *testing.T) {
+	prov := &fakeProvider{name: "docker-default", kind: provider.ProviderTypeManaged}
+	manager, _ := setupSuspendReleaseTest(prov)
+	manager.workspaceManager = nil
+
+	require.NoError(t, manager.Suspend(context.Background(), "sess_123", "terminate"))
+	assert.Empty(t, prov.destroyed)
 }

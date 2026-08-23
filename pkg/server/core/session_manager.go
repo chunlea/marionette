@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -797,7 +798,7 @@ func (m *SessionManager) releaseRunner(ctx context.Context, sessionID string, ru
 	defer cancel()
 
 	strategy := provider.SuspendStrategy(opts.Strategy)
-	actual, err := m.applySuspendStrategy(releaseCtx, prov, *runnerID, strategy, opts)
+	actual, err := m.applySuspendStrategy(releaseCtx, prov, sessionID, *runnerID, strategy, opts)
 	if err != nil {
 		m.logger.Error("failed to release runner on suspend",
 			zap.String("session_id", sessionID),
@@ -825,7 +826,7 @@ func (m *SessionManager) releaseRunner(ctx context.Context, sessionID string, ru
 func (m *SessionManager) applySuspendStrategy(
 	ctx context.Context,
 	prov provider.Provider,
-	runnerID string,
+	sessionID, runnerID string,
 	strategy provider.SuspendStrategy,
 	opts SuspendOptions,
 ) (*provider.SuspendResult, error) {
@@ -867,6 +868,28 @@ func (m *SessionManager) applySuspendStrategy(
 	// Documented fallback: the provider cannot suspend, so terminate rather
 	// than leave the instance running and billing against a session nobody is
 	// using.
+	//
+	// Sessions outlive runners by design, so this is only safe while the
+	// workspace lives outside the runner. If it does not, keep paying rather
+	// than destroy the user's only copy of their work.
+	if survives, reason := m.workspaceSurvivesRunner(ctx, sessionID); !survives {
+		m.logger.Error("refusing to destroy runner on suspend: workspace would not survive it",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", runnerID),
+			zap.String("provider", prov.Name()),
+			zap.String("reason", reason),
+		)
+		return nil, fmt.Errorf("cannot destroy runner %s: %s", runnerID, reason)
+	}
+
+	m.logger.Warn("destroying runner on suspend: provider cannot suspend",
+		zap.String("session_id", sessionID),
+		zap.String("runner_id", runnerID),
+		zap.String("provider", prov.Name()),
+		zap.String("requested_strategy", string(strategy)),
+		zap.String("reason", "provider implements neither SuspendableProvider nor a usable Pause"),
+	)
+
 	if err := prov.Destroy(ctx, runnerID); err != nil {
 		return nil, err
 	}
@@ -874,6 +897,53 @@ func (m *SessionManager) applySuspendStrategy(
 		Strategy:    provider.SuspendStrategyTerminate,
 		SuspendedAt: now,
 	}, nil
+}
+
+// workspaceSurvivesRunner reports whether a session's workspace lives outside
+// its runner, and why not when it does not.
+//
+// Sessions outlive runners, so destroying a runner is only acceptable while the
+// files are somewhere else: a host mount, a volume, shared storage or object
+// sync. When the answer cannot be established, the answer is no - leaking a
+// container costs money, losing a workspace loses work.
+func (m *SessionManager) workspaceSurvivesRunner(ctx context.Context, sessionID string) (bool, string) {
+	if m.workspaceManager == nil {
+		return false, "no workspace manager configured, cannot establish where the workspace lives"
+	}
+
+	session, err := m.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return false, "could not load session: " + err.Error()
+	}
+
+	ws, err := m.workspaceManager.Get(ctx, session.WorkspaceID)
+	if err != nil {
+		return false, "could not load workspace: " + err.Error()
+	}
+	if ws == nil {
+		return false, "workspace not found"
+	}
+
+	// An explicitly ephemeral workspace has nothing to preserve.
+	if !ws.Persist {
+		return true, ""
+	}
+
+	// Shared and object-synced workspaces are external by definition.
+	if ws.Mobility == WorkspaceMobilityShared || ws.Mobility == WorkspaceMobilityObjectSync {
+		return true, ""
+	}
+
+	// Otherwise the workspace must be mounted from the host.
+	hostPath, err := m.workspaceManager.GetHostPath(ctx, session.WorkspaceID)
+	if err != nil {
+		return false, "could not resolve workspace host path: " + err.Error()
+	}
+	if hostPath == "" {
+		return false, "workspace is runner-local (persisted, no host mount, mobility=" + ws.Mobility + ")"
+	}
+
+	return true, ""
 }
 
 // recordSuspendResult writes back what the provider actually did, so a resume
