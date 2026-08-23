@@ -59,10 +59,14 @@ type Client struct {
 	cfg    *Config
 	logger *zap.Logger
 
+	// connMu guards everything that Connect/Close swap out underneath the
+	// goroutines that keep reading it: the control channel, the heartbeat
+	// loop and the log streamer all call GRPCClient/RunnerID concurrently.
+	connMu     sync.RWMutex
 	conn       *grpc.ClientConn
 	grpcClient pb.RunnerServiceClient
+	runnerID   string
 
-	runnerID     string
 	hostname     string
 	certReloader *certreloader.CertReloader
 
@@ -110,15 +114,19 @@ func (c *Client) Connect(ctx context.Context) error {
 		c.setState(StateDisconnected)
 		return &ErrConnectionFailed{Addr: c.cfg.Server.Address, Cause: err}
 	}
+	c.connMu.Lock()
 	c.conn = conn
 	c.grpcClient = pb.NewRunnerServiceClient(conn)
+	c.connMu.Unlock()
 
 	// Register with server
 	c.setState(StateRegistering)
 	if err := c.register(ctx); err != nil {
-		_ = c.conn.Close()
+		c.connMu.Lock()
 		c.conn = nil
 		c.grpcClient = nil
+		c.connMu.Unlock()
+		_ = conn.Close()
 		c.setState(StateDisconnected)
 		return err
 	}
@@ -151,22 +159,33 @@ func (c *Client) dial(ctx context.Context) (*grpc.ClientConn, error) {
 		return nil, err
 	}
 
-	// Wait for connection to be ready with timeout
+	// Wait for the connection to actually be ready.
+	//
+	// WaitForStateChange returns after the FIRST transition, which for a fresh
+	// client is IDLE -> CONNECTING: returning there declared success while
+	// nothing was connected yet. Loop until Ready, the context expires, or the
+	// connection shuts down.
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	// Check connection state by making a blocking call
 	conn.Connect()
-	if !conn.WaitForStateChange(dialCtx, conn.GetState()) {
-		// If the state didn't change and we're not connected, we've timed out
+	for {
 		state := conn.GetState()
-		if state != connectivity.Ready {
+		switch state {
+		case connectivity.Ready:
+			return conn, nil
+		case connectivity.Shutdown:
 			_ = conn.Close()
-			return nil, fmt.Errorf("connection not ready, state: %s", state)
+			return nil, fmt.Errorf("connection shut down before becoming ready")
+		case connectivity.Idle, connectivity.Connecting, connectivity.TransientFailure:
+			// Keep waiting; gRPC retries transient failures on its own.
+		}
+
+		if !conn.WaitForStateChange(dialCtx, state) {
+			_ = conn.Close()
+			return nil, fmt.Errorf("connection not ready, state: %s", conn.GetState())
 		}
 	}
-
-	return conn, nil
 }
 
 func (c *Client) loadTLSCredentials() (credentials.TransportCredentials, error) {
@@ -249,7 +268,13 @@ func (c *Client) register(ctx context.Context) error {
 	)
 
 	ctx = c.attachMetadata(ctx)
-	resp, err := c.grpcClient.RegisterRunner(ctx, req)
+
+	grpcClient := c.GRPCClient()
+	if grpcClient == nil {
+		return ErrNotConnected
+	}
+
+	resp, err := grpcClient.RegisterRunner(ctx, req)
 	if err != nil {
 		return fmt.Errorf("register RPC failed: %w", err)
 	}
@@ -258,9 +283,12 @@ func (c *Client) register(ctx context.Context) error {
 		return &ErrRegistrationRejected{Message: resp.Message}
 	}
 
+	c.connMu.Lock()
 	c.runnerID = resp.RunnerId
+	c.connMu.Unlock()
+
 	c.logger.Info("registered with server",
-		zap.String("runner_id", c.runnerID),
+		zap.String("runner_id", resp.RunnerId),
 		zap.String("message", resp.Message),
 	)
 
@@ -277,14 +305,16 @@ func (c *Client) attachMetadata(ctx context.Context) context.Context {
 	md := metadata.New(map[string]string{
 		"x-runner-token": c.cfg.Runner.Token,
 	})
-	if c.runnerID != "" {
-		md.Set("x-runner-id", c.runnerID)
+	if runnerID := c.RunnerID(); runnerID != "" {
+		md.Set("x-runner-id", runnerID)
 	}
 	return metadata.NewOutgoingContext(ctx, md)
 }
 
 // RunnerID returns the assigned runner ID.
 func (c *Client) RunnerID() string {
+	c.connMu.RLock()
+	defer c.connMu.RUnlock()
 	return c.runnerID
 }
 
@@ -315,8 +345,32 @@ func (c *Client) StateC() <-chan ConnState {
 
 // GRPCClient returns the underlying gRPC client for advanced operations.
 // Returns nil if not connected.
+//
+// Callers must re-read this after every reconnect: a value captured once is a
+// handle to a connection that may since have been closed.
 func (c *Client) GRPCClient() pb.RunnerServiceClient {
+	c.connMu.RLock()
+	defer c.connMu.RUnlock()
 	return c.grpcClient
+}
+
+// Disconnect tears down the current connection without stopping the client, so
+// a supervisor can reconnect. Unlike Close it does not move the client to the
+// stopped state.
+func (c *Client) Disconnect() error {
+	c.connMu.Lock()
+	conn := c.conn
+	c.conn = nil
+	c.grpcClient = nil
+	c.runnerID = ""
+	c.connMu.Unlock()
+
+	c.setState(StateDisconnected)
+
+	if conn != nil {
+		return conn.Close()
+	}
+	return nil
 }
 
 // Close closes the client connection.
@@ -331,11 +385,14 @@ func (c *Client) Close() error {
 		c.certReloader = nil
 	}
 
-	if c.conn != nil {
-		err := c.conn.Close()
-		c.conn = nil
-		c.grpcClient = nil
-		return err
+	c.connMu.Lock()
+	conn := c.conn
+	c.conn = nil
+	c.grpcClient = nil
+	c.connMu.Unlock()
+
+	if conn != nil {
+		return conn.Close()
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -26,6 +27,11 @@ type ControlChannel struct {
 
 	stopC    chan struct{}
 	stoppedC chan struct{}
+	stopOnce sync.Once
+
+	// started is set once run() is on its way, so Stop and Wait know whether
+	// anything will ever close stoppedC.
+	started atomic.Bool
 }
 
 // NewControlChannel creates a new control channel.
@@ -59,6 +65,7 @@ func (c *ControlChannel) Start(ctx context.Context) error {
 	c.logger.Info("control channel established")
 
 	// Start the receive and send loops
+	c.started.Store(true)
 	go c.run(ctx)
 
 	return nil
@@ -198,24 +205,27 @@ func (c *ControlChannel) Send(msg *pb.RunnerMessage) {
 	}
 }
 
-// Stop stops the control channel.
+// Stop stops the control channel and waits for it to finish.
+//
+// It is safe to call more than once, and safe to call when Start never ran or
+// failed: an unconditional close(c.stopC) panicked on the second call, and
+// waiting on stoppedC deadlocked when no run() goroutine existed to close it.
 func (c *ControlChannel) Stop() {
-	close(c.stopC)
+	c.StopAsync()
 	c.Wait()
 }
 
 // StopAsync signals the control channel to stop without waiting.
 func (c *ControlChannel) StopAsync() {
-	select {
-	case <-c.stopC:
-		// Already closed
-	default:
-		close(c.stopC)
-	}
+	c.stopOnce.Do(func() { close(c.stopC) })
 }
 
-// Wait blocks until the control channel has stopped.
+// Wait blocks until the control channel has stopped. It returns immediately if
+// the channel was never started, since nothing will close stoppedC.
 func (c *ControlChannel) Wait() {
+	if !c.started.Load() {
+		return
+	}
 	<-c.stoppedC
 }
 
