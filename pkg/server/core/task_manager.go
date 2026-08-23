@@ -1064,16 +1064,41 @@ func (m *TaskManager) OnTaskCompleted(ctx context.Context, result *TaskCompleted
 		zap.String("task_status", taskStatus),
 	)
 
+	task, taskErr := m.store.GetTask(ctx, run.TaskID)
+
 	// Dispatch webhook event
-	if m.webhooks != nil {
-		if task, err := m.store.GetTask(ctx, run.TaskID); err == nil {
-			eventType := "task.completed"
-			if taskStatus == TaskStatusFailed {
-				eventType = "task.failed"
-			}
-			m.webhooks.DispatchTaskEvent(ctx, eventType, task, run)
+	if m.webhooks != nil && taskErr == nil {
+		eventType := "task.completed"
+		if taskStatus == TaskStatusFailed {
+			eventType = "task.failed"
 		}
+		m.webhooks.DispatchTaskEvent(ctx, eventType, task, run)
 	}
+
+	// A task finishing is what releases the session's one-task-in-flight slot,
+	// so it is the moment the next task in the backlog can go out. Nothing
+	// fired here before, and the runner's busy -> idle report cannot stand in
+	// for it: the agent sets its status back to idle as Execute returns, which
+	// is before the completion message it returns is even sent, so that wake
+	// arrives while the task is still running and correctly does nothing.
+	//
+	// The backlog therefore waited for the 60s sweeper. A session with a queue
+	// of tasks ran one per minute regardless of how fast the tasks were.
+	if taskErr != nil {
+		m.logger.Warn("could not read the completed task to dispatch its successor",
+			zap.String("task_id", run.TaskID), zap.Error(taskErr))
+		return nil
+	}
+
+	// Not on ctx: this is the gRPC context of the runner's completion message,
+	// and it is cancelled the moment that handler returns.
+	sessionID := task.SessionID
+	m.background.Go("dispatch-after-completion", func(bgCtx context.Context) {
+		if err := m.DispatchNextNow(bgCtx, sessionID); err != nil {
+			m.logger.Warn("could not dispatch the next task after a completion",
+				zap.String("session_id", sessionID), zap.Error(err))
+		}
+	})
 
 	return nil
 }

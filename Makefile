@@ -1,5 +1,6 @@
 .PHONY: deps build test lint proto migrate dev clean help \
 	schema schema-check openapi openapi-check generate test-store \
+	bench bench-core bench-store loadtest \
 	certs certs-clean certs-verify \
 	web-install web-dev web-build web-lint web-clean
 
@@ -240,6 +241,32 @@ test-linux-root:
 ## test-store: Run the store tests on the host (needs Docker; no container indirection)
 test-store:
 	$(GOTEST) -race -count=1 ./pkg/store/...
+
+# Performance baseline. See test/perf/BASELINE.md for recorded numbers and the
+# machine they came from. There is no regression gate: the point is to know the
+# shape before optimising anything.
+#
+# Benchmarks never run with -race. The race detector changes timing by an order
+# of magnitude, so a "benchmark" under it measures the detector.
+BENCHTIME ?= 2s
+BENCHCOUNT ?= 1
+
+## bench: Run every benchmark (core in-process + store against real PostgreSQL)
+bench: bench-core bench-store
+
+## bench-core: Benchmark the scheduler's in-process hot paths
+bench-core: proto
+	$(GOTEST) -run '^$$' -bench . -benchmem \
+		-benchtime $(BENCHTIME) -count $(BENCHCOUNT) ./pkg/server/core/...
+
+## bench-store: Benchmark the hot store queries (needs Docker; skips without it)
+bench-store:
+	$(GOTEST) -run '^$$' -bench . -benchmem \
+		-benchtime $(BENCHTIME) -count $(BENCHCOUNT) ./test/perf/store/...
+
+## loadtest: Drive the real stack with fake runners (no model tokens are spent)
+loadtest: build
+	./scripts/loadtest.sh
 
 ## docker-build: Build Docker images
 docker-build:

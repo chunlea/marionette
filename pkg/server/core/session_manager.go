@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -191,6 +192,20 @@ type SessionManager struct {
 	webhooks         *WebhookIntegration
 	background       *backgroundTasks
 	logger           *zap.Logger
+
+	// reserved holds runners chosen but not yet written to a session row.
+	//
+	// runnerClaimed answers from the database, so between selecting an idle
+	// runner and recording the choice there is a window in which the runner
+	// still looks free. Two sessions activating at the same time both take it,
+	// and Activate then detaches the loser - so N concurrent creates against N
+	// idle runners leave most of the sessions with nothing, which is exactly
+	// what the load test found.
+	//
+	// This closes the window inside one process. Across processes it needs a
+	// claim the database arbitrates; see NEEDS in the round-3 report.
+	reservedMu sync.Mutex
+	reserved   map[string]struct{}
 }
 
 // SessionManagerConfig holds configuration for SessionManager.
@@ -236,6 +251,31 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 		background:       background,
 		logger:           cfg.Logger,
 	}
+}
+
+// reserveRunner marks a runner as spoken for, reporting false if it already is.
+func (m *SessionManager) reserveRunner(runnerID string) bool {
+	m.reservedMu.Lock()
+	defer m.reservedMu.Unlock()
+	if m.reserved == nil {
+		m.reserved = make(map[string]struct{})
+	}
+	if _, taken := m.reserved[runnerID]; taken {
+		return false
+	}
+	m.reserved[runnerID] = struct{}{}
+	return true
+}
+
+// releaseReservation drops a reservation. It is safe to call for a runner that
+// was never reserved.
+func (m *SessionManager) releaseReservation(runnerID string) {
+	if runnerID == "" {
+		return
+	}
+	m.reservedMu.Lock()
+	defer m.reservedMu.Unlock()
+	delete(m.reserved, runnerID)
 }
 
 // setTaskManager injects the task manager after construction.
@@ -1537,6 +1577,9 @@ func (m *SessionManager) EnsureRunner(ctx context.Context, sessionID string) (*s
 	if err != nil {
 		return nil, err
 	}
+	// Held until the session row names the runner, which is the point at which
+	// runnerClaimed starts answering correctly for it.
+	defer m.releaseReservation(runnerID)
 
 	if err := m.Activate(ctx, sessionID, runnerID); err != nil {
 		m.logger.Error("failed to activate session on allocated runner",
@@ -1687,6 +1730,11 @@ func (m *SessionManager) selectIdleRunner(ctx context.Context, session *store.Se
 			continue
 		}
 		if claimed {
+			continue
+		}
+		// Last, because it has a side effect: taking the reservation only
+		// makes sense once the runner has passed every other test.
+		if !m.reserveRunner(runner.ID) {
 			continue
 		}
 		return runner.ID, nil

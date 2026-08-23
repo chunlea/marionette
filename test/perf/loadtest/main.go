@@ -33,6 +33,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -42,28 +43,29 @@ import (
 )
 
 type options struct {
-	apiURL      string
-	grpcAddr    string
-	apiKey      string
-	runnerToken string
-	pool        string
+	apiURL       string
+	grpcAddr     string
+	apiKey       string
+	runnerTokens []string
+	pool         string
 
 	runners  int
 	sessions int
 	tasks    int
 
-	logLines  int
-	taskMS    int
-	deadline  time.Duration
-	workspace string
-	keep      bool
-	verbose   bool
+	logLines    int
+	taskMS      int
+	releaseIdle bool
+	deadline    time.Duration
+	workspace   string
+	keep        bool
+	verbose     bool
 }
 
 func main() {
 	opts := parseFlags()
 
-	logger := newLogger(opts.verbose)
+	logger, level := newLogger(opts.verbose)
 	defer func() { _ = logger.Sync() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -77,7 +79,7 @@ func main() {
 		cancel()
 	}()
 
-	if err := run(ctx, opts, logger); err != nil {
+	if err := run(ctx, opts, logger, level); err != nil {
 		fmt.Fprintf(os.Stderr, "\nLOAD TEST FAILED: %v\n", err)
 		os.Exit(1)
 	}
@@ -91,8 +93,10 @@ func parseFlags() options {
 		"gRPC address runners connect to")
 	flag.StringVar(&opts.apiKey, "api-key", os.Getenv("MARIONETTE_API_KEY"),
 		"API key for the public API")
-	flag.StringVar(&opts.runnerToken, "runner-token", os.Getenv("MARIONETTE_RUNNER_TOKEN"),
-		"runner registration token")
+	tokens := flag.String("runner-tokens", os.Getenv("MARIONETTE_RUNNER_TOKENS"),
+		"comma-separated runner registration tokens, one per runner")
+	single := flag.String("runner-token", os.Getenv("MARIONETTE_RUNNER_TOKEN"),
+		"a single runner registration token (only useful with -runners 1)")
 	flag.StringVar(&opts.pool, "pool", "default", "pool the fake runners join")
 
 	flag.IntVar(&opts.runners, "runners", 50, "number of fake runners")
@@ -101,12 +105,27 @@ func parseFlags() options {
 
 	flag.IntVar(&opts.logLines, "log-lines", 20, "log lines each fake task emits")
 	flag.IntVar(&opts.taskMS, "task-ms", 200, "how long a fake task takes, in milliseconds")
+	flag.BoolVar(&opts.releaseIdle, "release-idle", false,
+		"suspend a session as soon as its tasks are done, freeing its runner for a parked session")
 	flag.DurationVar(&opts.deadline, "deadline", 10*time.Minute,
 		"how long to wait for every task to reach a terminal state")
 	flag.StringVar(&opts.workspace, "workspace", "", "workspace root (default: a temp dir)")
 	flag.BoolVar(&opts.keep, "keep", false, "keep workspaces and sessions after the run")
 	flag.BoolVar(&opts.verbose, "v", false, "verbose runner logging")
 	flag.Parse()
+
+	// A runner token binds to the runner it first registers: the second runner
+	// to present it is told the runner is already connected. So the pool needs
+	// one token per member, and passing a single token for N runners is a
+	// setup error rather than something to work around here.
+	for _, token := range strings.Split(*tokens, ",") {
+		if token = strings.TrimSpace(token); token != "" {
+			opts.runnerTokens = append(opts.runnerTokens, token)
+		}
+	}
+	if len(opts.runnerTokens) == 0 && *single != "" {
+		opts.runnerTokens = []string{*single}
+	}
 
 	return opts
 }
@@ -118,26 +137,43 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-func newLogger(verbose bool) *zap.Logger {
+// newLogger returns a logger and the level it can be turned down with.
+//
+// The level is adjustable because teardown is noisy by design: closing a
+// control channel cancels the receive loop, and pkg/agent logs that at error
+// level because in production it means the connection dropped. Here it means
+// the run finished, and a wall of stack traces under the results is worse than
+// useless.
+func newLogger(verbose bool) (*zap.Logger, zap.AtomicLevel) {
+	level := zap.NewAtomicLevelAt(zap.ErrorLevel)
+	if verbose {
+		// 50 runners at info level bury the report they exist to produce, so
+		// this is opt-in.
+		level.SetLevel(zap.InfoLevel)
+	}
+
 	cfg := zap.NewProductionConfig()
 	cfg.Encoding = "console"
-	if !verbose {
-		// 50 runners at info level bury the report they exist to produce.
-		cfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
-	}
+	cfg.Level = level
+
 	logger, err := cfg.Build()
 	if err != nil {
-		return zap.NewNop()
+		return zap.NewNop(), level
 	}
-	return logger
+	return logger, level
 }
 
-func run(ctx context.Context, opts options, logger *zap.Logger) error {
+func run(ctx context.Context, opts options, logger *zap.Logger, level zap.AtomicLevel) error {
 	if opts.apiKey == "" {
 		return errors.New("no API key: pass -api-key or set MARIONETTE_API_KEY")
 	}
-	if opts.runnerToken == "" {
-		return errors.New("no runner token: pass -runner-token or set MARIONETTE_RUNNER_TOKEN")
+	if len(opts.runnerTokens) == 0 {
+		return errors.New("no runner tokens: pass -runner-tokens or set MARIONETTE_RUNNER_TOKENS")
+	}
+	if len(opts.runnerTokens) < opts.runners {
+		return fmt.Errorf(
+			"%d runner token(s) for %d runners: a token binds to the first runner that presents it, so the pool needs one each",
+			len(opts.runnerTokens), opts.runners)
 	}
 	if opts.sessions <= 0 || opts.tasks <= 0 || opts.runners <= 0 {
 		return errors.New("runners, sessions and tasks must all be positive")
@@ -155,6 +191,7 @@ func run(ctx context.Context, opts options, logger *zap.Logger) error {
 		api:       api,
 		raw:       &rawAPI{baseURL: opts.apiURL, apiKey: opts.apiKey, client: &http.Client{Timeout: 30 * time.Second}},
 		logger:    logger,
+		logLevel:  level,
 		workspace: workspaceRoot,
 	}
 
@@ -229,13 +266,14 @@ marionette load test - FAKE EXECUTOR, no model tokens are spent
   sessions     %d
   tasks        %d  (%.1f per session)
   task shape   %d log lines, ~%dms each
+  release idle %v
   workspaces   %s
 ================================================================================
 
 `,
 		opts.apiURL, opts.grpcAddr, opts.runners, opts.pool,
 		opts.sessions, opts.tasks, float64(opts.tasks)/float64(opts.sessions),
-		opts.logLines, opts.taskMS, workspace)
+		opts.logLines, opts.taskMS, opts.releaseIdle, workspace)
 }
 
 // percentile returns the p'th percentile of a sorted slice, nearest-rank.

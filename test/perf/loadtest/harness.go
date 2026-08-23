@@ -19,11 +19,15 @@ type harness struct {
 	api       *client.HTTPClient
 	raw       *rawAPI
 	logger    *zap.Logger
+	logLevel  zap.AtomicLevel
 	workspace string
 
 	runners  []*fakeRunner
 	sessions []string
 	tasks    []taskRecord
+
+	releasedMu sync.Mutex
+	released   map[string]struct{}
 }
 
 // taskRecord is one task and when the harness asked for it. CreatedAt comes
@@ -50,7 +54,7 @@ func (h *harness) startRunners(ctx context.Context) error {
 		runner := newFakeRunner(
 			fmt.Sprintf("loadtest-%03d", i),
 			h.opts.grpcAddr,
-			h.opts.runnerToken,
+			h.opts.runnerTokens[i],
 			h.opts.pool,
 			runnerWorkspace(h.workspace, i),
 			execCfg,
@@ -89,6 +93,11 @@ func (h *harness) startRunners(ctx context.Context) error {
 }
 
 func (h *harness) stopRunners() {
+	// Closing a control channel cancels its receive loop, which pkg/agent logs
+	// at error level because in production it means the connection dropped.
+	// Here it means the run is over.
+	h.logLevel.SetLevel(zap.FatalLevel)
+
 	var wg sync.WaitGroup
 	for _, runner := range h.runners {
 		if runner == nil {
@@ -288,6 +297,10 @@ func (h *harness) awaitCompletion(ctx context.Context) (*report, error) {
 			}
 		}
 
+		if h.opts.releaseIdle {
+			h.releaseFinishedSessions(ctx, terminal)
+		}
+
 		if len(terminal) >= len(h.tasks) {
 			break
 		}
@@ -316,6 +329,49 @@ func (h *harness) awaitCompletion(ctx context.Context) (*report, error) {
 		}
 	}
 	return rep, nil
+}
+
+// releaseFinishedSessions suspends every session whose backlog is done.
+//
+// This is what makes an under-provisioned run finish at all, and it is the
+// point of running one: with fewer runners than sessions, most sessions park at
+// creation and can only proceed when somebody else gives a runner back. A run
+// with -release-idle and RUNNERS well below SESSIONS is therefore a direct test
+// of the runner-freed trigger against the real stack, rather than against a
+// fake store in a unit test.
+func (h *harness) releaseFinishedSessions(ctx context.Context, terminal map[string]string) {
+	remaining := make(map[string]int, len(h.sessions))
+	for _, task := range h.tasks {
+		if _, done := terminal[task.ID]; !done {
+			remaining[task.SessionID]++
+		}
+	}
+
+	h.releasedMu.Lock()
+	if h.released == nil {
+		h.released = make(map[string]struct{})
+	}
+	var toRelease []string
+	for _, sessionID := range h.sessions {
+		if remaining[sessionID] > 0 {
+			continue
+		}
+		if _, already := h.released[sessionID]; already {
+			continue
+		}
+		h.released[sessionID] = struct{}{}
+		toRelease = append(toRelease, sessionID)
+	}
+	h.releasedMu.Unlock()
+
+	for _, sessionID := range toRelease {
+		if err := h.api.SuspendSession(ctx, sessionID); err != nil {
+			// Not fatal: a session that never got a runner has nothing to
+			// suspend, and the run is not measuring suspend.
+			h.logger.Debug("could not suspend a finished session",
+				zap.String("session_id", sessionID), zap.Error(err))
+		}
+	}
 }
 
 // pollStatuses reads the current status of every task, one query per session.

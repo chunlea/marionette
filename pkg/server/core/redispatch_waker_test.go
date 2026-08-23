@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -468,4 +469,137 @@ func TestSessionManager_DoesNotWakeWhenItHeldNoRunner(t *testing.T) {
 
 	require.NoError(t, manager.Terminate(context.Background(), "sess_1"))
 	assert.Empty(t, waker.seen())
+}
+
+// =============================================================================
+// Regressions the load test found
+// =============================================================================
+
+// TestTaskManager_OnTaskCompleted_DispatchesTheNextTask.
+//
+// A task finishing is what frees the session's one-task-in-flight slot, so it is
+// the moment the next task can go out. Nothing fired here, and the runner's
+// busy -> idle report cannot stand in for it: the agent sets its status back to
+// idle as Execute returns, which is before the completion message is even sent,
+// so that wake arrives while the task is still running and correctly does
+// nothing.
+//
+// The backlog therefore waited for the 60s sweeper. The load test found this as
+// "8 tasks took two minutes"; four sessions with a queue each ran one task per
+// sweep interval no matter how fast the tasks were.
+func TestTaskManager_OnTaskCompleted_DispatchesTheNextTask(t *testing.T) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	background := newBackgroundTasks(context.Background(), 0, zap.NewNop())
+	manager := NewTaskManager(s, cmdSender, &mockSessionMgrForTask{}, nil, zap.NewNop(),
+		WithTaskBackground(background))
+
+	runnerID := "run_1"
+	s.sessions["sess_1"] = &store.Session{
+		ID: "sess_1", Status: SessionStatusActive, RunnerID: &runnerID,
+	}
+	s.tasks["first"] = &store.Task{
+		ID: "first", SessionID: "sess_1", Status: TaskStatusRunning,
+		CreatedAt: time.Now().Add(-time.Hour),
+	}
+	s.tasks["second"] = &store.Task{
+		ID: "second", SessionID: "sess_1", Status: TaskStatusPending,
+		Prompt: "next please", CreatedAt: time.Now(),
+	}
+	s.setTaskRun("trun_1", &store.TaskRun{
+		ID: "trun_1", TaskID: "first", Attempt: 1, Status: TaskRunStatusRunning,
+		RunnerID: &runnerID,
+	})
+
+	require.NoError(t, manager.OnTaskCompleted(context.Background(), &TaskCompletedResult{
+		RunID: "trun_1", Success: true,
+	}))
+	require.NoError(t, background.Wait(context.Background()))
+
+	require.Len(t, cmdSender.sentCommands, 1,
+		"finishing a task must pull the next one in the session")
+	assert.Equal(t, "second", cmdSender.sentCommands[0].GetExecuteTask().GetTaskId())
+}
+
+// TestTaskManager_OnTaskCompleted_LeavesAnEmptyBacklogAlone: the dispatch after
+// a completion is a trigger like any other, so finding nothing has to be free
+// and silent rather than an error.
+func TestTaskManager_OnTaskCompleted_LeavesAnEmptyBacklogAlone(t *testing.T) {
+	s := newTestTaskStore()
+	cmdSender := &mockCommandSender{}
+	background := newBackgroundTasks(context.Background(), 0, zap.NewNop())
+	manager := NewTaskManager(s, cmdSender, &mockSessionMgrForTask{}, nil, zap.NewNop(),
+		WithTaskBackground(background))
+
+	runnerID := "run_1"
+	s.sessions["sess_1"] = &store.Session{
+		ID: "sess_1", Status: SessionStatusActive, RunnerID: &runnerID,
+	}
+	s.tasks["only"] = &store.Task{
+		ID: "only", SessionID: "sess_1", Status: TaskStatusRunning, CreatedAt: time.Now(),
+	}
+	s.setTaskRun("trun_1", &store.TaskRun{
+		ID: "trun_1", TaskID: "only", Attempt: 1, Status: TaskRunStatusRunning,
+		RunnerID: &runnerID,
+	})
+
+	require.NoError(t, manager.OnTaskCompleted(context.Background(), &TaskCompletedResult{
+		RunID: "trun_1", Success: true,
+	}))
+	require.NoError(t, background.Wait(context.Background()))
+	assert.Empty(t, cmdSender.sentCommands)
+}
+
+// TestSessionManager_ConcurrentEnsureRunner_GivesEachSessionItsOwnRunner.
+//
+// runnerClaimed answers from the database, so between selecting an idle runner
+// and recording the choice there is a window in which the runner still looks
+// free. Two sessions activating at the same time both take it, and Activate
+// then detaches the loser - so N concurrent creates against N idle runners left
+// most of the sessions with nothing.
+//
+// The load test found this as "4 sessions, 4 idle runners, 2 sessions stranded".
+func TestSessionManager_ConcurrentEnsureRunner_GivesEachSessionItsOwnRunner(t *testing.T) {
+	const n = 8
+
+	for round := 0; round < 10; round++ {
+		manager, s := setupSessionManagerTestWithCmdSender(&mockCommandSenderForSession{})
+
+		for i := 0; i < n; i++ {
+			s.SetRunner(&store.Runner{
+				ID: fmt.Sprintf("run_%d", i), Status: StatusIdle,
+			})
+			s.SetSession(&store.Session{
+				ID: fmt.Sprintf("sess_%d", i), Status: SessionStatusPending,
+			})
+		}
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		results := make([]*store.Session, n)
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				session, err := manager.EnsureRunner(context.Background(), fmt.Sprintf("sess_%d", i))
+				assert.NoError(t, err)
+				results[i] = session
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+
+		seen := map[string]string{}
+		for i, session := range results {
+			require.NotNil(t, session, "session %d got no runner in round %d", i, round)
+			require.NotNil(t, session.RunnerID)
+			runnerID := *session.RunnerID
+			if other, taken := seen[runnerID]; taken {
+				t.Fatalf("round %d: runner %s handed to both %s and %s",
+					round, runnerID, other, session.ID)
+			}
+			seen[runnerID] = session.ID
+		}
+	}
 }
