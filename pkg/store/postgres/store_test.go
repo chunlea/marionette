@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,8 +20,62 @@ import (
 
 var testStore *pgstore.Store
 
+// dockerHealth reports whether a Docker daemon is reachable.
+//
+// testcontainers panics rather than returning an error when it cannot find a
+// Docker host at all ("rootless Docker not found"), so the probe has to
+// recover: that panic is exactly the case this function exists to detect.
+func dockerHealth(ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("no docker host: %v", r)
+		}
+	}()
+
+	provider, err := testcontainers.NewDockerProvider()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = provider.Close() }()
+
+	return provider.Health(ctx)
+}
+
+const noDockerBanner = `
+################################################################################
+# pkg/store/postgres CANNOT RUN — no Docker daemon reachable.
+#
+# These are the only tests that exercise real SQL: migrations, constraints,
+# pagination, error mapping. Nothing else covers them.
+#
+# Reason: %v
+#
+# To run them:  make test-store    (on the host)
+#               make test-linux    (in the Linux container; mounts the socket)
+#
+# To skip instead of failing, set MARIONETTE_TEST_SKIP_WITHOUT_DOCKER=1.
+################################################################################
+`
+
+// Failing is the default rather than skipping, because "go test" prints a
+// package's output only when it fails: a skip here would be invisible in normal
+// output and the suite would report success for tests that never ran. That is
+// exactly how this package went unexercised by make test-linux.
+
 func TestMain(m *testing.M) {
 	ctx := context.Background()
+
+	// Probe first: testcontainers panics deep in its internals when there is no
+	// Docker host, which is unreadable and gives the reader nothing to act on.
+	if err := dockerHealth(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, noDockerBanner, err)
+
+		if os.Getenv("MARIONETTE_TEST_SKIP_WITHOUT_DOCKER") != "" {
+			fmt.Fprintln(os.Stderr, "MARIONETTE_TEST_SKIP_WITHOUT_DOCKER is set: skipping.")
+			os.Exit(0)
+		}
+		os.Exit(1)
+	}
 
 	// Start PostgreSQL container
 	postgresContainer, err := postgres.Run(ctx,
