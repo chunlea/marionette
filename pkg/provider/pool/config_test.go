@@ -19,8 +19,6 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 30*time.Minute, cfg.IdleTimeout)
 	assert.Equal(t, 30*time.Second, cfg.HealthCheckInterval)
 	assert.Equal(t, 90*time.Second, cfg.StaleThreshold)
-	assert.Equal(t, 5*time.Minute, cfg.InitScriptTimeout)
-	assert.Equal(t, 5*time.Minute, cfg.CleanupScriptTimeout)
 	assert.Equal(t, 0, cfg.MaxTasksPerRunner)
 	assert.Equal(t, "lru", cfg.SelectionStrategy)
 }
@@ -97,14 +95,6 @@ func TestParseConfig(t *testing.T) {
 				return c.IdleTimeout == time.Hour &&
 					c.HealthCheckInterval == time.Minute &&
 					c.StaleThreshold == 2*time.Minute
-			},
-		},
-		{
-			name:  "parses script timeouts",
-			input: `{"pool_name": "test", "init_script_timeout": "10m", "cleanup_script_timeout": "3m"}`,
-			want: func(c *Config) bool {
-				return c.InitScriptTimeout == 10*time.Minute &&
-					c.CleanupScriptTimeout == 3*time.Minute
 			},
 		},
 		{

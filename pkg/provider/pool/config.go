@@ -39,12 +39,6 @@ type Config struct {
 	// StaleThreshold is how long before a runner is considered stale (no heartbeat).
 	StaleThreshold time.Duration `json:"stale_threshold,omitempty"`
 
-	// InitScriptTimeout is the maximum time allowed for init scripts.
-	InitScriptTimeout time.Duration `json:"init_script_timeout,omitempty"`
-
-	// CleanupScriptTimeout is the maximum time allowed for cleanup scripts.
-	CleanupScriptTimeout time.Duration `json:"cleanup_script_timeout,omitempty"`
-
 	// MaxTasksPerRunner is the maximum number of tasks a runner can execute
 	// before being recycled (tainted). 0 means unlimited.
 	MaxTasksPerRunner int `json:"max_tasks_per_runner,omitempty"`
@@ -57,15 +51,13 @@ type Config struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		MinRunners:           0,
-		MaxRunners:           100,
-		IdleTimeout:          30 * time.Minute,
-		HealthCheckInterval:  30 * time.Second,
-		StaleThreshold:       90 * time.Second,
-		InitScriptTimeout:    5 * time.Minute,
-		CleanupScriptTimeout: 5 * time.Minute,
-		MaxTasksPerRunner:    0, // unlimited
-		SelectionStrategy:    "lru",
+		MinRunners:          0,
+		MaxRunners:          100,
+		IdleTimeout:         30 * time.Minute,
+		HealthCheckInterval: 30 * time.Second,
+		StaleThreshold:      90 * time.Second,
+		MaxTasksPerRunner:   0, // unlimited
+		SelectionStrategy:   "lru",
 	}
 }
 
@@ -87,8 +79,6 @@ func ParseConfig(data json.RawMessage) (*Config, error) {
 		IdleTimeout          string            `json:"idle_timeout,omitempty"`
 		HealthCheckInterval  string            `json:"health_check_interval,omitempty"`
 		StaleThreshold       string            `json:"stale_threshold,omitempty"`
-		InitScriptTimeout    string            `json:"init_script_timeout,omitempty"`
-		CleanupScriptTimeout string            `json:"cleanup_script_timeout,omitempty"`
 		MaxTasksPerRunner    int               `json:"max_tasks_per_runner,omitempty"`
 		SelectionStrategy    string            `json:"selection_strategy,omitempty"`
 	}
@@ -135,20 +125,6 @@ func ParseConfig(data json.RawMessage) (*Config, error) {
 			return nil, fmt.Errorf("parsing stale_threshold: %w", err)
 		}
 		cfg.StaleThreshold = d
-	}
-	if raw.InitScriptTimeout != "" {
-		d, err := time.ParseDuration(raw.InitScriptTimeout)
-		if err != nil {
-			return nil, fmt.Errorf("parsing init_script_timeout: %w", err)
-		}
-		cfg.InitScriptTimeout = d
-	}
-	if raw.CleanupScriptTimeout != "" {
-		d, err := time.ParseDuration(raw.CleanupScriptTimeout)
-		if err != nil {
-			return nil, fmt.Errorf("parsing cleanup_script_timeout: %w", err)
-		}
-		cfg.CleanupScriptTimeout = d
 	}
 
 	return cfg, nil
