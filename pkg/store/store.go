@@ -36,6 +36,47 @@ type Store interface {
 	// over, is a no-op rather than an error.
 	ReleaseRunnerClaim(ctx context.Context, runnerID, sessionID string) error
 
+	// ServerReplicas and connection routing.
+	//
+	// A runner's control stream terminates in exactly one process, and the map
+	// that resolves it is in that process's memory. These record which process
+	// that is, so a replica which is not the holder can forward the command to
+	// the one that is instead of reporting "runner not connected".
+	//
+	// They read and write the runners table, which has row level security, and
+	// they act for the deployment rather than for a tenant - so callers bind
+	// system access, the same way the background jobs do.
+
+	// RegisterServerReplica records this process, or refreshes the row if the
+	// id is already present.
+	RegisterServerReplica(ctx context.Context, replica *ServerReplica) error
+	// HeartbeatServerReplica proves this process is still alive. A replica
+	// whose heartbeat has stopped is reaped, which clears every routing
+	// pointer it held.
+	HeartbeatServerReplica(ctx context.Context, id string) error
+	// DeleteServerReplica removes a replica row. The runners it held have
+	// their pointer cleared by the foreign key.
+	DeleteServerReplica(ctx context.Context, id string) error
+	// DeleteExpiredServerReplicas reaps replicas whose last heartbeat is older
+	// than the given age, and reports how many were removed.
+	DeleteExpiredServerReplicas(ctx context.Context, olderThan time.Duration) (int, error)
+	// ListServerReplicas returns every registered replica, newest heartbeat
+	// first. Operator visibility, and the source for how many are live.
+	ListServerReplicas(ctx context.Context) ([]*ServerReplica, error)
+	// BindRunnerConnection records that replicaID is holding runnerID's
+	// control stream. Last writer wins: the most recent successful stream
+	// registration is by definition the current holder.
+	BindRunnerConnection(ctx context.Context, runnerID, replicaID string) error
+	// ReleaseRunnerConnection clears the pointer only if replicaID still owns
+	// it. This is the fence: a stream that moved from replica A to replica B
+	// leaves A running its deferred disconnect after B has already registered,
+	// and an unconditional clear would delete the pointer that just became
+	// correct.
+	ReleaseRunnerConnection(ctx context.Context, runnerID, replicaID string) error
+	// GetRunnerConnection resolves a runner to the replica holding its stream.
+	// ErrNotFound means nothing holds it.
+	GetRunnerConnection(ctx context.Context, runnerID string) (*RunnerConnection, error)
+
 	// Workspaces
 	CreateWorkspace(ctx context.Context, workspace *Workspace) error
 	GetWorkspace(ctx context.Context, id string) (*Workspace, error)

@@ -532,6 +532,8 @@ CREATE TABLE public.runners (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     claim_session_id text,
     claimed_at timestamp with time zone,
+    connected_replica_id text,
+    connected_at timestamp with time zone,
     CONSTRAINT valid_runner_status CHECK ((status = ANY (ARRAY['offline'::text, 'idle'::text, 'busy'::text, 'paused'::text]))),
     CONSTRAINT valid_sandbox_mode CHECK ((sandbox_mode = ANY (ARRAY['runner-is-sandbox'::text, 'runner-creates-sandbox'::text, 'none'::text])))
 );
@@ -571,6 +573,18 @@ CREATE TABLE public.scheduled_tasks (
 );
 
 ALTER TABLE ONLY public.scheduled_tasks FORCE ROW LEVEL SECURITY;
+
+--
+-- Name: server_replicas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.server_replicas (
+    id text NOT NULL,
+    advertise_addr text NOT NULL,
+    version text,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_heartbeat_at timestamp with time zone DEFAULT now() NOT NULL
+);
 
 --
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
@@ -991,6 +1005,13 @@ ALTER TABLE ONLY public.scheduled_tasks
     ADD CONSTRAINT scheduled_tasks_pkey PRIMARY KEY (id);
 
 --
+-- Name: server_replicas server_replicas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.server_replicas
+    ADD CONSTRAINT server_replicas_pkey PRIMARY KEY (id);
+
+--
 -- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1319,6 +1340,12 @@ CREATE INDEX idx_runner_tokens_tenant ON public.runner_tokens USING btree (tenan
 CREATE INDEX idx_runners_claim ON public.runners USING btree (claim_session_id, claimed_at) WHERE (claim_session_id IS NOT NULL);
 
 --
+-- Name: idx_runners_connected_replica; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runners_connected_replica ON public.runners USING btree (connected_replica_id) WHERE (connected_replica_id IS NOT NULL);
+
+--
 -- Name: idx_runners_labels; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1371,6 +1398,12 @@ CREATE INDEX idx_scheduled_tasks_session ON public.scheduled_tasks USING btree (
 --
 
 CREATE INDEX idx_scheduled_tasks_tenant ON public.scheduled_tasks USING btree (tenant_id);
+
+--
+-- Name: idx_server_replicas_heartbeat; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_server_replicas_heartbeat ON public.server_replicas USING btree (last_heartbeat_at);
 
 --
 -- Name: idx_sessions_active_runner; Type: INDEX; Schema: public; Owner: -
@@ -1732,6 +1765,13 @@ ALTER TABLE ONLY public.profiles
 
 ALTER TABLE ONLY public.runner_tokens
     ADD CONSTRAINT runner_tokens_runner_id_fkey FOREIGN KEY (runner_id) REFERENCES public.runners(id) ON DELETE CASCADE;
+
+--
+-- Name: runners runners_connected_replica_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runners
+    ADD CONSTRAINT runners_connected_replica_id_fkey FOREIGN KEY (connected_replica_id) REFERENCES public.server_replicas(id) ON DELETE SET NULL;
 
 --
 -- Name: runners runners_profile_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
