@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/chunlea/marionette/pkg/auth"
+	"github.com/chunlea/marionette/pkg/cryptoutil"
 	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/server/admin"
 	"github.com/chunlea/marionette/pkg/server/api"
@@ -15,6 +16,7 @@ import (
 	grpcserver "github.com/chunlea/marionette/pkg/server/grpc"
 	"github.com/chunlea/marionette/pkg/store"
 	"github.com/chunlea/marionette/pkg/store/postgres"
+	"github.com/chunlea/marionette/pkg/tunnel"
 	"go.uber.org/zap"
 )
 
@@ -682,3 +684,182 @@ func storeOrNil(s *postgres.Store) store.Store {
 	}
 	return s
 }
+
+// tunnelStoreAdapter gives the tunnel manager a database.
+//
+// Until now cmd/server built the manager without one, so store was nil: Create
+// never wrote the tunnels table, every read-through path in pkg/tunnel
+// dead-ended, and tunnels were memory-only - a server restart lost every
+// tunnel that was still open, and the caller got "tunnel not found" for a URL
+// it had just been handed.
+//
+// Two fields the tunnel package's Store interface does not carry have to be
+// supplied here:
+//
+//   - token_prefix is NOT NULL. It is the human-readable head of the token,
+//     and it is derivable from the token itself, which the tunnel being
+//     created still carries. Reconstructed with the same rule cryptoutil uses
+//     so what lands in the column matches what the manager logs.
+//   - tenant_id stays NULL. Tunnels are not tenant-scoped yet (D2 deferred),
+//     and writing a tenant here would be inventing an isolation boundary the
+//     rest of the tunnel path does not enforce.
+type tunnelStoreAdapter struct {
+	store tunnelStore
+}
+
+// tunnelStore is the slice of the database tunnels need. It is narrower than
+// store.Store because DeleteExpiredTunnels lives only on the Postgres store.
+type tunnelStore interface {
+	CreateTunnel(ctx context.Context, t *store.Tunnel) error
+	GetTunnel(ctx context.Context, id string) (*store.Tunnel, error)
+	GetTunnelByTokenHash(ctx context.Context, hash string) (*store.Tunnel, error)
+	ListTunnels(ctx context.Context, opts store.ListTunnelsOptions) (*store.ListResult[store.Tunnel], error)
+	UpdateTunnel(ctx context.Context, id string, updates store.TunnelUpdates) error
+	DeleteExpiredTunnels(ctx context.Context) (int64, error)
+}
+
+func newTunnelStoreAdapter(s tunnelStore) *tunnelStoreAdapter {
+	return &tunnelStoreAdapter{store: s}
+}
+
+// tunnelListLimit bounds one read-through page.
+//
+// The manager asks for a session's tunnels, and a session with more than this
+// many live tunnels is pathological rather than merely busy. Bounded reads
+// beat an unbounded scan that only shows up under load.
+const tunnelListLimit = 200
+
+// CreateTunnel persists a newly created tunnel.
+func (a *tunnelStoreAdapter) CreateTunnel(ctx context.Context, t *tunnel.Tunnel, tokenHash string, hashVersion int) error {
+	row := &store.Tunnel{
+		ID:          t.ID,
+		SessionID:   t.SessionID,
+		RunnerID:    optionalString(t.RunnerID),
+		Type:        t.Type,
+		Direction:   t.Direction,
+		LocalPort:   t.LocalPort,
+		PublicURL:   optionalString(t.PublicURL),
+		IsPublic:    t.IsPublic,
+		TokenHash:   tokenHash,
+		TokenPrefix: tunnelTokenPrefix(t.Token),
+		HashVersion: hashVersion,
+		CreatedAt:   t.CreatedAt,
+		ExpiresAt:   t.ExpiresAt,
+		ClosedAt:    t.ClosedAt,
+	}
+	return a.store.CreateTunnel(ctx, row)
+}
+
+// GetTunnel retrieves a tunnel by ID.
+func (a *tunnelStoreAdapter) GetTunnel(ctx context.Context, id string) (*tunnel.Tunnel, error) {
+	row, err := a.store.GetTunnel(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return toTunnel(row), nil
+}
+
+// GetTunnelByHash retrieves a tunnel by its token hash. This is what lets a
+// token authenticate itself after a restart, when the in-memory entry that
+// held the hash is gone.
+func (a *tunnelStoreAdapter) GetTunnelByHash(ctx context.Context, hash string) (*tunnel.Tunnel, error) {
+	row, err := a.store.GetTunnelByTokenHash(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	return toTunnel(row), nil
+}
+
+// ListTunnels returns tunnels matching opts.
+func (a *tunnelStoreAdapter) ListTunnels(ctx context.Context, opts tunnel.ListOptions) ([]*tunnel.Tunnel, error) {
+	storeOpts := store.ListTunnelsOptions{
+		BaseListOptions: store.BaseListOptions{Limit: tunnelListLimit},
+		Type:            opts.Types,
+		IncludeClosed:   opts.IncludeClosed,
+	}
+	if opts.SessionID != "" {
+		storeOpts.SessionID = &opts.SessionID
+	}
+	if opts.RunnerID != "" {
+		storeOpts.RunnerID = &opts.RunnerID
+	}
+
+	result, err := a.store.ListTunnels(ctx, storeOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	tunnels := make([]*tunnel.Tunnel, 0, len(result.Items))
+	for _, row := range result.Items {
+		tunnels = append(tunnels, toTunnel(row))
+	}
+	return tunnels, nil
+}
+
+// UpdateTunnel applies updates to a stored tunnel.
+func (a *tunnelStoreAdapter) UpdateTunnel(ctx context.Context, id string, updates tunnel.Updates) error {
+	return a.store.UpdateTunnel(ctx, id, store.TunnelUpdates{
+		PublicURL: updates.PublicURL,
+		ClosedAt:  updates.ClosedAt,
+	})
+}
+
+// DeleteExpiredTunnels removes tunnels past their expiry.
+func (a *tunnelStoreAdapter) DeleteExpiredTunnels(ctx context.Context) (int64, error) {
+	return a.store.DeleteExpiredTunnels(ctx)
+}
+
+// toTunnel converts a stored row into the tunnel package's shape.
+//
+// Token is deliberately not set: it exists only in the response to the create
+// that minted it, and a tunnel read back from the database has no plaintext
+// token to offer.
+func toTunnel(row *store.Tunnel) *tunnel.Tunnel {
+	return &tunnel.Tunnel{
+		ID:        row.ID,
+		SessionID: row.SessionID,
+		RunnerID:  stringValue(row.RunnerID),
+		Type:      row.Type,
+		Direction: row.Direction,
+		LocalPort: row.LocalPort,
+		PublicURL: stringValue(row.PublicURL),
+		IsPublic:  row.IsPublic,
+		ExpiresAt: row.ExpiresAt,
+		CreatedAt: row.CreatedAt,
+		ClosedAt:  row.ClosedAt,
+	}
+}
+
+// tunnelTokenPrefix rebuilds the display prefix cryptoutil produced when the
+// token was minted: the type prefix plus the first eight characters of the
+// random part.
+//
+// token_prefix is NOT NULL, so a tunnel with no token still has to write
+// something; the type prefix alone is the honest answer in that case.
+func tunnelTokenPrefix(token string) string {
+	const displayChars = 8
+
+	typePrefix := cryptoutil.ExtractPrefix(token)
+	if typePrefix == "" {
+		typePrefix = cryptoutil.PrefixTunnelToken
+	}
+	if len(token) >= len(typePrefix)+displayChars {
+		return token[:len(typePrefix)+displayChars]
+	}
+	if token != "" {
+		return token
+	}
+	return typePrefix
+}
+
+// stringValue is the nil-safe read of an optional column.
+func stringValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// Compile-time check: the tunnel package's Store interface must be satisfied
+// here, not discovered to be unsatisfied at the nil-store dead end it replaces.
+var _ tunnel.Store = (*tunnelStoreAdapter)(nil)

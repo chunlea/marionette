@@ -207,6 +207,7 @@ func main() {
 		if cfg.Tunnels.Enabled {
 			tunnelRouter = wireTunnels(wireTunnelsDeps{
 				store:       dbStore,
+				tunnelStore: dbStore,
 				connManager: connManager,
 				apiKeySvc:   apiKeySvc,
 				baseURL:     baseURL,
@@ -638,21 +639,47 @@ func main() {
 
 // wireTunnelsDeps are the pieces the tunnel subsystem needs.
 type wireTunnelsDeps struct {
-	store       store.Store
+	store store.Store
+	// tunnelStore persists tunnels. It is a narrower interface than
+	// store.Store because DeleteExpiredTunnels lives only on the Postgres
+	// store. Nil leaves tunnels memory-only, which is what production ran
+	// with until this was wired.
+	tunnelStore tunnelStore
 	connManager *grpcserver.ConnectionManager
 	apiKeySvc   *auth.APIKeyService
 	baseURL     string
 	logger      *zap.Logger
 }
 
+// newTunnelManager builds the tunnel manager the way production does.
+//
+// Separated from wireTunnels so a test can assert the property that was wrong
+// for the life of the project: the manager production builds must persist.
+// Without a store it keeps tunnels in memory only - Create never writes the
+// tunnels table, every read-through path dead-ends, and a restart loses every
+// open tunnel while the URLs already handed out keep being answered with
+// "tunnel not found".
+func newTunnelManager(deps wireTunnelsDeps) *tunnel.TunnelManager {
+	opts := []tunnel.ManagerOption{
+		tunnel.WithLogger(deps.logger),
+		tunnel.WithBaseURL(deps.baseURL),
+	}
+
+	if deps.tunnelStore != nil {
+		opts = append(opts, tunnel.WithStore(newTunnelStoreAdapter(deps.tunnelStore)))
+		deps.logger.Info("tunnel persistence enabled")
+	} else {
+		deps.logger.Warn("no database: tunnels are memory-only and will not survive a restart")
+	}
+
+	return tunnel.NewTunnelManager(opts...)
+}
+
 // wireTunnels builds the tunnel manager, router and HTTP handlers and appends
 // the tunnel API options. It returns the router so the gRPC message router can
 // forward runner tunnel data to it.
 func wireTunnels(deps wireTunnelsDeps, apiOpts *[]api.Option) *grpcserver.TunnelRouter {
-	tunnelMgr := tunnel.NewTunnelManager(
-		tunnel.WithLogger(deps.logger),
-		tunnel.WithBaseURL(deps.baseURL),
-	)
+	tunnelMgr := newTunnelManager(deps)
 
 	tunnelRouter := grpcserver.NewTunnelRouter(
 		grpcserver.WithTRLogger(deps.logger),
