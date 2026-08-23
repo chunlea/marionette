@@ -21,6 +21,13 @@ import (
 // data leak waiting for the first missed RESET.
 const setTenantSQL = `SELECT set_config('app.tenant_id', $1, true)`
 
+// setSystemSQL grants cross-tenant access for the current transaction.
+//
+// Transaction-scoped for the same reason as the tenant binding: a
+// connection-level grant that outlived its request would turn the next
+// request on that pooled connection into an accidental superuser.
+const setSystemSQL = `SELECT set_config('app.system', 'on', true)`
+
 // tenantDB is the querier the Store hands to every statement.
 //
 // With no tenant in context it is the bare pool: single-tenant deployments pay
@@ -35,12 +42,22 @@ type tenantDB struct {
 	pool *pgxpool.Pool
 }
 
-// begin opens a transaction with the tenant bound.
+// begin opens a transaction with the tenant bound, or with cross-tenant access
+// granted when the context carries it.
 func (d tenantDB) begin(ctx context.Context, tenantID string) (pgx.Tx, error) {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("beginning tenant transaction: %w", err)
 	}
+
+	if store.IsSystemAccess(ctx) {
+		if _, err := tx.Exec(ctx, setSystemSQL); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, fmt.Errorf("granting system access: %w", err)
+		}
+		return tx, nil
+	}
+
 	if _, err := tx.Exec(ctx, setTenantSQL, tenantID); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, fmt.Errorf("binding tenant %q: %w", tenantID, err)
@@ -48,9 +65,18 @@ func (d tenantDB) begin(ctx context.Context, tenantID string) (pgx.Tx, error) {
 	return tx, nil
 }
 
+// needsTransaction reports whether a statement has to run inside one to carry
+// its tenant binding or its system grant.
+func needsTransaction(ctx context.Context) (tenantID string, needed bool) {
+	if store.IsSystemAccess(ctx) {
+		return "", true
+	}
+	return store.TenantFromContext(ctx)
+}
+
 // Exec runs a statement, bound to the context's tenant when there is one.
 func (d tenantDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	tenantID, ok := store.TenantFromContext(ctx)
+	tenantID, ok := needsTransaction(ctx)
 	if !ok {
 		return d.pool.Exec(ctx, sql, args...)
 	}
@@ -78,7 +104,7 @@ func (d tenantDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.Com
 // result that is never scanned would hold its connection until the context is
 // cancelled, which is why the row type is not exported.
 func (d tenantDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	tenantID, ok := store.TenantFromContext(ctx)
+	tenantID, ok := needsTransaction(ctx)
 	if !ok {
 		return d.pool.QueryRow(ctx, sql, args...)
 	}
@@ -96,7 +122,7 @@ func (d tenantDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 // The transaction is closed by Rows.Close, which pgx callers are already
 // required to call.
 func (d tenantDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	tenantID, ok := store.TenantFromContext(ctx)
+	tenantID, ok := needsTransaction(ctx)
 	if !ok {
 		return d.pool.Query(ctx, sql, args...)
 	}

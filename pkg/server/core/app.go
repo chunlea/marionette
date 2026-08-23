@@ -173,7 +173,12 @@ func Wire(deps WireDeps) (*App, error) {
 
 	workspaces := NewWorkspaceManager(deps.Store, deps.WorkspaceConfig, logger.Named("workspace"))
 
-	appCtx, cancel := context.WithCancel(context.Background())
+	// Background jobs run for the deployment, not for a tenant: the reaper
+	// destroys any tenant's orphaned runners, chunk GC collects every tenant's
+	// chunks, the partition maintainer serves them all. Without this they would
+	// see only NULL-tenant rows and quietly stop working the moment
+	// multi_tenant was switched on.
+	appCtx, cancel := context.WithCancel(store.WithSystemAccess(context.Background()))
 	background := newBackgroundTasks(appCtx, deps.Jobs.BackgroundWorkers, logger.Named("background"))
 
 	sessions := NewSessionManagerWithConfig(SessionManagerConfig{

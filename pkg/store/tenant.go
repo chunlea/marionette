@@ -40,3 +40,28 @@ func TenantPtr(ctx context.Context) *string {
 	}
 	return &tenantID
 }
+
+// systemAccessKey marks a context as acting for the deployment rather than for
+// one tenant.
+type systemAccessKey struct{}
+
+// WithSystemAccess returns a context that may read and write across tenants.
+//
+// This is a deliberate hole in tenant isolation, and it has exactly two callers
+// by design: the admin API, whose single operator credential is the
+// deployment's root of trust and which exists to see everything, and the
+// background jobs, which reap runners and collect chunks for every tenant at
+// once. Both are server-side; neither is reachable by an API key.
+//
+// It is not a substitute for a tenant. A request that should have had one and
+// does not is a bug, and marking it system-access would hide that bug behind a
+// working screen.
+func WithSystemAccess(ctx context.Context) context.Context {
+	return context.WithValue(ctx, systemAccessKey{}, true)
+}
+
+// IsSystemAccess reports whether ctx may cross tenant boundaries.
+func IsSystemAccess(ctx context.Context) bool {
+	granted, _ := ctx.Value(systemAccessKey{}).(bool)
+	return granted
+}

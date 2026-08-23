@@ -270,7 +270,12 @@ func (s *Store) BeginTx(ctx context.Context) (store.Tx, error) {
 
 	// Bind the tenant for the life of the transaction, so every statement
 	// inside it is filtered by the same policies as a single statement is.
-	if tenantID, ok := store.TenantFromContext(ctx); ok {
+	if store.IsSystemAccess(ctx) {
+		if _, err := tx.Exec(ctx, setSystemSQL); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, fmt.Errorf("granting system access: %w", err)
+		}
+	} else if tenantID, ok := store.TenantFromContext(ctx); ok {
 		if _, err := tx.Exec(ctx, setTenantSQL, tenantID); err != nil {
 			_ = tx.Rollback(ctx)
 			return nil, fmt.Errorf("binding tenant %q: %w", tenantID, err)

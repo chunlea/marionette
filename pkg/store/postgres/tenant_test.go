@@ -479,3 +479,98 @@ func TestRLS_SingleTenantCRUDSliceUnchanged(t *testing.T) {
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 }
+
+// =============================================================================
+// System access
+// =============================================================================
+
+// TestRLS_SystemAccessCrossesTenants covers the two callers that legitimately
+// span the deployment: the admin console and the background jobs. Without this
+// escape both would see nothing at all in multi-tenant mode.
+func TestRLS_SystemAccessCrossesTenants(t *testing.T) {
+	s := unprivilegedStore(t)
+
+	ctxA := tenantCtx("tenant_sys_a")
+	ctxB := tenantCtx("tenant_sys_b")
+	_, sessA := seedSessionFor(t, ctxA, "sys-a")
+	_, sessB := seedSessionFor(t, ctxB, "sys-b")
+
+	sysCtx := store.WithSystemAccess(context.Background())
+
+	t.Run("reads across tenants", func(t *testing.T) {
+		got, err := s.ListSessions(sysCtx, store.ListSessionsOptions{})
+		require.NoError(t, err)
+
+		ids := map[string]bool{}
+		for _, sess := range got.Items {
+			ids[sess.ID] = true
+		}
+		assert.True(t, ids[sessA.ID], "the operator console must see tenant A")
+		assert.True(t, ids[sessB.ID], "and tenant B")
+	})
+
+	t.Run("reads a specific tenant's row by id", func(t *testing.T) {
+		got, err := s.GetSession(sysCtx, sessB.ID)
+		require.NoError(t, err)
+		assert.Equal(t, sessB.ID, got.ID)
+	})
+
+	t.Run("in a transaction too", func(t *testing.T) {
+		require.NoError(t, store.WithTx(sysCtx, s, func(tx store.Tx) error {
+			_, err := tx.GetSession(sysCtx, sessA.ID)
+			return err
+		}))
+	})
+}
+
+// TestRLS_SystemAccessDoesNotLeakToTenantRequests is the guard on the escape:
+// it is transaction-scoped, so a pooled connection that just served the admin
+// console cannot hand cross-tenant vision to the next request on it.
+func TestRLS_SystemAccessDoesNotLeakToTenantRequests(t *testing.T) {
+	s := unprivilegedStore(t)
+
+	ctxA := tenantCtx("tenant_leak_sys_a")
+	_, sessA := seedSessionFor(t, ctxA, "leak-sys-a")
+	sysCtx := store.WithSystemAccess(context.Background())
+
+	// Churn the pool with system-access reads.
+	for i := 0; i < 20; i++ {
+		_, err := s.ListSessions(sysCtx, store.ListSessionsOptions{})
+		require.NoError(t, err)
+	}
+
+	// A different tenant must still see only its own rows.
+	ctxB := tenantCtx("tenant_leak_sys_b")
+	for i := 0; i < 20; i++ {
+		got, err := s.ListSessions(ctxB, store.ListSessionsOptions{})
+		require.NoError(t, err)
+		for _, sess := range got.Items {
+			require.NotEqual(t, sessA.ID, sess.ID,
+				"system access leaked across the pool into a tenant request")
+		}
+	}
+
+	// And a tenantless request is still tenantless.
+	got, err := s.ListSessions(context.Background(), store.ListSessionsOptions{})
+	require.NoError(t, err)
+	for _, sess := range got.Items {
+		require.Nil(t, sess.TenantID)
+	}
+}
+
+// TestRLS_SystemAccessWritesAcrossTenants: the admin console mints API keys and
+// registers runners for tenants it is not itself acting as.
+func TestRLS_SystemAccessWritesAcrossTenants(t *testing.T) {
+	s := unprivilegedStore(t)
+	sysCtx := store.WithSystemAccess(context.Background())
+
+	other := "tenant_sys_write"
+	ws := newWorkspace("operator-created", &other)
+	require.NoError(t, s.CreateWorkspace(sysCtx, ws),
+		"the operator console must be able to create into a tenant")
+
+	// And the tenant can see what was created for it.
+	got, err := s.GetWorkspace(tenantCtx(other), ws.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ws.ID, got.ID)
+}
