@@ -1,0 +1,25 @@
+pkg/agent/executor/claude/executor.go
+  s_476c758fe5506c::t_7052602c6d7c06 19-22,183-190,568,570,661
+pkg/agent/executor/claude/executor_test.go
+  s_476c758fe5506c::t_a42d3f6e52fb65 821,823,831-837
+pkg/agent/executor/claude/process_unix.go
+  s_476c758fe5506c::t_36306b67fe03af 1-36
+pkg/agent/executor/claude/process_windows.go
+  s_476c758fe5506c::t_64aaa65b94664d 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "88cbf2ca3642d1093dc70e234191f344787eea8e",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
