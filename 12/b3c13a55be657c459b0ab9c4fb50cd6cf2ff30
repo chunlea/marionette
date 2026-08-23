@@ -1,0 +1,29 @@
+pkg/server/core/session_manager.go
+  s_30fb41c4a911b8::t_bfd917c275bb6c 595-602,729-736,1919-1925
+pkg/server/core/session_manager_test.go
+  s_4e03746a1c3c16::t_75bd97359f6fe5 2473-2513
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "12b3c13a55be657c459b0ab9c4fb50cd6cf2ff30",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_4e03746a1c3c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60714d52-8636-4fc2-adaa-7b5018a4a131",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
