@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+//go:generate go run gen_runner_token_fixtures.go
+
 // The admin API returns runner tokens as {"token": {...}, "raw_token": "..."}.
 // RunnerTokenWithSecret flattens that, so it needs custom JSON methods; without
 // them every embedded field decoded as its zero value and
@@ -21,7 +23,8 @@ import (
 //
 // The fixtures are generated from the server's own response types
 // (admin.CreateRunnerTokenResponse / admin.RotateRunnerTokenResponse) so they
-// cannot drift into a hand-written guess of the shape.
+// cannot drift into a hand-written guess of the shape. Regenerate them with
+// `go generate ./pkg/client/...` (see gen_runner_token_fixtures.go).
 
 func loadFixture(t *testing.T, name string) []byte {
 	t.Helper()
