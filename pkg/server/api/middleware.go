@@ -29,23 +29,68 @@ func GetAPIKey(ctx context.Context) *store.APIKey {
 	return nil
 }
 
+// isWebSocketUpgrade reports whether r is a WebSocket handshake.
+//
+// Connection is a comma-separated list of tokens: browsers send
+// "Connection: keep-alive, Upgrade", so an exact match on "upgrade" misses
+// them.
+func isWebSocketUpgrade(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, token := range strings.Split(r.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenFromRequest extracts the API key a request authenticates with.
+//
+// Normally that is the Authorization header. A WebSocket handshake started by
+// a browser cannot carry one — the WebSocket constructor takes a URL and
+// nothing else — so for handshakes only, the key may travel as ?token=. The
+// dashboard has always sent it that way and the stream handlers have always
+// read it, but the check sat behind this middleware and was unreachable, so
+// every browser WebSocket got a 401.
+//
+// The query form is deliberately not accepted for ordinary requests: URLs end
+// up in access logs, proxies and Referer headers, and there is no reason to
+// put a credential there when a header will do.
+func tokenFromRequest(r *http.Request) (string, *apiError) {
+	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			return "", &apiError{"invalid_auth", "Invalid authorization header format"}
+		}
+		return parts[1], nil
+	}
+
+	if isWebSocketUpgrade(r) {
+		if token := r.URL.Query().Get("token"); token != "" {
+			return token, nil
+		}
+		return "", &apiError{"missing_auth", "Authorization header or token query parameter required"}
+	}
+
+	return "", &apiError{"missing_auth", "Authorization header required"}
+}
+
+// apiError carries the code and message of an authentication failure.
+type apiError struct {
+	code    string
+	message string
+}
+
 // AuthMiddleware validates API key authentication.
 func (s *Server) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Extract token from Authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			WriteError(w, http.StatusUnauthorized, "missing_auth", "Authorization header required")
+		token, authErr := tokenFromRequest(r)
+		if authErr != nil {
+			WriteError(w, http.StatusUnauthorized, authErr.code, authErr.message)
 			return
 		}
-
-		// Parse Bearer token
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			WriteError(w, http.StatusUnauthorized, "invalid_auth", "Invalid authorization header format")
-			return
-		}
-		token := parts[1]
 
 		// Validate API key
 		if s.apiKeyService == nil {
