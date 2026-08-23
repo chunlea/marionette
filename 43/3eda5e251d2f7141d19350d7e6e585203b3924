@@ -1,0 +1,25 @@
+docs/development/contributing.md
+  s_b1ee0c9aba1316::t_692cb3a34b1a0d 39-40,42-59,63-65
+docs/guides/cli-reference.md
+  s_b1ee0c9aba1316::t_2f58576c9062d3 3,5-17,21,24-25,27-31,36,44,46-55,57,60,63,72-74,76,80-81,83,86-88,90-96,99,101,104-105,107-108,111-113,116-118,120-125,127,129,131-137,139,141,143-150,152-156,158-161,163,165-166
+docs/guides/security.md
+  s_b1ee0c9aba1316::t_bf41e6ab91b4a1 145-182,185-191,194
+docs/concepts/workspaces.md
+  s_b1ee0c9aba1316::t_4bbb861c2f71af 13-22,110-113,119,122,147-150,153-156,159-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "433eda5e251d2f7141d19350d7e6e585203b3924",
+  "prompts": {},
+  "sessions": {
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
