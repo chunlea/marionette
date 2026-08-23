@@ -1,0 +1,19 @@
+pkg/tunnel/manager.go
+  s_28898a3c73f97d::t_6d2800b4fce3a5 21-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "f5af4f3c82a36c6a33ef2199132473c2385b037d",
+  "prompts": {},
+  "sessions": {
+    "s_28898a3c73f97d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98b6c8d5-b187-4f6f-bcd2-72ef08cfde16",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
