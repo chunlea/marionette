@@ -4,6 +4,7 @@ package iptables
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -107,7 +108,19 @@ type MockExecutor struct {
 
 	// Errors maps command strings to their mock errors.
 	Errors map[string]error
+
+	// CheckErr is returned for -C (rule exists?) probes that are not listed in
+	// checkOK. It defaults to iptables' "Bad rule" complaint so a fresh mock
+	// behaves like an empty ruleset: without it every conditional insert would
+	// believe its rule was already present and silently do nothing.
+	CheckErr error
+
+	// checkOK marks -C probes that should succeed.
+	checkOK map[string]bool
 }
+
+// ErrMockRuleMissing is what iptables prints when -C or -D finds no such rule.
+var ErrMockRuleMissing = errors.New("iptables: Bad rule (does a matching rule exist in that chain?).")
 
 // NewMockExecutor creates a new mock executor for testing.
 func NewMockExecutor() *MockExecutor {
@@ -116,7 +129,35 @@ func NewMockExecutor() *MockExecutor {
 		IPv6Commands: make([][]string, 0),
 		Outputs:      make(map[string][]byte),
 		Errors:       make(map[string]error),
+		CheckErr:     ErrMockRuleMissing,
+		checkOK:      make(map[string]bool),
 	}
+}
+
+// SetCheckOK makes the -C probe for the given rule arguments succeed, i.e.
+// pretend the rule is already installed.
+func (m *MockExecutor) SetCheckOK(args []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkOK[strings.Join(args, " ")] = true
+}
+
+// SetIPv6CheckOK is SetCheckOK for the ip6tables side.
+func (m *MockExecutor) SetIPv6CheckOK(args []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkOK["v6:"+strings.Join(args, " ")] = true
+}
+
+// checkResult resolves a -C probe. Caller holds the lock.
+func (m *MockExecutor) checkResult(args []string, key string) (error, bool) {
+	if len(args) == 0 || args[0] != "-C" {
+		return nil, false
+	}
+	if m.checkOK[key] {
+		return nil, true
+	}
+	return m.CheckErr, true
 }
 
 // Run records the command and returns any configured error.
@@ -128,6 +169,9 @@ func (m *MockExecutor) Run(ctx context.Context, args ...string) error {
 
 	key := strings.Join(args, " ")
 	if err, ok := m.Errors[key]; ok {
+		return err
+	}
+	if err, handled := m.checkResult(args, key); handled {
 		return err
 	}
 	return nil
@@ -159,6 +203,9 @@ func (m *MockExecutor) RunIPv6(ctx context.Context, args ...string) error {
 
 	key := "v6:" + strings.Join(args, " ")
 	if err, ok := m.Errors[key]; ok {
+		return err
+	}
+	if err, handled := m.checkResult(args, key); handled {
 		return err
 	}
 	return nil
@@ -221,4 +268,84 @@ func (m *MockExecutor) Reset() {
 	m.IPv6Commands = make([][]string, 0)
 	m.Outputs = make(map[string][]byte)
 	m.Errors = make(map[string]error)
+	m.checkOK = make(map[string]bool)
 }
+
+// NamespaceExecutor runs iptables inside another network namespace.
+//
+// The host's iptables binary is entered into the target namespace with
+// nsenter, rather than exec'd inside the container: a runner image is not
+// required to ship iptables, and the sandbox must never be able to see or
+// edit the rules that constrain it.
+//
+// Requires CAP_NET_ADMIN in the target namespace, which in practice means the
+// server process runs as root on the Docker host.
+type NamespaceExecutor struct {
+	// resolve returns the current network namespace path. It is called for
+	// every command, so a container that restarted under a new PID is picked
+	// up without recreating the executor.
+	resolve func(ctx context.Context) (string, error)
+
+	nsenterPath   string
+	iptablesPath  string
+	ip6tablesPath string
+}
+
+// NewNamespaceExecutor creates an executor targeting the namespace returned by
+// resolve.
+func NewNamespaceExecutor(resolve func(ctx context.Context) (string, error)) *NamespaceExecutor {
+	return &NamespaceExecutor{
+		resolve:       resolve,
+		nsenterPath:   "nsenter",
+		iptablesPath:  "iptables",
+		ip6tablesPath: "ip6tables",
+	}
+}
+
+// Run executes an iptables command inside the namespace.
+func (e *NamespaceExecutor) Run(ctx context.Context, args ...string) error {
+	_, err := e.run(ctx, e.iptablesPath, args)
+	return err
+}
+
+// Output executes an iptables command inside the namespace and returns stdout.
+func (e *NamespaceExecutor) Output(ctx context.Context, args ...string) ([]byte, error) {
+	return e.run(ctx, e.iptablesPath, args)
+}
+
+// RunIPv6 executes an ip6tables command inside the namespace.
+func (e *NamespaceExecutor) RunIPv6(ctx context.Context, args ...string) error {
+	_, err := e.run(ctx, e.ip6tablesPath, args)
+	return err
+}
+
+// OutputIPv6 executes an ip6tables command inside the namespace.
+func (e *NamespaceExecutor) OutputIPv6(ctx context.Context, args ...string) ([]byte, error) {
+	return e.run(ctx, e.ip6tablesPath, args)
+}
+
+func (e *NamespaceExecutor) run(ctx context.Context, binary string, args []string) ([]byte, error) {
+	nsPath, err := e.resolve(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolving network namespace: %w", err)
+	}
+
+	full := append([]string{"--net=" + nsPath, "--", binary}, args...)
+	cmd := exec.CommandContext(ctx, e.nsenterPath, full...)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		// iptables reports "No chain..." and "Bad rule..." on stderr; callers
+		// match on those strings, so they have to survive into the error.
+		return nil, fmt.Errorf("%s %s in %s: %w: %s",
+			binary, strings.Join(args, " "), nsPath, err, strings.TrimSpace(stderr.String()))
+	}
+
+	return stdout.Bytes(), nil
+}
+
+// Ensure NamespaceExecutor satisfies the Executor interface.
+var _ Executor = (*NamespaceExecutor)(nil)

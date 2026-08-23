@@ -168,13 +168,17 @@ func (p *NetworkPolicy) Validate() error {
 }
 
 // IsRestricted returns true if network access is restricted (not "none").
+//
+// A nil policy is the "no isolation" case, so the predicates below tolerate
+// one: callers get a policy or nil from a single Prepare step and should not
+// have to guard every use.
 func (p *NetworkPolicy) IsRestricted() bool {
-	return p.Level != PolicyNone
+	return p != nil && p.Level != PolicyNone
 }
 
 // IsAirGapped returns true if the policy completely blocks internet access.
 func (p *NetworkPolicy) IsAirGapped() bool {
-	return p.Level == PolicyAirGapped
+	return p != nil && p.Level == PolicyAirGapped
 }
 
 // RequiresDNSPinning returns true if the policy resolves names to IP rules and
@@ -182,7 +186,7 @@ func (p *NetworkPolicy) IsAirGapped() bool {
 //
 // Proxy mode is included: the proxy endpoint itself is pinned to an IP.
 func (p *NetworkPolicy) RequiresDNSPinning() bool {
-	return p.Level == PolicyAllowList || p.Level == PolicyProxy
+	return p != nil && (p.Level == PolicyAllowList || p.Level == PolicyProxy)
 }
 
 // AllowsExternalDNS reports whether the sandbox may send DNS queries off-box.
@@ -191,7 +195,7 @@ func (p *NetworkPolicy) RequiresDNSPinning() bool {
 // so the control-plane address is pinned into the container's /etc/hosts
 // instead and port 53 stays closed.
 func (p *NetworkPolicy) AllowsExternalDNS() bool {
-	return p.Level != PolicyAirGapped
+	return p == nil || p.Level != PolicyAirGapped
 }
 
 // ControlPlaneHosts returns the host part of every control-plane endpoint.

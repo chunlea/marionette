@@ -16,7 +16,9 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"go.uber.org/zap"
 
+	network2 "github.com/chunlea/marionette/pkg/network"
 	"github.com/chunlea/marionette/pkg/provider"
 	"github.com/chunlea/marionette/pkg/store"
 )
@@ -45,6 +47,19 @@ type Provider struct {
 
 	// networkIsolation handles network policy enforcement.
 	networkIsolation *NetworkIsolation
+
+	logger *zap.Logger
+}
+
+// SetLogger attaches a logger to the provider and its network isolation.
+// Without it both stay silent, which is the right default for tests but hides
+// policy decisions in production.
+func (p *Provider) SetLogger(logger *zap.Logger) {
+	if logger == nil {
+		return
+	}
+	p.logger = logger
+	p.networkIsolation.SetLogger(logger.Named("network"))
 }
 
 // Compile-time interface checks.
@@ -76,6 +91,7 @@ func New(cfg *store.ProviderConfig) (*Provider, error) {
 		suspendConfig:    suspendCfg,
 		client:           client,
 		networkIsolation: NewNetworkIsolation(client),
+		logger:           zap.NewNop(),
 	}, nil
 }
 
@@ -91,6 +107,7 @@ func NewWithClient(name string, cfg *Config, suspendCfg *provider.SuspendConfig,
 		suspendConfig:    suspendCfg,
 		client:           client,
 		networkIsolation: NewNetworkIsolation(client),
+		logger:           zap.NewNop(),
 	}
 }
 
@@ -106,6 +123,7 @@ func NewWithClientAndNetworkIsolation(name string, cfg *Config, suspendCfg *prov
 		suspendConfig:    suspendCfg,
 		client:           client,
 		networkIsolation: ni,
+		logger:           zap.NewNop(),
 	}
 }
 
@@ -134,19 +152,43 @@ func (p *Provider) Capabilities() provider.ProviderCapabilities {
 }
 
 // Spawn creates and starts a new container.
+//
+// A runner under a restricted network policy is created with no network at
+// all, started, fitted with its firewall rules while its namespace holds
+// nothing but loopback, and only then connected to a network. The container
+// therefore never has an interface it could send a packet through before the
+// rules exist. Applying the policy after connecting, which is what this used
+// to do, leaves a window of unrestricted egress between start and enforcement.
 func (p *Provider) Spawn(ctx context.Context, opts provider.SpawnOptions) (*provider.RunnerInstance, error) {
 	// Ensure network exists (auto-create if configured).
 	if err := p.ensureNetwork(ctx); err != nil {
 		return nil, &provider.ErrSpawnFailed{Reason: "network setup failed", Cause: err}
 	}
 
+	// Parse the policy before creating anything: a malformed policy must fail
+	// the spawn, not leave a running container with nothing enforced on it.
+	policy, err := p.networkIsolation.Prepare(opts, p.config)
+	if err != nil {
+		return nil, &provider.ErrSpawnFailed{Reason: "invalid network policy", Cause: err}
+	}
+
+	// Resolve on the host, before the container exists: /etc/hosts entries and
+	// the proxy environment are derived from the pinned addresses.
+	var resolved *network2.ResolvedPolicy
+	if policy.IsRestricted() {
+		resolved, err = p.networkIsolation.Resolve(ctx, policy)
+		if err != nil {
+			return nil, &provider.ErrSpawnFailed{Reason: "network policy resolution failed", Cause: err}
+		}
+	}
+
 	// Build container name.
 	containerName := p.containerName(opts.Name, opts.RunnerID)
 
 	// Build container configuration.
-	containerConfig := p.buildContainerConfig(opts)
-	hostConfig := p.buildHostConfig(opts)
-	networkConfig := p.buildNetworkConfig()
+	containerConfig := p.buildContainerConfig(opts, resolved)
+	hostConfig := p.buildHostConfig(opts, resolved)
+	networkConfig := p.buildNetworkConfig(resolved)
 
 	// Create container.
 	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, nil, containerName)
@@ -161,10 +203,10 @@ func (p *Provider) Spawn(ctx context.Context, opts provider.SpawnOptions) (*prov
 		return nil, &provider.ErrSpawnFailed{Reason: "container start failed", Cause: err}
 	}
 
-	// Apply network isolation policy if configured.
-	if opts.NetworkPolicy != "" && opts.NetworkPolicy != "none" {
-		if err := p.networkIsolation.ApplyPolicy(ctx, resp.ID, opts); err != nil {
-			// Cleanup on failure.
+	if resolved != nil {
+		if err := p.applyIsolation(ctx, opts, resp.ID, policy, resolved); err != nil {
+			// The container is running but unprotected, and it is still
+			// detached from every network. Destroy it rather than connect it.
 			_ = p.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 			return nil, &provider.ErrSpawnFailed{Reason: "network policy failed", Cause: err}
 		}
@@ -187,6 +229,45 @@ func (p *Provider) Spawn(ctx context.Context, opts provider.SpawnOptions) (*prov
 	}, nil
 }
 
+// applyIsolation installs the firewall and only then gives the container an
+// interface.
+//
+// Order is the whole point. Between ContainerStart and NetworkConnect the
+// container's namespace has no non-loopback interface, so there is no path a
+// packet could take; the rules land in that gap.
+func (p *Provider) applyIsolation(ctx context.Context, opts provider.SpawnOptions, containerID string, policy *network2.NetworkPolicy, resolved *network2.ResolvedPolicy) error {
+	key := runnerChainKey(opts.RunnerID, containerID)
+
+	if err := p.networkIsolation.Install(ctx, key, containerID, resolved); err != nil {
+		return err
+	}
+
+	if err := p.client.NetworkConnect(ctx, p.attachNetwork(), containerID, nil); err != nil {
+		_ = p.networkIsolation.Cleanup(ctx, key)
+		return fmt.Errorf("connecting container to network: %w", err)
+	}
+
+	// The refresh loop outlives this request: it must keep the pinned
+	// addresses current for as long as the runner exists.
+	if err := p.networkIsolation.StartRefresh(context.WithoutCancel(ctx), key, policy, resolved); err != nil {
+		_ = p.networkIsolation.Cleanup(ctx, key)
+		return err
+	}
+
+	return nil
+}
+
+// attachNetwork returns the network a restricted container is connected to
+// after its rules are in place.
+func (p *Provider) attachNetwork() string {
+	if p.config.Network != "" {
+		return p.config.Network
+	}
+	// Matching Docker's own default, so a provider with no configured network
+	// still ends up with the connectivity an unrestricted runner would have.
+	return "bridge"
+}
+
 // Destroy stops and removes a container.
 func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
 	containerID, err := p.findContainerByRunnerID(ctx, runnerID)
@@ -194,8 +275,14 @@ func (p *Provider) Destroy(ctx context.Context, runnerID string) error {
 		return err
 	}
 
-	// Cleanup network isolation rules (ignore errors as container may be stopping).
-	_ = p.networkIsolation.CleanupPolicy(ctx, containerID)
+	// Stop the refresher and drop the rules. Errors are not fatal: the rules
+	// live in the container's namespace and die with it.
+	if err := p.networkIsolation.Cleanup(ctx, runnerChainKey(runnerID, containerID)); err != nil {
+		p.logger.Warn("network policy cleanup failed",
+			zap.String("runner_id", runnerID),
+			zap.Error(err),
+		)
+	}
 
 	// Stop with timeout.
 	timeout := defaultStopTimeout
@@ -339,8 +426,8 @@ func (p *Provider) labelKey(key string) string {
 	return fmt.Sprintf("%s/%s", p.config.LabelPrefix, key)
 }
 
-func (p *Provider) buildContainerConfig(opts provider.SpawnOptions) *container.Config {
-	env := p.buildEnv(opts)
+func (p *Provider) buildContainerConfig(opts provider.SpawnOptions, resolved *network2.ResolvedPolicy) *container.Config {
+	env := p.buildEnv(opts, resolved)
 	labels := p.buildLabels(opts)
 
 	cfg := &container.Config{
@@ -357,17 +444,54 @@ func (p *Provider) buildContainerConfig(opts provider.SpawnOptions) *container.C
 	return cfg
 }
 
-func (p *Provider) buildHostConfig(opts provider.SpawnOptions) *container.HostConfig {
-	resources := p.buildResources(opts)
-	mounts := p.buildMounts(opts)
-
-	return &container.HostConfig{
-		Resources: resources,
-		Mounts:    mounts,
+func (p *Provider) buildHostConfig(opts provider.SpawnOptions, resolved *network2.ResolvedPolicy) *container.HostConfig {
+	cfg := &container.HostConfig{
+		Resources: p.buildResources(opts),
+		Mounts:    p.buildMounts(opts),
 	}
+
+	if resolved == nil {
+		return cfg
+	}
+
+	// No network at creation time. The container starts with a namespace that
+	// contains only loopback, which is what makes "rules before packets"
+	// achievable rather than a race we hope to win.
+	cfg.NetworkMode = "none"
+
+	// Never let Docker restart this container behind our back: a restart
+	// re-creates the namespace with an interface already attached, and the
+	// rules would only come back at the next refresh tick.
+	cfg.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
+
+	cfg.ExtraHosts = controlPlaneHostEntries(resolved)
+
+	return cfg
 }
 
-func (p *Provider) buildNetworkConfig() *network.NetworkingConfig {
+// controlPlaneHostEntries pins the server's name to its address in the
+// container's /etc/hosts.
+//
+// Air-gapped runners have no DNS at all, so this is the only way the agent can
+// turn a hostname into an address. It also removes a lookup from the path for
+// every other level: the name cannot be re-pointed mid-session.
+func controlPlaneHostEntries(resolved *network2.ResolvedPolicy) []string {
+	var entries []string
+	for _, er := range resolved.ControlPlane {
+		if er.Endpoint.IsIP() || len(er.IPs) == 0 {
+			continue
+		}
+		entries = append(entries, fmt.Sprintf("%s:%s", er.Endpoint.Host, er.IPs[0].String()))
+	}
+	return entries
+}
+
+func (p *Provider) buildNetworkConfig(resolved *network2.ResolvedPolicy) *network.NetworkingConfig {
+	// A restricted container is attached only after its rules exist.
+	if resolved != nil {
+		return nil
+	}
+
 	if p.config.Network == "" {
 		return nil
 	}
@@ -379,7 +503,7 @@ func (p *Provider) buildNetworkConfig() *network.NetworkingConfig {
 	}
 }
 
-func (p *Provider) buildEnv(opts provider.SpawnOptions) []string {
+func (p *Provider) buildEnv(opts provider.SpawnOptions, resolved *network2.ResolvedPolicy) []string {
 	env := []string{
 		fmt.Sprintf("MARIONETTE_SERVER=%s", opts.ServerURL),
 		fmt.Sprintf("MARIONETTE_RUNNER_TOKEN=%s", opts.RunnerToken),
@@ -389,11 +513,33 @@ func (p *Provider) buildEnv(opts provider.SpawnOptions) []string {
 		env = append(env, fmt.Sprintf("MARIONETTE_SANDBOX_MODE=%s", opts.SandboxMode))
 	}
 
+	// Proxy mode is enforced by the firewall, but the tools have to be told
+	// where the proxy is or every one of them just fails.
+	for k, v := range proxyEnv(resolved) {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	// Session environment last so an operator override still wins.
 	for k, v := range opts.Environment {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
 	return env
+}
+
+// proxyEnv renders the proxy environment for a resolved policy, in a stable
+// order so two spawns of the same session produce the same container config.
+func proxyEnv(resolved *network2.ResolvedPolicy) map[string]string {
+	if resolved == nil || resolved.OriginalPolicy == nil || resolved.OriginalPolicy.Proxy == nil {
+		return nil
+	}
+
+	noProxy := make([]string, 0, len(resolved.ControlPlane))
+	for _, er := range resolved.ControlPlane {
+		noProxy = append(noProxy, er.Endpoint.Host)
+	}
+
+	return resolved.OriginalPolicy.Proxy.Env(noProxy...)
 }
 
 func (p *Provider) buildLabels(opts provider.SpawnOptions) map[string]string {
@@ -559,11 +705,13 @@ func NewFromJSON(name string, configJSON, suspendConfigJSON json.RawMessage) (*P
 		suspendConfig:    suspendCfg,
 		client:           client,
 		networkIsolation: NewNetworkIsolation(client),
+		logger:           zap.NewNop(),
 	}, nil
 }
 
-// Close closes the Docker client connection.
+// Close stops the policy refreshers and closes the Docker client connection.
 func (p *Provider) Close() error {
+	p.networkIsolation.StopAll()
 	return p.client.Close()
 }
 

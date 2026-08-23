@@ -89,6 +89,16 @@ func (m *MockDockerClient) NetworkInspect(ctx context.Context, networkID string,
 	return args.Get(0).(network.Inspect), args.Error(1)
 }
 
+func (m *MockDockerClient) NetworkConnect(ctx context.Context, networkID, containerID string, config *network.EndpointSettings) error {
+	args := m.Called(ctx, networkID, containerID, config)
+	return args.Error(0)
+}
+
+func (m *MockDockerClient) NetworkDisconnect(ctx context.Context, networkID, containerID string, force bool) error {
+	args := m.Called(ctx, networkID, containerID, force)
+	return args.Error(0)
+}
+
 func (m *MockDockerClient) Ping(ctx context.Context) (types.Ping, error) {
 	args := m.Called(ctx)
 	return args.Get(0).(types.Ping), args.Error(1)

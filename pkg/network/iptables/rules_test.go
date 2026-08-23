@@ -2,6 +2,7 @@ package iptables
 
 import (
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,7 +60,7 @@ func TestRule_ToArgs(t *testing.T) {
 				Action: ActionAccept,
 				State:  []string{"ESTABLISHED", "RELATED"},
 			},
-			expected: []string{"-A", "OUTPUT", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"},
+			expected: []string{"-A", "OUTPUT", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"},
 		},
 		{
 			name: "with comment",
@@ -215,11 +216,14 @@ func TestRuleSet_AddAllowEstablished(t *testing.T) {
 	rs.AddAllowEstablished()
 
 	require.Len(t, rs.Rules, 1)
+	require.Len(t, rs.IPv6Rules, 1, "state matching must exist in both families")
+
 	rule := rs.Rules[0]
 	assert.Equal(t, "TEST_CHAIN", rule.Chain)
 	assert.Equal(t, ActionAccept, rule.Action)
 	assert.Contains(t, rule.State, "ESTABLISHED")
 	assert.Contains(t, rule.State, "RELATED")
+	assert.True(t, rs.IPv6Rules[0].IsIPv6)
 }
 
 func TestRuleSet_AddAllowIP(t *testing.T) {
@@ -338,4 +342,83 @@ func mustParseCIDR(s string) *net.IPNet {
 		panic(err)
 	}
 	return cidr
+}
+
+func TestRuleSet_AddAllowLoopback(t *testing.T) {
+	rs := NewRuleSet("TEST_CHAIN")
+	rs.AddAllowLoopback()
+
+	require.Len(t, rs.Rules, 1)
+	require.Len(t, rs.IPv6Rules, 1)
+	assert.Equal(t, "lo", rs.Rules[0].OutInterface)
+	assert.Contains(t, rs.Rules[0].ToArgs(), "-o")
+}
+
+func TestRuleSet_AddAllowDNSServer(t *testing.T) {
+	rs := NewRuleSet("TEST_CHAIN")
+	rs.AddAllowDNSServer(net.ParseIP("10.0.0.53"), "resolver")
+
+	// UDP is the normal path; TCP is needed for answers over 512 bytes and for
+	// DNSSEC, so a UDP-only rule breaks resolution unpredictably.
+	require.Len(t, rs.Rules, 2)
+	assert.Equal(t, ProtocolUDP, rs.Rules[0].Protocol)
+	assert.Equal(t, ProtocolTCP, rs.Rules[1].Protocol)
+	for _, r := range rs.Rules {
+		assert.Equal(t, 53, r.DestPort)
+	}
+	assert.Empty(t, rs.IPv6Rules)
+}
+
+func TestRuleSet_AddAllowDNSAny(t *testing.T) {
+	rs := NewRuleSet("TEST_CHAIN")
+	rs.AddAllowDNSAny("fallback")
+
+	require.Len(t, rs.Rules, 2)
+	require.Len(t, rs.IPv6Rules, 2)
+	for _, r := range rs.Rules {
+		assert.Nil(t, r.DestIP, "the fallback deliberately has no destination")
+		assert.Equal(t, 53, r.DestPort)
+	}
+}
+
+func TestRuleSet_AddJump(t *testing.T) {
+	rs := NewRuleSet("TEST_CHAIN")
+	rs.AddJump("TEST_CHAIN_D", "allow list")
+
+	require.Len(t, rs.Rules, 1)
+	require.Len(t, rs.IPv6Rules, 1)
+	assert.Equal(t, RuleAction("TEST_CHAIN_D"), rs.Rules[0].Action)
+	assert.Contains(t, rs.Rules[0].ToArgs(), "TEST_CHAIN_D")
+}
+
+func TestRule_ArgsVerbs(t *testing.T) {
+	rule := Rule{
+		Chain:    "CHAIN",
+		Action:   ActionAccept,
+		Protocol: ProtocolTCP,
+		DestIP:   net.ParseIP("1.1.1.1"),
+		DestPort: 443,
+		Comment:  "Allow 1.1.1.1:443",
+	}
+
+	for _, verb := range []string{"-A", "-I", "-D", "-C"} {
+		args := rule.Args(verb)
+		assert.Equal(t, verb, args[0])
+		assert.Equal(t, "CHAIN", args[1])
+		// Everything after the verb must be byte-identical, or iptables cannot
+		// match a delete against the rule an append created.
+		assert.Equal(t, rule.Args("-A")[2:], args[2:])
+	}
+}
+
+func TestValidateChainName(t *testing.T) {
+	require.NoError(t, ValidateChainName("MARIONETTE_abc_D"))
+	assert.ErrorContains(t, ValidateChainName("MARIONETTE-abc"), "invalid chain name character")
+	assert.ErrorContains(t, ValidateChainName(strings.Repeat("a", 29)), "exceeds 28 characters")
+}
+
+func TestRuleSet_ValidateRejectsActionlessRules(t *testing.T) {
+	rs := NewRuleSet("TEST_CHAIN")
+	rs.Rules = append(rs.Rules, Rule{Chain: "TEST_CHAIN"})
+	assert.ErrorContains(t, rs.Validate(), "no action")
 }

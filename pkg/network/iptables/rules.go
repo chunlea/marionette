@@ -7,7 +7,8 @@ import (
 	"strings"
 )
 
-// RuleAction defines what happens when a rule matches.
+// RuleAction defines what happens when a rule matches. It is also the jump
+// target, so a custom chain name is a valid action.
 type RuleAction string
 
 const (
@@ -41,18 +42,25 @@ const (
 	ProtocolAll RuleProtocol = "all"
 )
 
+// ConntrackEstablished is the state match for replies to traffic the sandbox
+// itself opened.
+//
+// This uses -m conntrack rather than the legacy -m state: xt_state is a compat
+// shim that minimal images and nftables-backed iptables do not always carry.
+var ConntrackEstablished = []string{"ESTABLISHED", "RELATED"}
+
 // Rule represents an iptables rule.
 type Rule struct {
 	// Chain is the chain to add the rule to.
 	Chain string
 
-	// Action is what to do when the rule matches.
+	// Action is what to do when the rule matches, or the chain to jump to.
 	Action RuleAction
 
 	// Protocol is the network protocol to match (tcp, udp, icmp, all).
 	Protocol RuleProtocol
 
-	// DestIP is the destination IP address or CIDR to match.
+	// DestIP is the destination IP address to match.
 	DestIP net.IP
 
 	// DestCIDR is the destination network to match (alternative to DestIP).
@@ -61,7 +69,7 @@ type Rule struct {
 	// DestPort is the destination port to match (for TCP/UDP).
 	DestPort int
 
-	// SourceIP is the source IP address or CIDR to match.
+	// SourceIP is the source IP address to match.
 	SourceIP net.IP
 
 	// SourceCIDR is the source network to match (alternative to SourceIP).
@@ -70,7 +78,10 @@ type Rule struct {
 	// SourcePort is the source port to match (for TCP/UDP).
 	SourcePort int
 
-	// State matches connection tracking states (ESTABLISHED, RELATED, NEW, etc.).
+	// OutInterface matches the outgoing interface, e.g. "lo".
+	OutInterface string
+
+	// State matches connection tracking states (ESTABLISHED, RELATED, ...).
 	State []string
 
 	// Comment is an optional comment for the rule.
@@ -83,59 +94,63 @@ type Rule struct {
 	IsIPv6 bool
 }
 
-// ToArgs converts the rule to iptables command-line arguments.
-// Returns arguments for appending to a chain with -A.
-func (r *Rule) ToArgs() []string {
-	args := []string{"-A", r.Chain}
+// Args renders the rule with the given verb: -A to append, -I to insert,
+// -D to delete, -C to test for existence.
+//
+// Delete and check must reproduce the append form exactly, comment included,
+// or iptables will not find the rule. That is why every caller goes through
+// this one renderer.
+func (r *Rule) Args(verb string) []string {
+	args := []string{verb, r.Chain}
 
-	// Protocol
 	if r.Protocol != "" && r.Protocol != ProtocolAll {
 		args = append(args, "-p", string(r.Protocol))
 	}
 
-	// Source
 	if r.SourceIP != nil {
 		args = append(args, "-s", r.SourceIP.String())
 	} else if r.SourceCIDR != nil {
 		args = append(args, "-s", r.SourceCIDR.String())
 	}
 
-	// Source port
 	if r.SourcePort > 0 && (r.Protocol == ProtocolTCP || r.Protocol == ProtocolUDP) {
 		args = append(args, "--sport", strconv.Itoa(r.SourcePort))
 	}
 
-	// Destination
 	if r.DestIP != nil {
 		args = append(args, "-d", r.DestIP.String())
 	} else if r.DestCIDR != nil {
 		args = append(args, "-d", r.DestCIDR.String())
 	}
 
-	// Destination port
 	if r.DestPort > 0 && (r.Protocol == ProtocolTCP || r.Protocol == ProtocolUDP) {
 		args = append(args, "--dport", strconv.Itoa(r.DestPort))
 	}
 
-	// Connection state
-	if len(r.State) > 0 {
-		args = append(args, "-m", "state", "--state", strings.Join(r.State, ","))
+	if r.OutInterface != "" {
+		args = append(args, "-o", r.OutInterface)
 	}
 
-	// Comment
+	if len(r.State) > 0 {
+		args = append(args, "-m", "conntrack", "--ctstate", strings.Join(r.State, ","))
+	}
+
 	if r.Comment != "" {
 		args = append(args, "-m", "comment", "--comment", r.Comment)
 	}
 
-	// Action
 	args = append(args, "-j", string(r.Action))
 
-	// Log prefix (for LOG action)
 	if r.Action == ActionLog && r.LogPrefix != "" {
 		args = append(args, "--log-prefix", r.LogPrefix)
 	}
 
 	return args
+}
+
+// ToArgs converts the rule to append (-A) arguments.
+func (r *Rule) ToArgs() []string {
+	return r.Args("-A")
 }
 
 // String returns a human-readable representation of the rule.
@@ -146,6 +161,12 @@ func (r *Rule) String() string {
 
 	if r.Protocol != "" && r.Protocol != ProtocolAll {
 		sb.WriteString(string(r.Protocol))
+		sb.WriteString(" ")
+	}
+
+	if r.OutInterface != "" {
+		sb.WriteString("out ")
+		sb.WriteString(r.OutInterface)
 		sb.WriteString(" ")
 	}
 
@@ -183,13 +204,13 @@ type RuleSet struct {
 	// ChainName is the custom chain name.
 	ChainName string
 
-	// Rules are the rules to add to the chain.
+	// Rules are the IPv4 rules to add to the chain.
 	Rules []Rule
 
 	// FlushFirst indicates whether to flush the chain before adding rules.
 	FlushFirst bool
 
-	// IPv6Rules are additional IPv6-specific rules.
+	// IPv6Rules are the ip6tables rules.
 	IPv6Rules []Rule
 }
 
@@ -203,65 +224,117 @@ func NewRuleSet(chainName string) *RuleSet {
 	}
 }
 
+// addBoth appends a rule to both the IPv4 and IPv6 sets. Structural rules
+// (loopback, state, jumps, the default drop) must exist in both families:
+// an IPv6-capable container with an IPv4-only chain has no policy at all.
+func (rs *RuleSet) addBoth(r Rule) {
+	v4 := r
+	v4.Chain = rs.ChainName
+	rs.Rules = append(rs.Rules, v4)
+
+	v6 := r
+	v6.Chain = rs.ChainName
+	v6.IsIPv6 = true
+	rs.IPv6Rules = append(rs.IPv6Rules, v6)
+}
+
+// addByFamily appends a rule to the set matching the address family.
+func (rs *RuleSet) addByFamily(r Rule, isIPv6 bool) {
+	r.Chain = rs.ChainName
+	r.IsIPv6 = isIPv6
+	if isIPv6 {
+		rs.IPv6Rules = append(rs.IPv6Rules, r)
+	} else {
+		rs.Rules = append(rs.Rules, r)
+	}
+}
+
+// AddAllowLoopback permits traffic that never leaves the sandbox.
+//
+// The container's own resolver stub (Docker publishes 127.0.0.11) and any
+// local helper the agent runs live here. Dropping loopback breaks name
+// resolution and the agent's own sandbox plumbing without isolating anything.
+func (rs *RuleSet) AddAllowLoopback() {
+	rs.addBoth(Rule{
+		Action:       ActionAccept,
+		OutInterface: "lo",
+		Comment:      "Allow loopback",
+	})
+}
+
 // AddAllowEstablished adds a rule to allow established and related connections.
 func (rs *RuleSet) AddAllowEstablished() {
-	rs.Rules = append(rs.Rules, Rule{
-		Chain:   rs.ChainName,
+	rs.addBoth(Rule{
 		Action:  ActionAccept,
-		State:   []string{"ESTABLISHED", "RELATED"},
+		State:   ConntrackEstablished,
 		Comment: "Allow established connections",
 	})
 }
 
-// AddAllowIP adds a rule to allow traffic to a specific IP and port.
+// AddAllowIP adds a rule to allow TCP traffic to a specific IP and port.
 func (rs *RuleSet) AddAllowIP(ip net.IP, port int, comment string) {
-	rule := Rule{
-		Chain:    rs.ChainName,
+	rs.addByFamily(Rule{
 		Action:   ActionAccept,
 		Protocol: ProtocolTCP,
 		DestIP:   ip,
 		DestPort: port,
 		Comment:  comment,
-		IsIPv6:   ip.To4() == nil,
-	}
+	}, ip.To4() == nil)
+}
 
-	if rule.IsIPv6 {
-		rs.IPv6Rules = append(rs.IPv6Rules, rule)
-	} else {
-		rs.Rules = append(rs.Rules, rule)
+// AddAllowDNSServer permits UDP and TCP queries to one resolver.
+func (rs *RuleSet) AddAllowDNSServer(ip net.IP, comment string) {
+	isIPv6 := ip.To4() == nil
+	for _, proto := range []RuleProtocol{ProtocolUDP, ProtocolTCP} {
+		rs.addByFamily(Rule{
+			Action:   ActionAccept,
+			Protocol: proto,
+			DestIP:   ip,
+			DestPort: 53,
+			Comment:  comment,
+		}, isIPv6)
+	}
+}
+
+// AddAllowDNSAny permits DNS to any destination.
+//
+// This is the fallback when no resolver address could be discovered. It is a
+// real widening of the policy: DNS is a usable exfiltration channel, and this
+// rule is the reason allow_list cannot claim to stop a determined agent from
+// leaking data. Air-gapped mode never uses it.
+func (rs *RuleSet) AddAllowDNSAny(comment string) {
+	for _, proto := range []RuleProtocol{ProtocolUDP, ProtocolTCP} {
+		rs.addBoth(Rule{
+			Action:   ActionAccept,
+			Protocol: proto,
+			DestPort: 53,
+			Comment:  comment,
+		})
 	}
 }
 
 // AddBlockCIDR adds a rule to block traffic to a CIDR.
 func (rs *RuleSet) AddBlockCIDR(cidr *net.IPNet, comment string) {
-	rule := Rule{
-		Chain:    rs.ChainName,
+	rs.addByFamily(Rule{
 		Action:   ActionDrop,
 		DestCIDR: cidr,
 		Comment:  comment,
-		IsIPv6:   cidr.IP.To4() == nil,
-	}
+	}, cidr.IP.To4() == nil)
+}
 
-	if rule.IsIPv6 {
-		rs.IPv6Rules = append(rs.IPv6Rules, rule)
-	} else {
-		rs.Rules = append(rs.Rules, rule)
-	}
+// AddJump sends matching traffic to another chain.
+func (rs *RuleSet) AddJump(target, comment string) {
+	rs.addBoth(Rule{
+		Action:  RuleAction(target),
+		Comment: comment,
+	})
 }
 
 // AddDefaultDrop adds a rule to drop all traffic that doesn't match previous rules.
 func (rs *RuleSet) AddDefaultDrop() {
-	rs.Rules = append(rs.Rules, Rule{
-		Chain:   rs.ChainName,
+	rs.addBoth(Rule{
 		Action:  ActionDrop,
 		Comment: "Default drop",
-	})
-
-	rs.IPv6Rules = append(rs.IPv6Rules, Rule{
-		Chain:   rs.ChainName,
-		Action:  ActionDrop,
-		Comment: "Default drop IPv6",
-		IsIPv6:  true,
 	})
 }
 
@@ -271,15 +344,29 @@ func (rs *RuleSet) Validate() error {
 		return fmt.Errorf("chain name is required")
 	}
 
-	// Chain name must be alphanumeric with underscores
-	for _, c := range rs.ChainName {
+	if err := ValidateChainName(rs.ChainName); err != nil {
+		return err
+	}
+
+	for _, r := range append(append([]Rule{}, rs.Rules...), rs.IPv6Rules...) {
+		if r.Action == "" {
+			return fmt.Errorf("rule in chain %s has no action", rs.ChainName)
+		}
+	}
+
+	return nil
+}
+
+// ValidateChainName checks a chain name against iptables' constraints.
+func ValidateChainName(name string) error {
+	for _, c := range name {
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
 			return fmt.Errorf("invalid chain name character: %c", c)
 		}
 	}
 
-	if len(rs.ChainName) > 28 {
-		return fmt.Errorf("chain name exceeds 28 characters")
+	if len(name) > MaxChainNameLength {
+		return fmt.Errorf("chain name exceeds %d characters", MaxChainNameLength)
 	}
 
 	return nil
