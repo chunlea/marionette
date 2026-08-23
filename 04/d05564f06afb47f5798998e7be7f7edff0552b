@@ -1,0 +1,19 @@
+docs/network.md
+  s_2681c55641541f::t_c0c1a2227a6649 3-4,6-7,9,11-12,14-18,20-25,27-28,30,32-34,36,38-40,43-65,67,69-71,74-90,93-246,249-336,339,345-348,351-390,393-394,396,398,400-404,406-407,409,411-416,418-427,429-433
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "04d05564f06afb47f5798998e7be7f7edff0552b",
+  "prompts": {},
+  "sessions": {
+    "s_2681c55641541f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957a3a1-8aa9-4481-b571-119f14c7519e",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
