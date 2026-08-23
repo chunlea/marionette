@@ -27,6 +27,9 @@ type TaskService interface {
 	// Execute starts execution of a pending task.
 	Execute(ctx context.Context, id string) error
 
+	// ListRuns returns the execution attempts of a task.
+	ListRuns(ctx context.Context, taskID string, opts ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error)
+
 	// GetLogs returns logs for a task.
 	GetLogs(ctx context.Context, taskID string, opts GetLogsOptions) (*store.ListResult[store.Log], error)
 
@@ -50,6 +53,13 @@ type ListTasksOptions struct {
 	Cursor    string   `json:"cursor,omitempty"`
 	SessionID string   `json:"session_id,omitempty"`
 	Status    []string `json:"status,omitempty"`
+}
+
+// ListTaskRunsOptions contains options for listing a task's runs.
+type ListTaskRunsOptions struct {
+	Limit  int      `json:"limit,omitempty"`
+	Cursor string   `json:"cursor,omitempty"`
+	Status []string `json:"status,omitempty"`
 }
 
 // GetLogsOptions contains options for retrieving task logs.

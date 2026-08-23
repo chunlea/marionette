@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -15,7 +16,8 @@ import (
 type MockTaskService struct {
 	mu    sync.RWMutex
 	tasks map[string]*store.Task
-	logs  map[string][]*store.Log // taskID -> logs
+	logs  map[string][]*store.Log     // taskID -> logs
+	runs  map[string][]*store.TaskRun // taskID -> runs
 
 	// Function stubs for custom behavior
 	CreateFunc     func(ctx context.Context, opts CreateTaskOptions) (*store.Task, error)
@@ -25,6 +27,7 @@ type MockTaskService struct {
 	CancelFunc     func(ctx context.Context, id string) error
 	RetryFunc      func(ctx context.Context, id string) error
 	GetLogsFunc    func(ctx context.Context, taskID string, opts GetLogsOptions) (*store.ListResult[store.Log], error)
+	ListRunsFunc   func(ctx context.Context, taskID string, opts ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error)
 	StreamLogsFunc func(ctx context.Context, taskID string, opts StreamLogsOptions) (<-chan *store.Log, error)
 }
 
@@ -33,6 +36,7 @@ func NewMockTaskService() *MockTaskService {
 	return &MockTaskService{
 		tasks: make(map[string]*store.Task),
 		logs:  make(map[string][]*store.Log),
+		runs:  make(map[string][]*store.TaskRun),
 	}
 }
 
@@ -392,3 +396,33 @@ var _ TaskService = (*MockTaskService)(nil)
 
 // Verify MockLogStream implements LogStream.
 var _ LogStream = (*MockLogStream)(nil)
+
+// AddRun records an execution attempt against a task.
+func (m *MockTaskService) AddRun(taskID string, run *store.TaskRun) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.runs[taskID] = append(m.runs[taskID], run)
+}
+
+// ListRuns returns the execution attempts of a task.
+func (m *MockTaskService) ListRuns(ctx context.Context, taskID string, opts ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	if m.ListRunsFunc != nil {
+		return m.ListRunsFunc(ctx, taskID, opts)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if _, ok := m.tasks[taskID]; !ok {
+		return nil, store.ErrNotFound
+	}
+
+	items := make([]*store.TaskRun, 0, len(m.runs[taskID]))
+	for _, run := range m.runs[taskID] {
+		if len(opts.Status) > 0 && !slices.Contains(opts.Status, run.Status) {
+			continue
+		}
+		items = append(items, run)
+	}
+	return &store.ListResult[store.TaskRun]{Items: items, TotalCount: int64(len(items))}, nil
+}

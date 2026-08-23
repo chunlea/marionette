@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/chunlea/marionette/pkg/server/core"
 	"github.com/chunlea/marionette/pkg/store"
@@ -25,6 +26,27 @@ func NewTaskAdapter(manager *core.TaskManager, store store.Store) *TaskAdapter {
 		manager: manager,
 		store:   store,
 	}
+}
+
+// ListRuns returns the execution attempts of a task.
+func (a *TaskAdapter) ListRuns(ctx context.Context, taskID string, opts ListTaskRunsOptions) (*store.ListResult[store.TaskRun], error) {
+	result, err := a.manager.ListRuns(ctx, taskID, core.ListTaskRunsOptions{
+		BaseListOptions: store.BaseListOptions{
+			Limit:  opts.Limit,
+			Cursor: opts.Cursor,
+		},
+		Status: opts.Status,
+	})
+	if err != nil {
+		if errors.Is(err, core.ErrTaskNotFound) {
+			// handleServiceError keys 404 off the store sentinel, and
+			// core.ErrTaskNotFound is a distinct value that would otherwise
+			// fall through to a 500.
+			return nil, fmt.Errorf("%w: task %s", store.ErrNotFound, taskID)
+		}
+		return nil, err
+	}
+	return result, nil
 }
 
 // Create creates a new task in a session.

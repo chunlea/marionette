@@ -114,19 +114,20 @@ func TestOpenAPIDocumentParsesAndDescribesTheContract(t *testing.T) {
 		"/api/v1/logs/{taskID}/stream",
 		"/api/v1/streams/{streamID}/ws",
 		"/api/v1/events",
+		// TaskRun had a type and a mapper but no route, so the dashboard faked
+		// an empty run history. The endpoint now exists, and the document
+		// describes exactly what is served.
+		"/api/v1/tasks/{taskID}/runs",
 	} {
 		assert.Contains(t, doc.Paths, path)
 	}
 
-	for _, schema := range []string{"Session", "Task", "Runner", "SessionList", "ErrorResponse"} {
+	for _, schema := range []string{
+		"Session", "Task", "Runner", "SessionList", "ErrorResponse",
+		"TaskRun", "TaskRunList",
+	} {
 		assert.Contains(t, doc.Comps.Schemas, schema)
 	}
-
-	// TaskRun has a type and a mapper but no route: GET /tasks/{id}/runs does
-	// not exist yet (the dashboard fakes an empty list). The document only
-	// describes what is served, so the schema stays out until the endpoint
-	// lands.
-	assert.NotContains(t, doc.Comps.Schemas, "TaskRun")
 }
 
 // TestOpenAPIDocumentHidesInternalFields is the schema-level counterpart of

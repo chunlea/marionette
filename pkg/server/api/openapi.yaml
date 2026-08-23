@@ -1632,6 +1632,73 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/tasks/{taskID}/runs:
+    get:
+      tags:
+        - Tasks
+      summary: List task runs
+      description: Lists the execution attempts of a task, oldest attempt first. The task itself only carries the latest status, so this is where a retry that failed before a later attempt succeeded is visible.
+      operationId: getTasksRuns
+      security:
+        - ApiKeyAuth:
+            - tasks:read
+      parameters:
+        - name: taskID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of items to return. Defaults to 50.
+          schema:
+            type: integer
+            format: int32
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous response's next_cursor.
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by run status.
+          explode: true
+          style: form
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskRunList'
+        "401":
+          description: The API key is missing, malformed, revoked or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The API key lacks the tasks:read scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/tunnels/{tunnelID}:
     get:
       tags:
@@ -2765,6 +2832,79 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Task'
+        total_count:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+        - items
+        - total_count
+        - has_more
+    TaskRun:
+      type: object
+      properties:
+        id:
+          type: string
+        task_id:
+          type: string
+        attempt:
+          type: integer
+          format: int32
+        runner_id:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - assigned
+            - running
+            - completed
+            - failed
+            - timeout
+            - canceled
+        error:
+          type: string
+        exit_code:
+          type: integer
+          format: int32
+        tokens_input:
+          type: integer
+          format: int32
+        tokens_output:
+          type: integer
+          format: int32
+        queued_at:
+          type: string
+          format: date-time
+        assigned_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - task_id
+        - attempt
+        - status
+        - queued_at
+        - updated_at
+    TaskRunList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskRun'
         total_count:
           type: integer
           format: int64

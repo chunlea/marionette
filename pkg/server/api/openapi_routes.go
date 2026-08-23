@@ -227,6 +227,16 @@ func publicRoutes() []routeSpec {
 			Success:     204,
 		},
 		{
+			Method: "GET", Path: "/api/v1/tasks/{taskID}/runs", Tag: "Tasks",
+			Summary:     "List task runs",
+			Description: "Lists the execution attempts of a task, oldest attempt first. The task itself only carries the latest status, so this is where a retry that failed before a later attempt succeeded is visible.",
+			Scope:       "tasks:read",
+			Query: withQuery(paginationQuery(),
+				repeatedQuery("status", "Filter by run status."),
+			),
+			Success: 200, Response: apitypes.ListResponse[apitypes.TaskRun]{},
+		},
+		{
 			Method: "GET", Path: "/api/v1/tasks/{taskID}/logs", Tag: "Tasks",
 			Summary: "List task logs",
 			Scope:   "tasks:read",
