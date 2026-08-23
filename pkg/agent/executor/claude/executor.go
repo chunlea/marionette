@@ -163,12 +163,6 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 	handler.HandleOutput("system", []byte("Claude Code started"))
 	handler.HandleOutput("system", []byte(fmt.Sprintf("command: %s %s", e.binaryPath, strings.Join(args, " "))))
 
-	// Close stdin to signal no input is coming (for --print mode)
-	// Claude Code waits for stdin EOF before producing output
-	if !e.streamMode {
-		_ = stdin.Close()
-	}
-
 	// Process output in goroutines
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -184,6 +178,21 @@ func (e *Executor) Execute(ctx context.Context, task *executor.Task, config *exe
 		defer wg.Done()
 		e.processStderr(ctx, stderr, handler)
 	}()
+
+	if e.streamMode {
+		// With --input-format stream-json the CLI reads the prompt from stdin
+		// and ignores the positional prompt argument entirely (verified on
+		// 2.1.241), so the prompt must be delivered as the first user message.
+		if err := e.SendMessage([]byte(task.Prompt)); err != nil {
+			e.killProcess()
+			wg.Wait()
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("failed to send prompt to claude: %w", err)
+		}
+	} else {
+		// --print mode: the CLI waits for stdin EOF before producing output.
+		e.closeStdin()
+	}
 
 	// Wait for output processing to complete
 	wg.Wait()
@@ -324,6 +333,14 @@ func (e *Executor) buildArgs(task *executor.Task, config *executor.AgentConfig) 
 		}
 	}
 
+	if hasResume {
+		// Stream input keeps stdin open so further user messages can be sent
+		// during the turn. It requires --print, and it makes the CLI ignore a
+		// positional prompt, so the prompt goes over stdin instead.
+		args = append(args, "--input-format", "stream-json", "--print")
+		return args, hasResume
+	}
+
 	// Add prompt
 	if task.Prompt != "" {
 		args = append(args, "--print", task.Prompt)
@@ -395,6 +412,14 @@ func (e *Executor) processOutput(ctx context.Context, r io.Reader, stream string
 		if err != nil {
 			handler.HandleOutput("system", []byte(fmt.Sprintf("parse error: %v", err)))
 			continue
+		}
+
+		// In stream mode the CLI keeps reading stdin and would serve turn after
+		// turn until EOF. A task is one turn, so close stdin as soon as the
+		// turn's result arrives; without this the process never exits and the
+		// run hangs until its timeout.
+		if e.streamMode && e.parser.Result() != nil {
+			e.closeStdin()
 		}
 
 		// Process events (could emit to a separate event handler in the future)
@@ -482,9 +507,47 @@ func (e *Executor) Kill() error {
 	return nil
 }
 
-// SendMessage sends a message to the running Claude process.
-// Only valid in stream mode (resume).
+// streamInputMessage is the stream-json envelope the CLI accepts on stdin when
+// started with --input-format stream-json. Verified against CLI 2.1.241: a
+// single line of this shape drives one turn, and the same process serves
+// further turns until stdin reaches EOF.
+type streamInputMessage struct {
+	Type    string          `json:"type"`
+	Message streamInputBody `json:"message"`
+}
+
+type streamInputBody struct {
+	Role    string               `json:"role"`
+	Content []streamInputContent `json:"content"`
+}
+
+type streamInputContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// userMessageEnvelope wraps plain text in the CLI's stream-json user message.
+func userMessageEnvelope(text string) ([]byte, error) {
+	return json.Marshal(streamInputMessage{
+		Type: "user",
+		Message: streamInputBody{
+			Role:    "user",
+			Content: []streamInputContent{{Type: "text", Text: text}},
+		},
+	})
+}
+
+// SendMessage sends a user message to the running Claude process.
+//
+// msg is the message TEXT; it is wrapped in the stream-json envelope the CLI
+// expects. Only valid in stream mode (resume), and only until the turn's
+// result arrives, after which stdin is closed so the process can exit.
 func (e *Executor) SendMessage(msg []byte) error {
+	envelope, err := userMessageEnvelope(string(msg))
+	if err != nil {
+		return fmt.Errorf("failed to encode user message: %w", err)
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -500,8 +563,37 @@ func (e *Executor) SendMessage(msg []byte) error {
 		return ErrNotRunning
 	}
 
-	_, err := e.stdin.Write(append(msg, '\n'))
+	_, err = e.stdin.Write(append(envelope, '\n'))
 	return err
+}
+
+// closeStdin closes the CLI's stdin exactly once. Further SendMessage calls
+// then fail with ErrNotRunning rather than writing to a closed pipe.
+func (e *Executor) closeStdin() {
+	e.mu.Lock()
+	stdin := e.stdin
+	e.stdin = nil
+	e.mu.Unlock()
+
+	if stdin != nil {
+		_ = stdin.Close()
+	}
+}
+
+// killProcess terminates the running process without touching Kill's
+// not-running bookkeeping.
+func (e *Executor) killProcess() {
+	e.mu.Lock()
+	cmd := e.cmd
+	cancel := e.cancelFunc
+	e.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
 }
 
 // IsStreamMode returns true if the executor is in stream mode.

@@ -207,6 +207,38 @@ func TestExecutor_buildArgs_WithResume(t *testing.T) {
 	assert.Contains(t, args, "--resume")
 	assert.Contains(t, args, "sess_abc123")
 	assert.True(t, hasResume)
+
+	// Resume runs read the prompt from stdin as stream-json. Without this the
+	// CLI never reads stdin and SendMessage writes into a pipe nobody reads.
+	assertArgPair(t, args, "--input-format", "stream-json")
+	assert.Contains(t, args, "--print")
+	assert.NotContains(t, args, "Continue", "the prompt is delivered over stdin, not argv")
+}
+
+// assertArgPair asserts that flag is present and immediately followed by value.
+func assertArgPair(t *testing.T, args []string, flag, value string) {
+	t.Helper()
+
+	for i, arg := range args {
+		if arg == flag {
+			require.Less(t, i+1, len(args), "%s must have a value", flag)
+			assert.Equal(t, value, args[i+1])
+			return
+		}
+	}
+	t.Fatalf("args %v missing flag %s", args, flag)
+}
+
+// TestExecutor_buildArgs_NonResumeKeepsArgvPrompt pins that only stream mode
+// moves the prompt to stdin.
+func TestExecutor_buildArgs_NonResumeKeepsArgvPrompt(t *testing.T) {
+	e := New()
+
+	args, hasResume := e.buildArgs(&executor.Task{Prompt: "Do the thing"}, nil)
+
+	assert.False(t, hasResume)
+	assert.NotContains(t, args, "--input-format")
+	assertArgPair(t, args, "--print", "Do the thing")
 }
 
 func TestExecutor_buildArgs_WithResumeConversationID(t *testing.T) {
@@ -803,11 +835,16 @@ func TestExecutor_SendMessage_Success(t *testing.T) {
 		done <- e.SendMessage([]byte("test message"))
 	}()
 
-	// Read from the pipe
+	// Read from the pipe. SendMessage takes plain text and writes the
+	// stream-json envelope the CLI expects, one message per line.
 	buf := make([]byte, 1024)
 	n, err := reader.Read(buf)
 	assert.NoError(t, err)
-	assert.Equal(t, "test message\n", string(buf[:n]))
+	written := string(buf[:n])
+	assert.True(t, strings.HasSuffix(written, "\n"), "each message is one line")
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"test message"}]}}`,
+		strings.TrimSpace(written))
 
 	// Check SendMessage returned without error
 	err = <-done
@@ -1134,30 +1171,129 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","s
 	assert.True(t, result.Success)
 }
 
+// TestExecutor_Execute_StreamMode proves the resume path end to end: the
+// prompt is delivered as a stream-json user message on stdin, the turn's
+// result closes stdin, and the process exits instead of hanging.
 func TestExecutor_Execute_StreamMode(t *testing.T) {
-	// Create a script that just outputs
+	scriptPath := "/tmp/claude/mock_claude_stream.sh"
+	capturePath := scriptPath + ".stdin"
+	_ = os.Remove(capturePath)
+
+	// Reads the prompt from stdin, then answers. A script that ignored stdin
+	// would pass trivially, so it echoes what it read for the assertions.
 	scriptContent := `#!/bin/bash
+IFS= read -r prompt
+printf '%s\n' "$prompt" >> "$0.stdin"
 echo '{"type":"system","subtype":"init","session_id":"sess_stream"}'
 echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello!","session_id":"sess_stream","num_turns":1,"duration_ms":5,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":3,"cache_read_input_tokens":5}}'
+# Block until stdin is closed; the executor must close it after the result.
+cat > /dev/null
 `
-	scriptPath := "/tmp/claude/mock_claude_stream.sh"
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	require.NoError(t, err)
-	defer func() { _ = os.Remove(scriptPath) }()
+	defer func() {
+		_ = os.Remove(scriptPath)
+		_ = os.Remove(capturePath)
+	}()
 
 	e := New(WithBinaryPath(scriptPath))
 
-	ctx := context.Background()
-	// Set ContextSnapshot to enable stream mode
 	task := &executor.Task{
-		Prompt:          "continue",
+		Prompt:          "continue please",
 		ContextSnapshot: []byte(`{"session_id":"sess_stream"}`),
 		Timeout:         10 * time.Second,
 	}
-	handler := newTestOutputHandler()
 
-	result, err := e.Execute(ctx, task, nil, handler)
+	result, err := e.Execute(context.Background(), task, nil, newTestOutputHandler())
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	assert.True(t, result.Success)
+	assert.Equal(t, "sess_stream", result.AgentSession)
+
+	captured, err := os.ReadFile(capturePath)
+	require.NoError(t, err, "the mock must have received the prompt on stdin")
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"continue please"}]}}`,
+		strings.TrimSpace(string(captured)))
+}
+
+// TestExecutor_SendMessage_RoundTrip queues a second user message during a
+// stream-mode run and proves it reaches the CLI's stdin in the envelope the
+// CLI actually accepts.
+func TestExecutor_SendMessage_RoundTrip(t *testing.T) {
+	scriptPath := "/tmp/claude/mock_claude_roundtrip.sh"
+	capturePath := scriptPath + ".stdin"
+	_ = os.Remove(capturePath)
+
+	// Reads two messages before finishing the turn, so the test can queue one
+	// while the run is still in flight.
+	scriptContent := `#!/bin/bash
+IFS= read -r first
+printf '%s\n' "$first" >> "$0.stdin"
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"ack"}]}}'
+IFS= read -r second
+printf '%s\n' "$second" >> "$0.stdin"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"sess_rt","usage":{"input_tokens":1,"output_tokens":1}}'
+cat > /dev/null
+`
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+	defer func() {
+		_ = os.Remove(scriptPath)
+		_ = os.Remove(capturePath)
+	}()
+
+	e := New(WithBinaryPath(scriptPath))
+	handler := newTestOutputHandler()
+
+	done := make(chan *executor.Result, 1)
+	go func() {
+		result, execErr := e.Execute(context.Background(), &executor.Task{
+			Prompt:          "first message",
+			ContextSnapshot: []byte(`{"conversation_id":"sess_rt"}`),
+			Timeout:         15 * time.Second,
+		}, nil, handler)
+		assert.NoError(t, execErr)
+		done <- result
+	}()
+
+	// Wait for the mock to acknowledge the first message, then queue another.
+	require.Eventually(t, func() bool {
+		data, readErr := os.ReadFile(capturePath)
+		return readErr == nil && strings.Contains(string(data), "first message")
+	}, 10*time.Second, 20*time.Millisecond, "mock never received the initial prompt")
+
+	require.NoError(t, e.SendMessage([]byte("second message")))
+
+	result := <-done
+	require.NotNil(t, result)
+	assert.True(t, result.Success)
+
+	captured, err := os.ReadFile(capturePath)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(captured)), "\n")
+	require.Len(t, lines, 2, "both messages must reach the CLI")
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"first message"}]}}`,
+		lines[0])
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"second message"}]}}`,
+		lines[1])
+
+	// Once the turn ends the executor closes stdin, so further sends fail
+	// rather than writing into a closed pipe.
+	assert.Error(t, e.SendMessage([]byte("too late")))
+}
+
+// TestExecutor_userMessageEnvelope pins the exact stdin contract verified
+// against CLI 2.1.241.
+func TestExecutor_userMessageEnvelope(t *testing.T) {
+	envelope, err := userMessageEnvelope("hello \"world\"")
+	require.NoError(t, err)
+
+	assert.JSONEq(t,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello \"world\""}]}}`,
+		string(envelope))
+	assert.NotContains(t, string(envelope), "\n", "the envelope must be a single line")
 }
