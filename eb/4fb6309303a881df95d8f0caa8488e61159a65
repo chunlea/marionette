@@ -1,0 +1,57 @@
+pkg/store/postgres/auth.go
+  s_30fb41c4a911b8::t_d3ca014d6bb1cc 128-130,141,143,414-416,427,429
+pkg/store/postgres/configs.go
+  s_30fb41c4a911b8::t_0731ca38144a87 142-144,155,157,435-437,448,450,708-710,721,723
+pkg/store/postgres/logs.go
+  s_30fb41c4a911b8::t_eb08265e550682 198-200,211,213,389-391,402,404,680-682,693,695
+pkg/store/postgres/permissions.go
+  s_30fb41c4a911b8::t_c27f0a349cb801 120-122,133,135
+pkg/store/postgres/runners.go
+  s_30fb41c4a911b8::t_4c249c5b9da4e4 134-136,149,151
+pkg/store/postgres/sessions.go
+  s_30fb41c4a911b8::t_13cc5dde0a4d0c 136-138,151,153
+pkg/store/postgres/sorting.go
+  s_476c758fe5506c::t_f87c8b515413a4 1-67
+pkg/store/postgres/sorting_test.go
+  s_4e03746a1c3c16::t_d559e27942b1f1 1-181
+pkg/store/postgres/storage.go
+  s_30fb41c4a911b8::t_96a2df320c84cf 128-130,141,143,411-413,424,426
+pkg/store/postgres/streams.go
+  s_30fb41c4a911b8::t_057f3b7080160a 153-155,168,170
+pkg/store/postgres/tasks.go
+  s_30fb41c4a911b8::t_55e000abca9cc2 117-119,130,132,384-386,397,399,636-638,649,651
+pkg/store/postgres/workspaces.go
+  s_30fb41c4a911b8::t_2cbf29c4210d53 110-112,125,127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "eb4fb6309303a881df95d8f0caa8488e61159a65",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_4e03746a1c3c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60714d52-8636-4fc2-adaa-7b5018a4a131",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
