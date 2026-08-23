@@ -905,3 +905,8 @@ func TestScheduledSessionActivator_PeriodicPolling(t *testing.T) {
 	// Should have been called at least 2-3 times (initial + 2-3 ticks)
 	require.GreaterOrEqual(t, finalCount, 2, "Expected at least 2 poll cycles")
 }
+
+// EnsureRunner satisfies SessionManagerInterface. These fakes never allocate.
+func (m *mockSessionMgrForActivator) EnsureRunner(_ context.Context, _ string) (*store.Session, error) {
+	return nil, ErrNoRunnerAvailable
+}

@@ -1728,3 +1728,11 @@ func TestMessageRouter_WithMRSessionManager(t *testing.T) {
 
 	assert.NotNil(t, router.sessionManager)
 }
+
+// EnsureRunner satisfies core.SessionManagerInterface. This fake never allocates.
+func (m *mockSessionManager) EnsureRunner(_ context.Context, _ string) (*store.Session, error) {
+	return nil, core.ErrNoRunnerAvailable
+}
+
+// DispatchNext satisfies TaskManagerInterface. These fakes dispatch nothing.
+func (m *mockTaskManager) DispatchNext(_ context.Context, _ string) error { return nil }

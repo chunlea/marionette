@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -166,6 +168,57 @@ func (s *testSessionStore) GetRunner(_ context.Context, id string) (*store.Runne
 	// Return a copy to avoid race conditions
 	copy := *runner
 	return &copy, nil
+}
+
+// ListRunners lists the runners this store owns.
+//
+// Without it the embedded wrapper answered from a different map, so allocation
+// could never see a runner set with SetRunner. The Status and Labels filters
+// are honoured the way the real store applies them.
+func (s *testSessionStore) ListRunners(_ context.Context, opts store.ListRunnersOptions) (*store.ListResult[store.Runner], error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]*store.Runner, 0, len(s.runners))
+	for _, runner := range s.runners {
+		if len(opts.Status) > 0 && !matchesAnyStatus(opts.Status, runner.Status) {
+			continue
+		}
+		if opts.PoolName != nil {
+			if runner.PoolName == nil || *runner.PoolName != *opts.PoolName {
+				continue
+			}
+		}
+		if !runnerHasLabels(runner, opts.Labels) {
+			continue
+		}
+		cp := *runner
+		items = append(items, &cp)
+	}
+
+	// Deterministic order so selection does not depend on map iteration.
+	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+
+	return &store.ListResult[store.Runner]{Items: items}, nil
+}
+
+// runnerHasLabels reports whether a runner carries every requested label.
+func runnerHasLabels(runner *store.Runner, want map[string]string) bool {
+	if len(want) == 0 {
+		return true
+	}
+	have := map[string]string{}
+	if len(runner.Labels) > 0 {
+		if err := json.Unmarshal(runner.Labels, &have); err != nil {
+			return false
+		}
+	}
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *testSessionStore) UpdateRunner(_ context.Context, id string, updates store.RunnerUpdates) error {
@@ -1860,10 +1913,13 @@ func TestSessionManager_RequestRunnerForResume_PreviousRunnerNotFound(t *testing
 
 // mockTaskManagerForSession implements TaskManagerInterface for testing.
 type mockTaskManagerForSession struct {
+	mu              sync.Mutex
 	executedTasks   []string
 	reExecutedTasks []string
+	dispatched      []string
 	executeErr      error
 	reExecuteErr    error
+	dispatchErr     error
 }
 
 func (m *mockTaskManagerForSession) Create(_ context.Context, _ CreateTaskOptions) (*store.Task, error) {
@@ -1877,12 +1933,30 @@ func (m *mockTaskManagerForSession) List(_ context.Context, _ ListTasksOptions) 
 }
 func (m *mockTaskManagerForSession) Cancel(_ context.Context, _ string) error { return nil }
 func (m *mockTaskManagerForSession) Execute(_ context.Context, taskID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.executedTasks = append(m.executedTasks, taskID)
 	return m.executeErr
 }
 func (m *mockTaskManagerForSession) ReExecute(_ context.Context, taskID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.reExecutedTasks = append(m.reExecutedTasks, taskID)
 	return m.reExecuteErr
+}
+
+// executedTaskIDs returns a copy of the recorded Execute calls.
+func (m *mockTaskManagerForSession) executedTaskIDs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.executedTasks...)
+}
+
+// reExecutedTaskIDs returns a copy of the recorded re-execution calls.
+func (m *mockTaskManagerForSession) reExecutedTaskIDs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.reExecutedTasks...)
 }
 func (m *mockTaskManagerForSession) CreateRun(_ context.Context, _ string) (*store.TaskRun, error) {
 	return nil, nil
@@ -1921,9 +1995,8 @@ func TestSessionManager_ReExecuteRunningTasks_WithRunningTask(t *testing.T) {
 	manager.reExecuteRunningTasks(context.Background(), "sess_123", "run_123")
 
 	// Verify task was re-executed using ReExecute (not Execute)
-	assert.Len(t, mockTM.reExecutedTasks, 1)
-	assert.Equal(t, "task_123", mockTM.reExecutedTasks[0])
-	assert.Empty(t, mockTM.executedTasks) // Execute should not be called
+	assert.Equal(t, []string{"task_123"}, mockTM.reExecutedTaskIDs())
+	assert.Empty(t, mockTM.executedTaskIDs()) // Execute should not be called
 }
 
 func TestSessionManager_ReExecuteRunningTasks_NoRunningTasks(t *testing.T) {
@@ -1944,7 +2017,7 @@ func TestSessionManager_ReExecuteRunningTasks_NoRunningTasks(t *testing.T) {
 	manager.reExecuteRunningTasks(context.Background(), "sess_123", "run_123")
 
 	// Verify no tasks were re-executed
-	assert.Empty(t, mockTM.reExecutedTasks)
+	assert.Empty(t, mockTM.reExecutedTaskIDs())
 }
 
 func TestSessionManager_ReExecuteRunningTasks_NoTaskManager(t *testing.T) {
@@ -2188,6 +2261,7 @@ func TestSessionManager_Suspend_NoDetachWhenPersistenceFails(t *testing.T) {
 type providerAwareSessionStore struct {
 	*testSessionStore
 	providerConfig *store.ProviderConfig
+	profiles       map[string]*store.Profile
 }
 
 func newProviderAwareSessionStore() *providerAwareSessionStore {
@@ -2199,6 +2273,22 @@ func newProviderAwareSessionStore() *providerAwareSessionStore {
 			Provider: "docker",
 		},
 	}
+}
+
+// SetProfile registers a profile the allocation path can resolve.
+func (s *providerAwareSessionStore) SetProfile(profile *store.Profile) {
+	if s.profiles == nil {
+		s.profiles = make(map[string]*store.Profile)
+	}
+	s.profiles[profile.ID] = profile
+}
+
+func (s *providerAwareSessionStore) GetProfile(_ context.Context, id string) (*store.Profile, error) {
+	profile, ok := s.profiles[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return profile, nil
 }
 
 func (s *providerAwareSessionStore) GetProviderConfig(_ context.Context, _ string) (*store.ProviderConfig, error) {
@@ -2510,4 +2600,248 @@ func TestSessionManager_Activate_DoesNotReleaseRunnerBeingHandedOver(t *testing.
 	assert.Equal(t, SessionStatusActive, next.Status)
 	require.NotNil(t, next.RunnerID)
 	assert.Equal(t, "run_123", *next.RunnerID)
+}
+
+// DispatchNext records which sessions were asked to dispatch their backlog.
+func (m *mockTaskManagerForSession) DispatchNext(_ context.Context, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dispatched = append(m.dispatched, sessionID)
+	return m.dispatchErr
+}
+
+// dispatchedSessions returns a copy of the recorded dispatch calls.
+func (m *mockTaskManagerForSession) dispatchedSessions() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.dispatched...)
+}
+
+// =============================================================================
+// G1: allocating a runner for a pending session
+// =============================================================================
+
+func setupAllocationTest(t *testing.T) (*SessionManager, *providerAwareSessionStore, *mockConnManagerForSession) {
+	t.Helper()
+	s := newProviderAwareSessionStore()
+	connMgr := &mockConnManagerForSession{}
+	manager := NewSessionManagerWithConfig(SessionManagerConfig{
+		Store:       s,
+		ConnManager: connMgr,
+		CmdSender:   &mockCommandSenderForSession{},
+		Logger:      zap.NewNop(),
+	})
+	s.SetSession(&store.Session{
+		ID:          "sess_pending",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_1",
+	})
+	return manager, s, connMgr
+}
+
+func idleRunner(id, name string) *store.Runner {
+	return &store.Runner{
+		ID:       id,
+		Name:     name,
+		Status:   StatusIdle,
+		PoolName: stringPtr("default"),
+	}
+}
+
+// TestSessionManager_EnsureRunner_ActivatesPendingSession is G1: creating a task
+// for a pending session must not require an operator to look up a runner ID and
+// call the admin activate endpoint by hand.
+func TestSessionManager_EnsureRunner_ActivatesPendingSession(t *testing.T) {
+	manager, s, _ := setupAllocationTest(t)
+	s.SetRunner(idleRunner("run_1", "smoke-runner"))
+
+	session, err := manager.EnsureRunner(context.Background(), "sess_pending")
+	require.NoError(t, err)
+	require.NotNil(t, session)
+
+	assert.Equal(t, SessionStatusActive, session.Status)
+	require.NotNil(t, session.RunnerID)
+	assert.Equal(t, "run_1", *session.RunnerID)
+}
+
+func TestSessionManager_EnsureRunner_KeepsExistingRunner(t *testing.T) {
+	manager, s, _ := setupAllocationTest(t)
+	s.SetRunner(idleRunner("run_1", "one"))
+	s.SetRunner(idleRunner("run_2", "two"))
+	runnerID := "run_2"
+	s.SetSession(&store.Session{
+		ID:          "sess_pending",
+		Status:      SessionStatusActive,
+		RunnerID:    &runnerID,
+		WorkspaceID: "ws_1",
+	})
+
+	session, err := manager.EnsureRunner(context.Background(), "sess_pending")
+	require.NoError(t, err)
+	require.NotNil(t, session.RunnerID)
+	assert.Equal(t, "run_2", *session.RunnerID, "an attached runner must not be swapped")
+}
+
+// TestSessionManager_EnsureRunner_NoRunnerAvailable is the "surface a clear
+// status" half of G1: the session stays pending and says why.
+func TestSessionManager_EnsureRunner_NoRunnerAvailable(t *testing.T) {
+	manager, _, _ := setupAllocationTest(t)
+
+	session, err := manager.EnsureRunner(context.Background(), "sess_pending")
+	require.ErrorIs(t, err, ErrNoRunnerAvailable)
+	assert.Nil(t, session)
+}
+
+func TestSessionManager_EnsureRunner_SkipsUnusableRunners(t *testing.T) {
+	t.Run("busy runner", func(t *testing.T) {
+		manager, s, _ := setupAllocationTest(t)
+		busy := idleRunner("run_busy", "busy")
+		busy.Status = StatusBusy
+		s.SetRunner(busy)
+
+		_, err := manager.EnsureRunner(context.Background(), "sess_pending")
+		assert.ErrorIs(t, err, ErrNoRunnerAvailable)
+	})
+
+	t.Run("tainted runner", func(t *testing.T) {
+		manager, s, _ := setupAllocationTest(t)
+		tainted := idleRunner("run_tainted", "tainted")
+		tainted.Tainted = true
+		s.SetRunner(tainted)
+
+		_, err := manager.EnsureRunner(context.Background(), "sess_pending")
+		assert.ErrorIs(t, err, ErrNoRunnerAvailable)
+	})
+
+	t.Run("disconnected runner", func(t *testing.T) {
+		manager, s, connMgr := setupAllocationTest(t)
+		connMgr.connectedRunners = map[string]bool{"run_1": false}
+		s.SetRunner(idleRunner("run_1", "gone"))
+
+		_, err := manager.EnsureRunner(context.Background(), "sess_pending")
+		assert.ErrorIs(t, err, ErrNoRunnerAvailable)
+	})
+
+	t.Run("runner already claimed by a live session", func(t *testing.T) {
+		manager, s, _ := setupAllocationTest(t)
+		s.SetRunner(idleRunner("run_1", "claimed"))
+		claimed := "run_1"
+		s.SetSession(&store.Session{
+			ID:       "sess_other",
+			Status:   SessionStatusActive,
+			RunnerID: &claimed,
+		})
+
+		_, err := manager.EnsureRunner(context.Background(), "sess_pending")
+		assert.ErrorIs(t, err, ErrNoRunnerAvailable)
+	})
+}
+
+// TestSessionManager_EnsureRunner_RespectsProfileCapabilities keeps allocation
+// selector-aware: a profile that demands a capability must not be handed a
+// runner without it.
+func TestSessionManager_EnsureRunner_RespectsProfileCapabilities(t *testing.T) {
+	manager, s, _ := setupAllocationTest(t)
+
+	s.SetProfile(&store.Profile{
+		ID:       "prof_gpu",
+		Name:     "gpu",
+		Selector: []byte(`{"capabilities":["gpu"]}`),
+	})
+	profileID := "prof_gpu"
+	s.SetSession(&store.Session{
+		ID:          "sess_pending",
+		Status:      SessionStatusPending,
+		WorkspaceID: "ws_1",
+		ProfileID:   &profileID,
+	})
+
+	plain := idleRunner("run_plain", "plain")
+	s.SetRunner(plain)
+
+	_, err := manager.EnsureRunner(context.Background(), "sess_pending")
+	require.ErrorIs(t, err, ErrNoRunnerAvailable)
+
+	gpu := idleRunner("run_gpu", "gpu")
+	gpu.Capabilities = []string{"gpu", "xcode"}
+	s.SetRunner(gpu)
+
+	session, err := manager.EnsureRunner(context.Background(), "sess_pending")
+	require.NoError(t, err)
+	require.NotNil(t, session.RunnerID)
+	assert.Equal(t, "run_gpu", *session.RunnerID)
+}
+
+func TestSessionManager_EnsureRunner_RefusesNonPendingStates(t *testing.T) {
+	tests := []struct {
+		status  string
+		wantErr error
+	}{
+		{SessionStatusSuspended, ErrSessionNotActive},
+		{SessionStatusResuming, ErrNoRunnerAvailable},
+		{SessionStatusTerminated, ErrSessionAlreadyTerminated},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			manager, s, _ := setupAllocationTest(t)
+			s.SetRunner(idleRunner("run_1", "free"))
+			s.SetSession(&store.Session{
+				ID:          "sess_pending",
+				Status:      tt.status,
+				WorkspaceID: "ws_1",
+			})
+
+			_, err := manager.EnsureRunner(context.Background(), "sess_pending")
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}
+
+// =============================================================================
+// G2: dispatching the backlog when a session becomes active
+// =============================================================================
+
+// TestSessionManager_Activate_DispatchesPendingBacklog covers the resume half of
+// G2: a session that comes back should pick up its backlog rather than wait for
+// another POST /execute.
+func TestSessionManager_Activate_DispatchesPendingBacklog(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+	mockTM := &mockTaskManagerForSession{}
+	manager.setTaskManager(mockTM)
+
+	s.SetRunner(&store.Runner{ID: "run_123", Name: "r", Status: StatusIdle})
+	s.SetSession(&store.Session{
+		ID:     "sess_123",
+		Status: SessionStatusPending,
+	})
+
+	require.NoError(t, manager.Activate(context.Background(), "sess_123", "run_123"))
+
+	require.Eventually(t, func() bool {
+		return len(mockTM.dispatchedSessions()) == 1
+	}, 5*time.Second, 20*time.Millisecond, "activation must dispatch the session backlog")
+	assert.Equal(t, []string{"sess_123"}, mockTM.dispatchedSessions())
+}
+
+func TestSessionManager_Activate_DispatchesBacklogAfterResume(t *testing.T) {
+	cmdSender := &mockCommandSenderForSession{}
+	manager, s, _ := setupSessionManagerTestFull(cmdSender)
+	mockTM := &mockTaskManagerForSession{}
+	manager.setTaskManager(mockTM)
+
+	previous := "run_123"
+	s.SetRunner(&store.Runner{ID: "run_123", Name: "r", Status: StatusIdle})
+	s.SetSession(&store.Session{
+		ID:               "sess_123",
+		Status:           SessionStatusResuming,
+		PreviousRunnerID: &previous,
+	})
+
+	require.NoError(t, manager.Activate(context.Background(), "sess_123", "run_123"))
+
+	require.Eventually(t, func() bool {
+		return len(mockTM.dispatchedSessions()) == 1
+	}, 5*time.Second, 20*time.Millisecond, "a resumed session must dispatch its backlog")
 }
