@@ -1,0 +1,51 @@
+pkg/server/core/bench_test.go
+  s_2681c55641541f::t_2d1c3b2c49b5b9 1-193
+test/perf/fakeexec/fakeexec.go
+  s_ecb7c44fe1ae09::t_cc65e981612f4b 1-262
+test/perf/fakeexec/fakeexec_test.go
+  s_ecb7c44fe1ae09::t_6ff1c490c62f9a 1-194
+test/perf/loadtest/harness.go
+  s_ecb7c44fe1ae09::t_a158df7bcfdb7b 1-428
+test/perf/loadtest/isolation_test.go
+  s_1e03d1f9444213::t_b0fb152b6e93b4 1-75
+test/perf/loadtest/main.go
+  s_ecb7c44fe1ae09::t_69a7b59e80106f 1-324
+test/perf/loadtest/report.go
+  s_ecb7c44fe1ae09::t_4a7fdcc1425d49 1-150
+test/perf/loadtest/runner.go
+  s_2681c55641541f::t_f03b11dfb261f3 1-182
+test/perf/store/store_bench_test.go
+  s_ecb7c44fe1ae09::t_88ce64a0e05823 1-297
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "1e162fb8f09f78406cc60d77c5313e95f8687976",
+  "prompts": {},
+  "sessions": {
+    "s_1e03d1f9444213": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f08e1d14-b06b-4619-aa64-c85c623e5795",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_2681c55641541f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957a3a1-8aa9-4481-b571-119f14c7519e",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_ecb7c44fe1ae09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "52064dcb-78a6-4657-81a0-b7202cd11674",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
