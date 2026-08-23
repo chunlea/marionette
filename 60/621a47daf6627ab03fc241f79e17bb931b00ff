@@ -1,0 +1,19 @@
+docs/storage.md
+  s_6ce8a3a3b8d9e6::t_05d96927dc6659 45-46,50-81,246-264,266-269,272-276,293-304,309-351,566-591,617,620-626,636-642,866-869,872-874,1208-1209,1224-1231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "60621a47daf6627ab03fc241f79e17bb931b00ff",
+  "prompts": {},
+  "sessions": {
+    "s_6ce8a3a3b8d9e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f1a55cc-dd39-4229-91f5-7498430c8926",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
