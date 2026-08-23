@@ -14,6 +14,9 @@ env:
   PROTOC_GEN_GO_VERSION: v1.36.11
   PROTOC_GEN_GO_GRPC_VERSION: v1.6.2
   GOLANGCI_LINT_VERSION: v2.13.1
+  # No v prefix: the release tag is v${ACTIONLINT_VERSION} but the asset name is
+  # not.
+  ACTIONLINT_VERSION: 1.7.7
 
 jobs:
   lint:
@@ -59,6 +62,26 @@ jobs:
 
       - name: golangci-lint
         run: golangci-lint run --timeout=5m ./...
+
+  actions:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    # The release workflow cannot be exercised without pushing a tag, so its
+    # syntax, expressions and shell are checked here instead.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install actionlint
+        run: |
+          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C "${RUNNER_TEMP}" actionlint
+
+      - name: actionlint
+        # shellcheck is preinstalled on the runner and actionlint picks it up,
+        # so this lints the shell inside every run: block as well.
+        run: |
+          "${RUNNER_TEMP}/actionlint" -color
 
   test:
     name: Test
