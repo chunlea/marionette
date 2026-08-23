@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -517,4 +519,91 @@ func TestProxyEnv(t *testing.T) {
 	assert.Equal(t, "http://proxy.internal:3128", env["HTTPS_PROXY"])
 	// The agent's own gRPC connection must never be proxied.
 	assert.Contains(t, env["NO_PROXY"], "marionette.internal")
+}
+
+// pidClient is a DockerClient whose container reports a different PID on each
+// inspect, standing in for a container that restarted.
+type pidClient struct {
+	DockerClient
+
+	mu       sync.Mutex
+	pids     []int
+	inspects int
+	err      error
+}
+
+func (c *pidClient) ContainerInspect(_ context.Context, id string) (types.ContainerJSON, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.err != nil {
+		return types.ContainerJSON{}, c.err
+	}
+
+	pid := c.pids[min(c.inspects, len(c.pids)-1)]
+	c.inspects++
+
+	return types.ContainerJSON{
+		ContainerJSONBase: &types.ContainerJSONBase{
+			ID:    id,
+			State: &container.State{Running: true, Pid: pid},
+		},
+	}, nil
+}
+
+// TestNamespaceResolver_FollowsAContainerRestart covers the trap that makes
+// this worth re-inspecting every time.
+//
+// A container that restarts inside a session comes back under a new PID with a
+// new network namespace. A path resolved once and cached would keep pointing
+// at a namespace that no longer exists, and every rule written through it
+// would go nowhere while the sandbox ran unfiltered.
+func TestNamespaceResolver_FollowsAContainerRestart(t *testing.T) {
+	client := &pidClient{pids: []int{1000, 2000}}
+	ni := NewNetworkIsolation(client)
+
+	resolve := ni.namespaceResolver("container1")
+
+	first, err := resolve(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "/proc/1000/ns/net", first)
+
+	second, err := resolve(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "/proc/2000/ns/net", second)
+	assert.Equal(t, 2, client.inspects, "the PID must be re-read, not cached")
+}
+
+func TestNamespaceResolver_HonoursProcRoot(t *testing.T) {
+	client := &pidClient{pids: []int{1000}}
+
+	// A server running inside a container sees its own procfs, where the PIDs
+	// the Docker API reports do not exist.
+	ni := NewNetworkIsolation(client, WithProcRoot("/host/proc"))
+
+	path, err := ni.namespaceResolver("container1")(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "/host/proc/1000/ns/net", path)
+}
+
+func TestNamespaceResolver_Failures(t *testing.T) {
+	t.Run("no client", func(t *testing.T) {
+		ni := NewNetworkIsolation(nil)
+		_, err := ni.namespaceResolver("container1")(context.Background())
+		assert.ErrorContains(t, err, "docker client not configured")
+	})
+
+	t.Run("inspect fails", func(t *testing.T) {
+		ni := NewNetworkIsolation(&pidClient{err: errors.New("no such container")})
+		_, err := ni.namespaceResolver("container1")(context.Background())
+		assert.ErrorContains(t, err, "inspecting container")
+	})
+
+	t.Run("container is not running", func(t *testing.T) {
+		// PID 0 means the namespace is gone; writing rules "somewhere" is
+		// worse than refusing.
+		ni := NewNetworkIsolation(&pidClient{pids: []int{0}})
+		_, err := ni.namespaceResolver("container1")(context.Background())
+		assert.ErrorContains(t, err, "is not running")
+	})
 }
