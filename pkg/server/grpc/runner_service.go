@@ -60,6 +60,21 @@ type RunnerService struct {
 	registry             *core.RunnerRegistry
 	logSubscriberMgr     core.LogSubscriberManagerInterface
 	browserStreamHandler BrowserStreamHandlerInterface
+	connBinder           ConnectionBinder
+}
+
+// ConnectionBinder records which process is holding a runner's control stream,
+// so a command sent from another replica can be routed to it.
+//
+// core.ReplicaRegistry implements it. Leaving it unset is the single-process
+// deployment: nothing is written, nothing is looked up, and SendCommand
+// behaves exactly as it did before routing existed.
+type ConnectionBinder interface {
+	// BindRunner records that this process holds the runner's stream.
+	BindRunner(ctx context.Context, runnerID string)
+	// ReleaseRunner clears the record, but only if this process still holds
+	// it - see the fence in migration 014.
+	ReleaseRunner(ctx context.Context, runnerID string)
 }
 
 // RunnerServiceOption is a functional option for RunnerService.
@@ -74,6 +89,13 @@ func NewRunnerService(logger *zap.Logger, opts ...RunnerServiceOption) *RunnerSe
 		opt(svc)
 	}
 	return svc
+}
+
+// WithConnectionBinder attaches the cross-replica connection registry.
+func WithConnectionBinder(b ConnectionBinder) RunnerServiceOption {
+	return func(svc *RunnerService) {
+		svc.connBinder = b
+	}
 }
 
 // WithStore sets the store for the RunnerService.
