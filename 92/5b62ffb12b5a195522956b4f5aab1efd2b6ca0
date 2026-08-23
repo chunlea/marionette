@@ -1,0 +1,49 @@
+pkg/server/core/app.go
+  s_b1ee0c9aba1316::t_58870b59facca1 46-49,96,285-301
+pkg/server/core/app_test.go
+  s_b1ee0c9aba1316::t_a247b763103344 33,56,94
+pkg/server/core/reaper.go
+  s_e995f4552d48c1::t_0a8592295dba3f 1-356
+pkg/server/core/reaper_test.go
+  s_476c758fe5506c::t_8c759d20b1571f 1-315
+pkg/server/core/session_manager.go
+  s_b1ee0c9aba1316::t_eece8273e16a42 702-707,737-924,1409-1413,1415,1421-1451
+pkg/server/core/session_manager_test.go
+  s_476c758fe5506c::t_c7f7b62fc9cd90 11,1450-1451,1492,2177-2377
+pkg/server/core/workspace_manager.go
+  s_e995f4552d48c1::t_3884c5c7bf7103 339-342,348-353,359
+pkg/server/core/workspace_manager_test.go
+  s_b1ee0c9aba1316::t_f81b09c8060d03 117-122,131-139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "925b62ffb12b5a195522956b4f5aab1efd2b6ca0",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
