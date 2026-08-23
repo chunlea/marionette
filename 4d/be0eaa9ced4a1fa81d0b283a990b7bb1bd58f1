@@ -1,0 +1,43 @@
+pkg/server/core/multiprocess_claim_test.go
+  s_06101893ef548c::t_c2f149fda8614b 465-516
+pkg/server/core/session_manager.go
+  s_b2fb362fa9128c::t_51556557e461ef 1267-1270,1272-1274,1278-1284
+pkg/store/models.go
+  s_06101893ef548c::t_dc84d6306b0e55 158-162
+pkg/store/postgres/sessions.go
+  s_b2fb362fa9128c::t_413afd05d86775 361-370,378-381
+pkg/store/postgres/sessions_test.go
+  s_922ee36a2ef105::t_07c2629347da70 79-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "4dbe0eaa9ced4a1fa81d0b283a990b7bb1bd58f1",
+  "prompts": {},
+  "sessions": {
+    "s_06101893ef548c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d763bd45-5eb0-4d79-aa0d-ea5d7b0f9d9c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_922ee36a2ef105": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e4155e7b-3074-4ac3-9061-4d234659107f",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b2fb362fa9128c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90747e52-2fa2-46d4-953b-527cf3ed633b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
