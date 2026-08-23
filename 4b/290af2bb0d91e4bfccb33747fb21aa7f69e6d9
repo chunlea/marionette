@@ -1,0 +1,57 @@
+Makefile
+  s_ecb7c44fe1ae09::t_c23d1a92606c1c 3,245-270
+pkg/server/core/redispatch_waker_test.go
+  s_6ce8a3a3b8d9e6::t_f0b9e1bfb37801 5,473-605
+pkg/server/core/session_manager.go
+  s_2681c55641541f::t_afc9c7f0de8941 8,195-208,256-280,1580-1582,1735-1739
+pkg/server/core/task_manager.go
+  s_ecb7c44fe1ae09::t_bed539079ca371 1067-1068,1070-1073,1075-1090,1093-1102
+scripts/loadtest.sh
+  s_6ce8a3a3b8d9e6::t_91f33ea4d6d341 1-162
+test/perf/loadtest/harness.go
+  s_1e03d1f9444213::t_eb168d516a824b 22,28-30,57,96-100,300-303,334-376
+test/perf/loadtest/main.go
+  s_1e03d1f9444213::t_40b34dc6417d6c 36,46-50,56-62,68,82,96-99,108-109,117-129,140-154,157-158,161,163,166,170-176,194,269,276
+test/perf/store/store_bench_test.go
+  s_2681c55641541f::t_d9499f6505c878 23,30,86-89,158-177,182,184-187,190-192,199-200,207-210,216,227-233,239,245,258,264-265,277,291,298-299,301,314,323-328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "4b290af2bb0d91e4bfccb33747fb21aa7f69e6d9",
+  "prompts": {},
+  "sessions": {
+    "s_1e03d1f9444213": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f08e1d14-b06b-4619-aa64-c85c623e5795",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_2681c55641541f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957a3a1-8aa9-4481-b571-119f14c7519e",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_6ce8a3a3b8d9e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f1a55cc-dd39-4229-91f5-7498430c8926",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_ecb7c44fe1ae09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "52064dcb-78a6-4657-81a0-b7202cd11674",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
