@@ -22,11 +22,20 @@ import (
 func newTestSyncer(t *testing.T) *WorkspaceSyncer {
 	t.Helper()
 
+	return newTestSyncerWithCAS(t, CASConfig{})
+}
+
+// newTestSyncerWithCAS is newTestSyncer with the chunking settings a test
+// needs to reach one side of the threshold or the other.
+func newTestSyncerWithCAS(t *testing.T, casCfg CASConfig) *WorkspaceSyncer {
+	t.Helper()
+
 	logger := zaptest.NewLogger(t)
 	syncer, err := NewWorkspaceSyncerFromConfig(StorageConfig{
 		Backend:    StorageBackendLocal,
 		LocalPath:  t.TempDir(),
 		Encryption: StorageEncryptionNone,
+		CAS:        casCfg,
 	}, logger)
 	require.NoError(t, err)
 	require.True(t, syncer.Available())
@@ -576,4 +585,117 @@ func TestWorkspaceSyncer_MountPathDoesNotCollideSessions(t *testing.T) {
 	err = syncer.Restore(ctx, secondID, firstResult.ManifestID, crossTarget)
 	require.Error(t, err,
 		"a manifest from another workspace must not restore under this key")
+}
+
+// The runner's CAS settings have to reach the syncer, and the ones it leaves
+// out have to land on the defaults rather than on zero.
+func TestCASConfigFrom(t *testing.T) {
+	t.Run("empty settings produce the defaults", func(t *testing.T) {
+		got := casConfigFrom(CASConfig{})
+
+		assert.Equal(t, cas.DefaultConfig.CDCThreshold, got.CDCThreshold)
+		assert.Equal(t, cas.CDCModeAuto, got.CDCMode)
+		assert.Equal(t, cas.DefaultConfig.MaxConcurrency, got.MaxConcurrency)
+		assert.NotEmpty(t, got.TempDir)
+	})
+
+	t.Run("configured settings are carried through", func(t *testing.T) {
+		got := casConfigFrom(CASConfig{
+			CDCThreshold:   4096,
+			CDCMode:        cas.CDCModeAlways,
+			MaxConcurrency: 3,
+		})
+
+		assert.Equal(t, int64(4096), got.CDCThreshold)
+		assert.Equal(t, cas.CDCModeAlways, got.CDCMode)
+		assert.Equal(t, 3, got.MaxConcurrency)
+	})
+}
+
+// A CAS setting that cannot be honoured has to be rejected at startup. The
+// alternative is a runner that looks healthy and stores workspaces the wrong
+// way, which is only discovered at the first restore.
+func TestCASConfigValidation(t *testing.T) {
+	base := func() Config {
+		return Config{
+			Server:  ServerConfig{Address: "localhost:9090"},
+			Runner:  RunnerConfig{Token: "rtok_test"},
+			Sandbox: SandboxConfig{Mode: "runner-is-sandbox"},
+			Logging: LoggingConfig{Level: "info", Format: "json"},
+			Storage: StorageConfig{
+				Backend:    StorageBackendLocal,
+				LocalPath:  t.TempDir(),
+				Encryption: StorageEncryptionNone,
+			},
+		}
+	}
+
+	t.Run("a known mode is accepted", func(t *testing.T) {
+		cfg := base()
+		cfg.Storage.CAS.CDCMode = cas.CDCModeAlways
+		require.NoError(t, cfg.Validate())
+	})
+
+	t.Run("an unknown mode is rejected", func(t *testing.T) {
+		cfg := base()
+		cfg.Storage.CAS.CDCMode = "sometimes"
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "storage.cas.cdc_mode")
+	})
+
+	t.Run("a negative threshold is rejected", func(t *testing.T) {
+		cfg := base()
+		cfg.Storage.CAS.CDCThreshold = -1
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "storage.cas.cdc_threshold")
+	})
+
+	t.Run("a negative concurrency is rejected", func(t *testing.T) {
+		cfg := base()
+		cfg.Storage.CAS.MaxConcurrency = -2
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "storage.cas.max_concurrency")
+	})
+}
+
+// The large-workspace path has to work through the runner's own entry points,
+// not just through the CAS package: a suspend that only survives small
+// workspaces is a suspend that fails on the workspaces worth preserving.
+func TestWorkspaceSyncer_RoundTripOverTheCDCThreshold(t *testing.T) {
+	ctx := context.Background()
+	syncer := newTestSyncerWithCAS(t, CASConfig{CDCMode: cas.CDCModeAlways, MaxConcurrency: 2})
+
+	id := WorkspaceIdentity{WorkspaceID: "ws_big", TenantID: "tenant-1"}
+
+	srcDir := t.TempDir()
+	blob := make([]byte, 5<<20)
+	_, err := rand.Read(blob)
+	require.NoError(t, err)
+	writeTree(t, srcDir, map[string][]byte{
+		"main.go":       []byte("package main\n"),
+		"vendor/big.db": blob,
+		"docs/notes.md": []byte("notes"),
+	})
+	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "build/out"), 0o755))
+
+	result, err := syncer.Sync(ctx, id, srcDir)
+	require.NoError(t, err)
+	require.True(t, result.Synced)
+
+	dstDir := filepath.Join(t.TempDir(), "restored")
+	require.NoError(t, syncer.Restore(ctx, id, result.ManifestID, dstDir))
+
+	assert.Equal(t, readTree(t, srcDir), readTree(t, dstDir))
+	assert.DirExists(t, filepath.Join(dstDir, "build/out"),
+		"an empty directory is part of the workspace")
+
+	// A second sync of the same tree reuses the first snapshot's chunks, so
+	// nothing new lands in storage.
+	second, err := syncer.Sync(ctx, id, srcDir)
+	require.NoError(t, err)
+	require.True(t, second.Synced)
+	require.NotEqual(t, result.ManifestID, second.ManifestID)
 }

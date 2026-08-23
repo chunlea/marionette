@@ -194,10 +194,7 @@ func buildCASSyncer(cfg StorageConfig, logger *zap.Logger) (func(workspaceID str
 			return nil, err
 		}
 
-		casCfg := cas.DefaultConfig
-		if casCfg.TempDir == "" {
-			casCfg.TempDir = filepath.Join(os.TempDir(), "marionette-cas")
-		}
+		casCfg := casConfigFrom(cfg.CAS)
 
 		chunkStore := cas.NewBlobChunkStore(provider, encryptor)
 		manifestStore := cas.NewBlobManifestStoreWithTempDir(provider, encryptor, casCfg.TempDir)
@@ -212,6 +209,23 @@ func buildCASSyncer(cfg StorageConfig, logger *zap.Logger) (func(workspaceID str
 	default:
 		return nil, fmt.Errorf("unknown storage backend %q", cfg.Backend)
 	}
+}
+
+// casConfigFrom applies the runner's CAS settings over the defaults.
+//
+// Zero means "unset" for every one of these: a runner that says nothing about
+// chunking gets the defaults rather than a workspace stored one byte at a time.
+func casConfigFrom(cfg CASConfig) cas.Config {
+	casCfg := cas.Config{
+		CDCThreshold:   cfg.CDCThreshold,
+		CDCMode:        cfg.CDCMode,
+		MaxConcurrency: cfg.MaxConcurrency,
+	}.WithDefaults()
+
+	if casCfg.TempDir == "" {
+		casCfg.TempDir = filepath.Join(os.TempDir(), "marionette-cas")
+	}
+	return casCfg
 }
 
 // buildCASEncryptor resolves the configured encryption mode.
