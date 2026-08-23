@@ -1177,3 +1177,21 @@ func TestRunnerRegistry_Register_BoundToken_SecondRegistration(t *testing.T) {
 	runner, _ := runnerStore.GetRunner(ctx, runnerID)
 	assert.Equal(t, "host2", runner.Hostname)
 }
+
+// Connection registry stubs: this file's subject does not route commands.
+func (m *mockRunnerStore) BindRunnerConnection(_ context.Context, _, _ string) error    { return nil }
+func (m *mockRunnerStore) ReleaseRunnerConnection(_ context.Context, _, _ string) error { return nil }
+func (m *mockRunnerStore) GetRunnerConnection(_ context.Context, _ string) (*store.RunnerConnection, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockRunnerStore) RegisterServerReplica(_ context.Context, _ *store.ServerReplica) error {
+	return nil
+}
+func (m *mockRunnerStore) HeartbeatServerReplica(_ context.Context, _ string) error { return nil }
+func (m *mockRunnerStore) DeleteServerReplica(_ context.Context, _ string) error    { return nil }
+func (m *mockRunnerStore) DeleteExpiredServerReplicas(_ context.Context, _ time.Duration) (int, error) {
+	return 0, nil
+}
+func (m *mockRunnerStore) ListServerReplicas(_ context.Context) ([]*store.ServerReplica, error) {
+	return nil, nil
+}
