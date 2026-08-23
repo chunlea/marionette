@@ -1,0 +1,21 @@
+pkg/server/core/task_manager.go
+  s_e995f4552d48c1::t_6ea36aa97d3b9a 8,103-116,286-292
+pkg/server/core/task_manager_test.go
+  s_e995f4552d48c1::t_77b2959df8b621 1917-1949
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "89f20620c8d334d7490da652f7ce3be0635e9322",
+  "prompts": {},
+  "sessions": {
+    "s_e995f4552d48c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9927d7e-6d37-48dc-90c8-48dcd2318899",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
