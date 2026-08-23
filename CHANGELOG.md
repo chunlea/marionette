@@ -94,6 +94,9 @@ the main path:
   single-process is correct today.
 - `mctl admin runner-tokens create` prints empty fields, and there is no
   `mctl runners` command — list runners via `GET /api/v1/runners`.
+- The published v0.1.0 images were built by hand before the release workflow
+  existed: they are `linux/arm64` only, and no `mctl` binaries are attached to
+  this release. Both are fixed from the next tag on.
 
 [#127]: https://github.com/chunlea/marionette/pull/127
 [#128]: https://github.com/chunlea/marionette/pull/128
