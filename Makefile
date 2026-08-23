@@ -1,6 +1,7 @@
 .PHONY: deps build test lint proto migrate dev clean help \
 	schema schema-check openapi openapi-check generate test-store \
 	bench bench-core bench-store loadtest \
+	version dist docker-build docker-up docker-down \
 	certs certs-clean certs-verify \
 	web-install web-dev web-build web-lint web-clean
 
@@ -16,8 +17,29 @@ SERVER_BINARY=bin/server
 AGENT_BINARY=bin/agent
 MCTL_BINARY=bin/mctl
 
+# Version stamping. Derived from git so a local build is honest about what it
+# is: an exact tag reads as v0.1.0, anything else as v0.1.0-3-g1234abc, with
+# -dirty appended when the tree has uncommitted changes.
+#
+# Expanded once (:=) so every binary in a single `make build` carries the same
+# stamp; VERSION=... from the environment or the command line still wins, which
+# is how the release workflow passes the tag it is building.
+VERSION := $(or $(VERSION),$(shell git describe --tags --always --dirty 2>/dev/null),dev)
+COMMIT := $(or $(COMMIT),$(shell git rev-parse --short HEAD 2>/dev/null),unknown)
+BUILD_DATE := $(or $(BUILD_DATE),$(shell date -u +%Y-%m-%dT%H:%M:%SZ))
+
+# The linker silently ignores an -X for a symbol that does not exist, so one
+# set of flags is safe for all three binaries. Today only mctl declares the vars
+# (cmd/mctl/version.go); server and agent light up the moment they do.
+VERSION_LDFLAGS=-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildDate=$(BUILD_DATE)
+
+# The same stamp for image builds, where it also becomes the OCI labels.
+DOCKER_BUILD_ARGS=--build-arg VERSION=$(VERSION) \
+	--build-arg COMMIT=$(COMMIT) \
+	--build-arg BUILD_DATE=$(BUILD_DATE)
+
 # Build flags
-LDFLAGS=-ldflags "-s -w"
+LDFLAGS=-ldflags "-s -w $(VERSION_LDFLAGS)"
 
 # Default target
 .DEFAULT_GOAL := help
@@ -155,6 +177,7 @@ dev:
 ## clean: Remove build artifacts
 clean:
 	rm -rf bin/
+	rm -rf dist/
 	rm -rf gen/proto/
 	rm -f coverage.out coverage.html
 
@@ -268,10 +291,42 @@ bench-store:
 loadtest: build
 	./scripts/loadtest.sh
 
+# =============================================================================
+# Release artifacts
+# =============================================================================
+
+## version: Print the version stamp a build would use right now
+version:
+	@echo "version:    $(VERSION)"
+	@echo "commit:     $(COMMIT)"
+	@echo "build date: $(BUILD_DATE)"
+
+# The same three targets .github/workflows/release.yml attaches to a release.
+# The workflow calls this target rather than repeating the build, so what you
+# can produce locally and what lands on the release page cannot drift.
+DIST_PLATFORMS ?= darwin/arm64 linux/amd64 linux/arm64
+
+## dist: Cross-compile the mctl tarballs a release attaches (into ./dist)
+dist: proto
+	@rm -rf dist && mkdir -p dist
+	@for platform in $(DIST_PLATFORMS); do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		echo "building mctl $(VERSION) $$os/$$arch"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
+			$(GOBUILD) $(LDFLAGS) -o dist/mctl ./cmd/mctl || exit 1; \
+		tar -czf "dist/mctl_$(VERSION)_$${os}_$${arch}.tar.gz" -C dist mctl; \
+		rm dist/mctl; \
+	done
+	@cd dist && { command -v sha256sum >/dev/null 2>&1 \
+		&& sha256sum *.tar.gz > SHA256SUMS \
+		|| shasum -a 256 *.tar.gz > SHA256SUMS; }
+	@echo "Artifacts in ./dist:"
+	@ls -1 dist
+
 ## docker-build: Build Docker images
 docker-build:
-	docker build -t marionette/server:latest -f deploy/docker/Dockerfile.server .
-	docker build -t marionette/agent:latest -f deploy/docker/Dockerfile.agent .
+	docker build $(DOCKER_BUILD_ARGS) -t marionette/server:latest -f deploy/docker/Dockerfile.server .
+	docker build $(DOCKER_BUILD_ARGS) -t marionette/agent:latest -f deploy/docker/Dockerfile.agent .
 
 ## docker-up: Start services with docker-compose
 docker-up:
