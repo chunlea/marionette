@@ -1,0 +1,19 @@
+.github/workflows/ci.yml
+  s_d7da100278f3de::t_8b9fe46f9ca1ac 17-19,66-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "1337dc2696612b0677fbd519e7393e88111e90d1",
+  "prompts": {},
+  "sessions": {
+    "s_d7da100278f3de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d25f03f-fcd3-47a0-8cec-a7ffad651de1",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
