@@ -1,0 +1,75 @@
+-- Marionette Database Schema — DESIGN NOTES
+--
+-- This file is the hand-written preamble that scripts/gen-schema.sh prepends
+-- to the generated docs/schema.sql. Edit this file for prose; edit
+-- migrations/*.up.sql for the actual schema.
+--
+--
+-- ID Format: {prefix}_{base62_timestamp}{nanoid}
+-- Examples: sess_0002xK9mNpV1StGXR8, task_0002xK9mNqW2TuHYS9
+--
+-- Structure:
+--   - prefix: resource type (sess, task, run, ws, etc.)
+--   - base62_timestamp: zero-padded milliseconds since epoch (8 chars fixed)
+--   - nanoid: 8 random chars (base62 alphabet)
+--
+-- Benefits:
+--   - Human-readable (type visible in ID)
+--   - Time-ordered (fixed-width base62 ensures lexicographic = chronological)
+--   - Short (~21 chars vs UUID's 36)
+--   - URL-safe (no special chars)
+--
+-- Prefixes:
+--   run_    runner
+--   sess_   session
+--   task_   task
+--   trun_   task_run
+--   stsk_   scheduled_task
+--   perm_   permission_request
+--   ws_     workspace
+--   key_    api_key
+--   rtok_   runner_token
+--   dek_    data_key
+--   log_    log entry
+--   arch_   log_archive
+--   acfg_   agent_config
+--   pcfg_   provider_config
+--   prof_   profile
+--   snap_   snapshot
+--   tun_    tunnel
+--   ttok_   tunnel_token
+--   mfst_   manifest
+--   alog_   action_log
+
+--------------------------------------------------------------------------------
+-- Tenant Isolation
+--------------------------------------------------------------------------------
+--
+-- DEPLOYMENT MODES:
+--   1. Single-tenant: tenant_id = NULL everywhere (default for self-hosted)
+--   2. Multi-tenant:  tenant_id NOT NULL enforced at application layer
+--
+-- SECURITY MODEL:
+--   - tenant_id is injected by auth middleware, NEVER from user input
+--   - All queries filtered by tenant_id (middleware-injected WHERE clause)
+--   - Cross-tenant references prevented at application layer (store package)
+--   - For multi-tenant SaaS: set config.multi_tenant = true
+--
+-- APPLICATION LAYER ENFORCEMENT (see pkg/store/tenant.go):
+--   1. TenantContext: wraps DB operations with tenant_id injection
+--   2. CreateSession: validates workspace.tenant_id == session.tenant_id
+--   3. CreateTask: validates session.tenant_id == task.tenant_id
+--   4. AttachRunner: validates runner.tenant_id == session.tenant_id
+--   5. All List/Get queries: add WHERE tenant_id = ? filter
+--
+-- NULL HANDLING:
+--   - PostgreSQL: NULL = NULL is false, so UNIQUE(tenant_id, name) allows
+--     multiple rows with NULL tenant_id and same name.
+--   - Solution: Use COALESCE(tenant_id, '') in unique indexes.
+--   - This treats NULL as empty string for uniqueness, but keeps NULL in data.
+--
+-- WHY NOT DATABASE TRIGGERS:
+--   - Portability: support MySQL, SQLite, CockroachDB in the future
+--   - Debuggability: easier to trace validation errors in application code
+--   - Performance: avoid trigger overhead on every write
+--   - Flexibility: different validation rules for different deployment modes

@@ -1,4 +1,5 @@
 .PHONY: deps build test lint proto migrate dev clean help \
+	schema schema-check \
 	certs certs-clean certs-verify \
 	web-install web-dev web-build web-lint web-clean
 
@@ -107,6 +108,14 @@ migrate-down:
 		exit 1; \
 	fi
 	migrate -path migrations -database "$(MARIONETTE_DATABASE_URL)" down 1
+
+## schema: Regenerate docs/schema.sql from migrations (requires Docker)
+schema:
+	./scripts/gen-schema.sh
+
+## schema-check: Fail if docs/schema.sql has drifted from migrations (requires Docker)
+schema-check:
+	./scripts/gen-schema.sh --check
 
 ## migrate-create: Create a new migration (usage: make migrate-create name=migration_name)
 migrate-create:

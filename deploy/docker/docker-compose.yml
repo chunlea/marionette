@@ -10,8 +10,6 @@ services:
       POSTGRES_DB: marionette
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Auto-run schema.sql on first startup
-      - ../../docs/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     # Expose port for local token generation
     ports:
       - "5432:5432"
@@ -21,6 +19,29 @@ services:
       timeout: 5s
       retries: 5
 
+  # Schema is provisioned by running migrations/, never by mounting a .sql file.
+  #
+  # This used to mount docs/schema.sql into /docker-entrypoint-initdb.d. That
+  # file had drifted (no streams, no webhooks), and the init directory only runs
+  # against an EMPTY data volume, so existing dev databases silently never
+  # picked up anything new. To start over:
+  #
+  #   docker compose down -v && docker compose up
+  #
+  # Migrations are idempotent, so this service is safe to re-run on every boot.
+  migrate:
+    image: migrate/migrate:v4.18.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../../migrations:/migrations:ro
+    command:
+      - -path=/migrations
+      - -database=postgres://marionette:marionette@postgres:5432/marionette?sslmode=disable
+      - up
+    restart: on-failure:5
+
   server:
     build:
       context: ../..
@@ -28,6 +49,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       MARIONETTE_DATABASE_URL: postgres://marionette:marionette@postgres:5432/marionette?sslmode=disable
       MARIONETTE_MASTER_KEY: ${MARIONETTE_MASTER_KEY:-dev-master-key-change-in-production}

@@ -1,5 +1,21 @@
--- Marionette Database Schema
--- PostgreSQL 15+
+--
+-- GENERATED FILE — DO NOT EDIT.
+--
+-- Source of truth: migrations/*.up.sql
+-- Prose/design notes: scripts/schema-header.sql
+-- Regenerate with:  make schema
+-- Drift is checked in CI (make schema-check).
+--
+-- Rendered from postgres:16-alpine. The daily partitions of `logs` are omitted: they
+-- are created at runtime by pkg/jobs.PartitionMaintainer, not by migrations.
+--
+
+-- Marionette Database Schema — DESIGN NOTES
+--
+-- This file is the hand-written preamble that scripts/gen-schema.sh prepends
+-- to the generated docs/schema.sql. Edit this file for prose; edit
+-- migrations/*.up.sql for the actual schema.
+--
 --
 -- ID Format: {prefix}_{base62_timestamp}{nanoid}
 -- Examples: sess_0002xK9mNpV1StGXR8, task_0002xK9mNqW2TuHYS9
@@ -70,807 +86,76 @@
 --   - Performance: avoid trigger overhead on every write
 --   - Flexibility: different validation rules for different deployment modes
 
---------------------------------------------------------------------------------
--- Configuration Tables (created first to avoid circular references)
---------------------------------------------------------------------------------
-
-CREATE TABLE provider_configs (
-    id TEXT PRIMARY KEY,  -- pcfg_xxx
-    name TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    config JSONB NOT NULL DEFAULT '{}',
-
-    -- Suspend configuration
-    -- See docs/providers.md for strategy details
-    suspend_config JSONB NOT NULL DEFAULT '{
-        "strategy": "terminate",
-        "min_duration": "60s",
-        "max_duration": "24h",
-        "fallback": "terminate"
-    }',
-
-    is_default BOOLEAN NOT NULL DEFAULT FALSE,
-    tenant_id TEXT,
-    labels JSONB NOT NULL DEFAULT '{}',
-    annotations JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- Note: Use index with COALESCE instead of constraint for NULL handling
-    CONSTRAINT valid_suspend_strategy CHECK (
-        suspend_config->>'strategy' IS NULL OR
-        suspend_config->>'strategy' IN (
-            'pause', 'snapshot', 'terminate_preserve_storage',
-            'release_to_pool', 'terminate'
-        )
-    )
-);
-
-CREATE INDEX idx_provider_configs_provider ON provider_configs(provider);
-CREATE INDEX idx_provider_configs_tenant ON provider_configs(tenant_id);
--- COALESCE handles NULL: treats NULL tenant_id as '' for uniqueness
-CREATE UNIQUE INDEX idx_provider_configs_name_unique ON provider_configs(COALESCE(tenant_id, ''), name);
-CREATE UNIQUE INDEX idx_provider_configs_default ON provider_configs(provider, COALESCE(tenant_id, ''))
-    WHERE is_default = TRUE;
-
-CREATE TABLE agent_configs (
-    id TEXT PRIMARY KEY,  -- acfg_xxx
-    name TEXT NOT NULL,
-    agent TEXT NOT NULL,
-    api_key_encrypted TEXT NOT NULL,
-    model TEXT,
-    base_url TEXT,
-    extra JSONB NOT NULL DEFAULT '{}',
-    is_default BOOLEAN NOT NULL DEFAULT FALSE,
-    tenant_id TEXT,
-    labels JSONB NOT NULL DEFAULT '{}',
-    annotations JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    -- Note: Use index with COALESCE instead of constraint for NULL handling
-);
-
-CREATE INDEX idx_agent_configs_agent ON agent_configs(agent);
-CREATE INDEX idx_agent_configs_tenant ON agent_configs(tenant_id);
--- COALESCE handles NULL: treats NULL tenant_id as '' for uniqueness
-CREATE UNIQUE INDEX idx_agent_configs_name_unique ON agent_configs(COALESCE(tenant_id, ''), name);
-CREATE UNIQUE INDEX idx_agent_configs_default ON agent_configs(agent, COALESCE(tenant_id, ''))
-    WHERE is_default = TRUE;
-
-CREATE TABLE profiles (
-    id TEXT PRIMARY KEY,  -- prof_xxx
-    name TEXT NOT NULL,
-    description TEXT,
-    provider_config_id TEXT REFERENCES provider_configs(id) ON DELETE SET NULL,
-    tenant_id TEXT,
-    resources JSONB NOT NULL DEFAULT '{}',
-    network JSONB NOT NULL DEFAULT '{}',
-    init_script TEXT,
-    cleanup_script TEXT,
-    tunnels JSONB NOT NULL DEFAULT '[]',
-    selector JSONB NOT NULL DEFAULT '{}',
-    labels JSONB NOT NULL DEFAULT '{}',
-    annotations JSONB NOT NULL DEFAULT '{}',
-    is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    -- Note: Use index with COALESCE instead of constraint for NULL handling
-);
-
-CREATE INDEX idx_profiles_tenant ON profiles(tenant_id);
--- COALESCE handles NULL: treats NULL tenant_id as '' for uniqueness
-CREATE UNIQUE INDEX idx_profiles_name_unique ON profiles(COALESCE(tenant_id, ''), name);
-
---------------------------------------------------------------------------------
--- Core Tables
---------------------------------------------------------------------------------
-
--- runners (execution environments)
-CREATE TABLE runners (
-    id TEXT PRIMARY KEY,  -- run_xxx
-    name TEXT NOT NULL,
-    hostname TEXT NOT NULL,
-
-    -- Connection state (server-tracked): offline, idle, busy, paused
-    status TEXT NOT NULL DEFAULT 'offline',
-
-    -- Taint status for pool runners (dirty state after crash)
-    tainted BOOLEAN NOT NULL DEFAULT FALSE,
-    taint_reason TEXT,
-
-    -- Sandbox configuration
-    sandbox_mode TEXT NOT NULL DEFAULT 'runner-is-sandbox',
-    sandbox_types TEXT[] DEFAULT '{}',
-
-    -- Provider info
-    provider_config_id TEXT REFERENCES provider_configs(id) ON DELETE SET NULL,
-    provider_instance_id TEXT,
-
-    -- Pool info
-    pool_name TEXT,
-    profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
-    capabilities TEXT[] NOT NULL DEFAULT '{}',
-
-    -- Tenant isolation
-    tenant_id TEXT,
-
-    -- Metadata
-    labels JSONB NOT NULL DEFAULT '{}',
-    annotations JSONB NOT NULL DEFAULT '{}',
-
-    last_seen_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT valid_sandbox_mode CHECK (
-        sandbox_mode IN ('runner-is-sandbox', 'runner-creates-sandbox', 'none')
-    ),
-    CONSTRAINT valid_runner_status CHECK (
-        status IN ('offline', 'idle', 'busy', 'paused')
-    )
-    -- Note: Use index with COALESCE instead of constraint for NULL handling
-);
-
-CREATE INDEX idx_runners_labels ON runners USING GIN (labels);
-CREATE INDEX idx_runners_pool ON runners(pool_name) WHERE pool_name IS NOT NULL;
-CREATE INDEX idx_runners_status ON runners(status);
-CREATE INDEX idx_runners_tenant ON runners(tenant_id);
-CREATE INDEX idx_runners_tainted ON runners(pool_name, tainted) WHERE tainted = TRUE;
--- COALESCE handles NULL: treats NULL tenant_id as '' for uniqueness
-CREATE UNIQUE INDEX idx_runners_name_unique ON runners(COALESCE(tenant_id, ''), name);
-
--- workspaces: persistent filesystem
-CREATE TABLE workspaces (
-    id TEXT PRIMARY KEY,  -- ws_xxx
-    name TEXT NOT NULL,
-
-    persist BOOLEAN NOT NULL DEFAULT TRUE,
-    storage_type TEXT NOT NULL DEFAULT 'volume',
-    storage_config JSONB NOT NULL DEFAULT '{}',
-
-    mobility TEXT NOT NULL DEFAULT 'local',
-    storage_domain TEXT,
-    storage_key TEXT,
-    storage_size_bytes BIGINT,
-    last_synced_at TIMESTAMPTZ,
-
-    disk_quota_mb INT,
-    tenant_id TEXT,
-    labels JSONB NOT NULL DEFAULT '{}',
-    annotations JSONB NOT NULL DEFAULT '{}',
-
-    expires_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at TIMESTAMPTZ,
-
-    CONSTRAINT valid_mobility CHECK (mobility IN ('local', 'shared', 'object_sync'))
-);
-
-CREATE INDEX idx_workspaces_tenant ON workspaces(tenant_id);
-CREATE INDEX idx_workspaces_expires ON workspaces(expires_at) WHERE deleted_at IS NULL;
-
--- sessions (long-lived work contexts)
-CREATE TABLE sessions (
-    id TEXT PRIMARY KEY,  -- sess_xxx
-    name TEXT,
-
-    status TEXT NOT NULL DEFAULT 'pending',
-
-    runner_id TEXT REFERENCES runners(id) ON DELETE SET NULL,
-    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
-
-    -- Agent configuration
-    agent TEXT NOT NULL,
-    is_byok BOOLEAN NOT NULL DEFAULT FALSE,
-    agent_config_id TEXT REFERENCES agent_configs(id) ON DELETE SET NULL,
-    agent_config_metadata JSONB,
-
-    -- Context snapshot (for suspend/resume)
-    -- Contains: conversation_state, working_directory, environment, etc.
-    context_snapshot JSONB,
-
-    -- Agent version tracking (for compatibility checking on resume)
-    -- Format: semantic version string, e.g., "1.0.45"
-    agent_version TEXT,
-
-    -- Suspend state tracking
-    -- Which strategy was used to suspend this session
-    suspend_strategy TEXT,
-    -- Snapshot ID if snapshot strategy was used
-    suspend_snapshot_id TEXT,
-    -- Whether workspace was synced to CAS during suspend
-    suspend_workspace_synced BOOLEAN,
-    -- Previous runner ID (for resume tracking)
-    previous_runner_id TEXT,
-
-    -- Network policy
-    network_policy TEXT NOT NULL DEFAULT 'allow_list',
-    allowed_hosts TEXT[] NOT NULL DEFAULT '{}',
-
-    -- Lifecycle mode
-    -- "on_demand": suspend when idle (default, cost-efficient)
-    -- "always_on": 7x24 persistent session, never auto-suspend
-    -- "scheduled": activated by cron schedule, suspend between runs
-    lifecycle_mode TEXT NOT NULL DEFAULT 'on_demand',
-
-    -- Lifecycle settings
-    idle_timeout_seconds INT DEFAULT 1800,  -- For on_demand: suspend after idle
-    max_lifetime_seconds INT,               -- Max session lifetime (NULL = unlimited)
-
-    -- Schedule settings (for lifecycle_mode = 'scheduled')
-    -- Cron expression: "0 9 * * 1-5" (weekdays at 9am)
-    schedule_cron TEXT,
-    schedule_timezone TEXT DEFAULT 'UTC',
-    -- Next scheduled activation time (computed from cron)
-    next_scheduled_at TIMESTAMPTZ,
-
-    tenant_id TEXT,
-    labels JSONB NOT NULL DEFAULT '{}',
-    annotations JSONB NOT NULL DEFAULT '{}',
-
-    last_activity_at TIMESTAMPTZ,
-    suspended_at TIMESTAMPTZ,
-    resumed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT valid_session_status CHECK (
-        status IN ('pending', 'active', 'suspended', 'resuming', 'terminated')
-    ),
-    CONSTRAINT valid_network_policy CHECK (
-        network_policy IN ('none', 'allow_list', 'proxy', 'air_gapped')
-    ),
-    CONSTRAINT valid_suspend_strategy CHECK (
-        suspend_strategy IS NULL OR
-        suspend_strategy IN (
-            'pause', 'snapshot', 'terminate_preserve_storage',
-            'release_to_pool', 'terminate'
-        )
-    ),
-    CONSTRAINT valid_lifecycle_mode CHECK (
-        lifecycle_mode IN ('on_demand', 'always_on', 'scheduled')
-    ),
-    CONSTRAINT scheduled_requires_cron CHECK (
-        lifecycle_mode != 'scheduled' OR schedule_cron IS NOT NULL
-    )
-);
-
-CREATE INDEX idx_sessions_status ON sessions(status);
-CREATE INDEX idx_sessions_runner ON sessions(runner_id);
-CREATE INDEX idx_sessions_tenant ON sessions(tenant_id);
-CREATE INDEX idx_sessions_labels ON sessions USING GIN (labels);
-CREATE INDEX idx_sessions_suspended ON sessions(tenant_id, suspended_at)
-    WHERE status = 'suspended';
-CREATE INDEX idx_sessions_scheduled ON sessions(next_scheduled_at)
-    WHERE lifecycle_mode = 'scheduled' AND status = 'suspended';
-CREATE INDEX idx_sessions_always_on ON sessions(tenant_id)
-    WHERE lifecycle_mode = 'always_on';
-
--- tasks: logical task entity
-CREATE TABLE tasks (
-    id TEXT PRIMARY KEY,  -- task_xxx
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    prompt TEXT NOT NULL,
-
-    status TEXT NOT NULL DEFAULT 'pending',
-    max_retries INT NOT NULL DEFAULT 0,
-    retry_count INT NOT NULL DEFAULT 0,
-    timeout_seconds INT NOT NULL DEFAULT 3600,
-
-    tenant_id TEXT,
-    labels JSONB NOT NULL DEFAULT '{}',
-    annotations JSONB NOT NULL DEFAULT '{}',
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT valid_task_status CHECK (
-        status IN ('pending', 'running', 'completed', 'failed', 'canceled')
-    )
-);
-
-CREATE INDEX idx_tasks_session ON tasks(session_id);
-CREATE INDEX idx_tasks_status ON tasks(status);
-CREATE INDEX idx_tasks_tenant ON tasks(tenant_id);
-CREATE INDEX idx_tasks_pending ON tasks(session_id, status) WHERE status = 'pending';
-
--- task_runs: execution attempts
-CREATE TABLE task_runs (
-    id TEXT PRIMARY KEY,  -- trun_xxx
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    attempt INT NOT NULL DEFAULT 1,
-    runner_id TEXT REFERENCES runners(id) ON DELETE SET NULL,
-
-    status TEXT NOT NULL DEFAULT 'pending',
-    error TEXT,
-    exit_code INT,
-    tokens_input INT,
-    tokens_output INT,
-
-    -- Tenant isolation (denormalized for query performance)
-    tenant_id TEXT,
-
-    queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    assigned_at TIMESTAMPTZ,
-    started_at TIMESTAMPTZ,
-    ended_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT valid_task_run_status CHECK (
-        status IN ('pending', 'assigned', 'running', 'completed', 'failed', 'timeout', 'canceled')
-    ),
-    UNIQUE(task_id, attempt)
-);
-
-CREATE INDEX idx_task_runs_task ON task_runs(task_id);
-CREATE INDEX idx_task_runs_runner ON task_runs(runner_id);
-CREATE INDEX idx_task_runs_status ON task_runs(status);
-CREATE INDEX idx_task_runs_tenant ON task_runs(tenant_id);
-
--- scheduled_tasks: recurring tasks with cron schedule
--- These create regular tasks when triggered
-CREATE TABLE scheduled_tasks (
-    id TEXT PRIMARY KEY,  -- stsk_xxx
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    description TEXT,
-
-    -- Cron schedule: "0 9 * * 1-5" (weekdays at 9am)
-    cron_expression TEXT NOT NULL,
-    timezone TEXT NOT NULL DEFAULT 'UTC',
-
-    -- Task template
-    prompt_template TEXT NOT NULL,  -- May contain {{.Date}}, {{.RunNumber}} etc.
-
-    -- Execution settings
-    timeout_seconds INT NOT NULL DEFAULT 3600,
-    max_retries INT NOT NULL DEFAULT 0,
-
-    -- State
-    status TEXT NOT NULL DEFAULT 'active',  -- "active", "paused", "disabled"
-    next_run_at TIMESTAMPTZ,
-    last_run_at TIMESTAMPTZ,
-    last_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
-    run_count INT NOT NULL DEFAULT 0,
-    failure_count INT NOT NULL DEFAULT 0,
-
-    -- Error handling
-    -- "continue": keep running even if last run failed
-    -- "pause_on_failure": pause after failure until manually resumed
-    -- "disable_on_failure": disable after N consecutive failures
-    on_failure TEXT NOT NULL DEFAULT 'continue',
-    max_consecutive_failures INT DEFAULT 3,
-    consecutive_failures INT NOT NULL DEFAULT 0,
-
-    tenant_id TEXT,
-    labels JSONB NOT NULL DEFAULT '{}',
-    annotations JSONB NOT NULL DEFAULT '{}',
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT valid_scheduled_task_status CHECK (
-        status IN ('active', 'paused', 'disabled')
-    ),
-    CONSTRAINT valid_on_failure CHECK (
-        on_failure IN ('continue', 'pause_on_failure', 'disable_on_failure')
-    )
-);
-
-CREATE INDEX idx_scheduled_tasks_session ON scheduled_tasks(session_id);
-CREATE INDEX idx_scheduled_tasks_next_run ON scheduled_tasks(next_run_at)
-    WHERE status = 'active';
-CREATE INDEX idx_scheduled_tasks_tenant ON scheduled_tasks(tenant_id);
-
--- permission_requests: async permission approval with suspend/resume support
-CREATE TABLE permission_requests (
-    id TEXT PRIMARY KEY,  -- perm_xxx
-    original_request_id TEXT NOT NULL,  -- Original request ID from agent (e.g., tool_use_id)
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    run_id TEXT NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,
-
-    -- Request details
-    tool TEXT NOT NULL,           -- "bash", "edit", "browser", etc.
-    action TEXT NOT NULL,         -- Command or description
-    context TEXT,                 -- Additional context for display
-    risk_level TEXT NOT NULL DEFAULT 'medium',
-
-    -- Status: pending -> approved/denied/canceled
-    status TEXT NOT NULL DEFAULT 'pending',
-
-    -- Timing
-    suspend_after_seconds INT NOT NULL DEFAULT 1800,  -- Auto-suspend session after 30 min
-    -- No auto-deny: permissions stay pending until explicit response or session termination
-
-    -- Response (when approved/denied)
-    responded_by TEXT,            -- User/API key that responded
-    response_reason TEXT,         -- Optional reason for approval/denial
-    responded_at TIMESTAMPTZ,
-
-    tenant_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT valid_permission_status CHECK (
-        status IN ('pending', 'approved', 'denied', 'canceled')
-    ),
-    CONSTRAINT valid_risk_level CHECK (
-        risk_level IN ('low', 'medium', 'high', 'critical')
-    )
-);
-
-CREATE INDEX idx_permission_requests_session ON permission_requests(session_id);
-CREATE INDEX idx_permission_requests_task ON permission_requests(task_id);
-CREATE INDEX idx_permission_requests_pending ON permission_requests(session_id, status)
-    WHERE status = 'pending';
-CREATE INDEX idx_permission_requests_tenant ON permission_requests(tenant_id);
-CREATE INDEX idx_permission_requests_original_id ON permission_requests(original_request_id);
-
---------------------------------------------------------------------------------
--- CAS Storage (Content-Addressable Storage)
---------------------------------------------------------------------------------
-
--- Content-addressed chunks (global dedup with tenant-scoped encryption)
--- Note: Chunks are encrypted per-tenant, NOT globally deduped across tenants
-CREATE TABLE chunks (
-    hash TEXT NOT NULL,                -- SHA-256 hash of compressed content
-    tenant_id TEXT NOT NULL,           -- Tenant isolation (chunks NOT shared across tenants)
-    size BIGINT NOT NULL,              -- Compressed size in bytes
-    ref_count INT NOT NULL DEFAULT 1,  -- Number of manifests referencing this chunk
-    deleted_at TIMESTAMPTZ,            -- Soft delete for GC safety
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    PRIMARY KEY (tenant_id, hash)      -- Tenant-scoped dedup
-);
-
-CREATE INDEX idx_chunks_gc ON chunks(deleted_at) WHERE deleted_at IS NOT NULL;
-
--- Workspace manifests (snapshot metadata)
-CREATE TABLE manifests (
-    id TEXT PRIMARY KEY,  -- mfst_xxx
-    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    parent_id TEXT REFERENCES manifests(id) ON DELETE SET NULL,
-    total_size BIGINT NOT NULL,
-
-    -- Single chunk mode (workspaces < 100MB)
-    single_chunk BOOLEAN NOT NULL DEFAULT FALSE,
-    chunk_hash TEXT,
-
-    -- CDC mode (workspaces >= 100MB)
-    -- For large workspaces, file list is stored in object storage as JSONL:
-    -- manifests/{tenant_id}/{workspace_id}/{manifest_id}.jsonl.zst.enc
-    -- files_json is kept NULL for CDC mode (use JSONL for streaming efficiency)
-    chunk_count INT NOT NULL DEFAULT 0,
-    files_json JSONB,  -- Only used for small CDC manifests as cache; NULL for large ones
-
-    tenant_id TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_manifests_workspace ON manifests(workspace_id, created_at DESC);
-CREATE INDEX idx_manifests_tenant ON manifests(tenant_id);
-
---------------------------------------------------------------------------------
--- Encryption
---------------------------------------------------------------------------------
-
-CREATE TABLE data_keys (
-    id TEXT PRIMARY KEY,  -- dek_xxx
-    resource_type TEXT NOT NULL,
-    resource_id TEXT NOT NULL,
-    dek_encrypted TEXT NOT NULL,
-    algorithm TEXT NOT NULL DEFAULT 'AES-256-GCM',
-    kek_id TEXT,
-
-    tenant_id TEXT,
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    rotated_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    UNIQUE(resource_type, resource_id)
-);
-
-CREATE INDEX idx_data_keys_resource ON data_keys(resource_type, resource_id);
-CREATE INDEX idx_data_keys_tenant ON data_keys(tenant_id);
-
---------------------------------------------------------------------------------
--- Authentication
---------------------------------------------------------------------------------
-
-CREATE TABLE api_keys (
-    id TEXT PRIMARY KEY,  -- key_xxx
-    name TEXT NOT NULL,
-    key_hash TEXT NOT NULL UNIQUE,    -- SHA-256 hex (64 chars)
-    key_prefix TEXT NOT NULL,         -- mk_xxxxxxxx (for display/logging)
-    hash_version INT NOT NULL DEFAULT 1,  -- 1=SHA-256, 2=HMAC-SHA256 (reserved)
-    scopes TEXT[] NOT NULL DEFAULT '{}',
-    tenant_id TEXT,
-    labels JSONB NOT NULL DEFAULT '{}',
-    annotations JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_by TEXT,
-    last_used_at TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ,
-    revoked_at TIMESTAMPTZ,
-    revoke_reason TEXT
-);
-
-CREATE INDEX idx_api_keys_key_hash ON api_keys(key_hash);
-CREATE INDEX idx_api_keys_tenant ON api_keys(tenant_id);
-CREATE INDEX idx_api_keys_expires ON api_keys(expires_at)
-    WHERE revoked_at IS NULL AND expires_at IS NOT NULL;
-
---------------------------------------------------------------------------------
--- Runner Tokens (for pool runners authentication)
---------------------------------------------------------------------------------
-
-CREATE TABLE runner_tokens (
-    id TEXT PRIMARY KEY,  -- rtok_xxx
-    token_hash TEXT NOT NULL UNIQUE,    -- SHA-256 hex (64 chars)
-    token_prefix TEXT NOT NULL,         -- rtok_xxxxxxxx (for display/logging)
-    hash_version INT NOT NULL DEFAULT 1,  -- 1=SHA-256, 2=HMAC-SHA256 (reserved)
-
-    -- Associated runner (NULL until first use)
-    runner_id TEXT REFERENCES runners(id) ON DELETE CASCADE,
-
-    -- Pool assignment
-    pool_name TEXT NOT NULL,
-
-    -- Token state
-    status TEXT NOT NULL DEFAULT 'active',
-
-    -- Rotation support
-    previous_token_hash TEXT,  -- For graceful rotation
-    rotation_deadline TIMESTAMPTZ,  -- Old token valid until this time
-
-    tenant_id TEXT,
-    labels JSONB NOT NULL DEFAULT '{}',
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_by TEXT,
-    last_used_at TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ,
-    revoked_at TIMESTAMPTZ,
-    revoke_reason TEXT,
-
-    CONSTRAINT valid_token_status CHECK (
-        status IN ('active', 'rotating', 'revoked', 'expired')
-    )
-);
-
-CREATE INDEX idx_runner_tokens_hash ON runner_tokens(token_hash);
-CREATE INDEX idx_runner_tokens_pool ON runner_tokens(pool_name);
-CREATE INDEX idx_runner_tokens_runner ON runner_tokens(runner_id);
-CREATE INDEX idx_runner_tokens_tenant ON runner_tokens(tenant_id);
-CREATE INDEX idx_runner_tokens_expires ON runner_tokens(expires_at)
-    WHERE status = 'active' AND expires_at IS NOT NULL;
-
---------------------------------------------------------------------------------
--- Logs (Partitioned by day)
---------------------------------------------------------------------------------
-
--- Note: Foreign keys omitted for partitioned table compatibility
--- Referential integrity enforced at application layer
-CREATE TABLE logs (
-    id TEXT NOT NULL,  -- log_xxx (or use run_id + sequence as natural key)
-    session_id TEXT NOT NULL,
-    task_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    runner_id TEXT NOT NULL,
-    stream TEXT NOT NULL DEFAULT 'stdout',
-    level TEXT NOT NULL DEFAULT 'info',
-    content TEXT NOT NULL,
-    sequence BIGINT NOT NULL,
-    tenant_id TEXT,
-    metadata JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
-
-CREATE UNIQUE INDEX idx_logs_run_seq_unique ON logs(run_id, sequence, created_at);
-CREATE INDEX idx_logs_task_seq ON logs(task_id, sequence);
-CREATE INDEX idx_logs_session ON logs(session_id, created_at);
-CREATE INDEX idx_logs_tenant ON logs(tenant_id, created_at);
-
-CREATE TABLE log_archives (
-    id TEXT PRIMARY KEY,  -- arch_xxx
-    session_id TEXT NOT NULL UNIQUE,
-    tenant_id TEXT,
-    storage_key TEXT NOT NULL,
-    storage_size_bytes BIGINT,
-    log_count BIGINT NOT NULL,
-    first_log_at TIMESTAMPTZ,
-    last_log_at TIMESTAMPTZ,
-    archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ,
-    deleted_at TIMESTAMPTZ
-);
-
-CREATE INDEX idx_log_archives_tenant ON log_archives(tenant_id);
-CREATE INDEX idx_log_archives_expires ON log_archives(expires_at) WHERE deleted_at IS NULL;
-
---------------------------------------------------------------------------------
--- Snapshots
---------------------------------------------------------------------------------
-
-CREATE TABLE snapshots (
-    id TEXT PRIMARY KEY,  -- snap_xxx
-    runner_id TEXT NOT NULL REFERENCES runners(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    provider_snapshot_id TEXT NOT NULL,
-    storage_key TEXT,
-    tenant_id TEXT,
-    size_bytes BIGINT,
-    labels JSONB NOT NULL DEFAULT '{}',
-    annotations JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ
-);
-
-CREATE INDEX idx_snapshots_runner ON snapshots(runner_id);
-CREATE UNIQUE INDEX idx_snapshots_runner_name ON snapshots(runner_id, name);
-CREATE INDEX idx_snapshots_tenant ON snapshots(tenant_id);
-
---------------------------------------------------------------------------------
--- Audit Logs
---------------------------------------------------------------------------------
-
--- Action logs for security audit trail
--- Records sensitive actions like permission responses, config changes, etc.
-CREATE TABLE action_logs (
-    id TEXT PRIMARY KEY,  -- alog_xxx
-
-    -- Actor
-    actor_type TEXT NOT NULL,         -- "user", "api_key", "system", "runner"
-    actor_id TEXT,                    -- API key ID, runner ID, or NULL for system
-    actor_name TEXT,                  -- Human-readable name for display
-
-    -- Action
-    action TEXT NOT NULL,             -- "permission.approved", "permission.denied", etc.
-    resource_type TEXT NOT NULL,      -- "permission_request", "session", "runner", etc.
-    resource_id TEXT NOT NULL,        -- ID of the affected resource
-
-    -- Context
-    session_id TEXT,                  -- Associated session (if applicable)
-    task_id TEXT,                     -- Associated task (if applicable)
-
-    -- Details
-    details JSONB NOT NULL DEFAULT '{}',  -- Action-specific details
-    ip_address TEXT,                  -- Client IP address
-    user_agent TEXT,                  -- Client user agent
-
-    -- Result
-    success BOOLEAN NOT NULL DEFAULT TRUE,
-    error_message TEXT,
-
-    tenant_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    -- No foreign keys for performance and to preserve logs even after resource deletion
-    CONSTRAINT valid_actor_type CHECK (
-        actor_type IN ('user', 'api_key', 'system', 'runner')
-    )
-);
-
--- Indexes for common query patterns
-CREATE INDEX idx_action_logs_actor ON action_logs(actor_type, actor_id);
-CREATE INDEX idx_action_logs_action ON action_logs(action);
-CREATE INDEX idx_action_logs_resource ON action_logs(resource_type, resource_id);
-CREATE INDEX idx_action_logs_session ON action_logs(session_id) WHERE session_id IS NOT NULL;
-CREATE INDEX idx_action_logs_tenant_time ON action_logs(tenant_id, created_at DESC);
-CREATE INDEX idx_action_logs_created ON action_logs(created_at DESC);
-
--- Partition by month for large deployments (optional)
--- Can convert to partitioned table later if needed
-
---------------------------------------------------------------------------------
--- Tunnels
---------------------------------------------------------------------------------
-
-CREATE TABLE tunnels (
-    id TEXT PRIMARY KEY,  -- tun_xxx
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    runner_id TEXT REFERENCES runners(id) ON DELETE SET NULL,  -- Nullable: runner can detach
-    type TEXT NOT NULL,
-
-    -- Direction for network policy enforcement (especially air_gapped mode)
-    -- "inbound": Server/User → Agent (viewing agent's screen/browser)
-    -- "outbound": Agent → External (exposing agent's port to internet)
-    direction TEXT NOT NULL DEFAULT 'inbound',
-
-    local_port INT NOT NULL,
-    public_url TEXT,
-
-    -- Public access (no token required)
-    -- When true, tunnel can be accessed without authentication
-    is_public BOOLEAN NOT NULL DEFAULT FALSE,
-
-    -- Token authentication (hashed for security)
-    -- See docs/auth.md for token design
-    token_hash TEXT NOT NULL,           -- SHA-256 hex (64 chars)
-    token_prefix TEXT NOT NULL,         -- ttok_xxxxxxxx (for display/logging)
-    hash_version INT NOT NULL DEFAULT 1,  -- 1=SHA-256, 2=HMAC-SHA256 (reserved)
-
-    tenant_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL,  -- Required: tunnels must expire
-    closed_at TIMESTAMPTZ,
-
-    CONSTRAINT valid_tunnel_type CHECK (
-        type IN ('http', 'tcp', 'desktop', 'browser', 'ios', 'android')
-    ),
-    CONSTRAINT valid_tunnel_direction CHECK (
-        direction IN ('inbound', 'outbound')
-    ),
-    -- Enforce direction based on type for consistency
-    -- inbound: desktop, browser, ios, android (streaming to user)
-    -- outbound: http, tcp (exposing to internet)
-    CONSTRAINT valid_type_direction CHECK (
-        (type IN ('desktop', 'browser', 'ios', 'android') AND direction = 'inbound') OR
-        (type IN ('http', 'tcp') AND direction = 'outbound')
-    )
-);
-
-CREATE INDEX idx_tunnels_session ON tunnels(session_id);
-CREATE INDEX idx_tunnels_active ON tunnels(session_id) WHERE closed_at IS NULL;
-CREATE INDEX idx_tunnels_tenant ON tunnels(tenant_id);
-
---------------------------------------------------------------------------------
--- Log Partition Management
---------------------------------------------------------------------------------
-
--- Create initial partitions (current day + 7 days ahead)
--- Run this during initial setup
-
--- Function to create a partition for a specific date
-CREATE OR REPLACE FUNCTION create_log_partition(partition_date DATE)
-RETURNS void AS $$
+--
+-- PostgreSQL database dump
+--
+
+--
+-- Name: create_log_partition(date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.create_log_partition(partition_date date) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     partition_name TEXT;
     start_date DATE;
     end_date DATE;
+    stranded BIGINT := 0;
 BEGIN
     partition_name := 'logs_' || TO_CHAR(partition_date, 'YYYYMMDD');
     start_date := partition_date;
     end_date := partition_date + INTERVAL '1 day';
 
-    -- Check if partition already exists
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relname = partition_name AND n.nspname = 'public'
-    ) THEN
+    IF to_regclass('public.' || quote_ident(partition_name)) IS NOT NULL THEN
+        RETURN;
+    END IF;
+
+    -- Rows for this day may already sit in the default partition (maintenance
+    -- was not running). Count them before deciding how to create the partition.
+    IF to_regclass('public.logs_default') IS NOT NULL THEN
+        EXECUTE format(
+            'SELECT count(*) FROM logs_default WHERE created_at >= %L AND created_at < %L',
+            start_date, end_date
+        ) INTO stranded;
+    END IF;
+
+    IF stranded = 0 THEN
         EXECUTE format(
             'CREATE TABLE %I PARTITION OF logs FOR VALUES FROM (%L) TO (%L)',
             partition_name, start_date, end_date
         );
-        RAISE NOTICE 'Created partition: %', partition_name;
+    ELSE
+        -- Attaching on top of those rows would fail, so build the table
+        -- detached, move the rows into it, then attach.
+        EXECUTE format(
+            'CREATE TABLE %I (LIKE logs INCLUDING DEFAULTS INCLUDING CONSTRAINTS)',
+            partition_name
+        );
+        EXECUTE format(
+            'WITH moved AS (' ||
+            '  DELETE FROM logs_default WHERE created_at >= %L AND created_at < %L RETURNING *' ||
+            ') INSERT INTO %I SELECT * FROM moved',
+            start_date, end_date, partition_name
+        );
+        EXECUTE format(
+            'ALTER TABLE logs ATTACH PARTITION %I FOR VALUES FROM (%L) TO (%L)',
+            partition_name, start_date, end_date
+        );
+        RAISE NOTICE 'Drained % rows from logs_default into %', stranded, partition_name;
     END IF;
-END;
-$$ LANGUAGE plpgsql;
 
--- Function to ensure partitions exist for upcoming days
--- Should be called daily by a cron job or pg_cron
-CREATE OR REPLACE FUNCTION maintain_log_partitions(days_ahead INT DEFAULT 7)
-RETURNS void AS $$
-DECLARE
-    target_date DATE;
-BEGIN
-    FOR i IN 0..days_ahead LOOP
-        target_date := CURRENT_DATE + (i || ' days')::INTERVAL;
-        PERFORM create_log_partition(target_date);
-    END LOOP;
+    RAISE NOTICE 'Created partition: %', partition_name;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
--- Function to drop old partitions (beyond retention period)
--- Should be called by the log archiver job after archiving
-CREATE OR REPLACE FUNCTION drop_old_log_partitions(retention_days INT DEFAULT 7)
-RETURNS void AS $$
+--
+-- Name: drop_old_log_partitions(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.drop_old_log_partitions(retention_days integer DEFAULT 7) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     partition_record RECORD;
     cutoff_date DATE;
@@ -885,7 +170,10 @@ BEGIN
         JOIN pg_class p ON i.inhparent = p.oid
         WHERE p.relname = 'logs'
     LOOP
-        -- Extract date from partition name (logs_YYYYMMDD)
+        IF partition_record.partition_name = 'logs_default' THEN
+            CONTINUE;
+        END IF;
+
         BEGIN
             partition_date := TO_DATE(
                 SUBSTRING(partition_record.partition_name FROM 'logs_(\d{8})'),
@@ -902,10 +190,1587 @@ BEGIN
         END;
     END LOOP;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
--- Initialize partitions for current week + 7 days ahead
-SELECT maintain_log_partitions(7);
+--
+-- Name: maintain_log_partitions(integer); Type: FUNCTION; Schema: public; Owner: -
+--
 
--- Example pg_cron setup (run after installing pg_cron extension):
--- SELECT cron.schedule('maintain-log-partitions', '0 0 * * *', 'SELECT maintain_log_partitions(7)');
+CREATE FUNCTION public.maintain_log_partitions(days_ahead integer DEFAULT 7) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    target_date DATE;
+BEGIN
+    FOR i IN 0..days_ahead LOOP
+        target_date := CURRENT_DATE + (i || ' days')::INTERVAL;
+        PERFORM create_log_partition(target_date);
+    END LOOP;
+END;
+$$;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: action_logs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.action_logs (
+    id text NOT NULL,
+    actor_type text NOT NULL,
+    actor_id text,
+    actor_name text,
+    action text NOT NULL,
+    resource_type text NOT NULL,
+    resource_id text NOT NULL,
+    session_id text,
+    task_id text,
+    details jsonb DEFAULT '{}'::jsonb NOT NULL,
+    ip_address text,
+    user_agent text,
+    success boolean DEFAULT true NOT NULL,
+    error_message text,
+    tenant_id text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT valid_actor_type CHECK ((actor_type = ANY (ARRAY['user'::text, 'api_key'::text, 'system'::text, 'runner'::text])))
+);
+
+--
+-- Name: agent_configs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_configs (
+    id text NOT NULL,
+    name text NOT NULL,
+    agent text NOT NULL,
+    api_key_encrypted text NOT NULL,
+    model text,
+    base_url text,
+    extra jsonb DEFAULT '{}'::jsonb NOT NULL,
+    is_default boolean DEFAULT false NOT NULL,
+    tenant_id text,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: api_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_keys (
+    id text NOT NULL,
+    name text NOT NULL,
+    key_hash text NOT NULL,
+    key_prefix text NOT NULL,
+    hash_version integer DEFAULT 1 NOT NULL,
+    scopes text[] DEFAULT '{}'::text[] NOT NULL,
+    tenant_id text,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by text,
+    last_used_at timestamp with time zone,
+    expires_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    revoke_reason text
+);
+
+--
+-- Name: chunks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.chunks (
+    hash text NOT NULL,
+    tenant_id text NOT NULL,
+    size bigint NOT NULL,
+    ref_count integer DEFAULT 1 NOT NULL,
+    deleted_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: data_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_keys (
+    id text NOT NULL,
+    resource_type text NOT NULL,
+    resource_id text NOT NULL,
+    dek_encrypted text NOT NULL,
+    algorithm text DEFAULT 'AES-256-GCM'::text NOT NULL,
+    kek_id text,
+    tenant_id text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    rotated_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: log_archives; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.log_archives (
+    id text NOT NULL,
+    session_id text NOT NULL,
+    tenant_id text,
+    storage_key text NOT NULL,
+    storage_size_bytes bigint,
+    log_count bigint NOT NULL,
+    first_log_at timestamp with time zone,
+    last_log_at timestamp with time zone,
+    archived_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone,
+    deleted_at timestamp with time zone
+);
+
+--
+-- Name: logs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.logs (
+    id text NOT NULL,
+    session_id text NOT NULL,
+    task_id text NOT NULL,
+    run_id text NOT NULL,
+    runner_id text NOT NULL,
+    stream text DEFAULT 'stdout'::text NOT NULL,
+    level text DEFAULT 'info'::text NOT NULL,
+    content text NOT NULL,
+    sequence bigint NOT NULL,
+    tenant_id text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+)
+PARTITION BY RANGE (created_at);
+
+--
+-- Name: logs_default; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.logs_default (
+    id text NOT NULL,
+    session_id text NOT NULL,
+    task_id text NOT NULL,
+    run_id text NOT NULL,
+    runner_id text NOT NULL,
+    stream text DEFAULT 'stdout'::text NOT NULL,
+    level text DEFAULT 'info'::text NOT NULL,
+    content text NOT NULL,
+    sequence bigint NOT NULL,
+    tenant_id text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: manifests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.manifests (
+    id text NOT NULL,
+    workspace_id text NOT NULL,
+    parent_id text,
+    total_size bigint NOT NULL,
+    single_chunk boolean DEFAULT false NOT NULL,
+    chunk_hash text,
+    chunk_count integer DEFAULT 0 NOT NULL,
+    files_json jsonb,
+    tenant_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: permission_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.permission_requests (
+    id text NOT NULL,
+    original_request_id text NOT NULL,
+    session_id text NOT NULL,
+    task_id text NOT NULL,
+    run_id text NOT NULL,
+    tool text NOT NULL,
+    action text NOT NULL,
+    context text,
+    risk_level text DEFAULT 'medium'::text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    suspend_after_seconds integer DEFAULT 1800 NOT NULL,
+    responded_by text,
+    response_reason text,
+    responded_at timestamp with time zone,
+    tenant_id text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT valid_permission_status CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'canceled'::text]))),
+    CONSTRAINT valid_risk_level CHECK ((risk_level = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
+);
+
+--
+-- Name: profiles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profiles (
+    id text NOT NULL,
+    name text NOT NULL,
+    description text,
+    provider_config_id text,
+    tenant_id text,
+    resources jsonb DEFAULT '{}'::jsonb NOT NULL,
+    network jsonb DEFAULT '{}'::jsonb NOT NULL,
+    init_script text,
+    cleanup_script text,
+    tunnels jsonb DEFAULT '[]'::jsonb NOT NULL,
+    selector jsonb DEFAULT '{}'::jsonb NOT NULL,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    is_builtin boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: provider_configs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.provider_configs (
+    id text NOT NULL,
+    name text NOT NULL,
+    provider text NOT NULL,
+    config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    suspend_config jsonb DEFAULT '{"fallback": "terminate", "strategy": "terminate", "max_duration": "24h", "min_duration": "60s"}'::jsonb NOT NULL,
+    is_default boolean DEFAULT false NOT NULL,
+    tenant_id text,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT valid_suspend_strategy CHECK ((((suspend_config ->> 'strategy'::text) IS NULL) OR ((suspend_config ->> 'strategy'::text) = ANY (ARRAY['pause'::text, 'snapshot'::text, 'terminate_preserve_storage'::text, 'release_to_pool'::text, 'terminate'::text]))))
+);
+
+--
+-- Name: runner_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runner_tokens (
+    id text NOT NULL,
+    token_hash text NOT NULL,
+    token_prefix text NOT NULL,
+    hash_version integer DEFAULT 1 NOT NULL,
+    runner_id text,
+    pool_name text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    previous_token_hash text,
+    rotation_deadline timestamp with time zone,
+    tenant_id text,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by text,
+    last_used_at timestamp with time zone,
+    expires_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    revoke_reason text,
+    CONSTRAINT valid_token_status CHECK ((status = ANY (ARRAY['active'::text, 'rotating'::text, 'revoked'::text, 'expired'::text])))
+);
+
+--
+-- Name: runners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runners (
+    id text NOT NULL,
+    name text NOT NULL,
+    hostname text NOT NULL,
+    status text DEFAULT 'offline'::text NOT NULL,
+    tainted boolean DEFAULT false NOT NULL,
+    taint_reason text,
+    sandbox_mode text DEFAULT 'runner-is-sandbox'::text NOT NULL,
+    sandbox_types text[] DEFAULT '{}'::text[],
+    provider_config_id text,
+    provider_instance_id text,
+    pool_name text,
+    profile_id text,
+    capabilities text[] DEFAULT '{}'::text[] NOT NULL,
+    tenant_id text,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    last_seen_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT valid_runner_status CHECK ((status = ANY (ARRAY['offline'::text, 'idle'::text, 'busy'::text, 'paused'::text]))),
+    CONSTRAINT valid_sandbox_mode CHECK ((sandbox_mode = ANY (ARRAY['runner-is-sandbox'::text, 'runner-creates-sandbox'::text, 'none'::text])))
+);
+
+--
+-- Name: scheduled_tasks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scheduled_tasks (
+    id text NOT NULL,
+    session_id text NOT NULL,
+    name text NOT NULL,
+    description text,
+    cron_expression text NOT NULL,
+    timezone text DEFAULT 'UTC'::text NOT NULL,
+    prompt_template text NOT NULL,
+    timeout_seconds integer DEFAULT 3600 NOT NULL,
+    max_retries integer DEFAULT 0 NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    next_run_at timestamp with time zone,
+    last_run_at timestamp with time zone,
+    last_task_id text,
+    run_count integer DEFAULT 0 NOT NULL,
+    failure_count integer DEFAULT 0 NOT NULL,
+    on_failure text DEFAULT 'continue'::text NOT NULL,
+    max_consecutive_failures integer DEFAULT 3,
+    consecutive_failures integer DEFAULT 0 NOT NULL,
+    tenant_id text,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT valid_on_failure CHECK ((on_failure = ANY (ARRAY['continue'::text, 'pause_on_failure'::text, 'disable_on_failure'::text]))),
+    CONSTRAINT valid_scheduled_task_status CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'disabled'::text])))
+);
+
+--
+-- Name: sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sessions (
+    id text NOT NULL,
+    name text,
+    status text DEFAULT 'pending'::text NOT NULL,
+    runner_id text,
+    workspace_id text NOT NULL,
+    agent text NOT NULL,
+    is_byok boolean DEFAULT false NOT NULL,
+    agent_config_id text,
+    agent_config_metadata jsonb,
+    context_snapshot jsonb,
+    agent_version text,
+    suspend_strategy text,
+    suspend_snapshot_id text,
+    suspend_workspace_synced boolean,
+    previous_runner_id text,
+    network_policy text DEFAULT 'allow_list'::text NOT NULL,
+    allowed_hosts text[] DEFAULT '{}'::text[] NOT NULL,
+    lifecycle_mode text DEFAULT 'on_demand'::text NOT NULL,
+    idle_timeout_seconds integer DEFAULT 1800,
+    max_lifetime_seconds integer,
+    schedule_cron text,
+    schedule_timezone text DEFAULT 'UTC'::text,
+    next_scheduled_at timestamp with time zone,
+    tenant_id text,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    last_activity_at timestamp with time zone,
+    suspended_at timestamp with time zone,
+    resumed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    profile_id text,
+    CONSTRAINT scheduled_requires_cron CHECK (((lifecycle_mode <> 'scheduled'::text) OR (schedule_cron IS NOT NULL))),
+    CONSTRAINT valid_lifecycle_mode CHECK ((lifecycle_mode = ANY (ARRAY['on_demand'::text, 'always_on'::text, 'scheduled'::text]))),
+    CONSTRAINT valid_network_policy CHECK ((network_policy = ANY (ARRAY['none'::text, 'allow_list'::text, 'proxy'::text, 'air_gapped'::text]))),
+    CONSTRAINT valid_session_status CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'suspended'::text, 'resuming'::text, 'terminated'::text]))),
+    CONSTRAINT valid_suspend_strategy CHECK (((suspend_strategy IS NULL) OR (suspend_strategy = ANY (ARRAY['pause'::text, 'snapshot'::text, 'terminate_preserve_storage'::text, 'release_to_pool'::text, 'terminate'::text]))))
+);
+
+--
+-- Name: snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.snapshots (
+    id text NOT NULL,
+    runner_id text NOT NULL,
+    name text NOT NULL,
+    provider_snapshot_id text NOT NULL,
+    storage_key text,
+    tenant_id text,
+    size_bytes bigint,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone
+);
+
+--
+-- Name: streams; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.streams (
+    id text NOT NULL,
+    session_id text NOT NULL,
+    runner_id text,
+    tenant_id text,
+    type text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    signaling_url text,
+    ice_servers jsonb DEFAULT '[]'::jsonb NOT NULL,
+    resolution_width integer,
+    resolution_height integer,
+    frame_rate integer,
+    bitrate integer,
+    video_codec text,
+    audio_codec text,
+    audio_enabled boolean DEFAULT false NOT NULL,
+    input_enabled boolean DEFAULT false NOT NULL,
+    provider_name text NOT NULL,
+    provider_stream_id text,
+    error text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    stopped_at timestamp with time zone,
+    expires_at timestamp with time zone,
+    device_serial text,
+    device_name text,
+    android_version text,
+    CONSTRAINT valid_stream_state CHECK ((state = ANY (ARRAY['pending'::text, 'starting'::text, 'active'::text, 'paused'::text, 'stopping'::text, 'stopped'::text, 'error'::text]))),
+    CONSTRAINT valid_stream_type CHECK ((type = ANY (ARRAY['desktop'::text, 'browser'::text, 'ios'::text, 'android'::text])))
+);
+
+--
+-- Name: COLUMN streams.device_serial; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.streams.device_serial IS 'Android device serial number (e.g., emulator-5554 or USB serial)';
+
+--
+-- Name: COLUMN streams.device_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.streams.device_name IS 'Android device model name';
+
+--
+-- Name: COLUMN streams.android_version; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.streams.android_version IS 'Android SDK version';
+
+--
+-- Name: task_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_runs (
+    id text NOT NULL,
+    task_id text NOT NULL,
+    attempt integer DEFAULT 1 NOT NULL,
+    runner_id text,
+    status text DEFAULT 'pending'::text NOT NULL,
+    error text,
+    exit_code integer,
+    tokens_input integer,
+    tokens_output integer,
+    tenant_id text,
+    queued_at timestamp with time zone DEFAULT now() NOT NULL,
+    assigned_at timestamp with time zone,
+    started_at timestamp with time zone,
+    ended_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT valid_task_run_status CHECK ((status = ANY (ARRAY['pending'::text, 'assigned'::text, 'running'::text, 'completed'::text, 'failed'::text, 'timeout'::text, 'canceled'::text])))
+);
+
+--
+-- Name: tasks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tasks (
+    id text NOT NULL,
+    session_id text NOT NULL,
+    prompt text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    max_retries integer DEFAULT 0 NOT NULL,
+    retry_count integer DEFAULT 0 NOT NULL,
+    timeout_seconds integer DEFAULT 3600 NOT NULL,
+    tenant_id text,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT valid_task_status CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text, 'canceled'::text])))
+);
+
+--
+-- Name: tunnels; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tunnels (
+    id text NOT NULL,
+    session_id text NOT NULL,
+    runner_id text,
+    type text NOT NULL,
+    direction text DEFAULT 'inbound'::text NOT NULL,
+    local_port integer NOT NULL,
+    public_url text,
+    is_public boolean DEFAULT false NOT NULL,
+    token_hash text NOT NULL,
+    token_prefix text NOT NULL,
+    hash_version integer DEFAULT 1 NOT NULL,
+    tenant_id text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    closed_at timestamp with time zone,
+    CONSTRAINT valid_tunnel_direction CHECK ((direction = ANY (ARRAY['inbound'::text, 'outbound'::text]))),
+    CONSTRAINT valid_tunnel_type CHECK ((type = ANY (ARRAY['http'::text, 'tcp'::text, 'desktop'::text, 'browser'::text, 'ios'::text, 'android'::text]))),
+    CONSTRAINT valid_type_direction CHECK ((((type = ANY (ARRAY['desktop'::text, 'browser'::text, 'ios'::text, 'android'::text])) AND (direction = 'inbound'::text)) OR ((type = ANY (ARRAY['http'::text, 'tcp'::text])) AND (direction = 'outbound'::text))))
+);
+
+--
+-- Name: webhook_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.webhook_events (
+    id text NOT NULL,
+    webhook_id text NOT NULL,
+    event_type text NOT NULL,
+    payload jsonb NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text,
+    last_status_code integer,
+    next_retry_at timestamp with time zone,
+    delivered_at timestamp with time zone,
+    tenant_id text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT valid_webhook_event_status CHECK ((status = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text, 'exhausted'::text, 'canceled'::text])))
+);
+
+--
+-- Name: webhooks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.webhooks (
+    id text NOT NULL,
+    name text NOT NULL,
+    url text NOT NULL,
+    events text[] DEFAULT '{}'::text[] NOT NULL,
+    secret_encrypted text NOT NULL,
+    secret_hash text NOT NULL,
+    secret_prefix text NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    max_retries integer DEFAULT 3 NOT NULL,
+    retry_delay_seconds integer DEFAULT 60 NOT NULL,
+    timeout_seconds integer DEFAULT 30 NOT NULL,
+    headers jsonb DEFAULT '{}'::jsonb NOT NULL,
+    tenant_id text,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: workspaces; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workspaces (
+    id text NOT NULL,
+    name text NOT NULL,
+    persist boolean DEFAULT true NOT NULL,
+    storage_type text DEFAULT 'volume'::text NOT NULL,
+    storage_config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    mobility text DEFAULT 'local'::text NOT NULL,
+    storage_domain text,
+    storage_key text,
+    storage_size_bytes bigint,
+    last_synced_at timestamp with time zone,
+    disk_quota_mb integer,
+    tenant_id text,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    annotations jsonb DEFAULT '{}'::jsonb NOT NULL,
+    expires_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT valid_mobility CHECK ((mobility = ANY (ARRAY['local'::text, 'shared'::text, 'object_sync'::text])))
+);
+
+--
+-- Name: logs_default; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.logs ATTACH PARTITION public.logs_default DEFAULT;
+
+--
+-- Name: action_logs action_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.action_logs
+    ADD CONSTRAINT action_logs_pkey PRIMARY KEY (id);
+
+--
+-- Name: agent_configs agent_configs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_configs
+    ADD CONSTRAINT agent_configs_pkey PRIMARY KEY (id);
+
+--
+-- Name: api_keys api_keys_key_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_key_hash_key UNIQUE (key_hash);
+
+--
+-- Name: api_keys api_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
+
+--
+-- Name: chunks chunks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chunks
+    ADD CONSTRAINT chunks_pkey PRIMARY KEY (tenant_id, hash);
+
+--
+-- Name: data_keys data_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_keys
+    ADD CONSTRAINT data_keys_pkey PRIMARY KEY (id);
+
+--
+-- Name: data_keys data_keys_resource_type_resource_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_keys
+    ADD CONSTRAINT data_keys_resource_type_resource_id_key UNIQUE (resource_type, resource_id);
+
+--
+-- Name: log_archives log_archives_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archives
+    ADD CONSTRAINT log_archives_pkey PRIMARY KEY (id);
+
+--
+-- Name: log_archives log_archives_session_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archives
+    ADD CONSTRAINT log_archives_session_id_key UNIQUE (session_id);
+
+--
+-- Name: logs logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.logs
+    ADD CONSTRAINT logs_pkey PRIMARY KEY (id, created_at);
+
+--
+-- Name: logs_default logs_default_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.logs_default
+    ADD CONSTRAINT logs_default_pkey PRIMARY KEY (id, created_at);
+
+--
+-- Name: manifests manifests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manifests
+    ADD CONSTRAINT manifests_pkey PRIMARY KEY (id);
+
+--
+-- Name: permission_requests permission_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permission_requests
+    ADD CONSTRAINT permission_requests_pkey PRIMARY KEY (id);
+
+--
+-- Name: profiles profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profiles
+    ADD CONSTRAINT profiles_pkey PRIMARY KEY (id);
+
+--
+-- Name: provider_configs provider_configs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.provider_configs
+    ADD CONSTRAINT provider_configs_pkey PRIMARY KEY (id);
+
+--
+-- Name: runner_tokens runner_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runner_tokens
+    ADD CONSTRAINT runner_tokens_pkey PRIMARY KEY (id);
+
+--
+-- Name: runner_tokens runner_tokens_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runner_tokens
+    ADD CONSTRAINT runner_tokens_token_hash_key UNIQUE (token_hash);
+
+--
+-- Name: runners runners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runners
+    ADD CONSTRAINT runners_pkey PRIMARY KEY (id);
+
+--
+-- Name: scheduled_tasks scheduled_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_tasks
+    ADD CONSTRAINT scheduled_tasks_pkey PRIMARY KEY (id);
+
+--
+-- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sessions
+    ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
+
+--
+-- Name: snapshots snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshots
+    ADD CONSTRAINT snapshots_pkey PRIMARY KEY (id);
+
+--
+-- Name: streams streams_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.streams
+    ADD CONSTRAINT streams_pkey PRIMARY KEY (id);
+
+--
+-- Name: task_runs task_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_runs
+    ADD CONSTRAINT task_runs_pkey PRIMARY KEY (id);
+
+--
+-- Name: task_runs task_runs_task_id_attempt_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_runs
+    ADD CONSTRAINT task_runs_task_id_attempt_key UNIQUE (task_id, attempt);
+
+--
+-- Name: tasks tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);
+
+--
+-- Name: tunnels tunnels_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tunnels
+    ADD CONSTRAINT tunnels_pkey PRIMARY KEY (id);
+
+--
+-- Name: webhook_events webhook_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webhook_events
+    ADD CONSTRAINT webhook_events_pkey PRIMARY KEY (id);
+
+--
+-- Name: webhooks webhooks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webhooks
+    ADD CONSTRAINT webhooks_pkey PRIMARY KEY (id);
+
+--
+-- Name: workspaces workspaces_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspaces
+    ADD CONSTRAINT workspaces_pkey PRIMARY KEY (id);
+
+--
+-- Name: idx_action_logs_action; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_action_logs_action ON public.action_logs USING btree (action);
+
+--
+-- Name: idx_action_logs_actor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_action_logs_actor ON public.action_logs USING btree (actor_type, actor_id);
+
+--
+-- Name: idx_action_logs_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_action_logs_created ON public.action_logs USING btree (created_at DESC);
+
+--
+-- Name: idx_action_logs_resource; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_action_logs_resource ON public.action_logs USING btree (resource_type, resource_id);
+
+--
+-- Name: idx_action_logs_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_action_logs_session ON public.action_logs USING btree (session_id) WHERE (session_id IS NOT NULL);
+
+--
+-- Name: idx_action_logs_tenant_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_action_logs_tenant_time ON public.action_logs USING btree (tenant_id, created_at DESC);
+
+--
+-- Name: idx_agent_configs_agent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_agent_configs_agent ON public.agent_configs USING btree (agent);
+
+--
+-- Name: idx_agent_configs_default; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_agent_configs_default ON public.agent_configs USING btree (agent, COALESCE(tenant_id, ''::text)) WHERE (is_default = true);
+
+--
+-- Name: idx_agent_configs_name_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_agent_configs_name_unique ON public.agent_configs USING btree (COALESCE(tenant_id, ''::text), name);
+
+--
+-- Name: idx_agent_configs_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_agent_configs_tenant ON public.agent_configs USING btree (tenant_id);
+
+--
+-- Name: idx_api_keys_expires; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_api_keys_expires ON public.api_keys USING btree (expires_at) WHERE ((revoked_at IS NULL) AND (expires_at IS NOT NULL));
+
+--
+-- Name: idx_api_keys_key_hash; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_api_keys_key_hash ON public.api_keys USING btree (key_hash);
+
+--
+-- Name: idx_api_keys_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_api_keys_tenant ON public.api_keys USING btree (tenant_id);
+
+--
+-- Name: idx_chunks_gc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_chunks_gc ON public.chunks USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
+
+--
+-- Name: idx_data_keys_resource; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_data_keys_resource ON public.data_keys USING btree (resource_type, resource_id);
+
+--
+-- Name: idx_data_keys_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_data_keys_tenant ON public.data_keys USING btree (tenant_id);
+
+--
+-- Name: idx_log_archives_expires; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_log_archives_expires ON public.log_archives USING btree (expires_at) WHERE (deleted_at IS NULL);
+
+--
+-- Name: idx_log_archives_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_log_archives_tenant ON public.log_archives USING btree (tenant_id);
+
+--
+-- Name: idx_logs_run_seq_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_logs_run_seq_unique ON ONLY public.logs USING btree (run_id, sequence, created_at);
+
+--
+-- Name: idx_logs_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_logs_session ON ONLY public.logs USING btree (session_id, created_at);
+
+--
+-- Name: idx_logs_task_seq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_logs_task_seq ON ONLY public.logs USING btree (task_id, sequence);
+
+--
+-- Name: idx_logs_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_logs_tenant ON ONLY public.logs USING btree (tenant_id, created_at);
+
+--
+-- Name: idx_manifests_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_manifests_tenant ON public.manifests USING btree (tenant_id);
+
+--
+-- Name: idx_manifests_workspace; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_manifests_workspace ON public.manifests USING btree (workspace_id, created_at DESC);
+
+--
+-- Name: idx_permission_requests_original_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_permission_requests_original_id ON public.permission_requests USING btree (original_request_id);
+
+--
+-- Name: idx_permission_requests_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_permission_requests_pending ON public.permission_requests USING btree (session_id, status) WHERE (status = 'pending'::text);
+
+--
+-- Name: idx_permission_requests_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_permission_requests_session ON public.permission_requests USING btree (session_id);
+
+--
+-- Name: idx_permission_requests_task; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_permission_requests_task ON public.permission_requests USING btree (task_id);
+
+--
+-- Name: idx_permission_requests_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_permission_requests_tenant ON public.permission_requests USING btree (tenant_id);
+
+--
+-- Name: idx_profiles_name_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_profiles_name_unique ON public.profiles USING btree (COALESCE(tenant_id, ''::text), name);
+
+--
+-- Name: idx_profiles_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_profiles_tenant ON public.profiles USING btree (tenant_id);
+
+--
+-- Name: idx_provider_configs_default; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_provider_configs_default ON public.provider_configs USING btree (provider, COALESCE(tenant_id, ''::text)) WHERE (is_default = true);
+
+--
+-- Name: idx_provider_configs_name_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_provider_configs_name_unique ON public.provider_configs USING btree (COALESCE(tenant_id, ''::text), name);
+
+--
+-- Name: idx_provider_configs_provider; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_provider_configs_provider ON public.provider_configs USING btree (provider);
+
+--
+-- Name: idx_provider_configs_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_provider_configs_tenant ON public.provider_configs USING btree (tenant_id);
+
+--
+-- Name: idx_runner_tokens_expires; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runner_tokens_expires ON public.runner_tokens USING btree (expires_at) WHERE ((status = 'active'::text) AND (expires_at IS NOT NULL));
+
+--
+-- Name: idx_runner_tokens_hash; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runner_tokens_hash ON public.runner_tokens USING btree (token_hash);
+
+--
+-- Name: idx_runner_tokens_pool; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runner_tokens_pool ON public.runner_tokens USING btree (pool_name);
+
+--
+-- Name: idx_runner_tokens_runner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runner_tokens_runner ON public.runner_tokens USING btree (runner_id);
+
+--
+-- Name: idx_runner_tokens_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runner_tokens_tenant ON public.runner_tokens USING btree (tenant_id);
+
+--
+-- Name: idx_runners_labels; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runners_labels ON public.runners USING gin (labels);
+
+--
+-- Name: idx_runners_name_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_runners_name_unique ON public.runners USING btree (COALESCE(tenant_id, ''::text), name);
+
+--
+-- Name: idx_runners_pool; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runners_pool ON public.runners USING btree (pool_name) WHERE (pool_name IS NOT NULL);
+
+--
+-- Name: idx_runners_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runners_status ON public.runners USING btree (status);
+
+--
+-- Name: idx_runners_tainted; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runners_tainted ON public.runners USING btree (pool_name, tainted) WHERE (tainted = true);
+
+--
+-- Name: idx_runners_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runners_tenant ON public.runners USING btree (tenant_id);
+
+--
+-- Name: idx_scheduled_tasks_next_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_scheduled_tasks_next_run ON public.scheduled_tasks USING btree (next_run_at) WHERE (status = 'active'::text);
+
+--
+-- Name: idx_scheduled_tasks_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_scheduled_tasks_session ON public.scheduled_tasks USING btree (session_id);
+
+--
+-- Name: idx_scheduled_tasks_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_scheduled_tasks_tenant ON public.scheduled_tasks USING btree (tenant_id);
+
+--
+-- Name: idx_sessions_active_runner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_sessions_active_runner ON public.sessions USING btree (runner_id) WHERE ((runner_id IS NOT NULL) AND (status = 'active'::text));
+
+--
+-- Name: idx_sessions_always_on; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sessions_always_on ON public.sessions USING btree (tenant_id) WHERE (lifecycle_mode = 'always_on'::text);
+
+--
+-- Name: idx_sessions_labels; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sessions_labels ON public.sessions USING gin (labels);
+
+--
+-- Name: idx_sessions_profile; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sessions_profile ON public.sessions USING btree (profile_id) WHERE (profile_id IS NOT NULL);
+
+--
+-- Name: idx_sessions_runner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sessions_runner ON public.sessions USING btree (runner_id);
+
+--
+-- Name: idx_sessions_scheduled; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sessions_scheduled ON public.sessions USING btree (next_scheduled_at) WHERE ((lifecycle_mode = 'scheduled'::text) AND (status = 'suspended'::text));
+
+--
+-- Name: idx_sessions_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sessions_status ON public.sessions USING btree (status);
+
+--
+-- Name: idx_sessions_suspended; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sessions_suspended ON public.sessions USING btree (tenant_id, suspended_at) WHERE (status = 'suspended'::text);
+
+--
+-- Name: idx_sessions_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sessions_tenant ON public.sessions USING btree (tenant_id);
+
+--
+-- Name: idx_snapshots_runner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_snapshots_runner ON public.snapshots USING btree (runner_id);
+
+--
+-- Name: idx_snapshots_runner_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_snapshots_runner_name ON public.snapshots USING btree (runner_id, name);
+
+--
+-- Name: idx_snapshots_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_snapshots_tenant ON public.snapshots USING btree (tenant_id);
+
+--
+-- Name: idx_streams_device; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_streams_device ON public.streams USING btree (device_serial) WHERE (type = 'android'::text);
+
+--
+-- Name: idx_streams_expires; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_streams_expires ON public.streams USING btree (expires_at) WHERE ((expires_at IS NOT NULL) AND (state <> ALL (ARRAY['stopped'::text, 'error'::text])));
+
+--
+-- Name: idx_streams_runner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_streams_runner ON public.streams USING btree (runner_id);
+
+--
+-- Name: idx_streams_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_streams_session ON public.streams USING btree (session_id);
+
+--
+-- Name: idx_streams_session_type_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_streams_session_type_active ON public.streams USING btree (session_id, type) WHERE (state <> ALL (ARRAY['stopped'::text, 'error'::text]));
+
+--
+-- Name: idx_streams_state; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_streams_state ON public.streams USING btree (state);
+
+--
+-- Name: idx_streams_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_streams_tenant ON public.streams USING btree (tenant_id);
+
+--
+-- Name: idx_task_runs_runner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_runs_runner ON public.task_runs USING btree (runner_id);
+
+--
+-- Name: idx_task_runs_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_runs_status ON public.task_runs USING btree (status);
+
+--
+-- Name: idx_task_runs_task; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_runs_task ON public.task_runs USING btree (task_id);
+
+--
+-- Name: idx_task_runs_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_runs_tenant ON public.task_runs USING btree (tenant_id);
+
+--
+-- Name: idx_tasks_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_pending ON public.tasks USING btree (session_id, status) WHERE (status = 'pending'::text);
+
+--
+-- Name: idx_tasks_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_session ON public.tasks USING btree (session_id);
+
+--
+-- Name: idx_tasks_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_status ON public.tasks USING btree (status);
+
+--
+-- Name: idx_tasks_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_tenant ON public.tasks USING btree (tenant_id);
+
+--
+-- Name: idx_tunnels_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tunnels_active ON public.tunnels USING btree (session_id) WHERE (closed_at IS NULL);
+
+--
+-- Name: idx_tunnels_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tunnels_session ON public.tunnels USING btree (session_id);
+
+--
+-- Name: idx_tunnels_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tunnels_tenant ON public.tunnels USING btree (tenant_id);
+
+--
+-- Name: idx_webhook_events_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhook_events_created ON public.webhook_events USING btree (webhook_id, created_at DESC);
+
+--
+-- Name: idx_webhook_events_delivered; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhook_events_delivered ON public.webhook_events USING btree (delivered_at) WHERE (status = 'delivered'::text);
+
+--
+-- Name: idx_webhook_events_retry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhook_events_retry ON public.webhook_events USING btree (next_retry_at) WHERE ((status = ANY (ARRAY['pending'::text, 'failed'::text])) AND (next_retry_at IS NOT NULL));
+
+--
+-- Name: idx_webhook_events_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhook_events_status ON public.webhook_events USING btree (status);
+
+--
+-- Name: idx_webhook_events_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhook_events_tenant ON public.webhook_events USING btree (tenant_id);
+
+--
+-- Name: idx_webhook_events_webhook; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhook_events_webhook ON public.webhook_events USING btree (webhook_id);
+
+--
+-- Name: idx_webhooks_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhooks_active ON public.webhooks USING btree (tenant_id) WHERE (is_active = true);
+
+--
+-- Name: idx_webhooks_events; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhooks_events ON public.webhooks USING gin (events);
+
+--
+-- Name: idx_webhooks_name_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_webhooks_name_unique ON public.webhooks USING btree (COALESCE(tenant_id, ''::text), name);
+
+--
+-- Name: idx_webhooks_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_webhooks_tenant ON public.webhooks USING btree (tenant_id);
+
+--
+-- Name: idx_workspaces_expires; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_workspaces_expires ON public.workspaces USING btree (expires_at) WHERE (deleted_at IS NULL);
+
+--
+-- Name: idx_workspaces_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_workspaces_tenant ON public.workspaces USING btree (tenant_id);
+
+--
+-- Name: logs_default_run_id_sequence_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX logs_default_run_id_sequence_created_at_idx ON public.logs_default USING btree (run_id, sequence, created_at);
+
+--
+-- Name: logs_default_session_id_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX logs_default_session_id_created_at_idx ON public.logs_default USING btree (session_id, created_at);
+
+--
+-- Name: logs_default_task_id_sequence_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX logs_default_task_id_sequence_idx ON public.logs_default USING btree (task_id, sequence);
+
+--
+-- Name: logs_default_tenant_id_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX logs_default_tenant_id_created_at_idx ON public.logs_default USING btree (tenant_id, created_at);
+
+--
+-- Name: logs_default_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.logs_pkey ATTACH PARTITION public.logs_default_pkey;
+
+--
+-- Name: logs_default_run_id_sequence_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.idx_logs_run_seq_unique ATTACH PARTITION public.logs_default_run_id_sequence_created_at_idx;
+
+--
+-- Name: logs_default_session_id_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.idx_logs_session ATTACH PARTITION public.logs_default_session_id_created_at_idx;
+
+--
+-- Name: logs_default_task_id_sequence_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.idx_logs_task_seq ATTACH PARTITION public.logs_default_task_id_sequence_idx;
+
+--
+-- Name: logs_default_tenant_id_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.idx_logs_tenant ATTACH PARTITION public.logs_default_tenant_id_created_at_idx;
+
+--
+-- Name: manifests manifests_parent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manifests
+    ADD CONSTRAINT manifests_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.manifests(id) ON DELETE SET NULL;
+
+--
+-- Name: manifests manifests_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manifests
+    ADD CONSTRAINT manifests_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+
+--
+-- Name: permission_requests permission_requests_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permission_requests
+    ADD CONSTRAINT permission_requests_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.task_runs(id) ON DELETE CASCADE;
+
+--
+-- Name: permission_requests permission_requests_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permission_requests
+    ADD CONSTRAINT permission_requests_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sessions(id) ON DELETE CASCADE;
+
+--
+-- Name: permission_requests permission_requests_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permission_requests
+    ADD CONSTRAINT permission_requests_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id) ON DELETE CASCADE;
+
+--
+-- Name: profiles profiles_provider_config_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profiles
+    ADD CONSTRAINT profiles_provider_config_id_fkey FOREIGN KEY (provider_config_id) REFERENCES public.provider_configs(id) ON DELETE SET NULL;
+
+--
+-- Name: runner_tokens runner_tokens_runner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runner_tokens
+    ADD CONSTRAINT runner_tokens_runner_id_fkey FOREIGN KEY (runner_id) REFERENCES public.runners(id) ON DELETE CASCADE;
+
+--
+-- Name: runners runners_profile_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runners
+    ADD CONSTRAINT runners_profile_id_fkey FOREIGN KEY (profile_id) REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+--
+-- Name: runners runners_provider_config_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runners
+    ADD CONSTRAINT runners_provider_config_id_fkey FOREIGN KEY (provider_config_id) REFERENCES public.provider_configs(id) ON DELETE SET NULL;
+
+--
+-- Name: scheduled_tasks scheduled_tasks_last_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_tasks
+    ADD CONSTRAINT scheduled_tasks_last_task_id_fkey FOREIGN KEY (last_task_id) REFERENCES public.tasks(id) ON DELETE SET NULL;
+
+--
+-- Name: scheduled_tasks scheduled_tasks_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_tasks
+    ADD CONSTRAINT scheduled_tasks_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sessions(id) ON DELETE CASCADE;
+
+--
+-- Name: sessions sessions_agent_config_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sessions
+    ADD CONSTRAINT sessions_agent_config_id_fkey FOREIGN KEY (agent_config_id) REFERENCES public.agent_configs(id) ON DELETE SET NULL;
+
+--
+-- Name: sessions sessions_profile_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sessions
+    ADD CONSTRAINT sessions_profile_id_fkey FOREIGN KEY (profile_id) REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+--
+-- Name: sessions sessions_runner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sessions
+    ADD CONSTRAINT sessions_runner_id_fkey FOREIGN KEY (runner_id) REFERENCES public.runners(id) ON DELETE SET NULL;
+
+--
+-- Name: sessions sessions_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sessions
+    ADD CONSTRAINT sessions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE RESTRICT;
+
+--
+-- Name: snapshots snapshots_runner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshots
+    ADD CONSTRAINT snapshots_runner_id_fkey FOREIGN KEY (runner_id) REFERENCES public.runners(id) ON DELETE CASCADE;
+
+--
+-- Name: streams streams_runner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.streams
+    ADD CONSTRAINT streams_runner_id_fkey FOREIGN KEY (runner_id) REFERENCES public.runners(id) ON DELETE SET NULL;
+
+--
+-- Name: streams streams_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.streams
+    ADD CONSTRAINT streams_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sessions(id) ON DELETE CASCADE;
+
+--
+-- Name: task_runs task_runs_runner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_runs
+    ADD CONSTRAINT task_runs_runner_id_fkey FOREIGN KEY (runner_id) REFERENCES public.runners(id) ON DELETE SET NULL;
+
+--
+-- Name: task_runs task_runs_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_runs
+    ADD CONSTRAINT task_runs_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id) ON DELETE CASCADE;
+
+--
+-- Name: tasks tasks_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sessions(id) ON DELETE CASCADE;
+
+--
+-- Name: tunnels tunnels_runner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tunnels
+    ADD CONSTRAINT tunnels_runner_id_fkey FOREIGN KEY (runner_id) REFERENCES public.runners(id) ON DELETE SET NULL;
+
+--
+-- Name: tunnels tunnels_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tunnels
+    ADD CONSTRAINT tunnels_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sessions(id) ON DELETE CASCADE;
+
+--
+-- Name: webhook_events webhook_events_webhook_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.webhook_events
+    ADD CONSTRAINT webhook_events_webhook_id_fkey FOREIGN KEY (webhook_id) REFERENCES public.webhooks(id) ON DELETE CASCADE;
+
+--
+-- PostgreSQL database dump complete
+--
+

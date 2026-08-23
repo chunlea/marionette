@@ -81,6 +81,18 @@ jobs:
           path: coverage.out
         if: always()
 
+  schema:
+    name: Schema drift
+    runs-on: ubuntu-latest
+    # No job container: the script drives Docker itself so CI and a developer's
+    # `make schema` render byte-identical output.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check docs/schema.sql matches migrations/
+        run: make schema-check
+
   build:
     name: Build
     runs-on: ubuntu-latest
