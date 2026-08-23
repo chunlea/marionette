@@ -1,0 +1,77 @@
+pkg/server/admin/runnertoken_handler_test.go
+  s_829cd3b6a7eda7::t_c9bf9f7c9a4ec8 13,236,318
+pkg/server/admin/server_test.go
+  s_829cd3b6a7eda7::t_92f9787838cf7e 12,109
+pkg/openapi/schema.go
+  s_c8578aa5dbeab3::t_ec8b70db4402fb 148-152
+pkg/server/admin/actionlog_handler.go
+  s_c8578aa5dbeab3::t_c3ea624421c3c3 73,100
+pkg/server/admin/admintypes/admintypes.go
+  s_30fb41c4a911b8::t_66d8a3e6929be3 1-265
+pkg/server/admin/agentconfig_handler.go
+  s_c8578aa5dbeab3::t_5a11ac1aae3a51 47,70,96,143
+pkg/server/admin/dto.go
+  s_476c758fe5506c::t_25ecf2cae10139 1-312
+pkg/server/admin/dto_test.go
+  s_b1ee0c9aba1316::t_8d0aa26cd5c63a 1-253
+pkg/server/admin/keys_handler.go
+  s_30fb41c4a911b8::t_9d9d1bbcf46978 10,46-47,71,97
+pkg/server/admin/profile_handler.go
+  s_c8578aa5dbeab3::t_637cc824ee42e1 50,74,100,151
+pkg/server/admin/providerconfig_handler.go
+  s_c8578aa5dbeab3::t_7aa26dde1d50e1 45,68,94,139
+pkg/server/admin/runners_handler.go
+  s_c8578aa5dbeab3::t_664acd131d8145 49,79,105
+pkg/server/admin/runnertoken_handler.go
+  s_30fb41c4a911b8::t_9e6de1e92dc846 12,56-57,93,119,184-185
+pkg/server/admin/webhook_handler.go
+  s_476c758fe5506c::t_49325b5758e5ad 10,101-102,130,156,212,271,308,334,359
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "88635ce02a2f8e1298b2a63da83e04f52630bd32",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_829cd3b6a7eda7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d342e86d-a42f-469e-846f-fd4f6252c53c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
