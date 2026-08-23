@@ -152,53 +152,15 @@ func newTestWorkspaceManager(t *testing.T, cfg config.WorkspaceStorageConfig) *t
 	testStore := newWorkspaceTestStore()
 	logger := zap.NewNop()
 
-	// Create a minimal store adapter that wraps our test store
-	mgr := &WorkspaceManager{
-		store:       &workspaceStoreAdapter{testStore},
-		config:      cfg,
-		logger:      logger,
-		createdDirs: make(map[string]bool),
-	}
-
 	if cfg.BaseDir == "" {
 		cfg.BaseDir = t.TempDir()
-		mgr.config = cfg
 	}
+	mgr := NewWorkspaceManager(testStore, cfg, logger)
 
 	return &testWorkspaceManager{
 		WorkspaceManager: mgr,
 		store:            testStore,
 	}
-}
-
-// workspaceStoreAdapter adapts workspaceTestStore to store.Store interface.
-// It only implements the methods needed by WorkspaceManager.
-type workspaceStoreAdapter struct {
-	*workspaceTestStore
-}
-
-func (a *workspaceStoreAdapter) CreateWorkspace(ctx context.Context, ws *store.Workspace) error {
-	return a.workspaceTestStore.CreateWorkspace(ctx, ws)
-}
-
-func (a *workspaceStoreAdapter) GetWorkspace(ctx context.Context, id string) (*store.Workspace, error) {
-	return a.workspaceTestStore.GetWorkspace(ctx, id)
-}
-
-func (a *workspaceStoreAdapter) ListWorkspaces(ctx context.Context, opts store.ListWorkspacesOptions) (*store.ListResult[store.Workspace], error) {
-	return a.workspaceTestStore.ListWorkspaces(ctx, opts)
-}
-
-func (a *workspaceStoreAdapter) UpdateWorkspace(ctx context.Context, id string, updates store.WorkspaceUpdates) error {
-	return a.workspaceTestStore.UpdateWorkspace(ctx, id, updates)
-}
-
-func (a *workspaceStoreAdapter) DeleteWorkspace(ctx context.Context, id string) error {
-	return a.workspaceTestStore.DeleteWorkspace(ctx, id)
-}
-
-func (a *workspaceStoreAdapter) ListSessions(ctx context.Context, opts store.ListSessionsOptions) (*store.ListResult[store.Session], error) {
-	return a.workspaceTestStore.ListSessions(ctx, opts)
 }
 
 // Tests
@@ -510,17 +472,8 @@ func TestWorkspaceManager_GetBaseDir(t *testing.T) {
 		logger := zap.NewNop()
 		cfg := config.WorkspaceStorageConfig{}
 
-		mgr := &WorkspaceManager{
-			store:       &workspaceStoreAdapter{testStore},
-			config:      cfg,
-			logger:      logger,
-			createdDirs: make(map[string]bool),
-		}
-		// NewWorkspaceManager sets default if empty
-		if cfg.BaseDir == "" {
-			cfg.BaseDir = DefaultWorkspaceBaseDir
-			mgr.config = cfg
-		}
+		// NewWorkspaceManager fills in the default base dir.
+		mgr := NewWorkspaceManager(testStore, cfg, logger)
 		assert.Equal(t, DefaultWorkspaceBaseDir, mgr.GetBaseDir())
 	})
 }
