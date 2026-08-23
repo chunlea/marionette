@@ -1,0 +1,41 @@
+.github/workflows/ci.yml
+  s_829cd3b6a7eda7::t_cae2a50df670ee 29,73,93,119,133,139-144,149,188,205,245,258
+.github/workflows/claude.yml
+  s_345440c29221e7::t_0e708462aa6299 29
+.github/workflows/docs.yml
+  s_345440c29221e7::t_b03356759c28d9 29,34,39,54,67
+.github/workflows/release.yml
+  s_28898a3c73f97d::t_c6420120f10821 131,139-141,147,162,165,169,191,229,265,280,287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "d647b25327068d9700657d4b710638eaf032c99f",
+  "prompts": {},
+  "sessions": {
+    "s_28898a3c73f97d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98b6c8d5-b187-4f6f-bcd2-72ef08cfde16",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_345440c29221e7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a030c2-2a53-79e2-baff-22144bbb43c0",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_829cd3b6a7eda7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d342e86d-a42f-469e-846f-fd4f6252c53c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
