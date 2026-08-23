@@ -1,0 +1,65 @@
+pkg/provider/kubernetes/network_test.go
+  s_0d0ac42be2d99d::t_ea57d7f5527bf7 1-467
+pkg/network/iptables/manager.go
+  s_2681c55641541f::t_02849ec259b369 147,152-176
+pkg/network/policy.go
+  s_2681c55641541f::t_5582c1f99b69a9 6,233-235,241-259
+pkg/network/policy_test.go
+  s_2681c55641541f::t_34b63d5647f667 306-309
+pkg/network/resolved.go
+  s_2681c55641541f::t_70e2d6eaaa92ca 59-62,115-158,186
+pkg/network/resolved_pinning_test.go
+  s_2681c55641541f::t_3bf435bc1c4b1a 270-343
+pkg/network/resolver.go
+  s_2681c55641541f::t_d9246e8449c831 7,201-208,229-240
+pkg/provider/kubernetes/config.go
+  s_1e03d1f9444213::t_e8626817198412 14,42-44,99-127,219-232
+pkg/provider/kubernetes/kubernetes.go
+  s_2681c55641541f::t_2303c8e3c1413b 20,48-52,83,98,143-163,165,168,176,213,290-294,381,398-402,442-445,699
+pkg/provider/kubernetes/kubernetes_test.go
+  s_6ce8a3a3b8d9e6::t_b87241285ab626 38-47,478,708-709,800-803,813-842,1021,1335,1375-1376,1382-1385
+pkg/provider/kubernetes/mock_client.go
+  s_6ce8a3a3b8d9e6::t_913311bbb258ec 47-50,56,77,102-107,171,349
+pkg/provider/kubernetes/network.go
+  s_2681c55641541f::t_3a2bd57667c437 7,14,18-76,78,80-93,97,99-100,103-116,128,133-137,141-144,148-166,170,177-178,181-183,188,192-198,201-209,212-224,226-236,239-240,245-249,255,266-342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "9f957478b1944eee3b9b7c686bbe76f5610d49f2",
+  "prompts": {},
+  "sessions": {
+    "s_0d0ac42be2d99d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "62a01624-4bc1-4cf8-862e-f2a73cffc4da",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_1e03d1f9444213": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f08e1d14-b06b-4619-aa64-c85c623e5795",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_2681c55641541f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957a3a1-8aa9-4481-b571-119f14c7519e",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_6ce8a3a3b8d9e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f1a55cc-dd39-4229-91f5-7498430c8926",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
