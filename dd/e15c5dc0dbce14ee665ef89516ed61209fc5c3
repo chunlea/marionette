@@ -1,0 +1,19 @@
+test/perf/BASELINE.md
+  s_2681c55641541f::t_db4bbeef959be3 21-22,170,172,176-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "dde15c5dc0dbce14ee665ef89516ed61209fc5c3",
+  "prompts": {},
+  "sessions": {
+    "s_2681c55641541f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957a3a1-8aa9-4481-b571-119f14c7519e",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
