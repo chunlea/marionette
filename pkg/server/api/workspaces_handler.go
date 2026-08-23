@@ -30,7 +30,7 @@ func (s *Server) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, workspace)
+	WriteJSON(w, http.StatusCreated, toWorkspaceResponse(workspace))
 }
 
 // handleListWorkspaces handles GET /api/v1/workspaces.
@@ -51,7 +51,7 @@ func (s *Server) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toWorkspaceResponse))
 }
 
 // handleGetWorkspace handles GET /api/v1/workspaces/{workspaceID}.
@@ -73,7 +73,7 @@ func (s *Server) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, workspace)
+	WriteJSON(w, http.StatusOK, toWorkspaceResponse(workspace))
 }
 
 // handleUpdateWorkspace handles PATCH /api/v1/workspaces/{workspaceID}.
@@ -101,7 +101,7 @@ func (s *Server) handleUpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, workspace)
+	WriteJSON(w, http.StatusOK, toWorkspaceResponse(workspace))
 }
 
 // handleDeleteWorkspace handles DELETE /api/v1/workspaces/{workspaceID}.

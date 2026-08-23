@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/chunlea/marionette/pkg/server/api/apitypes"
 )
 
 // handleCreateTask handles POST /api/v1/tasks.
@@ -36,7 +38,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, task)
+	WriteJSON(w, http.StatusCreated, toTaskResponse(task))
 }
 
 // handleListTasks handles GET /api/v1/tasks.
@@ -59,7 +61,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toTaskResponse))
 }
 
 // handleGetTask handles GET /api/v1/tasks/{taskID}.
@@ -81,7 +83,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, task)
+	WriteJSON(w, http.StatusOK, toTaskResponse(task))
 }
 
 // handleExecuteTask handles POST /api/v1/tasks/{taskID}/execute.
@@ -102,7 +104,7 @@ func (s *Server) handleExecuteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusAccepted, map[string]string{"status": "executing"})
+	WriteJSON(w, http.StatusAccepted, apitypes.TaskExecutionAccepted{Status: "executing"})
 }
 
 // handleCancelTask handles POST /api/v1/tasks/{taskID}/cancel.
@@ -173,5 +175,5 @@ func (s *Server) handleGetTaskLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toLogResponse))
 }

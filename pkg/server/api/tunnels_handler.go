@@ -47,7 +47,7 @@ func (s *Server) handleCreateTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, tun)
+	WriteJSON(w, http.StatusCreated, toTunnelResponse(tun))
 }
 
 // handleListTunnels handles GET /api/v1/sessions/{sessionID}/tunnels.
@@ -69,14 +69,7 @@ func (s *Server) handleListTunnels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return as ListResult for consistency with other endpoints
-	result := struct {
-		Items []*tunnel.Tunnel `json:"items"`
-	}{
-		Items: tunnels,
-	}
-
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toSliceResponse(tunnels, toTunnelResponse))
 }
 
 // handleGetTunnel handles GET /api/v1/tunnels/{tunnelID}.
@@ -98,7 +91,7 @@ func (s *Server) handleGetTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, tun)
+	WriteJSON(w, http.StatusOK, toTunnelResponse(tun))
 }
 
 // handleCloseTunnel handles DELETE /api/v1/tunnels/{tunnelID}.

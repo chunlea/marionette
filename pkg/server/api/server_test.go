@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/chunlea/marionette/pkg/auth"
+	"github.com/chunlea/marionette/pkg/server/api/apitypes"
 	"github.com/chunlea/marionette/pkg/store"
 )
 
@@ -142,7 +143,7 @@ func TestAuthMiddleware(t *testing.T) {
 		srv.Router().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-		var resp ErrorResponse
+		var resp apitypes.ErrorResponse
 		err := json.NewDecoder(rec.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, "missing_auth", resp.Code)
@@ -591,7 +592,7 @@ func TestServiceUnavailable(t *testing.T) {
 		srv.Router().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
-		var resp ErrorResponse
+		var resp apitypes.ErrorResponse
 		err := json.NewDecoder(rec.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, "service_unavailable", resp.Code)
@@ -716,7 +717,7 @@ func TestHandleServiceError(t *testing.T) {
 			handleServiceError(rec, tt.err)
 
 			assert.Equal(t, tt.expectedStatus, rec.Code)
-			var resp ErrorResponse
+			var resp apitypes.ErrorResponse
 			err := json.NewDecoder(rec.Body).Decode(&resp)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectedCode, resp.Code)
@@ -736,7 +737,7 @@ func TestSessionsInvalidJSON(t *testing.T) {
 	srv.Router().ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	var resp ErrorResponse
+	var resp apitypes.ErrorResponse
 	err := json.NewDecoder(rec.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.Equal(t, "invalid_json", resp.Code)
@@ -840,7 +841,7 @@ func TestWriteError(t *testing.T) {
 	WriteError(rec, http.StatusBadRequest, "test_error", "Test error message")
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	var resp ErrorResponse
+	var resp apitypes.ErrorResponse
 	err := json.NewDecoder(rec.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.Equal(t, "test_error", resp.Code)
@@ -1245,7 +1246,7 @@ func TestServiceUnavailableActions(t *testing.T) {
 			srv.Router().ServeHTTP(rec, req)
 
 			assert.Equal(t, http.StatusInternalServerError, rec.Code)
-			var resp ErrorResponse
+			var resp apitypes.ErrorResponse
 			err := json.NewDecoder(rec.Body).Decode(&resp)
 			require.NoError(t, err)
 			assert.Equal(t, "service_unavailable", resp.Code)
@@ -1398,7 +1399,7 @@ func TestWorkspaces(t *testing.T) {
 		srv.Router().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
-		var resp ErrorResponse
+		var resp apitypes.ErrorResponse
 		err := json.NewDecoder(rec.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, "invalid_json", resp.Code)
@@ -1574,7 +1575,7 @@ func TestWorkspaceServiceUnavailable(t *testing.T) {
 			srv.Router().ServeHTTP(rec, req)
 
 			assert.Equal(t, http.StatusInternalServerError, rec.Code)
-			var resp ErrorResponse
+			var resp apitypes.ErrorResponse
 			err := json.NewDecoder(rec.Body).Decode(&resp)
 			require.NoError(t, err)
 			assert.Equal(t, "service_unavailable", resp.Code)

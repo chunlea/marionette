@@ -29,7 +29,7 @@ func (s *Server) handleListPermissions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, result)
+	WriteJSON(w, http.StatusOK, toListResponse(result, toPermissionResponse))
 }
 
 // handleGetPermission handles GET /api/v1/permissions/{permissionID}.
@@ -51,7 +51,7 @@ func (s *Server) handleGetPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, permission)
+	WriteJSON(w, http.StatusOK, toPermissionResponse(permission))
 }
 
 // handleApprovePermission handles POST /api/v1/permissions/{permissionID}/approve.
