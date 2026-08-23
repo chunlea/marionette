@@ -10,9 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	"github.com/chunlea/marionette/pkg/store"
 )
 
-// mockPartitioner is a mock implementation of LogPartitioner for testing.
+// mockPartitioner implements LogPartitioner and ArchiveAwareLogPartitioner.
 type mockPartitioner struct {
 	mu            sync.Mutex
 	maintainCalls int
@@ -21,6 +23,7 @@ type mockPartitioner struct {
 	lastRetention int
 	maintainErr   error
 	dropErr       error
+	dropResult    store.LogPartitionDropResult
 }
 
 func (m *mockPartitioner) MaintainLogPartitions(_ context.Context, daysAhead int) error {
@@ -31,12 +34,18 @@ func (m *mockPartitioner) MaintainLogPartitions(_ context.Context, daysAhead int
 	return m.maintainErr
 }
 
-func (m *mockPartitioner) DropOldLogPartitions(_ context.Context, retentionDays int) error {
+func (m *mockPartitioner) DropArchivedLogPartitions(
+	_ context.Context, retentionDays int,
+) (*store.LogPartitionDropResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.dropCalls++
 	m.lastRetention = retentionDays
-	return m.dropErr
+	if m.dropErr != nil {
+		return nil, m.dropErr
+	}
+	result := m.dropResult
+	return &result, nil
 }
 
 func (m *mockPartitioner) counts() (maintain, drop int) {
@@ -57,8 +66,8 @@ func TestPartitionMaintainer_Defaults(t *testing.T) {
 
 	assert.Equal(t, 24*time.Hour, job.interval)
 	assert.Equal(t, 7, job.daysAhead)
-	// Retention defaults to disabled: log archiving is not wired yet, so
-	// dropping partitions would destroy the only copy.
+	// Retention defaults to disabled. Partitions are the hot copy of the logs,
+	// and an operator has to opt into ageing them out.
 	assert.Equal(t, 0, job.retentionDays)
 }
 
@@ -116,9 +125,17 @@ func TestPartitionMaintainer_RetentionEnabled(t *testing.T) {
 		Logger:        zap.NewNop(),
 	})
 
+	p.dropResult = store.LogPartitionDropResult{
+		Dropped:  []string{"logs_20260101"},
+		Retained: []string{"logs_20260102"},
+	}
+
 	result, err := job.RunNow(context.Background())
 	require.NoError(t, err)
 	assert.True(t, result.Dropped)
+	assert.Equal(t, []string{"logs_20260101"}, result.DroppedPartitions)
+	assert.Equal(t, []string{"logs_20260102"}, result.RetainedPartitions,
+		"a partition no archive covers must be reported, not silently kept")
 
 	maintain, drop := p.counts()
 	assert.Equal(t, 1, maintain)
@@ -215,3 +232,24 @@ func TestPartitionMaintainer_StopsOnContextCancel(t *testing.T) {
 		return !job.IsRunning()
 	}, 2*time.Second, 10*time.Millisecond, "job did not stop when the context was canceled")
 }
+
+// A store that cannot check archive coverage must not be asked to drop
+// anything. Retention that fell back to a plain date comparison would delete
+// the only copy of the logs, which is exactly what round 1 refused to risk.
+func TestPartitionMaintainer_RetentionRefusedWithoutCoverageCheck(t *testing.T) {
+	job := NewPartitionMaintainer(&maintainOnlyPartitioner{}, PartitionMaintainerConfig{
+		RetentionDays: 30,
+		Logger:        zap.NewNop(),
+	})
+
+	assert.Zero(t, job.retentionDays, "retention must switch itself off")
+
+	result, err := job.RunNow(context.Background())
+	require.NoError(t, err)
+	assert.False(t, result.Dropped)
+}
+
+// maintainOnlyPartitioner implements LogPartitioner and nothing else.
+type maintainOnlyPartitioner struct{}
+
+func (maintainOnlyPartitioner) MaintainLogPartitions(context.Context, int) error { return nil }

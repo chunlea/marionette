@@ -306,7 +306,7 @@ func (s *Store) DropArchivedLogPartitions(
 		return nil, err
 	}
 
-	cutoff := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -retentionDays)
+	cutoff := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -retentionDays)
 	result := &store.LogPartitionDropResult{}
 
 	for _, p := range partitions {
