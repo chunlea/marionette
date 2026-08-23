@@ -1,0 +1,37 @@
+cmd/agent/main.go
+  s_476c758fe5506c::t_0183c2d7138b99 6,10,77-80,84-85,92,101-102,105-106,108-109,111,113,128,131-140,185-258,261-276,279-280,282-283,285-301,303,305-335
+pkg/agent/control.go
+  s_476c758fe5506c::t_24786c31c52107 22-24,56-61,63,69,76,82-86,93,97-105,112,115,145,239-252
+pkg/agent/heartbeat.go
+  s_b1ee0c9aba1316::t_7b04fde6047785 36,173,175,180,182
+pkg/agent/lifecycle_test.go
+  s_b1ee0c9aba1316::t_fadf97239acb80 9-10,193-279
+pkg/agent/log_streamer.go
+  s_b1ee0c9aba1316::t_732a6bed837f41 53-66,76-79
+cmd/agent/main_test.go
+  s_476c758fe5506c::t_e10aa1ebe71f8f 1-257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "17ad3fc28ad7c0a143c5cc8dd73a32e9172a986d",
+  "prompts": {},
+  "sessions": {
+    "s_476c758fe5506c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a981c4-d928-4849-b9d8-cba03626c240",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_b1ee0c9aba1316": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa38a077-fcfd-45ae-af4f-7fa38d4e6e0b",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
