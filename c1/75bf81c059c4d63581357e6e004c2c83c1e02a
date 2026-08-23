@@ -1,0 +1,25 @@
+migrations/007_partitions_and_session_runner.down.sql
+  s_30fb41c4a911b8::t_b0ee3dbb60910e 1-85
+migrations/007_partitions_and_session_runner.up.sql
+  s_30fb41c4a911b8::t_72756ecfede73b 1-166
+pkg/store/postgres/partitions.go
+  s_30fb41c4a911b8::t_bed96a69ea3507 1-46
+pkg/store/postgres/partitions_test.go
+  s_30fb41c4a911b8::t_286c36901df411 1-222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "c175bf81c059c4d63581357e6e004c2c83c1e02a",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
