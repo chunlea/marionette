@@ -1,0 +1,43 @@
+pkg/agent/workspace_sync.go
+  s_1e03d1f9444213::t_f3914531d1eab9 203,279-282
+pkg/storage/cas/interface.go
+  s_6ce8a3a3b8d9e6::t_de4fc8736fa1df 26-27,30-38
+pkg/storage/cas/manifest.go
+  s_6ce8a3a3b8d9e6::t_a5cac470cf993b 7,25-28,39-62,120-122,124,126,128,130-134,136-139,148-151,153,155,158,163,165-168,172
+pkg/storage/cas/manifest_stream.go
+  s_6ce8a3a3b8d9e6::t_f936a051eb4c6f 1-406
+pkg/storage/cas/manifest_stream_test.go
+  s_ecb7c44fe1ae09::t_0061b4261d2117 1-247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "50b1b9cb26f0d7114eddcd9f7e5d3dd0e87c118b",
+  "prompts": {},
+  "sessions": {
+    "s_1e03d1f9444213": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f08e1d14-b06b-4619-aa64-c85c623e5795",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_6ce8a3a3b8d9e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f1a55cc-dd39-4229-91f5-7498430c8926",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_ecb7c44fe1ae09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "52064dcb-78a6-4657-81a0-b7202cd11674",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
