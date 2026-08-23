@@ -1,0 +1,19 @@
+cmd/server/main.go
+  s_06101893ef548c::t_57bf3f4a54ca5d 337-352,691-719
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "fc57336b523414bada5477a79ece94c509700f92",
+  "prompts": {},
+  "sessions": {
+    "s_06101893ef548c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d763bd45-5eb0-4d79-aa0d-ea5d7b0f9d9c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
