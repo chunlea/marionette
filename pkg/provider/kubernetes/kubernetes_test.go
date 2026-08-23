@@ -32,8 +32,8 @@ func newTestProvider(client *MockKubeClient) *Provider {
 			AccessMode: "ReadWriteOnce",
 		},
 	}
-	suspendCfg := &SuspendConfig{}
-	suspendCfg.applyDefaults()
+	suspendCfg := &provider.SuspendConfig{}
+	suspendCfg.ApplyDefaults(defaultSuspendConfig())
 
 	return NewWithClient("test-k8s", cfg, suspendCfg, client)
 }
@@ -453,8 +453,8 @@ func TestBuildPod(t *testing.T) {
 		Cmd:         []string{"/bin/agent"},
 		Args:        []string{"--debug"},
 	}
-	suspendCfg := &SuspendConfig{}
-	suspendCfg.applyDefaults()
+	suspendCfg := &provider.SuspendConfig{}
+	suspendCfg.ApplyDefaults(defaultSuspendConfig())
 	p := NewWithClient("test", cfg, suspendCfg, client)
 
 	opts := provider.SpawnOptions{
@@ -525,8 +525,8 @@ func TestBuildPVC(t *testing.T) {
 		Labels:      map[string]string{"app": "marionette"},
 		Annotations: map[string]string{"description": "test"},
 	}
-	suspendCfg := &SuspendConfig{}
-	suspendCfg.applyDefaults()
+	suspendCfg := &provider.SuspendConfig{}
+	suspendCfg.ApplyDefaults(defaultSuspendConfig())
 	p := NewWithClient("test", cfg, suspendCfg, client)
 
 	opts := provider.SpawnOptions{
@@ -964,8 +964,8 @@ func TestBuildEnvVariations(t *testing.T) {
 		Resources:     ResourceConfig{Memory: "2Gi", CPUs: "2"},
 		Storage:       StorageConfig{Size: "10Gi", AccessMode: "ReadWriteOnce"},
 	}
-	suspendCfg := &SuspendConfig{}
-	suspendCfg.applyDefaults()
+	suspendCfg := &provider.SuspendConfig{}
+	suspendCfg.ApplyDefaults(defaultSuspendConfig())
 	p := NewWithClient("test-k8s", cfg, suspendCfg, client)
 
 	t.Run("with environment variables", func(t *testing.T) {
@@ -1285,8 +1285,8 @@ func TestBuildTolerations(t *testing.T) {
 			},
 		},
 	}
-	suspendCfg := &SuspendConfig{}
-	suspendCfg.applyDefaults()
+	suspendCfg := &provider.SuspendConfig{}
+	suspendCfg.ApplyDefaults(defaultSuspendConfig())
 	p := NewWithClient("test-k8s", cfg, suspendCfg, client)
 
 	opts := provider.SpawnOptions{
@@ -1395,7 +1395,7 @@ func TestSuspendFallback(t *testing.T) {
 			Resources:     ResourceConfig{Memory: "2Gi", CPUs: "2"},
 			Storage:       StorageConfig{Size: "10Gi", AccessMode: "ReadWriteOnce"},
 		}
-		suspendCfg := &SuspendConfig{
+		suspendCfg := &provider.SuspendConfig{
 			Strategy: provider.SuspendStrategyTerminatePreserveStorage,
 			Fallback: provider.SuspendStrategyTerminate,
 		}
@@ -1477,8 +1477,8 @@ func TestNewWithClientValidation(t *testing.T) {
 		Resources:     ResourceConfig{Memory: "2Gi", CPUs: "2"},
 		Storage:       StorageConfig{Size: "10Gi", AccessMode: "ReadWriteOnce"},
 	}
-	suspendCfg := &SuspendConfig{}
-	suspendCfg.applyDefaults()
+	suspendCfg := &provider.SuspendConfig{}
+	suspendCfg.ApplyDefaults(defaultSuspendConfig())
 
 	// Test with nil config - should still work but use defaults
 	p := NewWithClient("test", cfg, suspendCfg, client)
@@ -1502,12 +1502,12 @@ func TestParseConfigErrors(t *testing.T) {
 
 func TestParseSuspendConfigErrors(t *testing.T) {
 	t.Run("invalid json", func(t *testing.T) {
-		_, err := ParseSuspendConfig([]byte(`{invalid json`))
+		_, err := provider.ParseSuspendConfig([]byte(`{invalid json`), defaultSuspendConfig())
 		require.Error(t, err)
 	})
 
 	t.Run("empty config uses defaults", func(t *testing.T) {
-		cfg, err := ParseSuspendConfig([]byte(`{}`))
+		cfg, err := provider.ParseSuspendConfig([]byte(`{}`), defaultSuspendConfig())
 		require.NoError(t, err)
 		assert.Equal(t, provider.SuspendStrategyTerminatePreserveStorage, cfg.Strategy)
 	})
@@ -1522,8 +1522,9 @@ func TestBuildNetworkPolicyModes(t *testing.T) {
 			RunnerID:      "run_proxy",
 			NetworkPolicy: "proxy",
 		}
-		np := p.buildNetworkPolicy("run_proxy", opts)
-		assert.NotNil(t, np)
+		np, err := p.buildNetworkPolicy("run_proxy", opts)
+		require.NoError(t, err)
+		require.NotNil(t, np)
 		// Proxy mode should have specific egress rules
 		assert.NotNil(t, np.Spec.Egress)
 	})
@@ -1533,10 +1534,30 @@ func TestBuildNetworkPolicyModes(t *testing.T) {
 			RunnerID:      "run_airgap",
 			NetworkPolicy: "air_gapped",
 		}
-		np := p.buildNetworkPolicy("run_airgap", opts)
-		assert.NotNil(t, np)
+		np, err := p.buildNetworkPolicy("run_airgap", opts)
+		require.NoError(t, err)
+		require.NotNil(t, np)
 		// Air gapped should have only DNS egress
 		assert.Len(t, np.Spec.Egress, 1)
+	})
+
+	t.Run("none needs no policy", func(t *testing.T) {
+		np, err := p.buildNetworkPolicy("run_none", provider.SpawnOptions{
+			RunnerID:      "run_none",
+			NetworkPolicy: "none",
+		})
+		require.NoError(t, err)
+		assert.Nil(t, np, "policy \"none\" means no NetworkPolicy is created")
+	})
+
+	t.Run("unknown policy is an error", func(t *testing.T) {
+		// This used to return a nil policy that went straight to the API.
+		np, err := p.buildNetworkPolicy("run_bogus", provider.SpawnOptions{
+			RunnerID:      "run_bogus",
+			NetworkPolicy: "not_a_real_policy",
+		})
+		require.Error(t, err)
+		assert.Nil(t, np)
 	})
 }
 

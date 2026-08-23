@@ -36,7 +36,7 @@ const (
 type Provider struct {
 	name          string
 	config        *Config
-	suspendConfig *SuspendConfig
+	suspendConfig *provider.SuspendConfig
 	client        DockerClient
 
 	// networkOnce ensures network is only created once.
@@ -60,7 +60,7 @@ func New(cfg *store.ProviderConfig) (*Provider, error) {
 		return nil, err
 	}
 
-	suspendCfg, err := ParseSuspendConfig(cfg.SuspendConfig)
+	suspendCfg, err := provider.ParseSuspendConfig(cfg.SuspendConfig, defaultSuspendConfig())
 	if err != nil {
 		return nil, err
 	}
@@ -75,30 +75,30 @@ func New(cfg *store.ProviderConfig) (*Provider, error) {
 		config:           dockerCfg,
 		suspendConfig:    suspendCfg,
 		client:           client,
-		networkIsolation: NewNetworkIsolation(),
+		networkIsolation: NewNetworkIsolation(client),
 	}, nil
 }
 
 // NewWithClient creates a provider with an injected client (for testing).
-func NewWithClient(name string, cfg *Config, suspendCfg *SuspendConfig, client DockerClient) *Provider {
+func NewWithClient(name string, cfg *Config, suspendCfg *provider.SuspendConfig, client DockerClient) *Provider {
 	if suspendCfg == nil {
-		suspendCfg = &SuspendConfig{}
-		suspendCfg.applyDefaults()
+		suspendCfg = &provider.SuspendConfig{}
+		suspendCfg.ApplyDefaults(defaultSuspendConfig())
 	}
 	return &Provider{
 		name:             name,
 		config:           cfg,
 		suspendConfig:    suspendCfg,
 		client:           client,
-		networkIsolation: NewNetworkIsolation(),
+		networkIsolation: NewNetworkIsolation(client),
 	}
 }
 
 // NewWithClientAndNetworkIsolation creates a provider with injected client and network isolation (for testing).
-func NewWithClientAndNetworkIsolation(name string, cfg *Config, suspendCfg *SuspendConfig, client DockerClient, ni *NetworkIsolation) *Provider {
+func NewWithClientAndNetworkIsolation(name string, cfg *Config, suspendCfg *provider.SuspendConfig, client DockerClient, ni *NetworkIsolation) *Provider {
 	if suspendCfg == nil {
-		suspendCfg = &SuspendConfig{}
-		suspendCfg.applyDefaults()
+		suspendCfg = &provider.SuspendConfig{}
+		suspendCfg.ApplyDefaults(defaultSuspendConfig())
 	}
 	return &Provider{
 		name:             name,
@@ -125,12 +125,10 @@ func (p *Provider) Capabilities() provider.ProviderCapabilities {
 		Pause:    true,
 		Snapshot: false, // Docker CRIU not enabled by default
 		Suspend: provider.SuspendCapability{
-			Strategies: []provider.SuspendStrategy{
-				provider.SuspendStrategyPause,
-				provider.SuspendStrategyTerminatePreserveStorage,
-				provider.SuspendStrategyTerminate,
-			},
-			Default: provider.SuspendStrategyPause,
+			// Derived from the dispatcher so capabilities cannot claim a
+			// strategy the provider does not implement.
+			Strategies: p.suspendDispatcher().Strategies(),
+			Default:    provider.SuspendStrategyPause,
 		},
 	}
 }
@@ -545,7 +543,7 @@ func NewFromJSON(name string, configJSON, suspendConfigJSON json.RawMessage) (*P
 		return nil, err
 	}
 
-	suspendCfg, err := ParseSuspendConfig(suspendConfigJSON)
+	suspendCfg, err := provider.ParseSuspendConfig(suspendConfigJSON, defaultSuspendConfig())
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +558,7 @@ func NewFromJSON(name string, configJSON, suspendConfigJSON json.RawMessage) (*P
 		config:           cfg,
 		suspendConfig:    suspendCfg,
 		client:           client,
-		networkIsolation: NewNetworkIsolation(),
+		networkIsolation: NewNetworkIsolation(client),
 	}, nil
 }
 
@@ -571,5 +569,5 @@ func (p *Provider) Close() error {
 
 // SuspendConfig returns the provider's suspend configuration.
 func (p *Provider) SuspendConfig() provider.SuspendConfig {
-	return p.suspendConfig.ToProviderSuspendConfig()
+	return *p.suspendConfig
 }

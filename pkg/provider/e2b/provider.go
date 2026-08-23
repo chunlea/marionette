@@ -21,7 +21,7 @@ var (
 type Provider struct {
 	name          string
 	config        *Config
-	suspendConfig *SuspendConfig
+	suspendConfig *provider.SuspendConfig
 	client        *Client
 
 	// sandboxCache maps runnerID -> sandboxID for paused sandbox lookup.
@@ -37,7 +37,7 @@ func New(cfg *store.ProviderConfig) (*Provider, error) {
 		return nil, err
 	}
 
-	suspendCfg, err := ParseSuspendConfig(cfg.SuspendConfig)
+	suspendCfg, err := provider.ParseSuspendConfig(cfg.SuspendConfig, defaultSuspendConfig())
 	if err != nil {
 		return nil, err
 	}
@@ -263,11 +263,10 @@ func (p *Provider) Capabilities() provider.ProviderCapabilities {
 		Pause:    true, // E2B supports native pause (beta)
 		Snapshot: false,
 		Suspend: provider.SuspendCapability{
-			Strategies: []provider.SuspendStrategy{
-				provider.SuspendStrategyPause,
-				provider.SuspendStrategyTerminate,
-			},
-			Default: provider.SuspendStrategyPause,
+			// Derived from the dispatcher so capabilities cannot claim a
+			// strategy the provider does not implement.
+			Strategies: p.suspendDispatcher().Strategies(),
+			Default:    provider.SuspendStrategyPause,
 		},
 	}
 }

@@ -601,12 +601,12 @@ func TestConfig_Validation(t *testing.T) {
 }
 
 func TestSuspendConfig_Defaults(t *testing.T) {
-	cfg, err := ParseSuspendConfig(nil)
+	cfg, err := provider.ParseSuspendConfig(nil, defaultSuspendConfig())
 
 	require.NoError(t, err)
 	assert.Equal(t, provider.SuspendStrategyPause, cfg.Strategy)
-	assert.Equal(t, 60*time.Second, cfg.MinDuration.Duration())
-	assert.Equal(t, 24*time.Hour, cfg.MaxDuration.Duration())
+	assert.Equal(t, 60*time.Second, cfg.MinDuration)
+	assert.Equal(t, 24*time.Hour, cfg.MaxDuration)
 	assert.Equal(t, provider.SuspendStrategyTerminatePreserveStorage, cfg.Fallback)
 }
 
@@ -618,50 +618,16 @@ func TestSuspendConfig_Parse(t *testing.T) {
 		"fallback": "terminate"
 	}`)
 
-	cfg, err := ParseSuspendConfig(jsonData)
+	cfg, err := provider.ParseSuspendConfig(jsonData, defaultSuspendConfig())
 
 	require.NoError(t, err)
 	assert.Equal(t, provider.SuspendStrategyTerminatePreserveStorage, cfg.Strategy)
-	assert.Equal(t, 30*time.Second, cfg.MinDuration.Duration())
-	assert.Equal(t, 1*time.Hour, cfg.MaxDuration.Duration())
+	assert.Equal(t, 30*time.Second, cfg.MinDuration)
+	assert.Equal(t, 1*time.Hour, cfg.MaxDuration)
 	assert.Equal(t, provider.SuspendStrategyTerminate, cfg.Fallback)
 }
 
 // Additional config tests for coverage
-
-func TestDuration_UnmarshalJSON_NumericSeconds(t *testing.T) {
-	jsonData := []byte(`60`)
-	var d Duration
-	err := d.UnmarshalJSON(jsonData)
-
-	require.NoError(t, err)
-	assert.Equal(t, 60*time.Second, d.Duration())
-}
-
-func TestDuration_UnmarshalJSON_InvalidString(t *testing.T) {
-	jsonData := []byte(`"invalid"`)
-	var d Duration
-	err := d.UnmarshalJSON(jsonData)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid duration")
-}
-
-func TestDuration_UnmarshalJSON_InvalidValue(t *testing.T) {
-	jsonData := []byte(`true`)
-	var d Duration
-	err := d.UnmarshalJSON(jsonData)
-
-	assert.Error(t, err)
-}
-
-func TestDuration_MarshalJSON(t *testing.T) {
-	d := Duration(5 * time.Minute)
-	data, err := d.MarshalJSON()
-
-	require.NoError(t, err)
-	assert.Equal(t, `"5m0s"`, string(data))
-}
 
 func TestConfig_MemoryMB(t *testing.T) {
 	cfg := &Config{
@@ -704,24 +670,6 @@ func TestConfig_CPUs_Invalid(t *testing.T) {
 
 	assert.Error(t, err)
 }
-
-func TestSuspendConfig_ToProviderSuspendConfig(t *testing.T) {
-	cfg := &SuspendConfig{
-		Strategy:    provider.SuspendStrategyPause,
-		MinDuration: Duration(30 * time.Second),
-		MaxDuration: Duration(1 * time.Hour),
-		Fallback:    provider.SuspendStrategyTerminate,
-	}
-
-	psc := cfg.ToProviderSuspendConfig()
-
-	assert.Equal(t, provider.SuspendStrategyPause, psc.Strategy)
-	assert.Equal(t, 30*time.Second, psc.MinDuration)
-	assert.Equal(t, 1*time.Hour, psc.MaxDuration)
-	assert.Equal(t, provider.SuspendStrategyTerminate, psc.Fallback)
-}
-
-// Additional Provider tests for coverage
 
 func TestProvider_Pause_NotFound(t *testing.T) {
 	mockClient := new(MockDockerClient)
@@ -963,10 +911,10 @@ func TestProvider_SuspendConfig(t *testing.T) {
 		LabelPrefix: "marionette.dev",
 		Resources:   ResourceConfig{Memory: "2g", CPUs: "2"},
 	}
-	suspendCfg := &SuspendConfig{
+	suspendCfg := &provider.SuspendConfig{
 		Strategy:    provider.SuspendStrategyPause,
-		MinDuration: Duration(60 * time.Second),
-		MaxDuration: Duration(24 * time.Hour),
+		MinDuration: 60 * time.Second,
+		MaxDuration: 24 * time.Hour,
 		Fallback:    provider.SuspendStrategyTerminate,
 	}
 	p := NewWithClient("test", cfg, suspendCfg, mockClient)

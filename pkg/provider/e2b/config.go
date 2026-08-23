@@ -72,57 +72,6 @@ type ResourceConfig struct {
 	DiskMB int `json:"disk_mb,omitempty"`
 }
 
-// SuspendConfig holds suspend behavior settings for E2B provider.
-type SuspendConfig struct {
-	// Strategy is the suspend strategy to use.
-	// E2B supports: pause (native), terminate
-	Strategy provider.SuspendStrategy `json:"strategy"`
-
-	// MinDuration prevents rapid suspend/resume cycles.
-	MinDuration Duration `json:"min_duration"`
-
-	// MaxDuration is max time suspended before auto-terminate.
-	// E2B beta pause supports up to 30 days.
-	MaxDuration Duration `json:"max_duration"`
-
-	// Fallback is the strategy to use if primary fails.
-	Fallback provider.SuspendStrategy `json:"fallback"`
-}
-
-// Duration is a wrapper around time.Duration for JSON unmarshaling.
-type Duration time.Duration
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (d *Duration) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err != nil {
-		// Try as number (seconds)
-		var n int64
-		if err := json.Unmarshal(b, &n); err != nil {
-			return fmt.Errorf("invalid duration: %s", string(b))
-		}
-		*d = Duration(time.Duration(n) * time.Second)
-		return nil
-	}
-
-	dur, err := time.ParseDuration(s)
-	if err != nil {
-		return fmt.Errorf("invalid duration %q: %w", s, err)
-	}
-	*d = Duration(dur)
-	return nil
-}
-
-// MarshalJSON implements json.Marshaler.
-func (d Duration) MarshalJSON() ([]byte, error) {
-	return json.Marshal(time.Duration(d).String())
-}
-
-// Duration returns the underlying time.Duration.
-func (d Duration) Duration() time.Duration {
-	return time.Duration(d)
-}
-
 // ParseConfig parses raw JSON into Config with defaults applied.
 func ParseConfig(data json.RawMessage) (*Config, error) {
 	var cfg Config
@@ -136,18 +85,6 @@ func ParseConfig(data json.RawMessage) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
-}
-
-// ParseSuspendConfig parses suspend configuration with defaults applied.
-func ParseSuspendConfig(data json.RawMessage) (*SuspendConfig, error) {
-	cfg := &SuspendConfig{}
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, cfg); err != nil {
-			return nil, fmt.Errorf("parsing suspend config: %w", err)
-		}
-	}
-	cfg.applyDefaults()
-	return cfg, nil
 }
 
 func (c *Config) applyDefaults() {
@@ -187,29 +124,13 @@ func (c *Config) validate() error {
 	return nil
 }
 
-func (c *SuspendConfig) applyDefaults() {
-	if c.Strategy == "" {
-		// E2B supports native pause (beta)
-		c.Strategy = provider.SuspendStrategyPause
-	}
-	if c.MinDuration == 0 {
-		c.MinDuration = Duration(60 * time.Second)
-	}
-	if c.MaxDuration == 0 {
-		// E2B beta pause supports up to 30 days
-		c.MaxDuration = Duration(30 * 24 * time.Hour)
-	}
-	if c.Fallback == "" {
-		c.Fallback = provider.SuspendStrategyTerminate
-	}
-}
-
-// ToProviderSuspendConfig converts to provider.SuspendConfig.
-func (c *SuspendConfig) ToProviderSuspendConfig() provider.SuspendConfig {
+// defaultSuspendConfig returns E2B's suspend defaults. E2B supports a native
+// pause (beta) that holds for up to 30 days.
+func defaultSuspendConfig() provider.SuspendConfig {
 	return provider.SuspendConfig{
-		Strategy:    c.Strategy,
-		MinDuration: c.MinDuration.Duration(),
-		MaxDuration: c.MaxDuration.Duration(),
-		Fallback:    c.Fallback,
+		Strategy:    provider.SuspendStrategyPause,
+		MinDuration: 60 * time.Second,
+		MaxDuration: 30 * 24 * time.Hour,
+		Fallback:    provider.SuspendStrategyTerminate,
 	}
 }

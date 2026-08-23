@@ -150,80 +150,14 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// SuspendConfig holds suspend configuration for pool providers.
-type SuspendConfig struct {
-	// Strategy is the suspend strategy for pool providers.
-	// For pools, this is typically "release_to_pool".
-	Strategy provider.SuspendStrategy `json:"strategy"`
-
-	// MinDuration prevents rapid suspend/resume cycles.
-	MinDuration time.Duration `json:"min_duration,omitempty"`
-
-	// MaxDuration auto-terminates after this time suspended.
-	MaxDuration time.Duration `json:"max_duration,omitempty"`
-
-	// SyncWorkspace forces workspace sync before suspend.
-	SyncWorkspace bool `json:"sync_workspace,omitempty"`
-}
-
-// DefaultSuspendConfig returns default suspend configuration for pools.
-func DefaultSuspendConfig() *SuspendConfig {
-	return &SuspendConfig{
+// defaultSuspendConfig returns the pool suspend defaults. Pools release the
+// runner back to the pool rather than pausing or snapshotting it.
+func defaultSuspendConfig() provider.SuspendConfig {
+	return provider.SuspendConfig{
 		Strategy:      provider.SuspendStrategyReleaseToPool,
 		MinDuration:   60 * time.Second,
 		MaxDuration:   24 * time.Hour,
+		Fallback:      provider.SuspendStrategyTerminate,
 		SyncWorkspace: true,
-	}
-}
-
-// ParseSuspendConfig parses suspend configuration from JSON.
-func ParseSuspendConfig(data json.RawMessage) (*SuspendConfig, error) {
-	cfg := DefaultSuspendConfig()
-
-	if len(data) == 0 || string(data) == "null" || string(data) == "{}" {
-		return cfg, nil
-	}
-
-	var raw struct {
-		Strategy      string `json:"strategy"`
-		MinDuration   string `json:"min_duration,omitempty"`
-		MaxDuration   string `json:"max_duration,omitempty"`
-		SyncWorkspace bool   `json:"sync_workspace,omitempty"`
-	}
-
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parsing suspend config: %w", err)
-	}
-
-	if raw.Strategy != "" {
-		cfg.Strategy = provider.SuspendStrategy(raw.Strategy)
-	}
-	cfg.SyncWorkspace = raw.SyncWorkspace
-
-	if raw.MinDuration != "" {
-		d, err := time.ParseDuration(raw.MinDuration)
-		if err != nil {
-			return nil, fmt.Errorf("parsing min_duration: %w", err)
-		}
-		cfg.MinDuration = d
-	}
-	if raw.MaxDuration != "" {
-		d, err := time.ParseDuration(raw.MaxDuration)
-		if err != nil {
-			return nil, fmt.Errorf("parsing max_duration: %w", err)
-		}
-		cfg.MaxDuration = d
-	}
-
-	return cfg, nil
-}
-
-// ToProviderSuspendConfig converts to the provider.SuspendConfig type.
-func (c *SuspendConfig) ToProviderSuspendConfig() provider.SuspendConfig {
-	return provider.SuspendConfig{
-		Strategy:      c.Strategy,
-		MinDuration:   c.MinDuration,
-		MaxDuration:   c.MaxDuration,
-		SyncWorkspace: c.SyncWorkspace,
 	}
 }

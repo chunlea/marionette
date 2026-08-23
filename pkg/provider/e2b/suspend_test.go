@@ -348,11 +348,11 @@ func TestSupportsStrategy(t *testing.T) {
 
 	p := newTestProvider(t, server.URL)
 
-	assert.True(t, p.supportsStrategy(provider.SuspendStrategyPause))
-	assert.True(t, p.supportsStrategy(provider.SuspendStrategyTerminate))
-	assert.False(t, p.supportsStrategy(provider.SuspendStrategySnapshot))
-	assert.False(t, p.supportsStrategy(provider.SuspendStrategyTerminatePreserveStorage))
-	assert.False(t, p.supportsStrategy(provider.SuspendStrategyReleaseToPool))
+	assert.True(t, p.suspendDispatcher().Supports(provider.SuspendStrategyPause))
+	assert.True(t, p.suspendDispatcher().Supports(provider.SuspendStrategyTerminate))
+	assert.False(t, p.suspendDispatcher().Supports(provider.SuspendStrategySnapshot))
+	assert.False(t, p.suspendDispatcher().Supports(provider.SuspendStrategyTerminatePreserveStorage))
+	assert.False(t, p.suspendDispatcher().Supports(provider.SuspendStrategyReleaseToPool))
 }
 
 func TestProviderSuspendNoFallback(t *testing.T) {

@@ -124,16 +124,16 @@ func TestParseSuspendConfig(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		want    *SuspendConfig
+		want    *provider.SuspendConfig
 		wantErr bool
 	}{
 		{
 			name:  "empty config applies defaults",
 			input: `{}`,
-			want: &SuspendConfig{
+			want: &provider.SuspendConfig{
 				Strategy:    provider.SuspendStrategyPause,
-				MinDuration: Duration(60 * time.Second),
-				MaxDuration: Duration(30 * 24 * time.Hour),
+				MinDuration: 60 * time.Second,
+				MaxDuration: 30 * 24 * time.Hour,
 				Fallback:    provider.SuspendStrategyTerminate,
 			},
 		},
@@ -145,10 +145,10 @@ func TestParseSuspendConfig(t *testing.T) {
 				"max_duration": "1h",
 				"fallback": "pause"
 			}`,
-			want: &SuspendConfig{
+			want: &provider.SuspendConfig{
 				Strategy:    provider.SuspendStrategyTerminate,
-				MinDuration: Duration(30 * time.Second),
-				MaxDuration: Duration(1 * time.Hour),
+				MinDuration: 30 * time.Second,
+				MaxDuration: 1 * time.Hour,
 				Fallback:    provider.SuspendStrategyPause,
 			},
 		},
@@ -158,10 +158,10 @@ func TestParseSuspendConfig(t *testing.T) {
 				"min_duration": 120,
 				"max_duration": 3600
 			}`,
-			want: &SuspendConfig{
+			want: &provider.SuspendConfig{
 				Strategy:    provider.SuspendStrategyPause,
-				MinDuration: Duration(120 * time.Second),
-				MaxDuration: Duration(3600 * time.Second),
+				MinDuration: 120 * time.Second,
+				MaxDuration: 3600 * time.Second,
 				Fallback:    provider.SuspendStrategyTerminate,
 			},
 		},
@@ -174,7 +174,7 @@ func TestParseSuspendConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseSuspendConfig(json.RawMessage(tt.input))
+			got, err := provider.ParseSuspendConfig(json.RawMessage(tt.input), defaultSuspendConfig())
 			if tt.wantErr {
 				require.Error(t, err)
 				return
@@ -186,81 +186,10 @@ func TestParseSuspendConfig(t *testing.T) {
 }
 
 func TestParseSuspendConfigNilData(t *testing.T) {
-	cfg, err := ParseSuspendConfig(nil)
+	cfg, err := provider.ParseSuspendConfig(nil, defaultSuspendConfig())
 	require.NoError(t, err)
 	assert.Equal(t, provider.SuspendStrategyPause, cfg.Strategy)
-	assert.Equal(t, Duration(60*time.Second), cfg.MinDuration)
-}
-
-func TestSuspendConfigToProviderSuspendConfig(t *testing.T) {
-	cfg := &SuspendConfig{
-		Strategy:    provider.SuspendStrategyPause,
-		MinDuration: Duration(2 * time.Minute),
-		MaxDuration: Duration(1 * time.Hour),
-		Fallback:    provider.SuspendStrategyTerminate,
-	}
-
-	providerCfg := cfg.ToProviderSuspendConfig()
-
-	assert.Equal(t, provider.SuspendStrategyPause, providerCfg.Strategy)
-	assert.Equal(t, 2*time.Minute, providerCfg.MinDuration)
-	assert.Equal(t, 1*time.Hour, providerCfg.MaxDuration)
-	assert.Equal(t, provider.SuspendStrategyTerminate, providerCfg.Fallback)
-}
-
-func TestDurationMarshalJSON(t *testing.T) {
-	d := Duration(5 * time.Minute)
-	data, err := json.Marshal(d)
-	require.NoError(t, err)
-	assert.Equal(t, `"5m0s"`, string(data))
-}
-
-func TestDurationUnmarshalJSON(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		want    Duration
-		wantErr bool
-	}{
-		{
-			name:  "string duration",
-			input: `"5m"`,
-			want:  Duration(5 * time.Minute),
-		},
-		{
-			name:  "integer seconds",
-			input: `300`,
-			want:  Duration(300 * time.Second),
-		},
-		{
-			name:    "invalid string",
-			input:   `"invalid"`,
-			wantErr: true,
-		},
-		{
-			name:    "invalid type",
-			input:   `true`,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var d Duration
-			err := json.Unmarshal([]byte(tt.input), &d)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, d)
-		})
-	}
-}
-
-func TestDurationDuration(t *testing.T) {
-	d := Duration(5 * time.Minute)
-	assert.Equal(t, 5*time.Minute, d.Duration())
+	assert.Equal(t, 60*time.Second, cfg.MinDuration)
 }
 
 func TestConfigValidation(t *testing.T) {

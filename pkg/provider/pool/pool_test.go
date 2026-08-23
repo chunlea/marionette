@@ -179,9 +179,14 @@ func TestProvider_Capabilities(t *testing.T) {
 
 	assert.False(t, caps.Pause, "pool providers don't support pause")
 	assert.False(t, caps.Snapshot, "pool providers don't support snapshots")
-	assert.Contains(t, caps.Suspend.Strategies, provider.SuspendStrategyReleaseToPool)
-	assert.Contains(t, caps.Suspend.Strategies, provider.SuspendStrategyTerminate)
-	assert.Equal(t, provider.SuspendStrategyReleaseToPool, caps.Suspend.Default)
+
+	// The pool provider implements neither Suspend nor Resume, so it must not
+	// advertise a suspend strategy. It used to claim release_to_pool.
+	var _ provider.Provider = p
+	_, suspendable := any(p).(provider.SuspendableProvider)
+	assert.False(t, suspendable, "pool does not implement SuspendableProvider")
+	assert.Empty(t, caps.Suspend.Strategies, "capabilities must not claim what is not implemented")
+	assert.Empty(t, caps.Suspend.Default)
 }
 
 func TestProvider_Spawn(t *testing.T) {
