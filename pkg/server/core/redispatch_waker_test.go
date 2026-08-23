@@ -559,10 +559,20 @@ func TestTaskManager_OnTaskCompleted_LeavesAnEmptyBacklogAlone(t *testing.T) {
 // most of the sessions with nothing.
 //
 // The load test found this as "4 sessions, 4 idle runners, 2 sessions stranded".
+// In production the loser is refused rather than allowed to share: migration
+// 001's partial unique index on sessions(runner_id) WHERE status = 'active' is
+// the real guard, and Activate translates its violation into ErrRunnerNotIdle.
+// So the cost of the race is a stranded session, not a shared runner - but a
+// stranded session is exactly what the load test could not finish around. The
+// in-memory store here has no such index, which is why this test can observe
+// the sharing directly.
 func TestSessionManager_ConcurrentEnsureRunner_GivesEachSessionItsOwnRunner(t *testing.T) {
 	const n = 8
 
-	for round := 0; round < 10; round++ {
+	// Enough rounds to catch a stale-read window rather than to prove one
+	// absent: the first version of the reservation checked the database before
+	// taking the reservation, and that lost roughly one round in fifty.
+	for round := 0; round < 20; round++ {
 		manager, s := setupSessionManagerTestWithCmdSender(&mockCommandSenderForSession{})
 
 		for i := 0; i < n; i++ {

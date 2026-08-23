@@ -1716,25 +1716,34 @@ func (m *SessionManager) selectIdleRunner(ctx context.Context, session *store.Se
 		if selector != nil && !hasAllCapabilities(runner.Capabilities, selector.Capabilities) {
 			continue
 		}
-		// "idle" is the runner's connection state, not an assignment: a runner
-		// can be idle while a session still owns it.
 		if m.connManager != nil && !m.connManager.IsConnected(runner.ID) {
 			continue
 		}
+		// The reservation is taken BEFORE the database is asked whether the
+		// runner is claimed, and that order is the whole point. The other way
+		// round, a caller that reads "unclaimed" can be overtaken by a caller
+		// that reserves, activates and releases before it gets to reserve; it
+		// then takes a runner on the strength of an answer that is no longer
+		// true. Reserving first means any claim committed before the check is
+		// seen, and any claim committed after it can only come from the one
+		// holder of the reservation.
+		if !m.reserveRunner(runner.ID) {
+			continue
+		}
+
+		// "idle" is the runner's connection state, not an assignment: a runner
+		// can be idle while a session still owns it.
 		claimed, err := m.runnerClaimed(ctx, runner.ID)
 		if err != nil {
 			m.logger.Warn("could not determine whether runner is claimed; skipping it",
 				zap.String("runner_id", runner.ID),
 				zap.Error(err),
 			)
+			m.releaseReservation(runner.ID)
 			continue
 		}
 		if claimed {
-			continue
-		}
-		// Last, because it has a side effect: taking the reservation only
-		// makes sense once the runner has passed every other test.
-		if !m.reserveRunner(runner.ID) {
+			m.releaseReservation(runner.ID)
 			continue
 		}
 		return runner.ID, nil
