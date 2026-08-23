@@ -191,22 +191,3 @@ func matchLabelsJSON(labelsJSON json.RawMessage, required map[string]string) boo
 	}
 	return true
 }
-
-// ValidationError represents a validation error.
-type ValidationError struct {
-	Field   string
-	Message string
-}
-
-func (e *ValidationError) Error() string {
-	if e.Field != "" {
-		return e.Field + ": " + e.Message
-	}
-	return e.Message
-}
-
-// IsValidation returns true if the error is a ValidationError.
-func IsValidation(err error) bool {
-	_, ok := err.(*ValidationError)
-	return ok
-}

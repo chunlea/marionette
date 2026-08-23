@@ -208,21 +208,3 @@ func (m *MockRunnerAdminService) AddRunner(runner *store.Runner) {
 	defer m.mu.Unlock()
 	m.runners[runner.ID] = runner
 }
-
-// InvalidStateError represents an invalid state transition error.
-type InvalidStateError struct {
-	Resource string
-	ID       string
-	Current  string
-	Expected string
-}
-
-func (e *InvalidStateError) Error() string {
-	return e.Resource + " " + e.ID + " is in state " + e.Current + ", expected " + e.Expected
-}
-
-// IsInvalidState returns true if the error is an InvalidStateError.
-func IsInvalidState(err error) bool {
-	_, ok := err.(*InvalidStateError)
-	return ok
-}
