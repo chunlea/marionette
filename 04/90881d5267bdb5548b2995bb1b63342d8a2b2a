@@ -1,0 +1,19 @@
+cmd/server/adapters.go
+  s_407eac4b802d80::t_8f3a911ec05ff2 6,8,10-11,15,17,264-684
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "0490881d5267bdb5548b2995bb1b63342d8a2b2a",
+  "prompts": {},
+  "sessions": {
+    "s_407eac4b802d80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef840d6e-7942-40f8-90b2-80141044f398",
+        "model": "claude-opus-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
