@@ -1,0 +1,19 @@
+pkg/server/grpc/multiprocess_routing_test.go
+  s_06dcb102eb172c::t_af450361881327 1-493
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "2c335b1aff6cfe656cccd82ec25ffde50f73a40c",
+  "prompts": {},
+  "sessions": {
+    "s_06dcb102eb172c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c713da8a-6e2a-4726-8e2b-41c65f36ac07",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
