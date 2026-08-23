@@ -80,11 +80,13 @@ func (m *mockMetadataStore) MarkChunkDeleted(_ context.Context, tenantID, hash s
 
 // MarkUnreferencedChunks mirrors the real single-statement mark: the ref_count
 // check and the write happen under one lock, so nothing can slip between them.
-func (m *mockMetadataStore) MarkUnreferencedChunks(_ context.Context, tenantID string, notAfter time.Time, limit int) ([]*store.Chunk, error) {
+func (m *mockMetadataStore) MarkUnreferencedChunks(_ context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	now := time.Now()
+	notAfter := now.Add(-minAge)
+
 	var marked []*store.Chunk
 	for _, chunk := range m.chunks {
 		if len(marked) >= limit {
@@ -103,9 +105,11 @@ func (m *mockMetadataStore) MarkUnreferencedChunks(_ context.Context, tenantID s
 	return marked, nil
 }
 
-func (m *mockMetadataStore) ListSweepableChunks(_ context.Context, tenantID string, markedBefore time.Time, limit int) ([]*store.Chunk, error) {
+func (m *mockMetadataStore) ListSweepableChunks(_ context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	markedBefore := time.Now().Add(-minAge)
 
 	var result []*store.Chunk
 	for _, chunk := range m.chunks {
@@ -123,9 +127,11 @@ func (m *mockMetadataStore) ListSweepableChunks(_ context.Context, tenantID stri
 	return result, nil
 }
 
-func (m *mockMetadataStore) DeleteChunkIfUnreferenced(_ context.Context, tenantID, hash string, markedBefore time.Time) (bool, error) {
+func (m *mockMetadataStore) DeleteChunkIfUnreferenced(_ context.Context, tenantID, hash string, minAge time.Duration) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	markedBefore := time.Now().Add(-minAge)
 
 	key := m.key(tenantID, hash)
 	chunk, exists := m.chunks[key]

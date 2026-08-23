@@ -17,17 +17,23 @@ import (
 // mark a chunk that had been referenced in between, and the sweep then deleted
 // it because it only looked at deleted_at.
 type ChunkMetadataStore interface {
-	// MarkUnreferencedChunks marks up to limit unreferenced chunks created at or
-	// before notAfter, and returns the rows it actually marked.
-	MarkUnreferencedChunks(ctx context.Context, tenantID string, notAfter time.Time, limit int) ([]*store.Chunk, error)
+	// MarkUnreferencedChunks marks up to limit unreferenced chunks older than
+	// minAge, and returns the rows it actually marked.
+	//
+	// Ages are measured against the store's own clock, not the caller's: these
+	// timestamps are written by the store, and comparing them against an
+	// application clock that drifts makes a short grace period behave
+	// erratically.
+	MarkUnreferencedChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error)
 
-	// ListSweepableChunks returns chunks that are still unreferenced and were
-	// marked before markedBefore.
-	ListSweepableChunks(ctx context.Context, tenantID string, markedBefore time.Time, limit int) ([]*store.Chunk, error)
+	// ListSweepableChunks returns chunks that are still unreferenced and have
+	// been marked for at least minAge.
+	ListSweepableChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error)
 
 	// DeleteChunkIfUnreferenced removes a chunk only while it is still
-	// unreferenced and still marked, reporting whether it did.
-	DeleteChunkIfUnreferenced(ctx context.Context, tenantID, hash string, markedBefore time.Time) (bool, error)
+	// unreferenced and has been marked for at least minAge, reporting whether
+	// it did.
+	DeleteChunkIfUnreferenced(ctx context.Context, tenantID, hash string, minAge time.Duration) (bool, error)
 
 	// ListUnreferencedChunks returns chunks with ref_count = 0 that haven't been
 	// marked. Used by dry runs, which must not write.
@@ -77,7 +83,6 @@ func NewGC(metadataStore ChunkMetadataStore, chunkStore ChunkStore, config GCCon
 // the sweep.
 func (g *GC) Mark(ctx context.Context, tenantID string) (int, error) {
 	totalMarked := 0
-	notAfter := time.Now().Add(-g.config.GracePeriod)
 
 	for {
 		select {
@@ -92,15 +97,11 @@ func (g *GC) Mark(ctx context.Context, tenantID string) (int, error) {
 			if err != nil {
 				return totalMarked, fmt.Errorf("listing unreferenced chunks: %w", err)
 			}
-			for _, chunk := range chunks {
-				if !chunk.CreatedAt.After(notAfter) {
-					totalMarked++
-				}
-			}
+			totalMarked += len(chunks)
 			return totalMarked, nil
 		}
 
-		marked, err := g.metadataStore.MarkUnreferencedChunks(ctx, tenantID, notAfter, g.config.BatchSize)
+		marked, err := g.metadataStore.MarkUnreferencedChunks(ctx, tenantID, g.config.GracePeriod, g.config.BatchSize)
 		if err != nil {
 			return totalMarked, fmt.Errorf("marking unreferenced chunks: %w", err)
 		}
@@ -129,10 +130,6 @@ func (g *GC) Sweep(ctx context.Context, tenantID string) (int, int64, error) {
 	totalBytes := int64(0)
 	var blobErrs []error
 
-	// Chunks marked before this are eligible; the same cutoff is re-applied by
-	// the delete so a chunk re-marked in the meantime is not caught out.
-	cutoff := time.Now().Add(-g.config.GracePeriod)
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -140,7 +137,7 @@ func (g *GC) Sweep(ctx context.Context, tenantID string) (int, int64, error) {
 		default:
 		}
 
-		chunks, err := g.metadataStore.ListSweepableChunks(ctx, tenantID, cutoff, g.config.BatchSize)
+		chunks, err := g.metadataStore.ListSweepableChunks(ctx, tenantID, g.config.GracePeriod, g.config.BatchSize)
 		if err != nil {
 			return totalDeleted, totalBytes, fmt.Errorf("listing sweepable chunks: %w", err)
 		}
@@ -156,7 +153,9 @@ func (g *GC) Sweep(ctx context.Context, tenantID string) (int, int64, error) {
 				continue
 			}
 
-			deleted, err := g.metadataStore.DeleteChunkIfUnreferenced(ctx, tenantID, chunk.Hash, cutoff)
+			// The same age bound is re-applied by the delete, so a chunk that
+			// was re-marked in the meantime is not caught out.
+			deleted, err := g.metadataStore.DeleteChunkIfUnreferenced(ctx, tenantID, chunk.Hash, g.config.GracePeriod)
 			if err != nil {
 				return totalDeleted, totalBytes, fmt.Errorf("deleting chunk %s from database: %w", chunk.Hash, err)
 			}

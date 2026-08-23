@@ -410,18 +410,23 @@ func registerChunk(ctx context.Context, q querier, tenantID, hash string, size i
 // MarkUnreferencedChunks marks up to limit unreferenced chunks for deletion and
 // returns the rows it actually marked.
 //
-// Only chunks created at or before notAfter are considered, so a chunk that has
-// been uploaded but not yet referenced survives its commit window.
-func (s *Store) MarkUnreferencedChunks(ctx context.Context, tenantID string, notAfter time.Time, limit int) ([]*store.Chunk, error) {
-	return markUnreferencedChunks(ctx, s.pool, tenantID, notAfter, limit)
+// Only chunks older than minAge are considered, so a chunk that has been
+// uploaded but not yet referenced survives its commit window.
+//
+// Ages are measured against the database clock rather than the caller's. The
+// timestamps being compared were written by the database, and an application
+// clock that runs a few milliseconds behind would otherwise make a short grace
+// period collect nothing at all.
+func (s *Store) MarkUnreferencedChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
+	return markUnreferencedChunks(ctx, s.pool, tenantID, minAge, limit)
 }
 
 // MarkUnreferencedChunks marks unreferenced chunks within a transaction.
-func (t *Tx) MarkUnreferencedChunks(ctx context.Context, tenantID string, notAfter time.Time, limit int) ([]*store.Chunk, error) {
-	return markUnreferencedChunks(ctx, t.tx, tenantID, notAfter, limit)
+func (t *Tx) MarkUnreferencedChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
+	return markUnreferencedChunks(ctx, t.tx, tenantID, minAge, limit)
 }
 
-func markUnreferencedChunks(ctx context.Context, q querier, tenantID string, notAfter time.Time, limit int) ([]*store.Chunk, error) {
+func markUnreferencedChunks(ctx context.Context, q querier, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -435,7 +440,7 @@ func markUnreferencedChunks(ctx context.Context, q querier, tenantID string, not
 			WHERE tenant_id = $1
 			  AND ref_count = 0
 			  AND deleted_at IS NULL
-			  AND created_at <= $2
+			  AND created_at <= NOW() - ($2::double precision * INTERVAL '1 second')
 			ORDER BY created_at ASC
 			LIMIT $3
 			FOR UPDATE SKIP LOCKED
@@ -449,7 +454,7 @@ func markUnreferencedChunks(ctx context.Context, q querier, tenantID string, not
 		  AND c.deleted_at IS NULL
 		RETURNING c.hash, c.tenant_id, c.size, c.ref_count, c.deleted_at, c.created_at`
 
-	rows, err := q.Query(ctx, query, tenantID, notAfter, limit)
+	rows, err := q.Query(ctx, query, tenantID, minAge.Seconds(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("marking unreferenced chunks: %w", err)
 	}
@@ -471,21 +476,58 @@ func markUnreferencedChunks(ctx context.Context, q querier, tenantID string, not
 	return chunks, nil
 }
 
+// ListChunkTenants returns every tenant that currently holds chunks.
+//
+// Garbage collection is per-tenant because chunks are: the primary key is
+// (tenant_id, hash) and every GC statement filters on it. A collector that only
+// knows one tenant id silently leaves every other tenant's garbage in place.
+func (s *Store) ListChunkTenants(ctx context.Context) ([]string, error) {
+	return listChunkTenants(ctx, s.pool)
+}
+
+// ListChunkTenants returns the tenants holding chunks, within a transaction.
+func (t *Tx) ListChunkTenants(ctx context.Context) ([]string, error) {
+	return listChunkTenants(ctx, t.tx)
+}
+
+func listChunkTenants(ctx context.Context, q querier) ([]string, error) {
+	rows, err := q.Query(ctx, `SELECT DISTINCT tenant_id FROM chunks ORDER BY tenant_id`)
+	if err != nil {
+		return nil, fmt.Errorf("listing chunk tenants: %w", err)
+	}
+	defer rows.Close()
+
+	var tenants []string
+	for rows.Next() {
+		var tenant string
+		if err := rows.Scan(&tenant); err != nil {
+			return nil, fmt.Errorf("scanning tenant: %w", err)
+		}
+		tenants = append(tenants, tenant)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating tenants: %w", err)
+	}
+
+	return tenants, nil
+}
+
 // ListSweepableChunks returns chunks that are still unreferenced and whose
 // grace period has expired.
 //
 // Unlike ListSoftDeletedChunks it excludes chunks that were referenced again
 // after being marked, which is the set the old sweep happily deleted.
-func (s *Store) ListSweepableChunks(ctx context.Context, tenantID string, markedBefore time.Time, limit int) ([]*store.Chunk, error) {
-	return listSweepableChunks(ctx, s.pool, tenantID, markedBefore, limit)
+func (s *Store) ListSweepableChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
+	return listSweepableChunks(ctx, s.pool, tenantID, minAge, limit)
 }
 
 // ListSweepableChunks lists sweepable chunks within a transaction.
-func (t *Tx) ListSweepableChunks(ctx context.Context, tenantID string, markedBefore time.Time, limit int) ([]*store.Chunk, error) {
-	return listSweepableChunks(ctx, t.tx, tenantID, markedBefore, limit)
+func (t *Tx) ListSweepableChunks(ctx context.Context, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
+	return listSweepableChunks(ctx, t.tx, tenantID, minAge, limit)
 }
 
-func listSweepableChunks(ctx context.Context, q querier, tenantID string, markedBefore time.Time, limit int) ([]*store.Chunk, error) {
+func listSweepableChunks(ctx context.Context, q querier, tenantID string, minAge time.Duration, limit int) ([]*store.Chunk, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -495,12 +537,12 @@ func listSweepableChunks(ctx context.Context, q querier, tenantID string, marked
 		WHERE tenant_id = $1
 		  AND ref_count = 0
 		  AND deleted_at IS NOT NULL
-		  AND deleted_at < $2
+		  AND deleted_at < NOW() - ($2::double precision * INTERVAL '1 second')
 		ORDER BY deleted_at ASC
 		LIMIT $3`,
 		chunkColumns)
 
-	rows, err := q.Query(ctx, query, tenantID, markedBefore, limit)
+	rows, err := q.Query(ctx, query, tenantID, minAge.Seconds(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("querying sweepable chunks: %w", err)
 	}
@@ -525,25 +567,25 @@ func listSweepableChunks(ctx context.Context, q querier, tenantID string, marked
 // DeleteChunkIfUnreferenced deletes a chunk only while it is still unreferenced
 // and still marked. It reports whether the row was actually removed, so the
 // caller knows not to delete the blob of a chunk that was resurrected under it.
-func (s *Store) DeleteChunkIfUnreferenced(ctx context.Context, tenantID, hash string, markedBefore time.Time) (bool, error) {
-	return deleteChunkIfUnreferenced(ctx, s.pool, tenantID, hash, markedBefore)
+func (s *Store) DeleteChunkIfUnreferenced(ctx context.Context, tenantID, hash string, minAge time.Duration) (bool, error) {
+	return deleteChunkIfUnreferenced(ctx, s.pool, tenantID, hash, minAge)
 }
 
 // DeleteChunkIfUnreferenced deletes a chunk within a transaction.
-func (t *Tx) DeleteChunkIfUnreferenced(ctx context.Context, tenantID, hash string, markedBefore time.Time) (bool, error) {
-	return deleteChunkIfUnreferenced(ctx, t.tx, tenantID, hash, markedBefore)
+func (t *Tx) DeleteChunkIfUnreferenced(ctx context.Context, tenantID, hash string, minAge time.Duration) (bool, error) {
+	return deleteChunkIfUnreferenced(ctx, t.tx, tenantID, hash, minAge)
 }
 
-func deleteChunkIfUnreferenced(ctx context.Context, q querier, tenantID, hash string, markedBefore time.Time) (bool, error) {
+func deleteChunkIfUnreferenced(ctx context.Context, q querier, tenantID, hash string, minAge time.Duration) (bool, error) {
 	query := `
 		DELETE FROM chunks
 		WHERE tenant_id = $1
 		  AND hash = $2
 		  AND ref_count = 0
 		  AND deleted_at IS NOT NULL
-		  AND deleted_at < $3`
+		  AND deleted_at < NOW() - ($3::double precision * INTERVAL '1 second')`
 
-	result, err := q.Exec(ctx, query, tenantID, hash, markedBefore)
+	result, err := q.Exec(ctx, query, tenantID, hash, minAge.Seconds())
 	if err != nil {
 		return false, handlePgError(err, "chunk", hash)
 	}

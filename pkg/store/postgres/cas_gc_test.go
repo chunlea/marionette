@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/chunlea/marionette/pkg/storage/cas"
+	"github.com/chunlea/marionette/pkg/store"
 )
 
 // memoryChunkStore is the blob half of the CAS, in memory. The GC tests here
@@ -277,6 +279,7 @@ func TestGCConcurrentWritersKeepTheirChunks(t *testing.T) {
 	var (
 		mu         sync.Mutex
 		committed  []string
+		reclaimed  int
 		abandoned  []string
 		writeGroup sync.WaitGroup
 	)
@@ -316,14 +319,27 @@ func TestGCConcurrentWritersKeepTheirChunks(t *testing.T) {
 
 				// The commit. Between the register above and this call the
 				// collector is free to mark and sweep, which is the race.
-				if err := testStore.IncrementChunkRef(ctx, tenant, hash); err != nil {
-					t.Errorf("IncrementChunkRef(%s): %v", hash, err)
-					return
-				}
+				err := testStore.IncrementChunkRef(ctx, tenant, hash)
 
 				mu.Lock()
-				committed = append(committed, hash)
+				switch {
+				case err == nil:
+					committed = append(committed, hash)
+				case errors.Is(err, store.ErrNotFound):
+					// Collected before this writer committed. With a grace
+					// period of one nanosecond that is the correct outcome —
+					// the window really is that short — and what matters is
+					// that the writer is told, rather than ending up with a
+					// manifest pointing at a chunk that is gone.
+					reclaimed++
+				default:
+					t.Errorf("IncrementChunkRef(%s): %v", hash, err)
+				}
 				mu.Unlock()
+
+				if err != nil && !errors.Is(err, store.ErrNotFound) {
+					return
+				}
 			}
 
 			// Chunks that are uploaded and then never committed, so the test
@@ -349,7 +365,11 @@ func TestGCConcurrentWritersKeepTheirChunks(t *testing.T) {
 	stopGC()
 	<-gcDone
 
-	require.Len(t, committed, writers*chunksPerWriter)
+	// Every attempt either committed or was reclaimed before it could; nothing
+	// is unaccounted for.
+	require.Equal(t, writers*chunksPerWriter, len(committed)+reclaimed)
+	require.NotEmpty(t, committed, "no commit won its race — the test proves nothing")
+	t.Logf("%d committed, %d reclaimed before commit", len(committed), reclaimed)
 
 	var lost []string
 	for _, hash := range committed {
