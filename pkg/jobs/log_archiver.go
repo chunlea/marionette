@@ -334,7 +334,7 @@ func (j *LogArchiver) archiveSession(
 	if err != nil {
 		return 0, 0, err
 	}
-	boundary := archiveBoundary(existing)
+	boundary := existing.Boundary()
 
 	// Rows younger than the lag window are out of scope for this pass. They are
 	// the ones a still-open transaction could be about to write underneath.
@@ -654,20 +654,4 @@ func (j *LogArchiver) existingArchive(ctx context.Context, sessionID string) (*s
 		return nil, nil
 	}
 	return archive, nil
-}
-
-// archiveBoundary is the exact position an archive stopped at.
-//
-// All three parts or none: a row missing one of them predates the boundary
-// columns, and guessing the missing part would either re-archive rows the
-// object already holds or delete rows it does not.
-func archiveBoundary(a *store.LogArchive) *store.LogCursor {
-	if a == nil || a.LastLogAt == nil || a.LastLogID == nil || a.LastLogSequence == nil {
-		return nil
-	}
-	return &store.LogCursor{
-		CreatedAt: *a.LastLogAt,
-		Sequence:  *a.LastLogSequence,
-		ID:        *a.LastLogID,
-	}
 }
