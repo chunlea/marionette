@@ -1,0 +1,85 @@
+cmd/server/main.go
+  s_2681c55641541f::t_5b3e66d53f7e96 42,102-114,153-154,254-255
+pkg/network/endpoint.go
+  s_1e03d1f9444213::t_c596b86e2c802d 1-109
+pkg/network/endpoint_test.go
+  s_2681c55641541f::t_adfcae6b30b7e7 1-124
+pkg/network/policy.go
+  s_2681c55641541f::t_b239005c3237c2 17-18,21-23,26-27,34-36,53-98,103,116-119,138-147,155-166,180-183,185-203
+pkg/network/policy_test.go
+  s_2681c55641541f::t_6a4f566cf0ff7d 31,34-35,232
+pkg/network/proxy.go
+  s_2681c55641541f::t_5d4f8c78a4d41a 1-177
+pkg/network/proxy_test.go
+  s_2681c55641541f::t_7f81269040fa8a 1-100
+pkg/network/refresher.go
+  s_2681c55641541f::t_1e2323638d88c5 1-369
+pkg/network/refresher_test.go
+  s_1e03d1f9444213::t_5596516e4aebeb 1-480
+pkg/network/resolved.go
+  s_2681c55641541f::t_0f7314ca55d562 4,6,12-15,30-40,66-81,104-106,108-155,163,165,168,176-183,189-192,194-204,234-258,262-302,309-324,326-361
+pkg/network/resolved_pinning_test.go
+  s_6ce8a3a3b8d9e6::t_9a21ef2553b922 1-269
+pkg/network/resolver.go
+  s_6ce8a3a3b8d9e6::t_7fface376b9402 118-123,129-176,178-185,187-190,192-193,196-213
+pkg/server/core/app.go
+  s_ecb7c44fe1ae09::t_67bc35df1354d4 17,96-103,138,206-207,216,221-230,251,271,412
+pkg/server/core/redispatch.go
+  s_ecb7c44fe1ae09::t_6b126933e7c2f9 67-68,75,118-125,127,149,153-155,157,221-222,224
+pkg/server/core/redispatch_metrics.go
+  s_6ce8a3a3b8d9e6::t_1a87358f563812 1-174
+pkg/server/core/redispatch_test.go
+  s_1e03d1f9444213::t_5ce4154690d13a 136-163,167,170,174,179,182,186,189,194,196,198,200,203-204,207-212,214-215,219-220,224-225
+pkg/server/core/redispatch_waker.go
+  s_ecb7c44fe1ae09::t_411244ea261f80 1-359
+pkg/server/core/redispatch_waker_test.go
+  s_ecb7c44fe1ae09::t_16c71feb4626cc 1-471
+pkg/server/core/runner_manager.go
+  s_ecb7c44fe1ae09::t_2d6ad5fbcaaf76 49,77-88,169-174,180-188,376-383
+pkg/server/core/session_manager.go
+  s_2681c55641541f::t_1775bc371d4c20 190,253-270,804-811,1664-1672,1856-1860,1998-2001
+pkg/server/core/task_manager.go
+  s_2681c55641541f::t_00d202c8f13c86 118-120,147-154
+pkg/server/core/task_manager_test.go
+  s_ecb7c44fe1ae09::t_917b7ac753740d 360-361,366-372,1821-1822,1824-1836,1838-1853,1886
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "a015ae862edb64812bb521523f7f2280b3c22dd3",
+  "prompts": {},
+  "sessions": {
+    "s_1e03d1f9444213": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f08e1d14-b06b-4619-aa64-c85c623e5795",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_2681c55641541f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957a3a1-8aa9-4481-b571-119f14c7519e",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_6ce8a3a3b8d9e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f1a55cc-dd39-4229-91f5-7498430c8926",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_ecb7c44fe1ae09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "52064dcb-78a6-4657-81a0-b7202cd11674",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
