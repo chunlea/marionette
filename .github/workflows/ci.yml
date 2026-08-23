@@ -26,7 +26,7 @@ jobs:
       image: golang:1.25-bookworm
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # buf breaking compares against origin/main; a shallow clone has no
           # such ref.
@@ -70,7 +70,7 @@ jobs:
     # syntax, expressions and shell are checked here instead.
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install actionlint
         run: |
@@ -90,7 +90,7 @@ jobs:
       image: golang:1.25-bookworm
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -116,7 +116,7 @@ jobs:
           MARIONETTE_RUNNER_TOKEN: test_token
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage.out
@@ -130,18 +130,23 @@ jobs:
         working-directory: web
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install pnpm
         # Pinned to 9 deliberately: pnpm 10+ fails the install on
         # ERR_PNPM_IGNORED_BUILDS. Keep in sync with the packageManager field
         # in web/package.json.
-        uses: pnpm/action-setup@v4
+        #
+        # The action itself stops at v5, the first major on Node 24, rather
+        # than v6: v6 replaced the installer with a pnpm-11 bootstrap that
+        # self-updates down to the requested version, which is a new path for
+        # the old version we pin here.
+        uses: pnpm/action-setup@v5
         with:
           version: 9
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -180,7 +185,7 @@ jobs:
     # `make schema` render byte-identical output.
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check docs/schema.sql matches migrations/
         run: make schema-check
@@ -197,7 +202,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -237,7 +242,7 @@ jobs:
         run: go test -run '^$' -bench . -benchmem -benchtime 2s ./pkg/server/core/... | tee -a bench.txt
 
       - name: Upload benchmark artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmarks
           path: bench.txt
@@ -250,7 +255,7 @@ jobs:
       image: golang:1.25-bookworm
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
