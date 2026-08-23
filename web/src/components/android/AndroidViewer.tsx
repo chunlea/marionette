@@ -116,7 +116,7 @@ export function AndroidViewer({ sessionId, stream, className = '' }: AndroidView
         }}
       >
         <video
-          ref={videoRef as React.RefObject<HTMLVideoElement>}
+          ref={videoRef}
           autoPlay
           playsInline
           muted={false}
