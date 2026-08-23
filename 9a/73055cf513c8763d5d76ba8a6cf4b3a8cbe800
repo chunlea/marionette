@@ -1,0 +1,27 @@
+pkg/store/models.go
+  s_30fb41c4a911b8::t_4ee114d689ab9b 723-725,732,736-738,746
+pkg/store/postgres/pagination_test.go
+  s_30fb41c4a911b8::t_1536bde2301aae 472-523
+pkg/store/postgres/sorting.go
+  s_30fb41c4a911b8::t_95c41b803e2d70 194-197
+pkg/store/postgres/sorting_test.go
+  s_30fb41c4a911b8::t_5bd8187cfbdb29 90-91
+pkg/store/postgres/webhooks.go
+  s_30fb41c4a911b8::t_dae3f26b560ca5 98-107,144-145,157-169,171,190-200,204-205,448,456-457,469-481,483,502-512,516-517
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "9a73055cf513c8763d5d76ba8a6cf4b3a8cbe800",
+  "prompts": {},
+  "sessions": {
+    "s_30fb41c4a911b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64b7c42c-0fdf-4bd0-883b-9f8a1e27f7e8",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
