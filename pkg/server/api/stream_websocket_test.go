@@ -185,8 +185,13 @@ func TestHandleBrowserStreamWS_ReceiveFrames(t *testing.T) {
 		defer func() { _ = resp.Body.Close() }()
 	}
 
-	// Wait for subscriber to be registered
-	time.Sleep(50 * time.Millisecond)
+	// The handler subscribes to the hub only after the upgrade completes, and
+	// BroadcastFrame drops frames that have no subscriber. Sleeping a fixed 50ms
+	// and hoping is what made the sibling log-stream test flaky on loaded CI
+	// runners; wait for the subscription to actually land instead.
+	require.Eventually(t, func() bool {
+		return mockService.frameHub.GetSubscriberCount(streamID) > 0
+	}, wsEventTimeout, 5*time.Millisecond, "handler never subscribed to the frame hub")
 
 	// Broadcast a frame
 	mockService.frameHub.BroadcastFrame(streamID, &pb.BrowserFrame{
@@ -197,8 +202,8 @@ func TestHandleBrowserStreamWS_ReceiveFrames(t *testing.T) {
 		Sequence: 1,
 	})
 
-	// Read message from WebSocket with timeout
-	require.NoError(t, ws.SetReadDeadline(time.Now().Add(2*time.Second)))
+	// Read message from WebSocket; the ceiling only bites on a genuine stall
+	require.NoError(t, ws.SetReadDeadline(time.Now().Add(wsEventTimeout)))
 	_, data, err := ws.ReadMessage()
 	require.NoError(t, err)
 
@@ -279,7 +284,7 @@ func TestHandleBrowserStreamWS_SendInput(t *testing.T) {
 		require.NotNil(t, mouse)
 		assert.Equal(t, float64(100), mouse.X)
 		assert.Equal(t, float64(200), mouse.Y)
-	case <-time.After(2 * time.Second):
+	case <-time.After(wsEventTimeout):
 		t.Fatal("timeout waiting for input event")
 	}
 
