@@ -1,0 +1,19 @@
+pkg/server/core/runner_provisioner_test.go
+  s_922ee36a2ef105::t_56bc77910b969d 1-305
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "98aedca5ba7c6c71d8eac53d0d165ceef19fb23e",
+  "prompts": {},
+  "sessions": {
+    "s_922ee36a2ef105": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e4155e7b-3074-4ac3-9061-4d234659107f",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
