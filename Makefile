@@ -1,5 +1,5 @@
 .PHONY: deps build test lint proto migrate dev clean help \
-	schema schema-check \
+	schema schema-check generate \
 	certs certs-clean certs-verify \
 	web-install web-dev web-build web-lint web-clean
 
@@ -91,6 +91,10 @@ lint:
 ## lint-fix: Run linter and fix issues
 lint-fix:
 	golangci-lint run --fix ./...
+
+## generate: Run go:generate across the tree (mocks etc.)
+generate:
+	$(GOCMD) generate ./...
 
 ## proto: Generate protobuf code
 proto:

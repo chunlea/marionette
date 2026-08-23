@@ -5,6 +5,14 @@ import (
 	"time"
 )
 
+// Store and Tx are large enough that hand-written fakes rot: every method added
+// here used to mean editing eight of them. Regenerate with `make generate`.
+//
+// The behavioural in-memory fakes in pkg/store/mock are deliberately NOT
+// generated — they implement real behaviour, which a call recorder cannot.
+//
+//go:generate go tool mockgen -source=store.go -destination=storemock/storemock.go -package=storemock
+
 // Store defines the persistence interface for Marionette.
 // All methods accept context.Context for cancellation and timeout support.
 type Store interface {
