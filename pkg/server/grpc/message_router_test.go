@@ -605,6 +605,14 @@ type mockStoreForRouter struct {
 	taskRuns []*store.TaskRun
 }
 
+// ClaimRunner: the router never allocates runners, so nothing here contends.
+func (m *mockStoreForRouter) ClaimRunner(_ context.Context, _, _ string, _ time.Duration) (bool, error) {
+	return true, nil
+}
+
+// ReleaseRunnerClaim: see ClaimRunner.
+func (m *mockStoreForRouter) ReleaseRunnerClaim(_ context.Context, _, _ string) error { return nil }
+
 func (m *mockStoreForRouter) ListSessions(_ context.Context, opts store.ListSessionsOptions) (*store.ListResult[store.Session], error) {
 	items := make([]*store.Session, 0, len(m.sessions))
 	for _, sess := range m.sessions {

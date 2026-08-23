@@ -10,6 +10,16 @@ type ListResult[T any] struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 }
 
+// DefaultRunnerClaimLease bounds how long a runner claim survives without
+// being released.
+//
+// Allocation holds a claim for one round trip - select a runner, write the
+// session row, release - so a lease this long is only ever reached by a process
+// that died mid-allocation. It is short enough that such a runner comes back
+// into service quickly, and long enough that a slow provider call cannot cause
+// a live allocation to lose its own claim.
+const DefaultRunnerClaimLease = 2 * time.Minute
+
 // BaseListOptions contains common pagination and ordering fields.
 type BaseListOptions struct {
 	Limit     int    // Max items to return (default: 50, max: 1000)

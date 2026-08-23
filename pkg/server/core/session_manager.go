@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	pb "github.com/chunlea/marionette/gen/proto/v1"
@@ -193,20 +192,6 @@ type SessionManager struct {
 	webhooks         *WebhookIntegration
 	background       *backgroundTasks
 	logger           *zap.Logger
-
-	// reserved holds runners chosen but not yet written to a session row.
-	//
-	// runnerClaimed answers from the database, so between selecting an idle
-	// runner and recording the choice there is a window in which the runner
-	// still looks free. Two sessions activating at the same time both take it,
-	// and Activate then detaches the loser - so N concurrent creates against N
-	// idle runners leave most of the sessions with nothing, which is exactly
-	// what the load test found.
-	//
-	// This closes the window inside one process. Across processes it needs a
-	// claim the database arbitrates; see NEEDS in the round-3 report.
-	reservedMu sync.Mutex
-	reserved   map[string]struct{}
 }
 
 // SessionManagerConfig holds configuration for SessionManager.
@@ -261,29 +246,40 @@ func (m *SessionManager) setProvisioner(p *RunnerProvisioner) {
 	m.provisioner = p
 }
 
-// reserveRunner marks a runner as spoken for, reporting false if it already is.
-func (m *SessionManager) reserveRunner(runnerID string) bool {
-	m.reservedMu.Lock()
-	defer m.reservedMu.Unlock()
-	if m.reserved == nil {
-		m.reserved = make(map[string]struct{})
-	}
-	if _, taken := m.reserved[runnerID]; taken {
+// claimRunner takes the database-arbitrated claim on a runner for a session.
+//
+// It reports false for a runner somebody else holds, which is a lost race and
+// not an error: the caller moves on to the next candidate.
+func (m *SessionManager) claimRunner(ctx context.Context, runnerID, sessionID string) bool {
+	won, err := m.store.ClaimRunner(ctx, runnerID, sessionID, store.DefaultRunnerClaimLease)
+	if err != nil {
+		m.logger.Warn("could not claim runner; skipping it",
+			zap.String("runner_id", runnerID),
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
 		return false
 	}
-	m.reserved[runnerID] = struct{}{}
-	return true
+	return won
 }
 
-// releaseReservation drops a reservation. It is safe to call for a runner that
-// was never reserved.
-func (m *SessionManager) releaseReservation(runnerID string) {
+// releaseRunnerClaim drops a claim held by sessionID. It is safe to call for a
+// runner that was never claimed, or whose claim has already been taken over.
+//
+// The release deliberately does not inherit the caller's cancellation: it runs
+// after the work it was protecting, and dropping it because a request returned
+// would leave the runner claimed until the lease expired.
+func (m *SessionManager) releaseRunnerClaim(ctx context.Context, runnerID, sessionID string) {
 	if runnerID == "" {
 		return
 	}
-	m.reservedMu.Lock()
-	defer m.reservedMu.Unlock()
-	delete(m.reserved, runnerID)
+	if err := m.store.ReleaseRunnerClaim(context.WithoutCancel(ctx), runnerID, sessionID); err != nil {
+		m.logger.Warn("failed to release runner claim; it will expire with its lease",
+			zap.String("runner_id", runnerID),
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+	}
 }
 
 // setTaskManager injects the task manager after construction.
@@ -520,6 +516,27 @@ func (m *SessionManager) Activate(ctx context.Context, sessionID, runnerID strin
 	if err := requireSameTenant("runner", runner.ID, session.TenantID, runner.TenantID); err != nil {
 		return err
 	}
+
+	// Take the claim before touching anything. Detaching comes next, and
+	// detaching without the claim is how a losing activation used to steal a
+	// runner from the session that had just won it: two activations both passed
+	// the checks above, the second detached the first and then took the runner,
+	// and the session that believed it was running found itself suspended with
+	// a task in flight.
+	//
+	// EnsureRunner already holds the claim for this session, and re-claiming as
+	// the same session is allowed, so the allocation path passes straight
+	// through. A direct activation - the admin route - contends here.
+	if !m.claimRunner(ctx, runnerID, sessionID) {
+		m.logger.Warn("runner is claimed by another session; refusing to activate",
+			zap.String("session_id", sessionID),
+			zap.String("runner_id", runnerID),
+		)
+		return ErrRunnerNotIdle
+	}
+	// Released on every path: once the session row names the runner,
+	// runnerClaimed answers for it and the claim has done its job.
+	defer m.releaseRunnerClaim(ctx, runnerID, sessionID)
 
 	// Detach any session still holding this runner. A failure here used to be
 	// logged and ignored, which let two sessions own one runner: both would
@@ -1675,7 +1692,7 @@ func (m *SessionManager) EnsureRunner(ctx context.Context, sessionID string) (*s
 	}
 	// Held until the session row names the runner, which is the point at which
 	// runnerClaimed starts answering correctly for it.
-	defer m.releaseReservation(runnerID)
+	defer m.releaseRunnerClaim(ctx, runnerID, sessionID)
 
 	if err := m.Activate(ctx, sessionID, runnerID); err != nil {
 		m.logger.Error("failed to activate session on allocated runner",
@@ -1815,31 +1832,34 @@ func (m *SessionManager) selectIdleRunner(ctx context.Context, session *store.Se
 		if m.connManager != nil && !m.connManager.IsConnected(runner.ID) {
 			continue
 		}
-		// The reservation is taken BEFORE the database is asked whether the
-		// runner is claimed, and that order is the whole point. The other way
-		// round, a caller that reads "unclaimed" can be overtaken by a caller
-		// that reserves, activates and releases before it gets to reserve; it
-		// then takes a runner on the strength of an answer that is no longer
-		// true. Reserving first means any claim committed before the check is
-		// seen, and any claim committed after it can only come from the one
-		// holder of the reservation.
-		if !m.reserveRunner(runner.ID) {
+		// The claim is taken BEFORE the database is asked whether a session
+		// already owns the runner, and that order is the whole point. The other
+		// way round, a caller that reads "unowned" can be overtaken by a caller
+		// that claims, activates and releases before it gets to claim; it then
+		// takes a runner on the strength of an answer that is no longer true.
+		// Claiming first means any ownership committed before the check is
+		// seen, and any ownership committed after it can only come from the one
+		// holder of the claim.
+		//
+		// The claim is a conditional UPDATE on the runner row, so this holds
+		// across processes and not merely across goroutines.
+		if !m.claimRunner(ctx, runner.ID, session.ID) {
 			continue
 		}
 
 		// "idle" is the runner's connection state, not an assignment: a runner
 		// can be idle while a session still owns it.
-		claimed, err := m.runnerClaimed(ctx, runner.ID)
+		owned, err := m.runnerClaimed(ctx, runner.ID)
 		if err != nil {
 			m.logger.Warn("could not determine whether runner is claimed; skipping it",
 				zap.String("runner_id", runner.ID),
 				zap.Error(err),
 			)
-			m.releaseReservation(runner.ID)
+			m.releaseRunnerClaim(ctx, runner.ID, session.ID)
 			continue
 		}
-		if claimed {
-			m.releaseReservation(runner.ID)
+		if owned {
+			m.releaseRunnerClaim(ctx, runner.ID, session.ID)
 			continue
 		}
 		return runner.ID, nil

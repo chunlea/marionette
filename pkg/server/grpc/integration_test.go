@@ -28,6 +28,7 @@ type integrationTestStore struct {
 	mu           sync.RWMutex
 	runners      map[string]*store.Runner
 	runnerByName map[string]*store.Runner
+	runnerClaims map[string]string
 	nextID       int
 }
 
@@ -132,6 +133,32 @@ func (s *integrationTestStore) DeleteRunner(_ context.Context, id string) error 
 	defer s.mu.Unlock()
 
 	delete(s.runners, id)
+	return nil
+}
+
+// ClaimRunner implements the runner claim in memory.
+func (s *integrationTestStore) ClaimRunner(_ context.Context, runnerID, sessionID string, lease time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.runnerClaims == nil {
+		s.runnerClaims = make(map[string]string)
+	}
+	if held, ok := s.runnerClaims[runnerID]; ok && held != sessionID {
+		return false, nil
+	}
+	s.runnerClaims[runnerID] = sessionID
+	return true, nil
+}
+
+// ReleaseRunnerClaim drops a claim held by sessionID.
+func (s *integrationTestStore) ReleaseRunnerClaim(_ context.Context, runnerID, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.runnerClaims[runnerID] == sessionID {
+		delete(s.runnerClaims, runnerID)
+	}
 	return nil
 }
 

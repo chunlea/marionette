@@ -23,6 +23,18 @@ type Store interface {
 	ListRunners(ctx context.Context, opts ListRunnersOptions) (*ListResult[Runner], error)
 	UpdateRunner(ctx context.Context, id string, updates RunnerUpdates) error
 	DeleteRunner(ctx context.Context, id string) error
+	// ClaimRunner takes an exclusive, leased claim on a runner for a session.
+	// It reports whether the claim was taken; false means another session
+	// holds a live claim and the caller must pick a different runner.
+	//
+	// This is the cross-process arbiter for runner allocation: selecting a
+	// runner and recording the choice are two statements, and without a claim
+	// two servers both pass the check and take the same runner.
+	ClaimRunner(ctx context.Context, runnerID, sessionID string, lease time.Duration) (bool, error)
+	// ReleaseRunnerClaim drops a claim held by sessionID. Releasing a claim
+	// held by somebody else, or one that has already expired and been taken
+	// over, is a no-op rather than an error.
+	ReleaseRunnerClaim(ctx context.Context, runnerID, sessionID string) error
 
 	// Workspaces
 	CreateWorkspace(ctx context.Context, workspace *Workspace) error
@@ -213,6 +225,18 @@ type Tx interface {
 	ListRunners(ctx context.Context, opts ListRunnersOptions) (*ListResult[Runner], error)
 	UpdateRunner(ctx context.Context, id string, updates RunnerUpdates) error
 	DeleteRunner(ctx context.Context, id string) error
+	// ClaimRunner takes an exclusive, leased claim on a runner for a session.
+	// It reports whether the claim was taken; false means another session
+	// holds a live claim and the caller must pick a different runner.
+	//
+	// This is the cross-process arbiter for runner allocation: selecting a
+	// runner and recording the choice are two statements, and without a claim
+	// two servers both pass the check and take the same runner.
+	ClaimRunner(ctx context.Context, runnerID, sessionID string, lease time.Duration) (bool, error)
+	// ReleaseRunnerClaim drops a claim held by sessionID. Releasing a claim
+	// held by somebody else, or one that has already expired and been taken
+	// over, is a no-op rather than an error.
+	ReleaseRunnerClaim(ctx context.Context, runnerID, sessionID string) error
 
 	// Workspaces
 	CreateWorkspace(ctx context.Context, workspace *Workspace) error

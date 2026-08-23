@@ -18,6 +18,15 @@ type testStore struct {
 	taskRuns           map[string]*store.TaskRun
 	permissionRequests map[string]*store.PermissionRequest
 	logs               []*store.Log
+
+	// runnerClaims mirrors runners.claim_session_id / claimed_at.
+	runnerClaims map[string]runnerClaim
+}
+
+// runnerClaim is one held runner claim.
+type runnerClaim struct {
+	sessionID string
+	at        time.Time
 }
 
 func newTestStore() *testStore {
@@ -349,6 +358,42 @@ func (s *testStore) UpdateRunner(_ context.Context, _ string, _ store.RunnerUpda
 	return nil
 }
 func (s *testStore) DeleteRunner(_ context.Context, _ string) error { return nil }
+
+// ClaimRunner implements the cross-process runner claim in memory.
+//
+// It is behavioural rather than a stub because the allocation tests turn on
+// exactly this: a second claim on a runner somebody else holds must fail, or
+// the test would pass while the real thing hands one runner to two sessions.
+func (s *testStore) ClaimRunner(_ context.Context, runnerID, sessionID string, lease time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.runnerClaims == nil {
+		s.runnerClaims = make(map[string]runnerClaim)
+	}
+	if lease <= 0 {
+		lease = store.DefaultRunnerClaimLease
+	}
+
+	held, ok := s.runnerClaims[runnerID]
+	if ok && held.sessionID != sessionID && time.Since(held.at) < lease {
+		return false, nil
+	}
+
+	s.runnerClaims[runnerID] = runnerClaim{sessionID: sessionID, at: time.Now()}
+	return true, nil
+}
+
+// ReleaseRunnerClaim drops a claim held by sessionID.
+func (s *testStore) ReleaseRunnerClaim(_ context.Context, runnerID, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if held, ok := s.runnerClaims[runnerID]; ok && held.sessionID == sessionID {
+		delete(s.runnerClaims, runnerID)
+	}
+	return nil
+}
 
 // Other stub methods to satisfy store.Store interface
 func (s *testStore) CreateAPIKey(_ context.Context, _ *store.APIKey) error { return nil }

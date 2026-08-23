@@ -114,6 +114,40 @@ func (m *testConnManager) UpdateLastSeen(_ string) error {
 // testStoreWrapper wraps testRunnerStore to implement store.Store.
 type testStoreWrapper struct {
 	testStore *testRunnerStore
+
+	// claimMu guards claims, which mirrors runners.claim_session_id.
+	claimMu sync.Mutex
+	claims  map[string]string
+}
+
+// ClaimRunner implements the cross-process runner claim in memory.
+//
+// Behavioural rather than a stub: allocation tests turn on a second claim
+// failing, and a stub that always wins would let them pass while the real
+// thing handed one runner to two sessions.
+func (w *testStoreWrapper) ClaimRunner(_ context.Context, runnerID, sessionID string, _ time.Duration) (bool, error) {
+	w.claimMu.Lock()
+	defer w.claimMu.Unlock()
+
+	if w.claims == nil {
+		w.claims = make(map[string]string)
+	}
+	if held, ok := w.claims[runnerID]; ok && held != sessionID {
+		return false, nil
+	}
+	w.claims[runnerID] = sessionID
+	return true, nil
+}
+
+// ReleaseRunnerClaim drops a claim held by sessionID.
+func (w *testStoreWrapper) ReleaseRunnerClaim(_ context.Context, runnerID, sessionID string) error {
+	w.claimMu.Lock()
+	defer w.claimMu.Unlock()
+
+	if w.claims[runnerID] == sessionID {
+		delete(w.claims, runnerID)
+	}
+	return nil
 }
 
 func (w *testStoreWrapper) GetRunner(ctx context.Context, id string) (*store.Runner, error) {

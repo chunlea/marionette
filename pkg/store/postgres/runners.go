@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -358,4 +359,73 @@ func scanRunnerFromRows(rows pgx.Rows) (*store.Runner, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// ClaimRunner takes an exclusive, leased claim on a runner for a session.
+//
+// The claim is a single conditional UPDATE, so the database decides the winner:
+// concurrent callers serialise on the row lock and exactly one sees a row
+// affected. Everything else - listing candidates, checking whether a live
+// session already owns the runner - is advisory, because it reads state that
+// can change before the caller acts on it.
+//
+// A claim held longer than lease is taken over. Without that, a server that
+// died between claiming and activating would strand the runner permanently.
+func (s *Store) ClaimRunner(ctx context.Context, runnerID, sessionID string, lease time.Duration) (bool, error) {
+	return claimRunner(ctx, s.db, runnerID, sessionID, lease)
+}
+
+// ClaimRunner takes a runner claim within a transaction.
+func (t *Tx) ClaimRunner(ctx context.Context, runnerID, sessionID string, lease time.Duration) (bool, error) {
+	return claimRunner(ctx, t.tx, runnerID, sessionID, lease)
+}
+
+func claimRunner(ctx context.Context, q querier, runnerID, sessionID string, lease time.Duration) (bool, error) {
+	if lease <= 0 {
+		lease = store.DefaultRunnerClaimLease
+	}
+
+	query := `
+		UPDATE runners
+		   SET claim_session_id = $2,
+		       claimed_at = NOW(),
+		       updated_at = NOW()
+		 WHERE id = $1
+		   AND (claim_session_id IS NULL
+		        OR claim_session_id = $2
+		        OR claimed_at < NOW() - make_interval(secs => $3))`
+
+	result, err := q.Exec(ctx, query, runnerID, sessionID, lease.Seconds())
+	if err != nil {
+		return false, handlePgError(err, "runner", runnerID)
+	}
+
+	return result.RowsAffected() > 0, nil
+}
+
+// ReleaseRunnerClaim drops a claim held by sessionID.
+func (s *Store) ReleaseRunnerClaim(ctx context.Context, runnerID, sessionID string) error {
+	return releaseRunnerClaim(ctx, s.db, runnerID, sessionID)
+}
+
+// ReleaseRunnerClaim drops a claim within a transaction.
+func (t *Tx) ReleaseRunnerClaim(ctx context.Context, runnerID, sessionID string) error {
+	return releaseRunnerClaim(ctx, t.tx, runnerID, sessionID)
+}
+
+func releaseRunnerClaim(ctx context.Context, q querier, runnerID, sessionID string) error {
+	// Scoped to the holder on purpose. A release that matched any claim would
+	// let a caller whose lease had already expired and been taken over hand
+	// somebody else's runner away.
+	query := `
+		UPDATE runners
+		   SET claim_session_id = NULL,
+		       claimed_at = NULL,
+		       updated_at = NOW()
+		 WHERE id = $1 AND claim_session_id = $2`
+
+	if _, err := q.Exec(ctx, query, runnerID, sessionID); err != nil {
+		return handlePgError(err, "runner", runnerID)
+	}
+	return nil
 }

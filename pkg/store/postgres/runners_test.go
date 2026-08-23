@@ -2,6 +2,8 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -246,4 +248,138 @@ func TestAlreadyExistsError(t *testing.T) {
 
 	// Cleanup
 	_ = testStore.DeleteRunner(ctx, runner1.ID)
+}
+
+// =============================================================================
+// Runner Claim Tests
+// =============================================================================
+
+// newClaimRunner creates a runner to contend over.
+func newClaimRunner(t *testing.T, name string) *store.Runner {
+	t.Helper()
+
+	runner := &store.Runner{
+		Name:         name + "-" + time.Now().Format("150405.000000"),
+		Hostname:     "localhost",
+		Status:       "idle",
+		SandboxMode:  "runner-is-sandbox",
+		Capabilities: []string{},
+		SandboxTypes: []string{},
+	}
+	require.NoError(t, testStore.CreateRunner(context.Background(), runner))
+	return runner
+}
+
+// TestClaimRunnerIsExclusive: the claim is the arbiter for runner allocation
+// across processes, so a second session must be told no rather than quietly
+// sharing the runner.
+func TestClaimRunnerIsExclusive(t *testing.T) {
+	ctx := context.Background()
+	runner := newClaimRunner(t, "claim-exclusive")
+
+	won, err := testStore.ClaimRunner(ctx, runner.ID, "sess_a", time.Minute)
+	require.NoError(t, err)
+	assert.True(t, won, "the first claim must win")
+
+	won, err = testStore.ClaimRunner(ctx, runner.ID, "sess_b", time.Minute)
+	require.NoError(t, err)
+	assert.False(t, won, "a second session must not be able to claim a held runner")
+
+	// The holder re-claiming is not contention: allocation claims once and the
+	// activation that follows claims again as the same session.
+	won, err = testStore.ClaimRunner(ctx, runner.ID, "sess_a", time.Minute)
+	require.NoError(t, err)
+	assert.True(t, won, "the holder must be able to re-claim")
+}
+
+// TestReleaseRunnerClaimFreesIt: without the release a runner would be stuck
+// until its lease expired, which is a slow-motion outage rather than a race.
+func TestReleaseRunnerClaimFreesIt(t *testing.T) {
+	ctx := context.Background()
+	runner := newClaimRunner(t, "claim-release")
+
+	won, err := testStore.ClaimRunner(ctx, runner.ID, "sess_a", time.Minute)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	require.NoError(t, testStore.ReleaseRunnerClaim(ctx, runner.ID, "sess_a"))
+
+	won, err = testStore.ClaimRunner(ctx, runner.ID, "sess_b", time.Minute)
+	require.NoError(t, err)
+	assert.True(t, won, "a released runner must be claimable again")
+}
+
+// TestReleaseRunnerClaimIgnoresNonHolders: a caller whose lease expired and was
+// taken over must not be able to hand somebody else's runner away.
+func TestReleaseRunnerClaimIgnoresNonHolders(t *testing.T) {
+	ctx := context.Background()
+	runner := newClaimRunner(t, "claim-nonholder")
+
+	won, err := testStore.ClaimRunner(ctx, runner.ID, "sess_a", time.Minute)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	require.NoError(t, testStore.ReleaseRunnerClaim(ctx, runner.ID, "sess_b"))
+
+	won, err = testStore.ClaimRunner(ctx, runner.ID, "sess_c", time.Minute)
+	require.NoError(t, err)
+	assert.False(t, won, "a release by a non-holder must not free the claim")
+}
+
+// TestExpiredClaimIsTakenOver: a server that died between claiming and
+// activating must not strand the runner permanently.
+func TestExpiredClaimIsTakenOver(t *testing.T) {
+	ctx := context.Background()
+	runner := newClaimRunner(t, "claim-expiry")
+
+	// A zero-length lease is already expired by the time the next statement
+	// runs, which is the point: no sleep, same code path.
+	won, err := testStore.ClaimRunner(ctx, runner.ID, "sess_dead", time.Minute)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	won, err = testStore.ClaimRunner(ctx, runner.ID, "sess_next", time.Nanosecond)
+	require.NoError(t, err)
+	assert.True(t, won, "an expired claim must be takeable")
+}
+
+// TestClaimRunnerOnMissingRunner reports a lost claim rather than an error:
+// there is no row to claim, so the caller simply moves on.
+func TestClaimRunnerOnMissingRunner(t *testing.T) {
+	won, err := testStore.ClaimRunner(context.Background(), "run_does_not_exist", "sess_a", time.Minute)
+	require.NoError(t, err)
+	assert.False(t, won)
+}
+
+// TestConcurrentClaimsElectOneWinner is the property the whole change rests on:
+// N callers, one row, exactly one winner decided by the database.
+func TestConcurrentClaimsElectOneWinner(t *testing.T) {
+	ctx := context.Background()
+	runner := newClaimRunner(t, "claim-concurrent")
+
+	const contenders = 8
+	results := make([]bool, contenders)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+
+	for i := 0; i < contenders; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			won, err := testStore.ClaimRunner(ctx, runner.ID, fmt.Sprintf("sess_%d", i), time.Minute)
+			assert.NoError(t, err)
+			results[i] = won
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	winners := 0
+	for _, won := range results {
+		if won {
+			winners++
+		}
+	}
+	assert.Equal(t, 1, winners, "exactly one contender may win the claim")
 }
