@@ -1,0 +1,49 @@
+pkg/server/api/permissions_handler.go
+  s_0d0ac42be2d99d::t_69d0c892918a55 32,54
+pkg/server/api/runners_handler.go
+  s_0d0ac42be2d99d::t_4e6b9824f1a025 30,52
+pkg/server/api/scheduled_tasks_handler.go
+  s_0d0ac42be2d99d::t_3d63627f77c485 47,70,92,120,169,197,219
+pkg/server/api/sessions_handler.go
+  s_0d0ac42be2d99d::t_292ce5e1953420 39,64,86
+pkg/server/api/tunnels_handler.go
+  s_0d0ac42be2d99d::t_c3e853ea15cb7d 50,72,94
+pkg/server/api/workspaces_handler.go
+  s_0d0ac42be2d99d::t_54f62874f3c57b 33,54,76,104
+pkg/server/api/apitypes/apitypes.go
+  s_c8578aa5dbeab3::t_851e67c2107583 1-255
+pkg/server/api/dto.go
+  s_c8578aa5dbeab3::t_af665ccf801f67 1-311
+pkg/server/api/dto_test.go
+  s_c8578aa5dbeab3::t_07d4c7c87f26e8 1-203
+pkg/server/api/helpers.go
+  s_c8578aa5dbeab3::t_3c3b5040d32d84 7-8,19
+pkg/server/api/server_test.go
+  s_c8578aa5dbeab3::t_2c4fb7e6e4976e 19,146,595,720,740,844,1249,1402,1578
+pkg/server/api/tasks_handler.go
+  s_c8578aa5dbeab3::t_429df12ad4737f 8-9,41,64,86,107,178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "980863ed51496bede1912271ecfd77a23e0aca98",
+  "prompts": {},
+  "sessions": {
+    "s_0d0ac42be2d99d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "62a01624-4bc1-4cf8-862e-f2a73cffc4da",
+        "model": "claude-fable-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_c8578aa5dbeab3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d97a894-a534-43d9-87e2-312fe36b3268",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
