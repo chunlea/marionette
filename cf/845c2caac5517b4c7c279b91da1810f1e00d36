@@ -1,0 +1,25 @@
+pkg/storage/cas/cdc.go
+  s_6ce8a3a3b8d9e6::t_a050a5af4cd6f1 422,432,437,488-489,492,497,500,504,506
+pkg/storage/cas/cdc_test.go
+  s_6ce8a3a3b8d9e6::t_8a393464ce726c 531-589
+pkg/storage/cas/types.go
+  s_6ce8a3a3b8d9e6::t_d74d46daa7e651 131-139,218-239
+docs/storage.md
+  s_6ce8a3a3b8d9e6::t_400f98eec05d65 637-643
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "cf845c2caac5517b4c7c279b91da1810f1e00d36",
+  "prompts": {},
+  "sessions": {
+    "s_6ce8a3a3b8d9e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f1a55cc-dd39-4229-91f5-7498430c8926",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
