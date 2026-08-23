@@ -28,6 +28,12 @@ var sessionsListFlags struct {
 	limit  int
 }
 
+// sessionsLogsFlags holds flags for the sessions logs command.
+var sessionsLogsFlags struct {
+	tail     int
+	archived string
+}
+
 // apiClient holds the client instance (set during command execution).
 var apiClient client.Client
 
@@ -60,6 +66,7 @@ func init() {
 	sessionsCmd.AddCommand(sessionsSuspendCmd)
 	sessionsCmd.AddCommand(sessionsResumeCmd)
 	sessionsCmd.AddCommand(sessionsTerminateCmd)
+	sessionsCmd.AddCommand(sessionsLogsCmd)
 
 	// Flags for sessions create
 	sessionsCreateCmd.Flags().StringVar(&sessionsCreateFlags.name, "name", "", "session name")
@@ -76,6 +83,52 @@ func init() {
 	sessionsListCmd.Flags().StringVar(&sessionsListFlags.agent, "agent", "", "filter by agent type")
 	sessionsListCmd.Flags().StringSliceVar(&sessionsListFlags.labels, "labels", nil, "filter by labels in key=value format")
 	sessionsListCmd.Flags().IntVar(&sessionsListFlags.limit, "limit", 50, "maximum number of results")
+
+	// Flags for sessions logs
+	sessionsLogsCmd.Flags().IntVar(&sessionsLogsFlags.tail, "tail", 0, "show only the last N lines")
+	sessionsLogsCmd.Flags().StringVar(&sessionsLogsFlags.archived, "archived", "",
+		"which copy to read: unset for both, true for the archive only, false for the database only")
+}
+
+var sessionsLogsCmd = &cobra.Command{
+	Use:   "logs SESSION_ID",
+	Short: "Get every log line a session produced",
+	Long: `Get a session's logs, oldest first.
+
+Logs are archived per session once it finishes, so this is the view that
+survives archiving: the archived lines followed by whatever is still in the
+database, as one stream. --archived narrows it to one side, which is worth
+doing only when you are asking about storage rather than about logs.
+
+Examples:
+  # The whole session
+  mctl sessions logs sess_xxx
+
+  # Only what has been archived
+  mctl sessions logs sess_xxx --archived true
+
+  # The last 100 lines
+  mctl sessions logs sess_xxx --tail 100`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if apiClient == nil {
+			return fmt.Errorf("no API client configured. Use --server and --api-key or configure a context")
+		}
+
+		iter, err := apiClient.GetSessionLogs(cmd.Context(), args[0], client.GetLogsOptions{
+			Tail:     sessionsLogsFlags.tail,
+			Archived: sessionsLogsFlags.archived,
+		})
+		if err != nil {
+			if client.IsNotFound(err) {
+				return fmt.Errorf("session %q not found", args[0])
+			}
+			return fmt.Errorf("failed to get logs: %w", err)
+		}
+		defer func() { _ = iter.Close() }()
+
+		return printLogs(iter)
+	},
 }
 
 var sessionsCreateCmd = &cobra.Command{

@@ -95,6 +95,10 @@ type GetLogsOptions struct {
 
 	// SinceSequence returns logs after this sequence number.
 	SinceSequence int64
+
+	// Archived selects which copy to read: "" for both (oldest first), "true"
+	// for the archive alone, "false" for the rows still in the database.
+	Archived string
 }
 
 // ListRunnersOptions contains options for listing runners.

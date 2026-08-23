@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -335,4 +336,35 @@ func TestSessionsOutputFormat(t *testing.T) {
 	err = json.Unmarshal(buf.Bytes(), &result)
 	require.NoError(t, err)
 	assert.Equal(t, "sess_json123", result["id"])
+}
+
+func TestSessionsLogsCommand(t *testing.T) {
+	mock := &client.MockClient{}
+	mock.GetSessionLogsFunc = func(_ context.Context, id string, opts client.GetLogsOptions) (client.LogIterator, error) {
+		if id != "sess_test123" {
+			t.Errorf("unexpected session id %q", id)
+		}
+		if opts.Archived != "true" {
+			t.Errorf("expected archived=true, got %q", opts.Archived)
+		}
+		return &client.MockLogIterator{
+			Logs: []*client.Log{
+				{ID: "log_1", Level: "info", Content: "from the archive"},
+			},
+		}, nil
+	}
+
+	SetClient(mock)
+	t.Cleanup(ResetClient)
+
+	out := captureOutput(t, func() {
+		rootCmd.SetArgs([]string{"sessions", "logs", "sess_test123", "--archived", "true"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "from the archive") {
+		t.Fatalf("expected the archived line in the output, got %q", out)
+	}
 }

@@ -287,6 +287,16 @@ func streamTaskLogs(ctx interface{ Done() <-chan struct{} }, taskID string, foll
 	}
 	defer func() { _ = iter.Close() }()
 
+	return printLogs(iter)
+}
+
+// printLogs drains a log iterator to stdout.
+//
+// Shared by the task and session log commands so both print the same lines the
+// same way, and so both benefit from the iterator following pagination: a
+// session long enough to have been archived does not fit in one page, and
+// stopping at the first one used to look exactly like reaching the end.
+func printLogs(iter client.LogIterator) error {
 	for {
 		log, err := iter.Next()
 		if err == io.EOF {
