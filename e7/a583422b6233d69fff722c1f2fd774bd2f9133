@@ -1,0 +1,21 @@
+pkg/server/core/redispatch_waker_test.go
+  s_1e03d1f9444213::t_ff4e9adf9b9821 562-568,572-575
+pkg/server/core/session_manager.go
+  s_1e03d1f9444213::t_0ef470b4d14de7 1722-1735,1742,1746
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "e7a583422b6233d69fff722c1f2fd774bd2f9133",
+  "prompts": {},
+  "sessions": {
+    "s_1e03d1f9444213": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f08e1d14-b06b-4619-aa64-c85c623e5795",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
