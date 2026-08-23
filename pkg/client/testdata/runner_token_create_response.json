@@ -1,0 +1,19 @@
+{
+  "token": {
+    "id": "rtok_0002xK9mNqW2TuHYS9",
+    "token_prefix": "rtok_8Kd2mVp1",
+    "hash_version": 1,
+    "runner_id": "run_0002xK9mNpV1StGXR8",
+    "pool_name": "gpu-pool",
+    "status": "active",
+    "rotation_deadline": "2026-08-24T11:04:05Z",
+    "labels": {
+      "env": "prod",
+      "tier": "premium"
+    },
+    "created_at": "2026-08-23T11:04:05Z",
+    "created_by": "admin",
+    "expires_at": "2026-09-22T11:04:05Z"
+  },
+  "raw_token": "rtok_8Kd2mVp1SecretValueDoNotLog"
+}
