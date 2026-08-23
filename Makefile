@@ -285,6 +285,10 @@ web-build:
 	cd web && pnpm build
 	rm -rf pkg/server/admin/dist
 	cp -r web/dist pkg/server/admin/dist
+	# The embed directive needs the directory to exist on a clean checkout, and
+	# .gitkeep is the only tracked thing in it. Copying over the top used to
+	# delete it, leaving `git status` claiming a tracked file had been removed.
+	touch pkg/server/admin/dist/.gitkeep
 	@echo "Frontend built and copied to pkg/server/admin/dist"
 
 ## web-lint: Lint frontend code
