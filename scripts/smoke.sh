@@ -8,8 +8,6 @@
 # ports 8080/8081/9090/15432 free.
 #
 # KNOWN-GAPS (each step marked below; remove the workaround when fixed):
-#   G1: creating a task does not auto-activate a pending session -> explicit admin activate
-#   G2: tasks are not auto-dispatched on create/resume            -> explicit POST /execute
 #   G3: mctl admin runner-tokens create prints empty fields       -> bootstrap via curl
 set -u -o pipefail
 
@@ -72,10 +70,8 @@ RUNNER_ID=$(curl -s -H "Authorization: Bearer $APIKEY" $API/api/v1/runners | pyt
 # 5. session + task (host claude login, BYOK not needed)
 step "session-create" bash -c "cd '$ROOT' && ./bin/mctl --server $API --api-key $APIKEY sessions create --agent claude --name smoke -o json | python3 -c 'import json,sys;print(json.load(sys.stdin)[\"id\"])' >| '$SMOKE_DIR/session.id'"
 SESS=$(cat "$SMOKE_DIR/session.id")
-step "session-activate(G1)" bash -c "curl -s -u $ADMIN_USER:$ADMIN_PASS -X POST $ADMIN/admin/api/v1/sessions/$SESS/activate -H 'Content-Type: application/json' -d '{\"runner_id\":\"$RUNNER_ID\"}' | grep -q activated"
 step "task-create" bash -c "cd '$ROOT' && ./bin/mctl --server $API --api-key $APIKEY tasks create --session $SESS --prompt 'Run this exact bash command and then stop: echo marionette-m1-alive' -o json | python3 -c 'import json,sys;print(json.load(sys.stdin)[\"id\"])' >| '$SMOKE_DIR/task.id'"
 TASK=$(cat "$SMOKE_DIR/task.id")
-step "task-execute(G2)" bash -c "curl -s -X POST -H 'Authorization: Bearer $APIKEY' $API/api/v1/tasks/$TASK/execute | grep -q executing"
 
 # 6. permission gate: wait for the pending request, approve it
 step "permission-pending" bash -c "for i in \$(seq 1 30); do P=\$(curl -s -H 'Authorization: Bearer $APIKEY' '$API/api/v1/permissions?status=pending' | python3 -c 'import json,sys;i=json.load(sys.stdin).get(\"items\",[]);print(i[0][\"id\"] if i else \"\")'); [ -n \"\$P\" ] && echo \$P >| '$SMOKE_DIR/perm.id' && exit 0; sleep 2; done; exit 1"
