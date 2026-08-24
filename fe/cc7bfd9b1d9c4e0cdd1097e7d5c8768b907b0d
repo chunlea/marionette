@@ -1,0 +1,35 @@
+pkg/config/config.go
+  s_c52644cec1abf9::t_e32f553c6c32a0 76-101
+pkg/config/load.go
+  s_c52644cec1abf9::t_0b4fb096a04b05 96-97
+cmd/server/main.go
+  s_c52644cec1abf9::t_d8f9b09d4889d9 176
+pkg/server/core/app.go
+  s_c52644cec1abf9::t_b3603444f27727 124-127,231-235
+pkg/server/core/autospawn.go
+  s_c52644cec1abf9::t_6731eff0fd9cc0 1-491
+pkg/server/core/autospawn_test.go
+  s_c52644cec1abf9::t_6978322c42b201 1-512
+pkg/server/core/multiprocess_autospawn_test.go
+  s_c52644cec1abf9::t_896db08f050cd6 1-226
+pkg/server/core/runner_provisioner.go
+  s_c52644cec1abf9::t_7bd5b579d209ca 99-123,146-148,186-202,210-214,219-247
+pkg/server/core/session_manager.go
+  s_c52644cec1abf9::t_568821fca216ba 192,207-210,242,1749-1765
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "fecc7bfd9b1d9c4e0cdd1097e7d5c8768b907b0d",
+  "prompts": {},
+  "sessions": {
+    "s_c52644cec1abf9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65ebfa16-a70a-4fae-9099-2cbc994d6aae",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
