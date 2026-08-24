@@ -221,12 +221,32 @@ func main() {
 		// tunnel router to forward runner data to.
 		var tunnelRouter *grpcserver.TunnelRouter
 		if cfg.Tunnels.Enabled {
+			// Tunnel affinity: a tunnel request that lands on a replica which
+			// does not hold the runner's stream is proxied whole to the one
+			// that does, instead of paying the round-5 command hop per 32KB
+			// chunk of the byte stream.
+			//
+			// The resolver keeps the peer's host and substitutes this
+			// process's API port, because that port is deployment-wide while
+			// the host is not; MARIONETTE_PEER_API_PORT and
+			// MARIONETTE_PEER_API_SCHEME override it. Plain http: this
+			// binary's public API listener does not terminate TLS - a
+			// deployment that puts TLS in front of it sets the scheme
+			// override.
+			tunnelAffinity := api.NewTunnelAffinity(api.TunnelAffinityConfig{
+				Locator:   replicaLocator{registry: replicaRegistry},
+				Resolver:  api.NewPeerAPIResolver(cfg.Server.API.Port, false),
+				ReplicaID: replicaRegistry.ID(),
+				Logger:    logger.Named("tunnel-affinity"),
+			})
+
 			tunnelRouter = wireTunnels(wireTunnelsDeps{
 				store:       dbStore,
 				tunnelStore: dbStore,
 				connManager: connManager,
 				apiKeySvc:   apiKeySvc,
 				baseURL:     baseURL,
+				affinity:    tunnelAffinity,
 				logger:      logger,
 			}, &apiOpts)
 		} else {
@@ -655,7 +675,11 @@ type wireTunnelsDeps struct {
 	connManager *grpcserver.ConnectionManager
 	apiKeySvc   *auth.APIKeyService
 	baseURL     string
-	logger      *zap.Logger
+	// affinity proxies a tunnel request to the replica holding its runner.
+	// Nil is legitimate and means every tunnel is served where its request
+	// lands, which is correct on one replica.
+	affinity *api.TunnelAffinity
+	logger   *zap.Logger
 }
 
 // newTunnelManager builds the tunnel manager the way production does.
@@ -703,6 +727,7 @@ func wireTunnels(deps wireTunnelsDeps, apiOpts *[]api.Option) *grpcserver.Tunnel
 	tunnelProxyHandler := api.NewTunnelProxyHandler(
 		api.WithTPLogger(deps.logger),
 		api.WithTPService(tunnelProxyAdapter),
+		api.WithTPAffinity(deps.affinity),
 		api.WithTPAPIKeyAuth(func(r *http.Request) (bool, error) {
 			// Check X-Marionette-API-Key first (brand-prefixed header), then
 			// fall back to X-API-Key for backwards compatibility.
