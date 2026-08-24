@@ -181,6 +181,21 @@ type TunnelAffinityConfig struct {
 
 // NewTunnelAffinity builds the affinity proxy. A nil result is legitimate and
 // means "no cross-replica proxying" - the handler treats it as such.
+//
+// TODO(lane-CORE): nothing constructs this yet. cmd/server/main.go builds the
+// tunnel handler in wireTunnels, which runs before the replica registry
+// exists, so the registry block has to move above the wireTunnels call before
+// the locator can be passed in:
+//
+//	api.WithTPAffinity(api.NewTunnelAffinity(api.TunnelAffinityConfig{
+//	    Locator:   replicaLocator{registry: replicaRegistry},
+//	    Resolver:  api.NewPeerAPIResolver(cfg.Server.API.Port, false),
+//	    ReplicaID: replicaRegistry.ID(),
+//	    Logger:    logger.Named("tunnel-affinity"),
+//	}))
+//
+// Until then every tunnel is served where its request lands, which is correct
+// on one replica and correct-but-slow on several.
 func NewTunnelAffinity(cfg TunnelAffinityConfig) *TunnelAffinity {
 	if cfg.Locator == nil {
 		return nil
