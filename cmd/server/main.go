@@ -173,6 +173,7 @@ func main() {
 			MetricsRegisterer:  metricsRegisterer,
 			MetricsNamespace:   cfg.Observability.Metrics.Namespace,
 			WorkspaceConfig:    cfg.Storage.Workspace,
+			AutoSpawn:          cfg.Providers.AutoSpawn,
 			WebhookConfig:      webhookConfig(),
 			Jobs: core.JobsConfig{
 				DisableChunkGC:  !cfg.Storage.GC.Enabled,

@@ -121,6 +121,10 @@ type WireDeps struct {
 
 	// WorkspaceConfig configures on-host workspace directories.
 	WorkspaceConfig config.WorkspaceStorageConfig
+	// AutoSpawn governs asking a managed provider for a runner when a task has
+	// nowhere to run. The zero value enables it with the default budget, which
+	// is what a managed deployment needs to work at all.
+	AutoSpawn config.AutoSpawnConfig
 	// WebhookConfig configures webhook delivery.
 	WebhookConfig webhook.Config
 	// ChunkGC collects unreferenced content-addressed chunks. Optional: when
@@ -224,7 +228,11 @@ func Wire(deps WireDeps) (*App, error) {
 		ProviderRegistry: deps.ProviderRegistry,
 		Webhooks:         webhooks,
 		Background:       background,
-		Logger:           logger.Named("session"),
+		AutoSpawn: AutoSpawnPolicy{
+			Enabled:    deps.AutoSpawn.AutoSpawnEnabled(),
+			MaxRunners: deps.AutoSpawn.MaxRunners,
+		},
+		Logger: logger.Named("session"),
 	})
 
 	redispatchMetrics := NewRedispatchMetrics(deps.MetricsRegisterer, deps.MetricsNamespace)

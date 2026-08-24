@@ -73,6 +73,32 @@ type ProvidersConfig struct {
 	Default    string                    `mapstructure:"default"`
 	Docker     *DockerProviderConfig     `mapstructure:"docker"`
 	Kubernetes *KubernetesProviderConfig `mapstructure:"kubernetes"`
+	AutoSpawn  AutoSpawnConfig           `mapstructure:"autospawn"`
+}
+
+// AutoSpawnConfig governs spawning a runner when a task has nowhere to run.
+//
+// Without it, a fresh managed deployment is a dead end: task creation only ever
+// searched the runners that had registered themselves, so on a server whose
+// provider is Docker the search is over zero candidates and the task sits
+// pending forever while the provider that exists to make runners is never
+// asked for one.
+type AutoSpawnConfig struct {
+	// Enabled turns auto-spawn on for managed providers. Default true: a
+	// managed provider that is never asked to spawn has no purpose, and pool
+	// and external providers are unaffected because they are never asked
+	// either.
+	Enabled *bool `mapstructure:"enabled"`
+
+	// MaxRunners caps how many live auto-spawned runners one provider config
+	// may have at a time. It is the blast radius of a bug in the trigger path,
+	// so it is small by default rather than generous.
+	MaxRunners int `mapstructure:"max_runners"`
+}
+
+// AutoSpawnEnabled reports whether auto-spawn is on, defaulting to true.
+func (c AutoSpawnConfig) AutoSpawnEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // DockerProviderConfig holds Docker-specific provider settings.

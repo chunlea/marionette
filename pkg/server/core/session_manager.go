@@ -189,6 +189,7 @@ type SessionManager struct {
 	taskManager      TaskManagerInterface
 	waker            RunnerAvailableNotifier
 	provisioner      *RunnerProvisioner
+	autoSpawn        AutoSpawnPolicy
 	webhooks         *WebhookIntegration
 	background       *backgroundTasks
 	logger           *zap.Logger
@@ -203,6 +204,10 @@ type SessionManagerConfig struct {
 	AuditLog         audit.Logger
 	ProviderRegistry ProviderRegistryInterface
 	Webhooks         *WebhookIntegration
+	// AutoSpawn governs asking a managed provider for a runner when allocation
+	// finds none. Disabled by the zero value: a manager built without it
+	// behaves exactly as it did before auto-spawn existed.
+	AutoSpawn AutoSpawnPolicy
 	// Background runs work that must outlive the request that started it.
 	// Wire supplies the shared pool; when nil the manager makes its own.
 	Background *backgroundTasks
@@ -234,6 +239,7 @@ func NewSessionManagerWithConfig(cfg SessionManagerConfig) *SessionManager {
 		auditLog:         cfg.AuditLog,
 		providerRegistry: cfg.ProviderRegistry,
 		webhooks:         cfg.Webhooks,
+		autoSpawn:        cfg.AutoSpawn,
 		background:       background,
 		logger:           cfg.Logger,
 	}
@@ -1740,7 +1746,23 @@ func (m *SessionManager) allocateRunner(ctx context.Context, session *store.Sess
 		return runnerID, nil
 	}
 
-	return m.selectIdleRunner(ctx, session, profile)
+	runnerID, err := m.selectIdleRunner(ctx, session, profile)
+	if err == nil {
+		return runnerID, nil
+	}
+	if !errors.Is(err, ErrNoRunnerAvailable) {
+		return "", err
+	}
+
+	// Nothing idle. On a managed provider that is not the end of it: ask for a
+	// runner and leave the task pending while the instance boots. The
+	// runner-joined trigger dispatches it when the agent connects, which is the
+	// dispatch path that already exists - there is deliberately no second one
+	// here waiting for a boot inside somebody's request.
+	if m.autoSpawnRunner(ctx, session, profile) {
+		return "", ErrRunnerSpawning
+	}
+	return "", err
 }
 
 // loadProfile returns the session's profile, or nil when it has none or it

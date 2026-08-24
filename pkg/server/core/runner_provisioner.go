@@ -96,6 +96,31 @@ type ProvisionOptions struct {
 
 	// WorkspaceMount is the host path to mount as /workspace.
 	WorkspaceMount string
+
+	// NetworkPolicy and AllowedHosts are the isolation level the instance is
+	// created with.
+	//
+	// They are not decoration: an empty policy means no isolation at all, so a
+	// spawn that forgets to carry a session's air_gapped setting produces a
+	// container with unrestricted network. Every caller that has a session must
+	// pass them.
+	NetworkPolicy string
+	AllowedHosts  []string
+
+	// CPUs, MemoryMB and DiskMB are the profile's resource limits. Zero means
+	// "the provider's default".
+	CPUs     float64
+	MemoryMB int
+	DiskMB   int
+
+	// ClaimForSessionID takes the runner claim for a session as part of the
+	// spawn, between writing the runner row and asking the provider for an
+	// instance.
+	//
+	// That order is the point: the claim exists before anything could connect,
+	// so a runner spawned because one session had nowhere to run cannot be
+	// allocated to a different session the moment it appears.
+	ClaimForSessionID string
 }
 
 // Spawn creates a runner on a managed provider and returns its row.
@@ -118,18 +143,9 @@ func (p *RunnerProvisioner) Spawn(ctx context.Context, opts ProvisionOptions) (*
 		return nil, err
 	}
 
-	spawnOpts := provider.SpawnOptions{
-		RunnerID:       runner.ID,
-		Name:           runner.Name,
-		ServerURL:      p.serverURL,
-		RunnerToken:    token,
-		Labels:         opts.Labels,
-		SandboxMode:    runner.SandboxMode,
-		WorkspaceMount: opts.WorkspaceMount,
-	}
-	if runner.TenantID != nil {
-		spawnOpts.TenantID = *runner.TenantID
-	}
+	p.claimFor(ctx, runner.ID, opts.ClaimForSessionID)
+
+	spawnOpts := p.spawnOptions(runner, token, opts)
 
 	instance, err := prov.Spawn(ctx, spawnOpts)
 	if err != nil {
@@ -167,7 +183,23 @@ func (p *RunnerProvisioner) PrepareSpawn(ctx context.Context, opts ProvisionOpti
 		return nil, err
 	}
 
-	spawnOpts := &provider.SpawnOptions{
+	p.claimFor(ctx, runner.ID, opts.ClaimForSessionID)
+
+	spawnOpts := p.spawnOptions(runner, token, opts)
+	return &spawnOpts, nil
+}
+
+// spawnOptions renders the provider-facing description of the instance.
+//
+// One builder for both entry points, because the two used to be separate and
+// drifted: the resume path applied the session's network policy and resources
+// afterwards while a direct Spawn silently created an unrestricted instance.
+func (p *RunnerProvisioner) spawnOptions(
+	runner *store.Runner,
+	token string,
+	opts ProvisionOptions,
+) provider.SpawnOptions {
+	spawnOpts := provider.SpawnOptions{
 		RunnerID:       runner.ID,
 		Name:           runner.Name,
 		ServerURL:      p.serverURL,
@@ -175,11 +207,44 @@ func (p *RunnerProvisioner) PrepareSpawn(ctx context.Context, opts ProvisionOpti
 		Labels:         opts.Labels,
 		SandboxMode:    runner.SandboxMode,
 		WorkspaceMount: opts.WorkspaceMount,
+		NetworkPolicy:  opts.NetworkPolicy,
+		AllowedHosts:   opts.AllowedHosts,
+		CPUs:           opts.CPUs,
+		MemoryMB:       opts.MemoryMB,
+		DiskMB:         opts.DiskMB,
 	}
 	if runner.TenantID != nil {
 		spawnOpts.TenantID = *runner.TenantID
 	}
-	return spawnOpts, nil
+	return spawnOpts
+}
+
+// claimFor reserves a freshly written runner row for a session.
+//
+// A failure is not fatal to the spawn: the instance is still useful, it is just
+// available to whoever allocates first. Losing the claim on a row created one
+// statement ago is not possible unless the database is unhealthy, so it is
+// logged rather than handled.
+func (p *RunnerProvisioner) claimFor(ctx context.Context, runnerID, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+
+	won, err := p.store.ClaimRunner(ctx, runnerID, sessionID, store.DefaultRunnerClaimLease)
+	if err != nil {
+		p.logger.Warn("could not claim the runner being spawned; another session may take it",
+			zap.String("runner_id", runnerID),
+			zap.String("session_id", sessionID),
+			zap.Error(err),
+		)
+		return
+	}
+	if !won {
+		p.logger.Warn("the runner being spawned was already claimed",
+			zap.String("runner_id", runnerID),
+			zap.String("session_id", sessionID),
+		)
+	}
 }
 
 // DiscardPrepared removes a runner row and token written by PrepareSpawn that
