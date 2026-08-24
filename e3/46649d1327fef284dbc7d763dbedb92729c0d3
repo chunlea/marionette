@@ -1,0 +1,19 @@
+CLAUDE.md
+  s_683f0a71c8fb68::t_17efc4e9c134bd 399,568,571,581-591
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "e346649d1327fef284dbc7d763dbedb92729c0d3",
+  "prompts": {},
+  "sessions": {
+    "s_683f0a71c8fb68": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a8647725-70f7-4390-95b1-c9bcbff2a34d",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
