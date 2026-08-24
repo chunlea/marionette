@@ -1,0 +1,21 @@
+cmd/mctl/admin_runners_test.go
+  s_c065cc8f8dc5eb::t_b699323bc9f772 5,48-56,70-89,96-100,359-402
+pkg/agent/run_ledger_test.go
+  s_c065cc8f8dc5eb::t_644d245317e5b2 307-319
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "5f517727955a917defcd5bec72556dfe7e69eb1b",
+  "prompts": {},
+  "sessions": {
+    "s_c065cc8f8dc5eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a030fc-1d5b-7542-9241-6be2f7ebc51a",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
