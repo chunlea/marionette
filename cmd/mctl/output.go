@@ -168,6 +168,32 @@ var runnerView = tableView[client.Runner]{
 	},
 }
 
+// adminRunnerView is the operator's runner row. It differs from runnerView by
+// the two columns the admin API exists to expose - the provider config behind
+// the runner, and whether it has been tainted out of service.
+var adminRunnerView = tableView[client.AdminRunner]{
+	headers: []string{"ID", "NAME", "STATUS", "POOL", "PROVIDER", "SANDBOX", "LAST SEEN"},
+	row: func(r *client.AdminRunner) []string {
+		lastSeen := ""
+		if r.LastSeenAt != nil {
+			lastSeen = formatTime(*r.LastSeenAt)
+		}
+		status := r.Status
+		if r.Tainted {
+			status += " (tainted)"
+		}
+		return []string{
+			r.ID,
+			r.Name,
+			status,
+			derefString(r.PoolName),
+			derefString(r.ProviderConfigID),
+			r.SandboxMode,
+			lastSeen,
+		}
+	},
+}
+
 var permissionView = tableView[client.PermissionRequest]{
 	headers: []string{"ID", "SESSION", "TASK", "TOOL", "STATUS", "RISK", "CREATED"},
 	row: func(perm *client.PermissionRequest) []string {
@@ -247,6 +273,16 @@ func (p *Printer) PrintRunner(r *client.Runner) error { return printOne(p, r, ru
 // PrintRunnerList outputs a list of runners.
 func (p *Printer) PrintRunnerList(runners []*client.Runner) error {
 	return printList(p, runners, runnerView)
+}
+
+// PrintAdminRunner outputs a single runner in the operator's view.
+func (p *Printer) PrintAdminRunner(r *client.AdminRunner) error {
+	return printOne(p, r, adminRunnerView)
+}
+
+// PrintAdminRunnerList outputs a list of runners in the operator's view.
+func (p *Printer) PrintAdminRunnerList(runners []*client.AdminRunner) error {
+	return printList(p, runners, adminRunnerView)
 }
 
 // PrintPermission outputs a single permission request.

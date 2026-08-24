@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +38,8 @@ type AdminClient interface {
 
 	// Runners (admin operations)
 	SpawnRunner(ctx context.Context, opts SpawnRunnerOptions) (*AdminRunner, error)
+	GetRunner(ctx context.Context, id string) (*AdminRunner, error)
+	ListRunners(ctx context.Context, opts ListRunnersOptions) (*ListResult[AdminRunner], error)
 	DestroyRunner(ctx context.Context, id string) error
 
 	// Runner Tokens
@@ -358,6 +361,30 @@ func (c *HTTPAdminClient) doRequest(ctx context.Context, method, path string, bo
 	return nil
 }
 
+// setAdminLabels writes a label filter in the format the admin API reads:
+// one "labels" parameter holding comma-separated key=value pairs.
+//
+// This is not the public API's format. Every admin list method used to send
+// the public one - labels[key]=value - which the admin handlers never look at,
+// so the filter was silently dropped and the caller got an unfiltered page it
+// had no way to tell apart from a correctly filtered one.
+//
+// Pairs are sorted so the query string is stable, which is what lets a test
+// assert on it.
+func setAdminLabels(params url.Values, labels map[string]string) {
+	if len(labels) == 0 {
+		return
+	}
+
+	pairs := make([]string, 0, len(labels))
+	for k, v := range labels {
+		pairs = append(pairs, k+"="+v)
+	}
+	sort.Strings(pairs)
+
+	params.Set("labels", strings.Join(pairs, ","))
+}
+
 // parseError parses an error response from the API.
 func (c *HTTPAdminClient) parseError(resp *http.Response) error {
 	var errResp struct {
@@ -408,9 +435,7 @@ func (c *HTTPAdminClient) ListAPIKeys(ctx context.Context, opts ListAPIKeysOptio
 	if opts.Cursor != "" {
 		params.Set("cursor", opts.Cursor)
 	}
-	for k, v := range opts.Labels {
-		params.Set("labels["+k+"]", v)
-	}
+	setAdminLabels(params, opts.Labels)
 
 	path := "/admin/api/v1/keys"
 	if len(params) > 0 {
@@ -465,9 +490,7 @@ func (c *HTTPAdminClient) ListAgentConfigs(ctx context.Context, opts ListAgentCo
 	if opts.Agent != "" {
 		params.Set("agent", opts.Agent)
 	}
-	for k, v := range opts.Labels {
-		params.Set("labels["+k+"]", v)
-	}
+	setAdminLabels(params, opts.Labels)
 
 	path := "/admin/api/v1/agent-configs"
 	if len(params) > 0 {
@@ -527,9 +550,7 @@ func (c *HTTPAdminClient) ListProviderConfigs(ctx context.Context, opts ListProv
 	if opts.Provider != "" {
 		params.Set("provider", opts.Provider)
 	}
-	for k, v := range opts.Labels {
-		params.Set("labels["+k+"]", v)
-	}
+	setAdminLabels(params, opts.Labels)
 
 	path := "/admin/api/v1/provider-configs"
 	if len(params) > 0 {
@@ -563,6 +584,47 @@ func (c *HTTPAdminClient) DeleteProviderConfig(ctx context.Context, id string) e
 func (c *HTTPAdminClient) SpawnRunner(ctx context.Context, opts SpawnRunnerOptions) (*AdminRunner, error) {
 	var result AdminRunner
 	if err := c.doRequest(ctx, http.MethodPost, "/admin/api/v1/runners/spawn", opts, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetRunner retrieves a runner by ID, in the operator's view: unlike the
+// public one it names the provider config and instance behind the runner.
+func (c *HTTPAdminClient) GetRunner(ctx context.Context, id string) (*AdminRunner, error) {
+	var result AdminRunner
+	if err := c.doRequest(ctx, http.MethodGet, "/admin/api/v1/runners/"+id, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListRunners lists runners with optional filtering.
+func (c *HTTPAdminClient) ListRunners(ctx context.Context, opts ListRunnersOptions) (*ListResult[AdminRunner], error) {
+	params := url.Values{}
+	if opts.Limit > 0 {
+		params.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Cursor != "" {
+		params.Set("cursor", opts.Cursor)
+	}
+	// The admin API reads one comma-separated status parameter, not a
+	// repeated one; the public API is the one that repeats.
+	if len(opts.Status) > 0 {
+		params.Set("status", strings.Join(opts.Status, ","))
+	}
+	if opts.PoolName != "" {
+		params.Set("pool_name", opts.PoolName)
+	}
+	setAdminLabels(params, opts.Labels)
+
+	path := "/admin/api/v1/runners"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	var result ListResult[AdminRunner]
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -628,9 +690,7 @@ func (c *HTTPAdminClient) ListRunnerTokens(ctx context.Context, opts ListRunnerT
 	if opts.IncludeRevoked {
 		params.Set("include_revoked", "true")
 	}
-	for k, v := range opts.Labels {
-		params.Set("labels["+k+"]", v)
-	}
+	setAdminLabels(params, opts.Labels)
 
 	path := "/admin/api/v1/runner-tokens"
 	if len(params) > 0 {
@@ -697,9 +757,7 @@ func (c *HTTPAdminClient) ListProfiles(ctx context.Context, opts ListProfilesOpt
 	if opts.IncludeBuiltin {
 		params.Set("include_builtin", "true")
 	}
-	for k, v := range opts.Labels {
-		params.Set("labels["+k+"]", v)
-	}
+	setAdminLabels(params, opts.Labels)
 
 	path := "/admin/api/v1/profiles"
 	if len(params) > 0 {

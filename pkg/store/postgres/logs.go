@@ -189,6 +189,16 @@ func listLogs(ctx context.Context, q querier, opts store.ListLogsOptions) (*stor
 		args = append(args, opts.Level)
 		argNum++
 	}
+	if opts.MinSequence != nil {
+		conditions = append(conditions, fmt.Sprintf("sequence >= $%d", argNum))
+		args = append(args, *opts.MinSequence)
+		argNum++
+	}
+	if opts.MaxSequence != nil {
+		conditions = append(conditions, fmt.Sprintf("sequence <= $%d", argNum))
+		args = append(args, *opts.MaxSequence)
+		argNum++
+	}
 	if opts.After != nil {
 		// A row comparison, not three ANDed ones: the ordering logs are
 		// archived in is (created_at, sequence, id), and that is the only

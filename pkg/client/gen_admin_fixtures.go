@@ -65,6 +65,50 @@ func main() {
 		ExpiresAt:   &expires,
 	}
 
+	providerConfigID := "pcfg_0002xK9mNsY4VwJaU1"
+	providerInstanceID := "b3f1c9d2e4a5"
+	poolName := "gpu-pool"
+	profileID := "prof_0002xK9mNtZ5WxKbV2"
+	lastSeen := created.Add(30 * time.Second)
+
+	runner := &admintypes.Runner{
+		ID:                 runnerID,
+		Name:               "docker-runner-1",
+		Hostname:           "runner-1.local",
+		Status:             "idle",
+		SandboxMode:        "runner-is-sandbox",
+		SandboxTypes:       []string{"docker"},
+		ProviderConfigID:   &providerConfigID,
+		ProviderInstanceID: &providerInstanceID,
+		PoolName:           &poolName,
+		ProfileID:          &profileID,
+		Capabilities:       []string{"desktop", "android"},
+		Labels:             map[string]string{"env": "prod"},
+		Annotations:        map[string]string{},
+		LastSeenAt:         &lastSeen,
+		CreatedAt:          created,
+		UpdatedAt:          created,
+	}
+
+	// A tainted pool runner: the second row proves the optional fields decode
+	// both when the server sends them and when it leaves them out.
+	taintReason := "disk pressure"
+	tainted := &admintypes.Runner{
+		ID:           "run_0002xK9mNuA6XyLcW3",
+		Name:         "pool-runner-2",
+		Hostname:     "mac-mini-2.local",
+		Status:       "offline",
+		Tainted:      true,
+		TaintReason:  &taintReason,
+		SandboxMode:  "runner-creates-sandbox",
+		SandboxTypes: []string{},
+		Capabilities: []string{},
+		Labels:       map[string]string{},
+		Annotations:  map[string]string{},
+		CreatedAt:    created,
+		UpdatedAt:    created,
+	}
+
 	fixtures := map[string]any{
 		"runner_token_create_response.json": admintypes.CreatedRunnerToken{
 			Token:    token,
@@ -77,6 +121,14 @@ func main() {
 		"api_key_create_response.json": admintypes.CreatedAPIKey{
 			Key:      key,
 			RawToken: "mk_7Jc1lUo0SecretValueDoNotLog",
+		},
+		// Spawn and get answer with the same type, so one fixture pins both.
+		"runner_response.json": runner,
+		"runner_list_response.json": admintypes.ListResponse[admintypes.Runner]{
+			Items:      []*admintypes.Runner{runner, tainted},
+			TotalCount: 2,
+			HasMore:    true,
+			NextCursor: "cursor_0002xK9mNvB7",
 		},
 	}
 

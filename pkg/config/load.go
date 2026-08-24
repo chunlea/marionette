@@ -93,6 +93,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("providers.default", "docker")
 	v.SetDefault("providers.docker.image", "marionette/agent:latest")
 	v.SetDefault("providers.docker.network", "marionette-network")
+	v.SetDefault("providers.autospawn.enabled", true)
+	v.SetDefault("providers.autospawn.max_runners", 10)
 
 	// Storage defaults
 	v.SetDefault("storage.provider", "local")

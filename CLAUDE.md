@@ -396,11 +396,10 @@ mctl sessions create \
   --name "my-assistant"
 
 # Create scheduled session for daily reports
+# (the cron itself lives on a scheduled task, created below)
 mctl sessions create \
   --agent claude \
   --lifecycle scheduled \
-  --schedule "0 9 * * 1-5" \
-  --schedule-tz "America/Los_Angeles" \
   --name "daily-reporter"
 
 # Add scheduled task to a session
@@ -566,10 +565,10 @@ MARIONETTE_ENCRYPTION_KEY=your-encryption-key
 
 ```bash
 # Session management
-mctl sessions create --agent claude --api-key $KEY --name "my-project"
+mctl sessions create --agent claude --agent-api-key $KEY --name "my-project"
 mctl sessions list
 mctl sessions suspend $SESSION_ID
-mctl sessions attach $SESSION_ID
+mctl sessions resume $SESSION_ID
 
 # Task execution
 mctl tasks create --session $SID --prompt "Build a REST API"
@@ -579,11 +578,17 @@ mctl tasks cancel $TASK_ID
 # Continue from previous task
 mctl tasks create --continue $TASK_ID --prompt "Add authentication"
 
-# Admin operations
-mctl admin keys create --name "ci-key" --scopes "tasks:*"
-mctl admin agent-configs create --name "claude-prod" --agent claude --api-key $KEY
-mctl admin providers create docker --name "docker-local" --image "marionette/runner:latest"
-mctl admin runners spawn --provider docker-local --name "runner-1"
+# Admin operations (admin API on :8081, basic auth)
+# Every `mctl admin` command takes --admin-username/--admin-password, omitted here.
+mctl admin runner-tokens create --pool-name default
+mctl admin profiles create --name dev-small --resources '{"cpu":"2","memory":"4Gi"}'
+mctl admin runners spawn --provider-config docker-local --name "runner-1"
+mctl admin runners list --status idle
+mctl admin runners destroy $RUNNER_ID
+mctl admin sessions activate $SESSION_ID $RUNNER_ID
+
+# API keys, agent configs and provider configs are admin-API only today:
+# the endpoints exist, the mctl subcommands do not.
 ```
 
 ## Environment Variables

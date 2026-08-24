@@ -15,12 +15,14 @@ import (
 type MockLogStreamService struct {
 	mu          sync.Mutex
 	subscribers map[string][]chan LogMessage
+	waiters     map[string][]chan struct{}
 }
 
 // NewMockLogStreamService creates a new mock log stream service.
 func NewMockLogStreamService() *MockLogStreamService {
 	return &MockLogStreamService{
 		subscribers: make(map[string][]chan LogMessage),
+		waiters:     make(map[string][]chan struct{}),
 	}
 }
 
@@ -31,6 +33,11 @@ func (m *MockLogStreamService) Subscribe(_ context.Context, taskID string) (<-ch
 
 	ch := make(chan LogMessage, 100)
 	m.subscribers[taskID] = append(m.subscribers[taskID], ch)
+
+	for _, ready := range m.waiters[taskID] {
+		close(ready)
+	}
+	delete(m.waiters, taskID)
 
 	unsubscribe := func() {
 		m.mu.Lock()
@@ -47,6 +54,34 @@ func (m *MockLogStreamService) Subscribe(_ context.Context, taskID string) (<-ch
 	}
 
 	return ch, unsubscribe, nil
+}
+
+// WaitForSubscriber blocks until at least one subscriber is registered for
+// taskID, or ctx is done.
+//
+// Publish drops messages that have no subscriber, and the WebSocket handler only
+// calls Subscribe *after* the HTTP upgrade response has been written. A test
+// that publishes straight after Dial can therefore win the race, lose its
+// message, and then sit on the read deadline. Waiting on the subscription closes
+// that window: it returns as soon as the handler subscribes (microseconds on a
+// healthy run) and leaves the read deadline as a ceiling for a genuine hang
+// rather than a wall clock the test races against.
+func (m *MockLogStreamService) WaitForSubscriber(ctx context.Context, taskID string) error {
+	m.mu.Lock()
+	if len(m.subscribers[taskID]) > 0 {
+		m.mu.Unlock()
+		return nil
+	}
+	ready := make(chan struct{})
+	m.waiters[taskID] = append(m.waiters[taskID], ready)
+	m.mu.Unlock()
+
+	select {
+	case <-ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Publish publishes a log message to subscribers.
@@ -67,6 +102,7 @@ func (m *MockLogStreamService) Publish(taskID string, msg LogMessage) {
 type MockEventStreamService struct {
 	mu          sync.Mutex
 	subscribers []chan EventMessage
+	waiters     []chan struct{}
 }
 
 // NewMockEventStreamService creates a new mock event stream service.
@@ -84,6 +120,11 @@ func (m *MockEventStreamService) Subscribe(_ context.Context, _ EventSubscribeOp
 	ch := make(chan EventMessage, 100)
 	m.subscribers = append(m.subscribers, ch)
 
+	for _, ready := range m.waiters {
+		close(ready)
+	}
+	m.waiters = nil
+
 	unsubscribe := func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -98,6 +139,26 @@ func (m *MockEventStreamService) Subscribe(_ context.Context, _ EventSubscribeOp
 	}
 
 	return ch, unsubscribe, nil
+}
+
+// WaitForSubscriber blocks until at least one subscriber is registered, or ctx
+// is done. See MockLogStreamService.WaitForSubscriber for why tests need it.
+func (m *MockEventStreamService) WaitForSubscriber(ctx context.Context) error {
+	m.mu.Lock()
+	if len(m.subscribers) > 0 {
+		m.mu.Unlock()
+		return nil
+	}
+	ready := make(chan struct{})
+	m.waiters = append(m.waiters, ready)
+	m.mu.Unlock()
+
+	select {
+	case <-ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Publish publishes an event to all subscribers.

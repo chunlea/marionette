@@ -16,6 +16,14 @@ import (
 	"github.com/chunlea/marionette/pkg/auth"
 )
 
+// wsEventTimeout is the ceiling for WebSocket assertions in this package.
+//
+// It is deliberately generous: these tests wait on an event (a subscription
+// landing, a frame arriving), so a healthy run returns in microseconds and never
+// touches the ceiling. It only bites when something is genuinely stuck, which is
+// what we want a loaded CI runner to report.
+const wsEventTimeout = 30 * time.Second
+
 func TestLogStreamNotConfigured(t *testing.T) {
 	srv, _, token := testServer(t) // No log stream service
 
@@ -96,6 +104,13 @@ func TestLogStreamWebSocket(t *testing.T) {
 		}
 	}()
 
+	// Dial returns as soon as the upgrade response is written, but the handler
+	// subscribes only after that. Publishing before the subscription exists
+	// silently drops the message, so wait for the handler to subscribe first.
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), wsEventTimeout)
+	defer cancelWait()
+	require.NoError(t, logSvc.WaitForSubscriber(waitCtx, "task_test123"))
+
 	// Send a log message
 	logSvc.Publish("task_test123", LogMessage{
 		TaskID:    "task_test123",
@@ -106,9 +121,9 @@ func TestLogStreamWebSocket(t *testing.T) {
 		Timestamp: time.Now(),
 	})
 
-	// Read the message with longer timeout for CI
+	// Read the message; the ceiling only bites if the handler never forwards it
 	var msg LogMessage
-	err = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	err = conn.SetReadDeadline(time.Now().Add(wsEventTimeout))
 	require.NoError(t, err)
 	err = conn.ReadJSON(&msg)
 	require.NoError(t, err)
@@ -154,6 +169,12 @@ func TestEventStreamWebSocket(t *testing.T) {
 		}
 	}()
 
+	// Same subscribe-after-upgrade race as TestLogStreamWebSocket: wait for the
+	// handler's subscription before publishing.
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), wsEventTimeout)
+	defer cancelWait()
+	require.NoError(t, eventSvc.WaitForSubscriber(waitCtx))
+
 	// Send an event
 	eventSvc.Publish(EventMessage{
 		EventType: "task.created",
@@ -163,9 +184,9 @@ func TestEventStreamWebSocket(t *testing.T) {
 		Timestamp: time.Now(),
 	})
 
-	// Read the message with longer timeout for CI
+	// Read the message; the ceiling only bites if the handler never forwards it
 	var msg EventMessage
-	err = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	err = conn.SetReadDeadline(time.Now().Add(wsEventTimeout))
 	require.NoError(t, err)
 	err = conn.ReadJSON(&msg)
 	require.NoError(t, err)
@@ -270,6 +291,46 @@ func TestMockLogStreamService(t *testing.T) {
 		// Should not panic
 		svc.Publish("non_existent", LogMessage{Content: "ignored"})
 	})
+
+	t.Run("publish before subscribe is dropped", func(t *testing.T) {
+		// This is the mechanism behind the TestLogStreamWebSocket flake: a
+		// message published before the subscription exists is gone for good, and
+		// a reader then blocks until its deadline instead of failing fast.
+		svc.Publish("task_early", LogMessage{Content: "lost"})
+
+		ch, unsubscribe, err := svc.Subscribe(context.Background(), "task_early")
+		require.NoError(t, err)
+		defer unsubscribe()
+
+		select {
+		case msg := <-ch:
+			t.Fatalf("expected no message, got %q", msg.Content)
+		default:
+		}
+	})
+
+	t.Run("wait for subscriber returns once subscribed", func(t *testing.T) {
+		unsubscribed := make(chan func(), 1)
+		go func() {
+			_, unsub, err := svc.Subscribe(context.Background(), "task_wait")
+			assert.NoError(t, err)
+			unsubscribed <- unsub
+		}()
+
+		ctx, cancel := context.WithTimeout(context.Background(), wsEventTimeout)
+		defer cancel()
+		require.NoError(t, svc.WaitForSubscriber(ctx, "task_wait"))
+
+		// Already subscribed: the second wait must not block.
+		require.NoError(t, svc.WaitForSubscriber(ctx, "task_wait"))
+		(<-unsubscribed)()
+	})
+
+	t.Run("wait for subscriber honours context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.ErrorIs(t, svc.WaitForSubscriber(ctx, "task_never"), context.Canceled)
+	})
 }
 
 func TestMockEventStreamService(t *testing.T) {
@@ -331,6 +392,24 @@ func TestMockEventStreamService(t *testing.T) {
 	t.Run("publish with no subscribers", func(_ *testing.T) {
 		// Should not panic
 		svc.Publish(EventMessage{EventType: "ignored"})
+	})
+
+	t.Run("wait for subscriber honours context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.ErrorIs(t, NewMockEventStreamService().WaitForSubscriber(ctx), context.Canceled)
+	})
+
+	t.Run("wait for subscriber returns once subscribed", func(t *testing.T) {
+		fresh := NewMockEventStreamService()
+		go func() {
+			_, _, err := fresh.Subscribe(context.Background(), EventSubscribeOptions{})
+			assert.NoError(t, err)
+		}()
+
+		ctx, cancel := context.WithTimeout(context.Background(), wsEventTimeout)
+		defer cancel()
+		require.NoError(t, fresh.WaitForSubscriber(ctx))
 	})
 }
 

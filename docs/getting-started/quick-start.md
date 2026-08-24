@@ -105,6 +105,20 @@ export MARIONETTE_RUNNER_TOKEN=...   # from step 3
 local walk and wrong for anything else — see
 [Providers](../concepts/providers.md) for the sandbox modes.
 
+!!! warning "Containerized runners need `server_url`"
+    If you swap this step for the Docker provider — or any provider that spawns a
+    runner into a container — set `providers.docker.isolation.server_url` first.
+    It is the address a spawned runner dials back on, and with nothing configured
+    the server derives it from its own gRPC listener: `127.0.0.1:9090`, which
+    inside a container is the container itself. Runners then start, never
+    connect, and sit there until the reaper takes them. The server logs a WARN
+    naming the key whenever it has to guess, so check the startup log if runners
+    are not showing up. Set it to an address the container can reach:
+    `host.docker.internal:9090` when the server runs on the Docker Desktop host,
+    or the Compose service name (`server:9090`) when the server is itself a
+    container on the same network. See
+    [Configuration](configuration.md#docker-provider).
+
 Confirm it joined. There is no `mctl runners` command yet:
 
 ```bash

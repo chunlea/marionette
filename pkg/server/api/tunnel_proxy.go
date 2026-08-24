@@ -58,6 +58,10 @@ type TunnelProxyHandler struct {
 	service    TunnelProxyService
 	httpProxy  *tunnel.HTTPProxy
 	apiKeyAuth func(r *http.Request) (bool, error)
+	// affinity hands a request whose runner is held by another replica to that
+	// replica, whole. Nil in a single-process deployment, where every runner is
+	// local and there is nowhere to hand it to.
+	affinity *TunnelAffinity
 }
 
 // TunnelProxyOption is a functional option for TunnelProxyHandler.
@@ -81,6 +85,15 @@ func WithTPService(svc TunnelProxyService) TunnelProxyOption {
 func WithTPAPIKeyAuth(fn func(r *http.Request) (bool, error)) TunnelProxyOption {
 	return func(h *TunnelProxyHandler) {
 		h.apiKeyAuth = fn
+	}
+}
+
+// WithTPAffinity sets the cross-replica affinity proxy. A nil proxy leaves the
+// handler serving every tunnel locally, which is what a single-process
+// deployment wants.
+func WithTPAffinity(a *TunnelAffinity) TunnelProxyOption {
+	return func(h *TunnelProxyHandler) {
+		h.affinity = a
 	}
 }
 
@@ -156,6 +169,21 @@ func (h *TunnelProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			zap.String("type", info.Type),
 		)
 		http.Error(w, "tunnel type not supported for HTTP proxy", http.StatusBadRequest)
+		return
+	}
+
+	// Cross-replica affinity.
+	//
+	// The runner's control stream lives in one process, and everything below
+	// this line writes to it a chunk at a time. If that process is not this
+	// one, hand it the whole request now: one extra network leg here buys a
+	// data path with no hop in it at all. See tunnel_proxy_affinity.go.
+	//
+	// Deliberately after authentication - an unauthenticated request is
+	// refused here rather than costing a peer a round trip - and deliberately
+	// before the path rewrite and sanitisation below, so the peer sees the
+	// request exactly as the client sent it and authenticates it itself.
+	if h.affinity.serve(w, r, tunnelID, info.RunnerID) {
 		return
 	}
 
@@ -661,6 +689,9 @@ func (h *TunnelProxyHandler) sanitizeRequest(r *http.Request) {
 	// Remove Marionette-specific headers
 	r.Header.Del("X-Marionette-Tunnel-Token")
 	r.Header.Del("X-Marionette-API-Key")
+	// The affinity hop marker is routing bookkeeping between replicas. The
+	// service at the far end of the tunnel has no business seeing it.
+	r.Header.Del(TunnelHopHeader)
 
 	// Remove Basic Auth if it contains a tunnel token
 	if _, password, ok := r.BasicAuth(); ok && strings.HasPrefix(password, "ttok_") {

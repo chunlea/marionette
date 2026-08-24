@@ -26,6 +26,16 @@ providers:
     host: "unix:///var/run/docker.sock"
     image: "marionette/agent:latest"
     network: "marionette_default"
+    isolation:
+      # The address a spawned runner dials back on. Without it the server
+      # derives one from its own gRPC listener - 127.0.0.1:9090, which inside a
+      # runner container is that container, so runners come up and never
+      # connect. The server logs a WARN naming this key when it has to guess.
+      #
+      # "server" is this compose file's service name, resolvable on the compose
+      # network. Use host.docker.internal:9090 instead when the server runs on
+      # the Docker Desktop host rather than in a container.
+      server_url: "server:9090"
 
 # Storage configuration
 storage:
