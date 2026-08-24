@@ -172,6 +172,16 @@ type ListLogsOptions struct {
 	// comparison, a row sharing the last archived row's timestamp is either
 	// served twice or not at all.
 	After *LogCursor
+
+	// MinSequence and MaxSequence bound the sequence range, inclusive.
+	//
+	// Sequence is unique per run, not per session (idx_logs_run_seq_unique),
+	// so a range is only meaningful together with RunID. The live fan-out
+	// relay is what needs it: a notification carries the run and the range a
+	// batch covered, and the replica that has subscribers reads exactly those
+	// rows back rather than being sent their contents.
+	MinSequence *int64
+	MaxSequence *int64
 }
 
 // ListLogArchivesOptions for filtering log archives.

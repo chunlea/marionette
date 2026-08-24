@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -124,7 +125,24 @@ func listRunners(ctx context.Context, q querier, opts store.ListRunnersOptions) 
 		args = append(args, *opts.Tainted)
 		argNum++
 	}
-	// TODO: Add label filtering with JSONB operators
+	if len(opts.Labels) > 0 {
+		// Containment, so the filter means "has at least these labels" rather
+		// than "has exactly these" - the Kubernetes-style semantics every
+		// caller assumes.
+		//
+		// This was a TODO for the life of the project, and callers had already
+		// been written against it: runner selection passes a profile's os and
+		// arch selectors here, and with the filter missing they were silently
+		// ignored, so a profile that asked for linux/arm64 would be served the
+		// first idle runner of any shape.
+		encoded, err := json.Marshal(opts.Labels)
+		if err != nil {
+			return nil, fmt.Errorf("encoding label filter: %w", err)
+		}
+		conditions = append(conditions, fmt.Sprintf("labels @> $%d::jsonb", argNum))
+		args = append(args, string(encoded))
+		argNum++
+	}
 
 	whereClause := ""
 	if len(conditions) > 0 {
