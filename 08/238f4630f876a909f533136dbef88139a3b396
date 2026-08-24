@@ -1,0 +1,39 @@
+pkg/server/api/tunnel_proxy_affinity.go
+  s_345440c29221e7::t_2d70ca80156d02 1-365
+pkg/server/api/tunnel_proxy.go
+  s_6fee7803fbaa0a::t_9fd3fc77048807 61-64,91-99,175-189,692-694
+pkg/server/api/tunnel_proxy_affinity_test.go
+  s_683f0a71c8fb68::t_27569f1717739e 1-652
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "08238f4630f876a909f533136dbef88139a3b396",
+  "prompts": {},
+  "sessions": {
+    "s_345440c29221e7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a030c2-2a53-79e2-baff-22144bbb43c0",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_683f0a71c8fb68": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a8647725-70f7-4390-95b1-c9bcbff2a34d",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_6fee7803fbaa0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "36744445-9d62-49c1-8139-fc55e7e699fd",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
