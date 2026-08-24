@@ -1,0 +1,49 @@
+pkg/server/core/app.go
+  s_345440c29221e7::t_c63e48d0d47081 13,69-74,107-113,158-162,292-297,312,324-370,509-517
+pkg/server/core/events.go
+  s_345440c29221e7::t_cd3fef59f70a1c 29-34,42,91-101,107-123
+pkg/server/core/fanout.go
+  s_829cd3b6a7eda7::t_043570ab9dc1ca 1-555
+pkg/server/core/interfaces.go
+  s_345440c29221e7::t_fcf26ab5e4ef52 14-16
+pkg/server/core/log_subscriber_manager.go
+  s_345440c29221e7::t_1a2c679fc54d5a 10-17,22,33-60,62-64
+pkg/server/grpc/runner_service.go
+  s_345440c29221e7::t_fdb5d1e2575046 307-309,311
+pkg/server/core/teststore_test.go
+  s_c52644cec1abf9::t_fc64cc829672ff 21,672-700,703
+pkg/server/core/fanout_test.go
+  s_829cd3b6a7eda7::t_af74bd1dc238bc 1-539
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "7ccdd76abf2bf8cdead130f1979d87875377a183",
+  "prompts": {},
+  "sessions": {
+    "s_345440c29221e7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a030c2-2a53-79e2-baff-22144bbb43c0",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_829cd3b6a7eda7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d342e86d-a42f-469e-846f-fd4f6252c53c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_c52644cec1abf9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65ebfa16-a70a-4fae-9099-2cbc994d6aae",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
