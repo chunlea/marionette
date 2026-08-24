@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -44,6 +45,15 @@ type fakeAdminServer struct {
 	// providerConfigs and profiles back the name resolution.
 	providerConfigs []*client.ProviderConfig
 	profiles        []*client.Profile
+	// providerConfigPages, when set, is served one page per request, each but
+	// the last carrying a next_cursor.
+	providerConfigPages [][]*client.ProviderConfig
+	// providerConfigCursors records the cursor each list request carried.
+	providerConfigCursors []string
+	// providerConfigError, when set, is returned instead of a page.
+	providerConfigError int
+	// profileError, when set, is returned instead of the profile list.
+	profileError int
 	// runnerError, when set, is returned instead of a runner response.
 	runnerError int
 }
@@ -57,12 +67,37 @@ func (f *fakeAdminServer) start(t *testing.T) string {
 
 		switch {
 		case path == "/admin/api/v1/provider-configs" && r.Method == http.MethodGet:
+			f.providerConfigCursors = append(f.providerConfigCursors, r.URL.Query().Get("cursor"))
+			if f.providerConfigError != 0 {
+				w.WriteHeader(f.providerConfigError)
+				_, _ = w.Write([]byte(`{"code":"internal_error","message":"provider config store is down"}`))
+				return
+			}
+			if pages := f.providerConfigPages; len(pages) > 0 {
+				n := min(len(f.providerConfigCursors)-1, len(pages)-1)
+				next := ""
+				if n < len(pages)-1 {
+					next = fmt.Sprintf("cursor_%d", n+1)
+				}
+				writeJSON(t, w, http.StatusOK, client.ListResult[client.ProviderConfig]{
+					Items:      pages[n],
+					TotalCount: int64(len(pages[n])),
+					HasMore:    next != "",
+					NextCursor: next,
+				})
+				return
+			}
 			writeJSON(t, w, http.StatusOK, client.ListResult[client.ProviderConfig]{
 				Items:      f.providerConfigs,
 				TotalCount: int64(len(f.providerConfigs)),
 			})
 
 		case path == "/admin/api/v1/profiles" && r.Method == http.MethodGet:
+			if f.profileError != 0 {
+				w.WriteHeader(f.profileError)
+				_, _ = w.Write([]byte(`{"code":"internal_error","message":"profile store is down"}`))
+				return
+			}
 			writeJSON(t, w, http.StatusOK, client.ListResult[client.Profile]{
 				Items:      f.profiles,
 				TotalCount: int64(len(f.profiles)),
@@ -318,6 +353,50 @@ func TestAdminRunnersSpawn_AmbiguousNameIsRefused(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "2 provider configs are named")
 	assert.Contains(t, err.Error(), "pcfg_a, pcfg_b")
+	assert.Nil(t, fake.spawnBody)
+}
+
+// A name on the second page must still resolve: the admin API caps a page at
+// 100 provider configs, and stopping at the first page would report a config
+// that exists as missing.
+func TestAdminRunnersSpawn_ResolvesANameOnALaterPage(t *testing.T) {
+	fake := &fakeAdminServer{
+		providerConfigPages: [][]*client.ProviderConfig{
+			{{ID: "pcfg_a", Name: "k8s-staging"}},
+			{{ID: "pcfg_b", Name: "docker-local"}},
+		},
+	}
+	url := fake.start(t)
+
+	_, err := runMctl(t, url, "admin", "runners", "spawn", "--provider-config", "docker-local")
+	require.NoError(t, err)
+
+	assert.Equal(t, "pcfg_b", fake.spawnBody["provider_config_id"])
+	assert.Equal(t, []string{"", "cursor_1"}, fake.providerConfigCursors,
+		"the second request must carry the cursor the first returned")
+}
+
+func TestAdminRunnersSpawn_ResolutionFailureIsReported(t *testing.T) {
+	fake := &fakeAdminServer{providerConfigError: http.StatusInternalServerError}
+	url := fake.start(t)
+
+	_, err := runMctl(t, url, "admin", "runners", "spawn", "--provider-config", "docker-local")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `failed to resolve provider config "docker-local"`)
+	assert.Nil(t, fake.spawnBody, "a lookup that failed must not spawn anything")
+}
+
+func TestAdminRunnersSpawn_ProfileResolutionFailureIsReported(t *testing.T) {
+	fake := &fakeAdminServer{
+		providerConfigs: []*client.ProviderConfig{{ID: "pcfg_docker", Name: "docker-local"}},
+		profileError:    http.StatusInternalServerError,
+	}
+	url := fake.start(t)
+
+	_, err := runMctl(t, url, "admin", "runners", "spawn",
+		"--provider-config", "docker-local", "--profile", "dev-small")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `failed to resolve profile "dev-small"`)
 	assert.Nil(t, fake.spawnBody)
 }
 

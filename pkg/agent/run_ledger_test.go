@@ -304,3 +304,16 @@ func TestRunLedger_ConcurrentBeginClaimsOnce(t *testing.T) {
 
 	assert.Equal(t, int32(1), fresh.Load(), "exactly one caller may claim a run id")
 }
+
+// A window of zero would remember nothing, so every redelivery would re-run.
+// The constructor clamps it rather than accepting a ledger that cannot work.
+func TestRunLedger_WindowIsAtLeastOne(t *testing.T) {
+	l := newRunLedger(0)
+
+	_, _ = l.begin("trun_a")
+	l.finish("trun_a", &pb.RunnerMessage{})
+
+	decision, recorded := l.begin("trun_a")
+	assert.Equal(t, runCompleted, decision)
+	assert.NotNil(t, recorded)
+}
