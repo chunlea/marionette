@@ -1,0 +1,35 @@
+pkg/client/admin.go
+  s_683f0a71c8fb68::t_71fd56b0f059dd 11,41-42,364-387,438,493,553,592-632,693,760
+pkg/client/admin_runner_decode_test.go
+  s_4e03746a1c3c16::t_dc80711e0aa88e 1-228
+pkg/client/gen_admin_fixtures.go
+  s_683f0a71c8fb68::t_29d66d8acc53c7 68-111,125-132
+pkg/client/testdata/runner_list_response.json
+  s_683f0a71c8fb68::t_ae35209264cd73 1-48
+pkg/client/testdata/runner_response.json
+  s_683f0a71c8fb68::t_1939070bd1ed30 1-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "d27a64277f71ab2c5858436b53211be2f2754e35",
+  "prompts": {},
+  "sessions": {
+    "s_4e03746a1c3c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60714d52-8636-4fc2-adaa-7b5018a4a131",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_683f0a71c8fb68": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a8647725-70f7-4390-95b1-c9bcbff2a34d",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
