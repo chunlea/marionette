@@ -11,6 +11,9 @@ import (
 type LogSubscriberManagerInterface interface {
 	// Broadcast sends a log entry to all subscribers for the session.
 	Broadcast(log *store.Log)
+	// BroadcastBatch sends a freshly written batch to local subscribers and
+	// announces it to the other replicas.
+	BroadcastBatch(logs []*store.Log)
 	// Subscribe registers a channel to receive logs for a session.
 	Subscribe(sessionID string, ch chan *store.Log)
 	// Unsubscribe removes a channel from session subscriptions.

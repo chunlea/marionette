@@ -18,6 +18,7 @@ type testStore struct {
 	taskRuns           map[string]*store.TaskRun
 	permissionRequests map[string]*store.PermissionRequest
 	logs               []*store.Log
+	logReads           int
 
 	// runnerClaims mirrors runners.claim_session_id / claimed_at.
 	runnerClaims map[string]runnerClaim
@@ -668,10 +669,38 @@ func (s *testStore) CreateLogs(_ context.Context, logs []*store.Log) error {
 	return nil
 }
 
-func (s *testStore) ListLogs(_ context.Context, _ store.ListLogsOptions) (*store.ListResult[store.Log], error) {
+// ListLogs honours the filters the live fan-out relay reads a notified batch
+// back with. A fake that ignored them would let a relay bug - reading the wrong
+// run, or the whole table - pass its tests.
+func (s *testStore) ListLogs(_ context.Context, opts store.ListLogsOptions) (*store.ListResult[store.Log], error) {
+	s.mu.Lock()
+	s.logReads++
+	s.mu.Unlock()
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return &store.ListResult[store.Log]{Items: s.logs}, nil
+
+	items := make([]*store.Log, 0, len(s.logs))
+	for _, log := range s.logs {
+		switch {
+		case opts.SessionID != nil && log.SessionID != *opts.SessionID:
+		case opts.TaskID != nil && log.TaskID != *opts.TaskID:
+		case opts.RunID != nil && log.RunID != *opts.RunID:
+		case opts.RunnerID != nil && log.RunnerID != *opts.RunnerID:
+		case opts.MinSequence != nil && log.Sequence < *opts.MinSequence:
+		case opts.MaxSequence != nil && log.Sequence > *opts.MaxSequence:
+		default:
+			items = append(items, log)
+		}
+	}
+	return &store.ListResult[store.Log]{Items: items, TotalCount: int64(len(items))}, nil
+}
+
+// logReadCount reports how many times ListLogs was called.
+func (s *testStore) logReadCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.logReads
 }
 
 func (s *testStore) CreateLogArchive(_ context.Context, _ *store.LogArchive) error { return nil }

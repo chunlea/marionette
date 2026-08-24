@@ -26,6 +26,12 @@ type Event struct {
 	Timestamp    time.Time
 }
 
+// eventRelay publishes an event to the other replicas. LiveFanout implements
+// it; a single-process deployment leaves it nil and pays nothing.
+type eventRelay interface {
+	PublishEvent(evt Event)
+}
+
 // EventBus fans resource events out to in-process subscribers.
 // The zero value is not usable; call NewEventBus.
 type EventBus struct {
@@ -33,6 +39,7 @@ type EventBus struct {
 	nextID  uint64
 	subs    map[uint64]*eventSubscriber
 	matcher *webhook.Matcher
+	relay   eventRelay
 	logger  *zap.Logger
 }
 
@@ -81,13 +88,39 @@ func (b *EventBus) Subscribe(types []string) (<-chan Event, func()) {
 	}
 }
 
-// Publish fans an event out to every matching subscriber. It never blocks:
-// a subscriber that cannot keep up loses the event.
+// setRelay injects the cross-replica relay. Package-private: production wiring
+// happens once, in Wire.
+func (b *EventBus) setRelay(relay eventRelay) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.relay = relay
+}
+
+// Publish fans an event out to every matching subscriber on this replica and
+// announces it to the others. It never blocks: a subscriber that cannot keep
+// up loses the event, and so does a replica whose listener is down.
 func (b *EventBus) Publish(evt Event) {
 	if evt.Timestamp.IsZero() {
 		evt.Timestamp = time.Now()
 	}
 
+	b.deliver(evt)
+
+	b.mu.RLock()
+	relay := b.relay
+	b.mu.RUnlock()
+
+	if relay != nil {
+		relay.PublishEvent(evt)
+	}
+}
+
+// deliver fans an event out to this replica's subscribers only.
+//
+// It is the path a peer's event arrives on, which is why it is separate from
+// Publish: delivering through Publish would announce every event again, and
+// every replica would announce every other replica's events forever.
+func (b *EventBus) deliver(evt Event) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 

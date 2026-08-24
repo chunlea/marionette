@@ -10,6 +10,7 @@ import (
 	"github.com/chunlea/marionette/pkg/audit"
 	"github.com/chunlea/marionette/pkg/auth"
 	"github.com/chunlea/marionette/pkg/config"
+	"github.com/chunlea/marionette/pkg/id"
 	"github.com/chunlea/marionette/pkg/jobs"
 	"github.com/chunlea/marionette/pkg/storage/cas"
 	"github.com/chunlea/marionette/pkg/store"
@@ -65,6 +66,12 @@ type JobsConfig struct {
 	RedispatchInterval time.Duration
 	DisableRedispatch  bool
 
+	// DisableLiveFanout leaves logs and events local to the replica that
+	// produced them. Tests that want no listener connection set it; production
+	// should not, unless the store cannot listen at all - in which case the
+	// relay is not built anyway.
+	DisableLiveFanout bool
+
 	// LogRetentionDays drops log partitions older than this many days.
 	//
 	// It MUST stay zero (the default, meaning "never drop") until log archiving
@@ -96,6 +103,13 @@ type WireDeps struct {
 	AuditLog audit.Logger
 	// Logger is the root logger.
 	Logger *zap.Logger
+
+	// ReplicaID identifies this process to the other replicas. It is the same
+	// id the replica registry publishes, so a routing pointer and a fan-out
+	// notice name the same process; when empty, one is generated, which is
+	// enough for the live fan-out's only use of it - not delivering this
+	// process's own notices back to itself.
+	ReplicaID string
 
 	// MetricsRegisterer registers the core's Prometheus collectors. Optional:
 	// with metrics disabled the counters still exist and are simply not
@@ -141,8 +155,11 @@ type App struct {
 	Webhooks          *WebhookManager
 	LogSubscribers    *LogSubscriberManager
 	Events            *EventBus
-	Reaper            *Reaper
-	DispatchWaker     *DispatchWaker
+	// LiveFanout re-broadcasts logs and events across replicas. Nil when the
+	// store cannot listen, or when the job is disabled.
+	LiveFanout    *LiveFanout
+	Reaper        *Reaper
+	DispatchWaker *DispatchWaker
 
 	// Background jobs, started by Start and drained by Stop.
 	jobs []backgroundJob
@@ -272,6 +289,12 @@ func Wire(deps WireDeps) (*App, error) {
 	scheduledTasks := NewScheduledTaskService(deps.Store, tasks, deps.AuditLog, logger.Named("scheduled-task"))
 	logSubscribers := NewLogSubscriberManager(logger.Named("log-subscriber"))
 
+	// Live fan-out. Without it a follow client or an SSE consumer connected to
+	// a replica that does not hold the runner's stream gets history and no
+	// tail; see fanout.go for why the transport is LISTEN/NOTIFY and why the
+	// relay is not gated on the replica count.
+	fanout := buildFanout(deps, logSubscribers, events, logger)
+
 	app := &App{
 		Store:             deps.Store,
 		Logger:            logger,
@@ -286,6 +309,7 @@ func Wire(deps WireDeps) (*App, error) {
 		Webhooks:          webhookMgr,
 		LogSubscribers:    logSubscribers,
 		Events:            events,
+		LiveFanout:        fanout,
 		DispatchWaker:     waker,
 		ctx:               appCtx,
 		cancel:            cancel,
@@ -295,6 +319,53 @@ func Wire(deps WireDeps) (*App, error) {
 	app.buildJobs(deps)
 
 	return app, nil
+}
+
+// buildFanout constructs the cross-replica relay, or nil when the store cannot
+// listen.
+//
+// A store with no LISTEN/NOTIFY is not an error: every other path still works,
+// and the only thing missing is the live tail on a replica that does not hold
+// the stream - which is precisely the state this whole subsystem is fixing, so
+// falling back to it is honest.
+func buildFanout(
+	deps WireDeps,
+	logs *LogSubscriberManager,
+	events *EventBus,
+	logger *zap.Logger,
+) *LiveFanout {
+	if deps.Jobs.DisableLiveFanout {
+		return nil
+	}
+
+	notifier, ok := deps.Store.(store.Notifier)
+	if !ok {
+		logger.Warn("store cannot listen for notifications; " +
+			"live log and event tails will only reach subscribers on the replica that produced them")
+		return nil
+	}
+
+	replicaID := deps.ReplicaID
+	if replicaID == "" {
+		replicaID = id.New("repl")
+	}
+
+	fanout, err := NewLiveFanout(LiveFanoutConfig{
+		Notifier:  notifier,
+		Store:     deps.Store,
+		Logs:      logs,
+		Events:    events,
+		ReplicaID: replicaID,
+		Logger:    logger.Named("fanout"),
+	})
+	if err != nil {
+		logger.Error("could not build the live fan-out relay", zap.Error(err))
+		return nil
+	}
+
+	logs.setRelay(fanout)
+	events.setRelay(fanout)
+	return fanout
 }
 
 func (d WireDeps) validate() error {
@@ -432,6 +503,15 @@ func (a *App) buildJobs(deps WireDeps) {
 			name:  "redispatch-sweeper",
 			start: func(ctx context.Context) error { sweeper.Start(ctx); return nil },
 			stop:  func(context.Context) { sweeper.Stop() },
+		})
+	}
+
+	if a.LiveFanout != nil {
+		fanout := a.LiveFanout
+		a.jobs = append(a.jobs, backgroundJob{
+			name:  "live-fanout",
+			start: fanout.Start,
+			stop:  fanout.Stop,
 		})
 	}
 

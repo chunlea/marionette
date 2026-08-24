@@ -304,11 +304,11 @@ func (s *RunnerService) StreamLogs(stream grpc.ClientStreamingServer[pb.StreamLo
 			logsDropped += int64(len(batch))
 		} else {
 			logsStored += int64(len(batch))
-			// Broadcast to subscribers
+			// Broadcast to this replica's subscribers, and announce the batch
+			// to the others: a follow client connected to a replica that does
+			// not hold this runner's stream has no other way to see the tail.
 			if s.logSubscriberMgr != nil {
-				for _, log := range batch {
-					s.logSubscriberMgr.Broadcast(log)
-				}
+				s.logSubscriberMgr.BroadcastBatch(batch)
 			}
 		}
 		batch = batch[:0]

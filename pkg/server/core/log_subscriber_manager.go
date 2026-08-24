@@ -7,12 +7,19 @@ import (
 	"go.uber.org/zap"
 )
 
-// LogSubscriberManager manages real-time log subscribers.
-// Full WebSocket integration will be implemented in G6.
+// logRelay publishes a log batch to the other replicas. LiveFanout implements
+// it; a single-process deployment leaves it nil and pays nothing.
+type logRelay interface {
+	PublishLogs(logs []*store.Log)
+}
+
+// LogSubscriberManager fans real-time logs out to in-process subscribers: the
+// websocket log stream, and the relay's delivery of another replica's logs.
 type LogSubscriberManager struct {
 	logger *zap.Logger
 	mu     sync.RWMutex
 	subs   map[string][]chan *store.Log // sessionID -> channels
+	relay  logRelay
 }
 
 // NewLogSubscriberManager creates a new LogSubscriberManager.
@@ -23,8 +30,38 @@ func NewLogSubscriberManager(logger *zap.Logger) *LogSubscriberManager {
 	}
 }
 
+// setRelay injects the cross-replica relay. Package-private: production wiring
+// happens once, in Wire.
+func (m *LogSubscriberManager) setRelay(relay logRelay) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.relay = relay
+}
+
+// BroadcastBatch delivers a freshly written batch to local subscribers and
+// announces it to the other replicas.
+//
+// Batch rather than line by line because the announcement is per batch: a
+// notification per log line would be one database round trip per line, and the
+// receiving side reads the rows back by sequence range anyway.
+func (m *LogSubscriberManager) BroadcastBatch(logs []*store.Log) {
+	for _, log := range logs {
+		m.Broadcast(log)
+	}
+
+	m.mu.RLock()
+	relay := m.relay
+	m.mu.RUnlock()
+
+	if relay != nil {
+		relay.PublishLogs(logs)
+	}
+}
+
 // Broadcast sends a log entry to all subscribers for the session.
-// In G4, this is a stub that logs the broadcast. Full implementation in G6.
+//
+// Local delivery only: this is also the path the relay delivers a peer's logs
+// through, so publishing from here would echo them straight back out.
 func (m *LogSubscriberManager) Broadcast(log *store.Log) {
 	if log == nil {
 		return
