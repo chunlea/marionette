@@ -1,0 +1,21 @@
+cmd/server/main.go
+  s_c52644cec1abf9::t_90fe2a49b52a0e 147-160,172,276-278
+pkg/server/core/multiprocess_fanout_test.go
+  s_c52644cec1abf9::t_499648d7aaed0e 1-218
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "80fcdfa489e0b6b860e42f05a623af3bea72699e",
+  "prompts": {},
+  "sessions": {
+    "s_c52644cec1abf9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65ebfa16-a70a-4fae-9099-2cbc994d6aae",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
