@@ -1,0 +1,26 @@
+{
+  "id": "run_0002xK9mNpV1StGXR8",
+  "name": "docker-runner-1",
+  "hostname": "runner-1.local",
+  "status": "idle",
+  "tainted": false,
+  "sandbox_mode": "runner-is-sandbox",
+  "sandbox_types": [
+    "docker"
+  ],
+  "provider_config_id": "pcfg_0002xK9mNsY4VwJaU1",
+  "provider_instance_id": "b3f1c9d2e4a5",
+  "pool_name": "gpu-pool",
+  "profile_id": "prof_0002xK9mNtZ5WxKbV2",
+  "capabilities": [
+    "desktop",
+    "android"
+  ],
+  "labels": {
+    "env": "prod"
+  },
+  "annotations": {},
+  "last_seen_at": "2026-08-23T11:04:35Z",
+  "created_at": "2026-08-23T11:04:05Z",
+  "updated_at": "2026-08-23T11:04:05Z"
+}
