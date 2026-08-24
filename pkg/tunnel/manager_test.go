@@ -434,6 +434,49 @@ func TestTunnelManager_ValidateToken(t *testing.T) {
 	})
 }
 
+// TestTunnelManager_ResolvesAndAuthenticatesOnASecondReplica is the property
+// cross-replica tunnel affinity rests on.
+//
+// The replica a tunnel request lands on is not necessarily the one that
+// created the tunnel, and the affinity proxy forwards the caller's own
+// credential rather than inventing a peer one. Both of those are only sound if
+// a manager with a cold cache can resolve the tunnel and verify its token from
+// the store alone. Every other test here validates against the manager that
+// created the tunnel, where the cache answers and the store is never asked.
+func TestTunnelManager_ResolvesAndAuthenticatesOnASecondReplica(t *testing.T) {
+	store := newMockStore()
+
+	origin := NewTunnelManager(WithStore(store), WithLogger(zaptest.NewLogger(t)))
+	created, err := origin.Create(context.Background(), CreateTunnelOptions{
+		SessionID: "sess_123",
+		RunnerID:  "run_456",
+		Type:      TypeHTTP,
+		LocalPort: 3000,
+	})
+	require.NoError(t, err)
+
+	// A different process: same database, cache that has never seen this
+	// tunnel.
+	other := NewTunnelManager(WithStore(store), WithLogger(zaptest.NewLogger(t)))
+
+	// First the entry point resolves the tunnel, because which runner holds it
+	// is what decides where the request goes.
+	resolved, err := other.Get(context.Background(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "run_456", resolved.RunnerID)
+
+	// Then it authenticates the caller. Note the order: Get has already cached
+	// an entry without a token hash, so this is the path a second replica
+	// really takes.
+	validated, err := other.ValidateToken(context.Background(), created.ID, created.Token)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, validated.ID)
+
+	// And a bad token is still bad there.
+	_, err = other.ValidateToken(context.Background(), created.ID, "ttok_not_it")
+	assert.ErrorIs(t, err, ErrInvalidToken)
+}
+
 func TestTunnelManager_GetActiveCount(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	store := newMockStore()

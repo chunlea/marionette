@@ -38,6 +38,15 @@ import (
 // It is the loop guard. A request carrying it is never proxied again, whatever
 // the registry says, so a stale or circular routing pointer costs one wasted
 // leg rather than a request bouncing between two processes until it times out.
+//
+// It is not authenticated, and deliberately so. A client that forges it only
+// declines its own affinity: the request is then served where it landed and
+// its chunks take the round-5 command hop, which is slower but correct. The
+// alternative - proving the marker with the peer credential derived from the
+// master key - would mean sending that credential to an address this file
+// DERIVES rather than one a peer published, so a wrong derivation would hand
+// the shared secret to whatever is listening there. A forgeable
+// slow-yourself-down header is the cheaper mistake by a wide margin.
 const TunnelHopHeader = "X-Marionette-Tunnel-Hop"
 
 // Environment overrides for peer API address derivation. Both mirror
