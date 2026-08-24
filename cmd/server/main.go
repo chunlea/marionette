@@ -144,6 +144,20 @@ func main() {
 		chunkGC, chunkTenants := initChunkGC(cfg, secrets, dbStore, logger)
 		logArchive = initLogArchiving(cfg, secrets, dbStore, logger)
 
+		// The replica registry is built before the core managers because they
+		// need its id: the routing pointers it publishes and the live fan-out's
+		// notices have to name this process the same way, or a replica would
+		// filter out its own notices under one id and publish them under
+		// another.
+		routingMetrics := grpcserver.NewRoutingMetrics(metricsRegisterer, cfg.Observability.Metrics.Namespace)
+		replicaRegistry, err = core.NewReplicaRegistry(dbStore, core.ReplicaRegistryConfig{
+			AdvertiseAddr:       replicaAdvertiseAddr(cfg, logger),
+			ObserveReplicaCount: routingMetrics.SetLiveReplicas,
+		}, logger.Named("replica-registry"))
+		if err != nil {
+			logger.Fatal("failed to build the replica registry", zap.Error(err))
+		}
+
 		app, err = core.Wire(core.WireDeps{
 			Store:              dbStore,
 			ChunkGC:            chunkGC,
@@ -155,6 +169,7 @@ func main() {
 			RunnerServerURL:    runnerServerURL(cfg, logger),
 			AuditLog:           auditLog,
 			Logger:             logger,
+			ReplicaID:          replicaRegistry.ID(),
 			MetricsRegisterer:  metricsRegisterer,
 			MetricsNamespace:   cfg.Observability.Metrics.Namespace,
 			WorkspaceConfig:    cfg.Storage.Workspace,
@@ -258,22 +273,13 @@ func main() {
 		//
 		// A runner's control stream lives in one process, so without this a
 		// second replica cannot reach it and every ExecuteTask, DetachSession
-		// and permission response between them fails. The registry publishes
-		// which process holds which stream; the forwarder is the one hop that
-		// uses it.
+		// and permission response between them fails. The registry (built
+		// above) publishes which process holds which stream; the forwarder is
+		// the one hop that uses it.
 		//
 		// A single-process deployment pays for the heartbeat and nothing else:
 		// SendCommand answers from the local map every time and never reaches
 		// the locator.
-		routingMetrics := grpcserver.NewRoutingMetrics(metricsRegisterer, cfg.Observability.Metrics.Namespace)
-		replicaRegistry, err = core.NewReplicaRegistry(dbStore, core.ReplicaRegistryConfig{
-			AdvertiseAddr:       replicaAdvertiseAddr(cfg, logger),
-			ObserveReplicaCount: routingMetrics.SetLiveReplicas,
-		}, logger.Named("replica-registry"))
-		if err != nil {
-			logger.Fatal("failed to build the replica registry", zap.Error(err))
-		}
-
 		peerCredential := grpcserver.DerivePeerCredential(secrets.MasterKey)
 		if peerCredential == "" {
 			logger.Warn("cross-replica command routing is disabled: " +
