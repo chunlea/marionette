@@ -19,6 +19,13 @@ func SetAdminClient(c client.AdminClient) {
 	adminClientWasSet = true
 }
 
+// ResetAdminClient clears the admin client, so a test that installed one does
+// not leave the credential check skipped for whatever runs next.
+func ResetAdminClient() {
+	adminClient = nil
+	adminClientWasSet = false
+}
+
 // Admin flags
 var (
 	adminServer   string
