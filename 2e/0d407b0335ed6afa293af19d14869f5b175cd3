@@ -1,0 +1,29 @@
+pkg/server/api/tunnel_proxy_affinity.go
+  s_c065cc8f8dc5eb::t_288099e499f19d 41-49
+pkg/tunnel/manager_test.go
+  s_683f0a71c8fb68::t_e56d77c3052c77 437-479
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "2e0d407b0335ed6afa293af19d14869f5b175cd3",
+  "prompts": {},
+  "sessions": {
+    "s_683f0a71c8fb68": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a8647725-70f7-4390-95b1-c9bcbff2a34d",
+        "model": "unknown"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    },
+    "s_c065cc8f8dc5eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a030fc-1d5b-7542-9241-6be2f7ebc51a",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "chunli <git@chunli.dev>"
+    }
+  }
+}
