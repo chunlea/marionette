@@ -166,7 +166,24 @@ providers:
       cpus: "4"
     volumes:
       - "/data/workspaces:/workspace"
+    isolation:
+      # The address a spawned runner dials back on. Required for any
+      # containerized runner - see below.
+      server_url: "host.docker.internal:9090"
 ```
+
+`isolation.server_url` is the address a spawned runner dials back on, and it is
+the one setting a containerized runner will not come up without. Leave it unset
+and the server derives the address from its own gRPC listener: `127.0.0.1:9090`,
+which inside a container is the container itself. Runners then start, never
+connect, and sit there until the reaper takes them. The server logs a WARN naming
+the key whenever it has to guess, so check the startup log if runners are not
+showing up. Set it to an address the container can reach:
+`host.docker.internal:9090` when the server runs on the Docker Desktop host, the
+Compose service name (`server:9090`) when the server is itself a container on the
+same network, or the service DNS name in a cluster. The rest of the `isolation`
+block — proxies, resolvers, refresh cadence — is documented in
+[Network isolation](../network.md).
 
 ### Kubernetes Provider
 

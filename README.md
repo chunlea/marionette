@@ -151,6 +151,17 @@ This joins the `default` pool as a plain local runner. `--sandbox-mode none` mea
 the agent runs directly on this host, which is the right choice for a local walk
 and the wrong choice for anything else.
 
+If you swap this step for the **Docker provider** — or any provider that spawns a
+runner into a container — set `providers.docker.isolation.server_url` first. It is
+the address a spawned runner dials back on, and with nothing configured the server
+derives it from its own gRPC listener: `127.0.0.1:9090`, which inside a container
+is the container itself. Runners then start, never connect, and sit there until
+the reaper takes them. The server logs a WARN naming the key whenever it has to
+guess, so check the startup log if runners are not showing up. Set it to an address
+the container can reach: `host.docker.internal:9090` when the server runs on the
+Docker Desktop host, or the Compose service name (`server:9090`) when the server is
+itself a container on the same network.
+
 ```bash
 export MARIONETTE_RUNNER_TOKEN=...   # from step 4
 
